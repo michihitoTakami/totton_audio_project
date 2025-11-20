@@ -1,0 +1,14 @@
+[project]
+name = "gpu-audio-upsampler"
+version = "0.1.0"
+description = "GPU-accelerated high-precision audio upsampling plugin"
+readme = "CLAUDE.md"
+requires-python = ">=3.11"
+dependencies = [
+    "scipy>=1.11.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+]
+
+[dependency-groups]
+dev = []
