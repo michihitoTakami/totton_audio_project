@@ -60,8 +60,12 @@ instantiate(const LV2_Descriptor* descriptor,
     plugin->output_buffer_left = new std::vector<float>();
     plugin->output_buffer_right = new std::vector<float>();
 
-    // Default filter path (will be configurable later)
-    plugin->filter_path = "/home/michihito/Working/gpu_os/data/coefficients/filter_1m_min_phase.bin";
+    // Construct filter path from bundle path (installed with plugin)
+    std::string filter_path_str = std::string(bundle_path) + "filter_1m_min_phase.bin";
+    // Allocate persistent string (plugin lifetime)
+    char* filter_path_copy = new char[filter_path_str.length() + 1];
+    std::strcpy(filter_path_copy, filter_path_str.c_str());
+    plugin->filter_path = filter_path_copy;
     plugin->upsample_ratio = 16;
 
     return (LV2_Handle)plugin;
@@ -96,6 +100,12 @@ static void
 activate(LV2_Handle instance)
 {
     GPUUpsamplerLV2* plugin = (GPUUpsamplerLV2*)instance;
+
+    // Clean up existing instance if present (prevent memory leak on re-activation)
+    if (plugin->upsampler) {
+        delete plugin->upsampler;
+        plugin->upsampler = nullptr;
+    }
 
     // Initialize GPU upsampler engine
     try {
@@ -183,6 +193,11 @@ cleanup(LV2_Handle instance)
     }
     if (plugin->output_buffer_right) {
         delete plugin->output_buffer_right;
+    }
+
+    // Free filter path string allocated in instantiate()
+    if (plugin->filter_path) {
+        delete[] plugin->filter_path;
     }
 
     delete plugin;

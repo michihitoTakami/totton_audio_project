@@ -92,6 +92,11 @@ install(FILES
     src/lv2_plugin/gpu_upsampler.ttl
     DESTINATION ${LV2_INSTALL_DIR}
 )
+# Install filter coefficients to LV2 bundle
+install(FILES
+    data/coefficients/filter_1m_min_phase.bin
+    DESTINATION ${LV2_INSTALL_DIR}
+)
 
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)

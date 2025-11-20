@@ -5,7 +5,7 @@
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix units: <http://lv2plug.in/ns/extensions/units#> .
 
-<http://github.com/michihitoTakami/gpu_upsampler>
+<https://github.com/michihitoTakami/gpu_upsampler>
     a lv2:Plugin ;
     doap:name "GPU Audio Upsampler" ;
     doap:description "Ultra-high precision audio upsampling using GPU (1M tap minimum phase FIR, 44.1kHz->705.6kHz)" ;
@@ -14,8 +14,9 @@
         foaf:name "Michihito Takami" ;
         foaf:homepage <https://github.com/michihitoTakami>
     ] ;
-    lv2:project <http://github.com/michihitoTakami/gpu_upsampler> ;
-    lv2:optionalFeature lv2:hardRTCapable ;
+    lv2:project <https://github.com/michihitoTakami/gpu_upsampler> ;
+    # Note: hardRTCapable removed - GPU processing is not suitable for hard realtime
+    # Will be implemented with lv2:workSchedule in future version (Week 4)
     lv2:port [
         a lv2:AudioPort ,
             lv2:InputPort ;

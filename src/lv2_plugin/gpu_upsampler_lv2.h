@@ -1,7 +1,7 @@
 #ifndef GPU_UPSAMPLER_LV2_H
 #define GPU_UPSAMPLER_LV2_H
 
-#define GPU_UPSAMPLER_URI "http://github.com/michihitoTakami/gpu_upsampler"
+#define GPU_UPSAMPLER_URI "https://github.com/michihitoTakami/gpu_upsampler"
 
 // Port indices
 enum {
