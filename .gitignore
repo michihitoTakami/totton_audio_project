@@ -41,6 +41,20 @@ uv.lock
 # data/coefficients/*.bin は512KBなので含める
 # plots は検証用なので含める
 
+# Test data (WAV files are large)
+test_data/*.wav
+test_data/output_*
+test_data/optimized_*
+
+# CMake build files
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
 # OS
 .DS_Store
 Thumbs.db
