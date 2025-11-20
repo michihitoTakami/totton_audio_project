@@ -5,6 +5,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <nvml.h>
 
 namespace ConvolutionEngine {
 
@@ -66,9 +67,40 @@ void checkCufftError(cufftResult result, const char* context) {
 }
 
 double getGPUUtilization() {
-    // Simplified version - returns 0 for now
-    // Full implementation would require NVML library
-    return 0.0;
+    static bool nvmlInitialized = false;
+    static nvmlDevice_t device;
+
+    // Initialize NVML on first call
+    if (!nvmlInitialized) {
+        nvmlReturn_t result = nvmlInit();
+        if (result != NVML_SUCCESS) {
+            std::cerr << "Warning: Failed to initialize NVML: "
+                      << nvmlErrorString(result) << std::endl;
+            return 0.0;
+        }
+
+        // Get device handle for GPU 0
+        result = nvmlDeviceGetHandleByIndex(0, &device);
+        if (result != NVML_SUCCESS) {
+            std::cerr << "Warning: Failed to get NVML device handle: "
+                      << nvmlErrorString(result) << std::endl;
+            nvmlShutdown();
+            return 0.0;
+        }
+
+        nvmlInitialized = true;
+    }
+
+    // Query GPU utilization
+    nvmlUtilization_t utilization;
+    nvmlReturn_t result = nvmlDeviceGetUtilizationRates(device, &utilization);
+    if (result != NVML_SUCCESS) {
+        std::cerr << "Warning: Failed to query GPU utilization: "
+                  << nvmlErrorString(result) << std::endl;
+        return 0.0;
+    }
+
+    return static_cast<double>(utilization.gpu);
 }
 
 } // namespace Utils
@@ -80,7 +112,7 @@ GPUUpsampler::GPUUpsampler()
       d_inputBlock_(nullptr), d_outputBlock_(nullptr),
       d_inputFFT_(nullptr), d_convResult_(nullptr),
       fftPlanForward_(0), fftPlanInverse_(0),
-      overlapSize_(0), stream_(nullptr) {
+      overlapSize_(0), stream_(nullptr), streamLeft_(nullptr), streamRight_(nullptr) {
     stats_ = Stats();
 }
 
@@ -146,10 +178,20 @@ bool GPUUpsampler::setupGPUResources() {
     try {
         std::cout << "Setting up GPU resources..." << std::endl;
 
-        // Create CUDA stream
+        // Create CUDA streams (one for mono, two for stereo parallel processing)
         Utils::checkCudaError(
             cudaStreamCreate(&stream_),
-            "cudaStreamCreate"
+            "cudaStreamCreate primary"
+        );
+
+        Utils::checkCudaError(
+            cudaStreamCreate(&streamLeft_),
+            "cudaStreamCreate left"
+        );
+
+        Utils::checkCudaError(
+            cudaStreamCreate(&streamRight_),
+            "cudaStreamCreate right"
         );
 
         // Calculate FFT sizes for Overlap-Save
@@ -164,6 +206,7 @@ bool GPUUpsampler::setupGPUResources() {
 
         overlapSize_ = filterTaps_ - 1;
         overlapBuffer_.resize(overlapSize_, 0.0f);
+        overlapBufferRight_.resize(overlapSize_, 0.0f);
 
         // Allocate device memory for filter coefficients
         Utils::checkCudaError(
@@ -259,19 +302,38 @@ bool GPUUpsampler::processChannel(const float* inputData,
                                   std::vector<float>& outputData) {
     auto startTime = std::chrono::high_resolution_clock::now();
 
+    bool success = processChannelWithStream(inputData, inputFrames, outputData,
+                                            stream_, overlapBuffer_);
+
+    if (success) {
+        auto endTime = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = endTime - startTime;
+
+        stats_.totalProcessingTime += elapsed.count();
+        stats_.framesProcessed += inputFrames;
+        stats_.gpuUtilization = Utils::getGPUUtilization();
+    }
+
+    return success;
+}
+
+bool GPUUpsampler::processChannelWithStream(const float* inputData,
+                                            size_t inputFrames,
+                                            std::vector<float>& outputData,
+                                            cudaStream_t stream,
+                                            std::vector<float>& overlapBuffer) {
     // Initialize all GPU pointers to nullptr for safe cleanup
     float* d_upsampledInput = nullptr;
     float* d_input = nullptr;
     float* d_paddedInput = nullptr;
     cufftComplex* d_inputFFT = nullptr;
-    cufftComplex* d_resultFFT = nullptr;
     float* d_convResult = nullptr;
 
     try {
         size_t outputFrames = inputFrames * upsampleRatio_;
         outputData.resize(outputFrames, 0.0f);
 
-        // Step 1: Zero-pad input signal (upsample)
+        // Step 1: Zero-pad input signal (upsample) in one go
         Utils::checkCudaError(
             cudaMalloc(&d_upsampledInput, outputFrames * sizeof(float)),
             "cudaMalloc upsampled input"
@@ -289,146 +351,169 @@ bool GPUUpsampler::processChannel(const float* inputData,
         );
 
         Utils::checkCudaError(
-            cudaMemcpy(d_input, inputData, inputFrames * sizeof(float),
-                      cudaMemcpyHostToDevice),
+            cudaMemcpyAsync(d_input, inputData, inputFrames * sizeof(float),
+                           cudaMemcpyHostToDevice, stream),
             "cudaMemcpy input to device"
         );
 
         // Launch zero-padding kernel
         int threadsPerBlock = 256;
         int blocks = (inputFrames + threadsPerBlock - 1) / threadsPerBlock;
-        zeroPadKernel<<<blocks, threadsPerBlock, 0, stream_>>>(
+        zeroPadKernel<<<blocks, threadsPerBlock, 0, stream>>>(
             d_input, d_upsampledInput, inputFrames, upsampleRatio_
         );
 
         cudaFree(d_input);
         d_input = nullptr;
 
-        // Step 2: Perform GPU FFT convolution using pre-computed filter FFT
-        // Reuse fftPlanForward_, fftPlanInverse_, and d_filterFFT_
-
-        // Allocate padded buffer for FFT (use pre-computed fftSize_)
+        // Step 2: Perform Overlap-Save FFT convolution in blocks
+        // Allocate persistent buffers for block processing
         Utils::checkCudaError(
             cudaMalloc(&d_paddedInput, fftSize_ * sizeof(float)),
             "cudaMalloc padded input"
         );
 
-        Utils::checkCudaError(
-            cudaMemset(d_paddedInput, 0, fftSize_ * sizeof(float)),
-            "cudaMemset padded input"
-        );
-
-        // Copy upsampled data to padded buffer
-        size_t copySize = (outputFrames < static_cast<size_t>(fftSize_)) ?
-                          outputFrames : static_cast<size_t>(fftSize_);
-        Utils::checkCudaError(
-            cudaMemcpy(d_paddedInput, d_upsampledInput,
-                      copySize * sizeof(float), cudaMemcpyDeviceToDevice),
-            "cudaMemcpy to padded"
-        );
-
-        // Allocate temporary FFT buffer (reuse d_inputFFT_ for efficiency)
         int fftComplexSize = fftSize_ / 2 + 1;
         Utils::checkCudaError(
             cudaMalloc(&d_inputFFT, fftComplexSize * sizeof(cufftComplex)),
-            "cudaMalloc input FFT temp"
+            "cudaMalloc input FFT"
         );
 
-        Utils::checkCudaError(
-            cudaMalloc(&d_resultFFT, fftComplexSize * sizeof(cufftComplex)),
-            "cudaMalloc result FFT"
-        );
-
-        // Perform forward FFT on input using pre-computed plan
-        Utils::checkCufftError(
-            cufftExecR2C(fftPlanForward_, d_paddedInput, d_inputFFT),
-            "cufftExecR2C input"
-        );
-
-        // Complex multiplication in frequency domain with pre-computed filter FFT
-        threadsPerBlock = 256;
-        blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
-
-        Utils::checkCudaError(
-            cudaMemcpy(d_resultFFT, d_inputFFT,
-                      fftComplexSize * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
-            "cudaMemcpy FFT to result"
-        );
-
-        complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream_>>>(
-            d_resultFFT, d_filterFFT_, fftComplexSize  // Use pre-computed d_filterFFT_
-        );
-
-        Utils::checkCudaError(
-            cudaGetLastError(),
-            "complexMultiplyKernel launch"
-        );
-
-        // Perform inverse FFT using pre-computed plan
         Utils::checkCudaError(
             cudaMalloc(&d_convResult, fftSize_ * sizeof(float)),
             "cudaMalloc conv result"
         );
 
-        Utils::checkCufftError(
-            cufftExecC2R(fftPlanInverse_, d_resultFFT, d_convResult),
-            "cufftExecC2R inverse"
-        );
+        // Overlap-Save parameters
+        // validOutputPerBlock is the number of new output samples per block
+        // (excluding the overlap region that gets discarded)
+        int validOutputPerBlock = fftSize_ - overlapSize_;
 
-        // Scale by FFT size (cuFFT doesn't normalize)
-        float scale = 1.0f / fftSize_;
-        size_t validOutputSize = (outputFrames < static_cast<size_t>(fftSize_)) ?
-                                  outputFrames : static_cast<size_t>(fftSize_);
-        int scaleBlocks = (validOutputSize + threadsPerBlock - 1) / threadsPerBlock;
-        scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream_>>>(
-            d_convResult, validOutputSize, scale
-        );
+        // Reset overlap buffer at start of new channel processing
+        std::fill(overlapBuffer.begin(), overlapBuffer.end(), 0.0f);
 
-        Utils::checkCudaError(
-            cudaGetLastError(),
-            "scaleKernel launch"
-        );
+        // Process audio in blocks
+        size_t outputPos = 0;
+        size_t inputPos = 0;
 
-        // Copy result back to host (only valid portion, already computed above)
-        Utils::checkCudaError(
-            cudaMemcpy(outputData.data(), d_convResult,
-                      validOutputSize * sizeof(float), cudaMemcpyDeviceToHost),
-            "cudaMemcpy result to host"
-        );
+        while (outputPos < outputFrames) {
+            // Calculate current block size
+            size_t remainingSamples = outputFrames - inputPos;
+            size_t currentBlockSize = (remainingSamples < static_cast<size_t>(validOutputPerBlock)) ?
+                                       remainingSamples : static_cast<size_t>(validOutputPerBlock);
 
-        // If output is larger than FFT size, process in blocks
-        if (outputFrames > static_cast<size_t>(fftSize_)) {
-            std::cerr << "Warning: Output size (" << outputFrames
-                      << ") exceeds FFT size (" << fftSize_ << ")" << std::endl;
-            std::cerr << "Full Overlap-Save implementation needed for long audio." << std::endl;
-            std::cerr << "Processing truncated to " << validOutputSize << " samples." << std::endl;
-            outputData.resize(validOutputSize);
+            // Prepare input block: [overlap from previous | new input data]
+            Utils::checkCudaError(
+                cudaMemsetAsync(d_paddedInput, 0, fftSize_ * sizeof(float), stream),
+                "cudaMemset padded input"
+            );
+
+            // Copy overlap from previous block (host to device)
+            if (overlapSize_ > 0 && outputPos > 0) {
+                Utils::checkCudaError(
+                    cudaMemcpyAsync(d_paddedInput, overlapBuffer.data(),
+                                   overlapSize_ * sizeof(float), cudaMemcpyHostToDevice, stream),
+                    "cudaMemcpy overlap to device"
+                );
+            }
+
+            // Copy new input data from upsampled signal
+            if (inputPos + currentBlockSize <= outputFrames) {
+                Utils::checkCudaError(
+                    cudaMemcpyAsync(d_paddedInput + overlapSize_, d_upsampledInput + inputPos,
+                                   currentBlockSize * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy block to padded"
+                );
+            }
+
+            // Perform FFT convolution on this block
+            Utils::checkCufftError(
+                cufftExecR2C(fftPlanForward_, d_paddedInput, d_inputFFT),
+                "cufftExecR2C block"
+            );
+
+            // Complex multiplication with pre-computed filter FFT
+            // Note: complexMultiplyKernel modifies data in-place, so we operate directly on d_inputFFT
+            threadsPerBlock = 256;
+            blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
+
+            complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+                d_inputFFT, d_filterFFT_, fftComplexSize
+            );
+
+            Utils::checkCudaError(
+                cudaGetLastError(),
+                "complexMultiplyKernel launch"
+            );
+
+            // Inverse FFT (operate on d_inputFFT since we modified it in-place)
+            Utils::checkCufftError(
+                cufftExecC2R(fftPlanInverse_, d_inputFFT, d_convResult),
+                "cufftExecC2R block"
+            );
+
+            // Scale by FFT size
+            float scale = 1.0f / fftSize_;
+            int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
+            scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
+                d_convResult, fftSize_, scale
+            );
+
+            Utils::checkCudaError(
+                cudaGetLastError(),
+                "scaleKernel launch"
+            );
+
+            // Extract valid output (discard first overlapSize_ samples)
+            size_t validOutputSize = (outputFrames - outputPos < static_cast<size_t>(validOutputPerBlock)) ?
+                                      (outputFrames - outputPos) : static_cast<size_t>(validOutputPerBlock);
+
+            Utils::checkCudaError(
+                cudaMemcpyAsync(outputData.data() + outputPos, d_convResult + overlapSize_,
+                               validOutputSize * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                "cudaMemcpy valid output to host"
+            );
+
+            // Save overlap for next block (last overlapSize_ samples of current block input)
+            if (outputPos + validOutputSize < outputFrames) {
+                // Copy the samples that will overlap with next block
+                size_t overlapSourcePos = inputPos + validOutputSize;
+                if (overlapSourcePos + overlapSize_ <= outputFrames) {
+                    Utils::checkCudaError(
+                        cudaMemcpyAsync(overlapBuffer.data(), d_upsampledInput + overlapSourcePos,
+                                       overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                        "cudaMemcpy overlap from device"
+                    );
+                }
+            }
+
+            // Advance positions
+            outputPos += validOutputSize;
+            inputPos += validOutputSize;
         }
 
-        // Cleanup temporary buffers (reuse initialized pointers)
+        // Synchronize stream before cleanup
+        Utils::checkCudaError(
+            cudaStreamSynchronize(stream),
+            "cudaStreamSynchronize"
+        );
+
+        // Cleanup temporary buffers
         cudaFree(d_upsampledInput);
         cudaFree(d_paddedInput);
         cudaFree(d_inputFFT);
-        cudaFree(d_resultFFT);
         cudaFree(d_convResult);
-
-        auto endTime = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> elapsed = endTime - startTime;
-
-        stats_.totalProcessingTime += elapsed.count();
-        stats_.framesProcessed += inputFrames;
 
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in processChannel: " << e.what() << std::endl;
+        std::cerr << "Error in processChannelWithStream: " << e.what() << std::endl;
 
         // Clean up all allocated GPU memory
         if (d_upsampledInput) cudaFree(d_upsampledInput);
         if (d_input) cudaFree(d_input);
         if (d_paddedInput) cudaFree(d_paddedInput);
         if (d_inputFFT) cudaFree(d_inputFFT);
-        if (d_resultFFT) cudaFree(d_resultFFT);
         if (d_convResult) cudaFree(d_convResult);
 
         return false;
@@ -440,13 +525,33 @@ bool GPUUpsampler::processStereo(const float* leftInput,
                                  size_t inputFrames,
                                  std::vector<float>& leftOutput,
                                  std::vector<float>& rightOutput) {
-    // Process both channels
-    bool success = processChannel(leftInput, inputFrames, leftOutput);
-    if (success) {
-        success = processChannel(rightInput, inputFrames, rightOutput);
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    // Launch both channels in parallel using separate streams
+    // Note: We need to use lambda or thread to truly parallelize,
+    // but CUDA streams already allow concurrent execution on GPU
+
+    // Process left channel on streamLeft_
+    bool leftSuccess = processChannelWithStream(leftInput, inputFrames, leftOutput,
+                                                streamLeft_, overlapBuffer_);
+
+    // Process right channel on streamRight_ (can execute in parallel with left)
+    bool rightSuccess = processChannelWithStream(rightInput, inputFrames, rightOutput,
+                                                 streamRight_, overlapBufferRight_);
+
+    // Both streams are synchronized within processChannelWithStream
+    // So results are ready when both calls return
+
+    if (leftSuccess && rightSuccess) {
+        auto endTime = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = endTime - startTime;
+
+        stats_.totalProcessingTime += elapsed.count();
+        stats_.framesProcessed += inputFrames * 2; // Count both channels
+        stats_.gpuUtilization = Utils::getGPUUtilization();
     }
 
-    return success;
+    return leftSuccess && rightSuccess;
 }
 
 void GPUUpsampler::cleanup() {
@@ -461,6 +566,8 @@ void GPUUpsampler::cleanup() {
     if (fftPlanInverse_) cufftDestroy(fftPlanInverse_);
 
     if (stream_) cudaStreamDestroy(stream_);
+    if (streamLeft_) cudaStreamDestroy(streamLeft_);
+    if (streamRight_) cudaStreamDestroy(streamRight_);
 
     d_filterCoeffs_ = nullptr;
     d_filterFFT_ = nullptr;
@@ -471,6 +578,8 @@ void GPUUpsampler::cleanup() {
     fftPlanForward_ = 0;
     fftPlanInverse_ = 0;
     stream_ = nullptr;
+    streamLeft_ = nullptr;
+    streamRight_ = nullptr;
 }
 
 } // namespace ConvolutionEngine

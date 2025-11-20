@@ -14,6 +14,19 @@ public:
     ~GPUUpsampler();
 
     // Initialize with filter coefficients file and block size
+    //
+    // Parameters:
+    //   filterCoeffPath: Path to binary file containing filter coefficients (float32 array)
+    //   upsampleRatio: Integer upsampling ratio (e.g., 16 for 44.1kHz -> 705.6kHz)
+    //   blockSize: FFT processing block size in samples (default: 8192)
+    //              This determines the basic unit for Overlap-Save convolution.
+    //              Larger values improve GPU efficiency but increase latency.
+    //              Actual FFT size will be next power-of-2 >= (blockSize + filterTaps - 1)
+    //
+    //              Trade-offs:
+    //              - Small (2048-4096): Lower latency, more CPU-GPU transfers, lower throughput
+    //              - Medium (8192-16384): Balanced latency and throughput (recommended)
+    //              - Large (32768+): Higher throughput, higher latency, more memory usage
     bool initialize(const std::string& filterCoeffPath,
                    int upsampleRatio,
                    int blockSize = 8192);
@@ -52,6 +65,13 @@ private:
                                size_t inputLength,
                                std::vector<float>& output);
 
+    // Internal helper for processing a channel with a specific stream
+    bool processChannelWithStream(const float* inputData,
+                                   size_t inputFrames,
+                                   std::vector<float>& outputData,
+                                   cudaStream_t stream,
+                                   std::vector<float>& overlapBuffer);
+
     // Free all GPU resources
     void cleanup();
 
@@ -80,11 +100,14 @@ private:
     Stats stats_;
 
     // State for Overlap-Save
-    std::vector<float> overlapBuffer_;   // Store overlap from previous block
+    std::vector<float> overlapBuffer_;       // Store overlap from previous block (mono/left)
+    std::vector<float> overlapBufferRight_;  // Store overlap for right channel
     int overlapSize_;
 
-    // CUDA stream for async operations
-    cudaStream_t stream_;
+    // CUDA streams for async operations
+    cudaStream_t stream_;          // Primary stream for mono
+    cudaStream_t streamLeft_;      // Left channel for stereo parallel
+    cudaStream_t streamRight_;     // Right channel for stereo parallel
 };
 
 // Utility functions
