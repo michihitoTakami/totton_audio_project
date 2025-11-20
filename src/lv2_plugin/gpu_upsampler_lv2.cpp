@@ -14,19 +14,16 @@ enum WorkMessageType {
 };
 
 // Work message structure (sent from run() to work())
+// Note: No pointers - worker accesses plugin instance buffers directly
 struct WorkMessage {
     WorkMessageType type;
     uint32_t n_samples;
-    float* input_left;
-    float* input_right;
 };
 
 // Response message structure (sent from work() to work_response())
 struct ResponseMessage {
     WorkMessageType type;
     uint32_t output_samples;
-    float* output_left;
-    float* output_right;
     bool success;
 };
 
@@ -35,7 +32,7 @@ using ConvolutionEngine::GPUUpsampler;
 
 // Plugin instance structure (C++ struct)
 struct GPUUpsamplerLV2 {
-    // Port buffers
+    // Port buffers (connected by host)
     const float* input_left;
     const float* input_right;
     float* output_left;
@@ -48,9 +45,17 @@ struct GPUUpsamplerLV2 {
     // Sample rate
     double sample_rate;
 
-    // Processing buffers
-    std::vector<float>* output_buffer_left;
-    std::vector<float>* output_buffer_right;
+    // Worker input buffers (copied from port buffers in run())
+    std::vector<float>* worker_input_left;
+    std::vector<float>* worker_input_right;
+
+    // Worker output buffers (filled by GPU processing in work())
+    std::vector<float>* worker_output_left;
+    std::vector<float>* worker_output_right;
+
+    // Worker state
+    bool worker_processing;  // True if worker is currently processing
+    uint32_t output_read_pos;  // Position in output buffer for consumption
 
     // Filter path
     const char* filter_path;
@@ -83,8 +88,15 @@ instantiate(const LV2_Descriptor* descriptor,
     plugin->latency_port = nullptr;
     plugin->upsampler = nullptr;
     plugin->sample_rate = rate;
-    plugin->output_buffer_left = new std::vector<float>();
-    plugin->output_buffer_right = new std::vector<float>();
+
+    // Initialize worker buffers
+    plugin->worker_input_left = new std::vector<float>();
+    plugin->worker_input_right = new std::vector<float>();
+    plugin->worker_output_left = new std::vector<float>();
+    plugin->worker_output_right = new std::vector<float>();
+    plugin->worker_processing = false;
+    plugin->output_read_pos = 0;
+
     plugin->schedule = nullptr;
 
     // Construct filter path from bundle path (installed with plugin)
@@ -105,8 +117,10 @@ instantiate(const LV2_Descriptor* descriptor,
     if (!plugin->schedule) {
         // Worker interface is required
         delete[] filter_path_copy;
-        delete plugin->output_buffer_left;
-        delete plugin->output_buffer_right;
+        delete plugin->worker_input_left;
+        delete plugin->worker_input_right;
+        delete plugin->worker_output_left;
+        delete plugin->worker_output_right;
         delete plugin;
         return nullptr;
     }
@@ -169,10 +183,20 @@ activate(LV2_Handle instance)
         }
     }
 
-    // Report latency to host (block size in samples)
-    // For now, using block size as latency (8192 samples at 44.1kHz = ~185ms)
+    // Report latency to host
+    // Latency components:
+    // 1. FFT overlap (filterTaps - 1 = 999,999 samples at input rate)
+    // 2. Block size (8192 samples at input rate)
+    // Total: ~1,008,191 samples @ 44.1kHz = ~22.86 seconds
+    //
+    // Note: This is the MINIMUM latency due to minimum-phase FIR filter design.
+    // The 1M tap filter concentrates energy at t>=0 but still requires full convolution.
     if (plugin->latency_port) {
-        *plugin->latency_port = 8192.0f;
+        const int filter_taps = 1000000;  // 1M tap filter
+        const int overlap_latency = filter_taps - 1;  // 999,999
+        const int block_latency = 8192;
+        const int total_latency = overlap_latency + block_latency;
+        *plugin->latency_port = static_cast<float>(total_latency);
     }
 }
 
@@ -184,7 +208,7 @@ run(LV2_Handle instance, uint32_t n_samples)
 
     // Safety check
     if (!plugin->upsampler || !plugin->input_left || !plugin->input_right ||
-        !plugin->output_left || !plugin->output_right) {
+        !plugin->output_left || !plugin->output_right || !plugin->schedule) {
         // Passthrough mode if upsampler not initialized
         if (plugin->input_left && plugin->output_left) {
             memcpy(plugin->output_left, plugin->input_left, n_samples * sizeof(float));
@@ -195,30 +219,42 @@ run(LV2_Handle instance, uint32_t n_samples)
         return;
     }
 
-    // Process stereo audio through GPU upsampler
-    bool success = plugin->upsampler->processStereo(
-        plugin->input_left,
-        plugin->input_right,
-        n_samples,
-        *plugin->output_buffer_left,
-        *plugin->output_buffer_right
-    );
+    // Step 1: Copy input to worker buffers (if worker is not currently processing)
+    if (!plugin->worker_processing) {
+        plugin->worker_input_left->assign(plugin->input_left, plugin->input_left + n_samples);
+        plugin->worker_input_right->assign(plugin->input_right, plugin->input_right + n_samples);
 
-    if (!success) {
-        // On error, output silence
-        memset(plugin->output_left, 0, n_samples * plugin->upsample_ratio * sizeof(float));
-        memset(plugin->output_right, 0, n_samples * plugin->upsample_ratio * sizeof(float));
-        return;
+        // Step 2: Schedule GPU processing in worker thread
+        WorkMessage msg;
+        msg.type = WORK_MSG_PROCESS_AUDIO;
+        msg.n_samples = n_samples;
+
+        // Mark as processing
+        plugin->worker_processing = true;
+
+        // Schedule work (non-blocking, returns immediately)
+        plugin->schedule->schedule_work(
+            plugin->schedule->handle,
+            sizeof(WorkMessage),
+            &msg
+        );
     }
 
-    // Copy upsampled data to output ports
-    // Note: LV2 host expects the same sample rate, so we need to handle this carefully
-    // For now, we'll do a simple decimation (take every Nth sample)
-    // In production, this should be handled by PipeWire's sample rate negotiation
-    size_t output_frames = plugin->output_buffer_left->size();
-    for (uint32_t i = 0; i < n_samples && i < output_frames; i++) {
-        plugin->output_left[i] = (*plugin->output_buffer_left)[i];
-        plugin->output_right[i] = (*plugin->output_buffer_right)[i];
+    // Step 3: Output from previous worker results
+    // Note: Initial latency until first result is ready
+    size_t available = plugin->worker_output_left->size() - plugin->output_read_pos;
+
+    if (available >= n_samples) {
+        // Enough data available - copy to output
+        for (uint32_t i = 0; i < n_samples; i++) {
+            plugin->output_left[i] = (*plugin->worker_output_left)[plugin->output_read_pos + i];
+            plugin->output_right[i] = (*plugin->worker_output_right)[plugin->output_read_pos + i];
+        }
+        plugin->output_read_pos += n_samples;
+    } else {
+        // Not enough data - output silence (underrun)
+        memset(plugin->output_left, 0, n_samples * sizeof(float));
+        memset(plugin->output_right, 0, n_samples * sizeof(float));
     }
 }
 
@@ -255,14 +291,15 @@ work(LV2_Handle instance,
     }
 
     // Perform GPU processing in worker thread (non-realtime)
+    // Access input from worker_input buffers (safe - copied in run())
     bool success = false;
-    if (plugin->upsampler) {
+    if (plugin->upsampler && plugin->worker_input_left && plugin->worker_input_right) {
         success = plugin->upsampler->processStereo(
-            msg->input_left,
-            msg->input_right,
+            plugin->worker_input_left->data(),
+            plugin->worker_input_right->data(),
             msg->n_samples,
-            *plugin->output_buffer_left,
-            *plugin->output_buffer_right
+            *plugin->worker_output_left,
+            *plugin->worker_output_right
         );
     }
 
@@ -270,9 +307,7 @@ work(LV2_Handle instance,
     ResponseMessage response;
     response.type = WORK_MSG_PROCESS_AUDIO;
     response.success = success;
-    response.output_samples = success ? plugin->output_buffer_left->size() : 0;
-    response.output_left = success ? plugin->output_buffer_left->data() : nullptr;
-    response.output_right = success ? plugin->output_buffer_right->data() : nullptr;
+    response.output_samples = success ? plugin->worker_output_left->size() : 0;
 
     // Send response back to audio thread
     respond(handle, sizeof(ResponseMessage), &response);
@@ -294,10 +329,19 @@ work_response(LV2_Handle instance,
 
     const ResponseMessage* response = (const ResponseMessage*)data;
 
-    // Response handling is done in run() function
-    // This function is called from audio thread, so just acknowledge
-    (void)plugin;
-    (void)response;
+    // Mark worker as finished
+    plugin->worker_processing = false;
+
+    // Reset read position for new output data
+    if (response->success && response->output_samples > 0) {
+        plugin->output_read_pos = 0;
+        // Worker output buffers are already filled by work()
+    } else {
+        // GPU processing failed - clear output buffers
+        plugin->worker_output_left->clear();
+        plugin->worker_output_right->clear();
+        plugin->output_read_pos = 0;
+    }
 
     return LV2_WORKER_SUCCESS;
 }
@@ -308,11 +352,18 @@ cleanup(LV2_Handle instance)
 {
     GPUUpsamplerLV2* plugin = (GPUUpsamplerLV2*)instance;
 
-    if (plugin->output_buffer_left) {
-        delete plugin->output_buffer_left;
+    // Free worker buffers
+    if (plugin->worker_input_left) {
+        delete plugin->worker_input_left;
     }
-    if (plugin->output_buffer_right) {
-        delete plugin->output_buffer_right;
+    if (plugin->worker_input_right) {
+        delete plugin->worker_input_right;
+    }
+    if (plugin->worker_output_left) {
+        delete plugin->worker_output_left;
+    }
+    if (plugin->worker_output_right) {
+        delete plugin->worker_output_right;
     }
 
     // Free filter path string allocated in instantiate()
