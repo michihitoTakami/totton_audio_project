@@ -59,6 +59,7 @@ private:
     int upsampleRatio_;
     int blockSize_;
     int filterTaps_;
+    int fftSize_;                        // Pre-computed FFT size
 
     // Filter coefficients
     std::vector<float> h_filterCoeffs_;  // Host

@@ -55,9 +55,10 @@ bool WavReader::readAll(AudioFile& output) {
     // Read all frames
     sf_count_t framesRead = sf_readf_float(file_, output.data.data(), info_.frames);
     if (framesRead != info_.frames) {
-        std::cerr << "Warning: Expected " << info_.frames << " frames, read "
-                  << framesRead << std::endl;
-        output.frames = static_cast<int>(framesRead);
+        std::cerr << "Error: Incomplete read. Expected " << info_.frames
+                  << " frames, read " << framesRead << std::endl;
+        std::cerr << "File may be corrupted or truncated." << std::endl;
+        return false;
     }
 
     return true;

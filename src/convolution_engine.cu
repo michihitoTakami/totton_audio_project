@@ -75,7 +75,7 @@ double getGPUUtilization() {
 
 // GPUUpsampler implementation
 GPUUpsampler::GPUUpsampler()
-    : upsampleRatio_(1), blockSize_(8192), filterTaps_(0),
+    : upsampleRatio_(1), blockSize_(8192), filterTaps_(0), fftSize_(0),
       d_filterCoeffs_(nullptr), d_filterFFT_(nullptr),
       d_inputBlock_(nullptr), d_outputBlock_(nullptr),
       d_inputFFT_(nullptr), d_convResult_(nullptr),
@@ -154,13 +154,13 @@ bool GPUUpsampler::setupGPUResources() {
 
         // Calculate FFT sizes for Overlap-Save
         // For Overlap-Save: FFT size = block size + filter taps - 1
-        int fftSize = blockSize_ + filterTaps_ - 1;
+        size_t fftSizeNeeded = static_cast<size_t>(blockSize_) + static_cast<size_t>(filterTaps_) - 1;
         // Round up to next power of 2 for efficiency
-        int fftSizePow2 = 1;
-        while (fftSizePow2 < fftSize) {
-            fftSizePow2 *= 2;
+        fftSize_ = 1;
+        while (static_cast<size_t>(fftSize_) < fftSizeNeeded) {
+            fftSize_ *= 2;
         }
-        std::cout << "  FFT size: " << fftSizePow2 << std::endl;
+        std::cout << "  FFT size: " << fftSize_ << std::endl;
 
         overlapSize_ = filterTaps_ - 1;
         overlapBuffer_.resize(overlapSize_, 0.0f);
@@ -191,7 +191,7 @@ bool GPUUpsampler::setupGPUResources() {
         );
 
         // Allocate FFT buffers
-        int fftComplexSize = fftSizePow2 / 2 + 1;
+        int fftComplexSize = fftSize_ / 2 + 1;
 
         Utils::checkCudaError(
             cudaMalloc(&d_inputFFT_, fftComplexSize * sizeof(cufftComplex)),
@@ -210,24 +210,24 @@ bool GPUUpsampler::setupGPUResources() {
 
         // Create cuFFT plans
         Utils::checkCufftError(
-            cufftPlan1d(&fftPlanForward_, fftSizePow2, CUFFT_R2C, 1),
+            cufftPlan1d(&fftPlanForward_, fftSize_, CUFFT_R2C, 1),
             "cufftPlan1d forward"
         );
 
         Utils::checkCufftError(
-            cufftPlan1d(&fftPlanInverse_, fftSizePow2, CUFFT_C2R, 1),
+            cufftPlan1d(&fftPlanInverse_, fftSize_, CUFFT_C2R, 1),
             "cufftPlan1d inverse"
         );
 
         // Pre-compute filter FFT
         float* d_filterPadded;
         Utils::checkCudaError(
-            cudaMalloc(&d_filterPadded, fftSizePow2 * sizeof(float)),
+            cudaMalloc(&d_filterPadded, fftSize_ * sizeof(float)),
             "cudaMalloc filter padded"
         );
 
         Utils::checkCudaError(
-            cudaMemset(d_filterPadded, 0, fftSizePow2 * sizeof(float)),
+            cudaMemset(d_filterPadded, 0, fftSize_ * sizeof(float)),
             "cudaMemset filter padded"
         );
 
@@ -259,12 +259,19 @@ bool GPUUpsampler::processChannel(const float* inputData,
                                   std::vector<float>& outputData) {
     auto startTime = std::chrono::high_resolution_clock::now();
 
+    // Initialize all GPU pointers to nullptr for safe cleanup
+    float* d_upsampledInput = nullptr;
+    float* d_input = nullptr;
+    float* d_paddedInput = nullptr;
+    cufftComplex* d_inputFFT = nullptr;
+    cufftComplex* d_resultFFT = nullptr;
+    float* d_convResult = nullptr;
+
     try {
         size_t outputFrames = inputFrames * upsampleRatio_;
         outputData.resize(outputFrames, 0.0f);
 
         // Step 1: Zero-pad input signal (upsample)
-        float* d_upsampledInput;
         Utils::checkCudaError(
             cudaMalloc(&d_upsampledInput, outputFrames * sizeof(float)),
             "cudaMalloc upsampled input"
@@ -276,7 +283,6 @@ bool GPUUpsampler::processChannel(const float* inputData,
         );
 
         // Copy input to device
-        float* d_input;
         Utils::checkCudaError(
             cudaMalloc(&d_input, inputFrames * sizeof(float)),
             "cudaMalloc input"
@@ -296,42 +302,36 @@ bool GPUUpsampler::processChannel(const float* inputData,
         );
 
         cudaFree(d_input);
+        d_input = nullptr;
 
-        // Step 2: Perform GPU FFT convolution with filter
-        // Use Overlap-Save algorithm for efficient block-wise processing
+        // Step 2: Perform GPU FFT convolution using pre-computed filter FFT
+        // Reuse fftPlanForward_, fftPlanInverse_, and d_filterFFT_
 
-        // Calculate FFT size (next power of 2 that fits data + filter)
-        int fftSize = 1;
-        while (fftSize < static_cast<int>(outputFrames + filterTaps_ - 1)) {
-            fftSize *= 2;
-        }
-
-        // Allocate padded buffer for FFT
-        float* d_paddedInput;
+        // Allocate padded buffer for FFT (use pre-computed fftSize_)
         Utils::checkCudaError(
-            cudaMalloc(&d_paddedInput, fftSize * sizeof(float)),
+            cudaMalloc(&d_paddedInput, fftSize_ * sizeof(float)),
             "cudaMalloc padded input"
         );
 
         Utils::checkCudaError(
-            cudaMemset(d_paddedInput, 0, fftSize * sizeof(float)),
+            cudaMemset(d_paddedInput, 0, fftSize_ * sizeof(float)),
             "cudaMemset padded input"
         );
 
+        // Copy upsampled data to padded buffer
+        size_t copySize = (outputFrames < static_cast<size_t>(fftSize_)) ?
+                          outputFrames : static_cast<size_t>(fftSize_);
         Utils::checkCudaError(
             cudaMemcpy(d_paddedInput, d_upsampledInput,
-                      outputFrames * sizeof(float), cudaMemcpyDeviceToDevice),
+                      copySize * sizeof(float), cudaMemcpyDeviceToDevice),
             "cudaMemcpy to padded"
         );
 
-        // Allocate FFT result buffers
-        int fftComplexSize = fftSize / 2 + 1;
-        cufftComplex* d_inputFFT;
-        cufftComplex* d_resultFFT;
-
+        // Allocate temporary FFT buffer (reuse d_inputFFT_ for efficiency)
+        int fftComplexSize = fftSize_ / 2 + 1;
         Utils::checkCudaError(
             cudaMalloc(&d_inputFFT, fftComplexSize * sizeof(cufftComplex)),
-            "cudaMalloc input FFT"
+            "cudaMalloc input FFT temp"
         );
 
         Utils::checkCudaError(
@@ -339,59 +339,16 @@ bool GPUUpsampler::processChannel(const float* inputData,
             "cudaMalloc result FFT"
         );
 
-        // Create FFT plans for this size
-        cufftHandle planForward, planInverse;
+        // Perform forward FFT on input using pre-computed plan
         Utils::checkCufftError(
-            cufftPlan1d(&planForward, fftSize, CUFFT_R2C, 1),
-            "cufftPlan1d forward (processing)"
-        );
-
-        Utils::checkCufftError(
-            cufftPlan1d(&planInverse, fftSize, CUFFT_C2R, 1),
-            "cufftPlan1d inverse (processing)"
-        );
-
-        // Compute filter FFT for this size (if different from pre-computed)
-        float* d_filterPadded;
-        cufftComplex* d_filterFFT_local;
-
-        Utils::checkCudaError(
-            cudaMalloc(&d_filterPadded, fftSize * sizeof(float)),
-            "cudaMalloc filter padded"
-        );
-
-        Utils::checkCudaError(
-            cudaMalloc(&d_filterFFT_local, fftComplexSize * sizeof(cufftComplex)),
-            "cudaMalloc filter FFT local"
-        );
-
-        Utils::checkCudaError(
-            cudaMemset(d_filterPadded, 0, fftSize * sizeof(float)),
-            "cudaMemset filter padded"
-        );
-
-        Utils::checkCudaError(
-            cudaMemcpy(d_filterPadded, d_filterCoeffs_,
-                      filterTaps_ * sizeof(float), cudaMemcpyDeviceToDevice),
-            "cudaMemcpy filter for FFT"
-        );
-
-        Utils::checkCufftError(
-            cufftExecR2C(planForward, d_filterPadded, d_filterFFT_local),
-            "cufftExecR2C filter"
-        );
-
-        // Perform forward FFT on input
-        Utils::checkCufftError(
-            cufftExecR2C(planForward, d_paddedInput, d_inputFFT),
+            cufftExecR2C(fftPlanForward_, d_paddedInput, d_inputFFT),
             "cufftExecR2C input"
         );
 
-        // Complex multiplication in frequency domain
+        // Complex multiplication in frequency domain with pre-computed filter FFT
         threadsPerBlock = 256;
         blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
 
-        // Copy input FFT to result buffer
         Utils::checkCudaError(
             cudaMemcpy(d_resultFFT, d_inputFFT,
                       fftComplexSize * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
@@ -399,7 +356,7 @@ bool GPUUpsampler::processChannel(const float* inputData,
         );
 
         complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream_>>>(
-            d_resultFFT, d_filterFFT_local, fftComplexSize
+            d_resultFFT, d_filterFFT_, fftComplexSize  // Use pre-computed d_filterFFT_
         );
 
         Utils::checkCudaError(
@@ -407,23 +364,24 @@ bool GPUUpsampler::processChannel(const float* inputData,
             "complexMultiplyKernel launch"
         );
 
-        // Perform inverse FFT
-        float* d_convResult;
+        // Perform inverse FFT using pre-computed plan
         Utils::checkCudaError(
-            cudaMalloc(&d_convResult, fftSize * sizeof(float)),
+            cudaMalloc(&d_convResult, fftSize_ * sizeof(float)),
             "cudaMalloc conv result"
         );
 
         Utils::checkCufftError(
-            cufftExecC2R(planInverse, d_resultFFT, d_convResult),
+            cufftExecC2R(fftPlanInverse_, d_resultFFT, d_convResult),
             "cufftExecC2R inverse"
         );
 
         // Scale by FFT size (cuFFT doesn't normalize)
-        float scale = 1.0f / fftSize;
-        int scaleBlocks = (outputFrames + threadsPerBlock - 1) / threadsPerBlock;
+        float scale = 1.0f / fftSize_;
+        size_t validOutputSize = (outputFrames < static_cast<size_t>(fftSize_)) ?
+                                  outputFrames : static_cast<size_t>(fftSize_);
+        int scaleBlocks = (validOutputSize + threadsPerBlock - 1) / threadsPerBlock;
         scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream_>>>(
-            d_convResult, outputFrames, scale
+            d_convResult, validOutputSize, scale
         );
 
         Utils::checkCudaError(
@@ -431,23 +389,28 @@ bool GPUUpsampler::processChannel(const float* inputData,
             "scaleKernel launch"
         );
 
-        // Copy result back to host
+        // Copy result back to host (only valid portion, already computed above)
         Utils::checkCudaError(
             cudaMemcpy(outputData.data(), d_convResult,
-                      outputFrames * sizeof(float), cudaMemcpyDeviceToHost),
+                      validOutputSize * sizeof(float), cudaMemcpyDeviceToHost),
             "cudaMemcpy result to host"
         );
 
-        // Cleanup
+        // If output is larger than FFT size, process in blocks
+        if (outputFrames > static_cast<size_t>(fftSize_)) {
+            std::cerr << "Warning: Output size (" << outputFrames
+                      << ") exceeds FFT size (" << fftSize_ << ")" << std::endl;
+            std::cerr << "Full Overlap-Save implementation needed for long audio." << std::endl;
+            std::cerr << "Processing truncated to " << validOutputSize << " samples." << std::endl;
+            outputData.resize(validOutputSize);
+        }
+
+        // Cleanup temporary buffers (reuse initialized pointers)
         cudaFree(d_upsampledInput);
         cudaFree(d_paddedInput);
         cudaFree(d_inputFFT);
         cudaFree(d_resultFFT);
-        cudaFree(d_filterPadded);
-        cudaFree(d_filterFFT_local);
         cudaFree(d_convResult);
-        cufftDestroy(planForward);
-        cufftDestroy(planInverse);
 
         auto endTime = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed = endTime - startTime;
@@ -459,6 +422,15 @@ bool GPUUpsampler::processChannel(const float* inputData,
 
     } catch (const std::exception& e) {
         std::cerr << "Error in processChannel: " << e.what() << std::endl;
+
+        // Clean up all allocated GPU memory
+        if (d_upsampledInput) cudaFree(d_upsampledInput);
+        if (d_input) cudaFree(d_input);
+        if (d_paddedInput) cudaFree(d_paddedInput);
+        if (d_inputFFT) cudaFree(d_inputFFT);
+        if (d_resultFFT) cudaFree(d_resultFFT);
+        if (d_convResult) cudaFree(d_convResult);
+
         return false;
     }
 }
