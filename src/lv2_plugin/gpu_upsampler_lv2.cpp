@@ -61,7 +61,7 @@ instantiate(const LV2_Descriptor* descriptor,
     plugin->output_buffer_right = new std::vector<float>();
 
     // Construct filter path from bundle path (installed with plugin)
-    std::string filter_path_str = std::string(bundle_path) + "filter_1m_min_phase.bin";
+    std::string filter_path_str = std::string(bundle_path) + "/filter_1m_min_phase.bin";
     // Allocate persistent string (plugin lifetime)
     char* filter_path_copy = new char[filter_path_str.length() + 1];
     std::strcpy(filter_path_copy, filter_path_str.c_str());
