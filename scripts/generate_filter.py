@@ -2,15 +2,15 @@
 """
 GPU Audio Upsampler - Phase 1: Filter Coefficient Generation
 
-131,072タップの最小位相FIRフィルタを生成し、検証する。
+1,000,000タップの最小位相FIRフィルタを生成し、検証する。
 
 仕様:
-- タップ数: 131,072 (128k)
+- タップ数: 1,000,000 (1M)
 - 位相特性: 最小位相（プリリンギング排除）
 - 通過帯域: 0-20,000 Hz
 - 阻止帯域: 22,050 Hz以降
-- 阻止帯域減衰: -180 dB以下
-- 窓関数: Kaiser (β ≈ 18)
+- 阻止帯域減衰: -220 dB以下（100万タップで達成可能）
+- 窓関数: Kaiser (β ≈ 50)
 - アップサンプリング倍率: 16倍
 """
 
@@ -21,7 +21,7 @@ from scipy import signal
 import matplotlib.pyplot as plt
 
 # 定数定義
-N_TAPS = 131072  # 128k taps
+N_TAPS = 1_000_000  # 1M taps (100万タップ)
 SAMPLE_RATE_INPUT = 44100  # 入力サンプルレート (Hz)
 UPSAMPLE_RATIO = 16  # アップサンプリング倍率
 SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO  # 705.6 kHz
@@ -29,11 +29,11 @@ SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO  # 705.6 kHz
 # フィルタ設計パラメータ
 PASSBAND_END = 20000  # 通過帯域終端 (Hz)
 STOPBAND_START = 22050  # 阻止帯域開始 (Hz) - ナイキスト周波数
-STOPBAND_ATTENUATION_DB = 180  # 阻止帯域減衰量 (dB)
-# Kaiser βパラメータ: A(dB)の減衰量に対して β ≈ 0.1102*(A-8.7) + 0.07886*(A-8.7)
-# A=180dBの場合、β ≈ 18.9 + 13.5 ≈ 32が必要
-# より安全に β=40 を使用（より急峻な遮断特性）
-KAISER_BETA = 40  # Kaiser窓のβパラメータ
+STOPBAND_ATTENUATION_DB = 220  # 阻止帯域減衰量 (dB) - 100万タップで-220dB以上達成可能
+# Kaiser βパラメータ: A(dB)の減衰量に対して β ≈ 0.1102*(A-8.7)
+# A=220dBの場合、β ≈ 0.1102*(220-8.7) ≈ 23.3
+# より安全マージンを持たせて β=50 を使用（超急峻な遮断特性）
+KAISER_BETA = 50  # Kaiser窓のβパラメータ
 
 
 def design_linear_phase_filter():
@@ -95,8 +95,10 @@ def convert_to_minimum_phase(h_linear):
     # n_fft: FFTサイズ（時間エイリアシング防止のため、タップ数の8倍に設定）
     # ホモモルフィック処理では周波数領域で対数操作を行うため、
     # 十分なFFTサイズを確保しないと因果性が壊れプリリンギングが残留する
-    # 131k tapsの場合、より精度の高い変換のため8倍=1,048,576を使用
+    # 100万tapsの場合、8倍=8,388,608（2^23）を使用
+    # これは非常に大きなFFTなので、処理に時間がかかる（数分～数十分）
     n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 8)))
+    print(f"  警告: FFTサイズ {n_fft:,} は非常に大きいため、処理に時間がかかります（数分～数十分）")
 
     h_min_phase = signal.minimum_phase(h_linear, method='homomorphic', n_fft=n_fft)
 
@@ -304,9 +306,10 @@ def export_coefficients(h, metadata, output_dir='data/coefficients'):
 
     # 1. バイナリ形式（float32）
     h_float32 = h.astype(np.float32)
-    binary_path = output_path / 'filter_131k_min_phase.bin'
+    binary_path = output_path / 'filter_1m_min_phase.bin'
     h_float32.tofile(binary_path)
-    print(f"  保存: {binary_path} ({binary_path.stat().st_size / 1024:.1f} KB)")
+    file_size_mb = binary_path.stat().st_size / (1024 * 1024)
+    print(f"  保存: {binary_path} ({file_size_mb:.2f} MB)")
 
     # 2. C++ヘッダファイル
     header_path = output_path / 'filter_coefficients.h'
@@ -322,11 +325,11 @@ def export_coefficients(h, metadata, output_dir='data/coefficients'):
         f.write(f"constexpr int SAMPLE_RATE_OUTPUT = {metadata['sample_rate_output']};\n")
         f.write(f"constexpr int UPSAMPLE_RATIO = {metadata['upsample_ratio']};\n\n")
         f.write("// Filter coefficients (float32)\n")
-        f.write("// IMPORTANT: 131k taps (512KB) is too large for embedding in source code.\n")
+        f.write("// IMPORTANT: 1M taps (3.8MB) is too large for embedding in source code.\n")
         f.write("// Recommended approach: Load from binary file at runtime using std::ifstream.\n")
-        f.write("// Binary file: filter_131k_min_phase.bin (same directory)\n")
+        f.write("// Binary file: filter_1m_min_phase.bin (same directory)\n")
         f.write("// Example:\n")
-        f.write("//   std::ifstream ifs(\"filter_131k_min_phase.bin\", std::ios::binary);\n")
+        f.write("//   std::ifstream ifs(\"filter_1m_min_phase.bin\", std::ios::binary);\n")
         f.write("//   std::vector<float> coeffs(FILTER_TAPS);\n")
         f.write("//   ifs.read(reinterpret_cast<char*>(coeffs.data()), FILTER_TAPS * sizeof(float));\n")
         f.write("extern const float FILTER_COEFFICIENTS[FILTER_TAPS];\n\n")
@@ -378,13 +381,13 @@ def main():
 
     # 7. 最終レポート
     print("\n" + "=" * 70)
-    print("Phase 1 完了")
+    print("Phase 1 完了 - 100万タップフィルタ")
     print("=" * 70)
-    print(f"✓ {N_TAPS}タップ最小位相FIRフィルタ生成完了")
+    print(f"✓ {N_TAPS:,}タップ最小位相FIRフィルタ生成完了")
     print(f"✓ 阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
     print(f"  {'合格' if validation_results['meets_stopband_spec'] else '不合格'} (目標: {STOPBAND_ATTENUATION_DB} dB以上)")
     print(f"✓ 最小位相特性: {'確認済み' if validation_results['is_minimum_phase'] else '要確認'}")
-    print(f"✓ 係数ファイル: data/coefficients/")
+    print(f"✓ 係数ファイル: data/coefficients/filter_1m_min_phase.bin")
     print(f"✓ 検証プロット: plots/analysis/")
     print("=" * 70)
 
