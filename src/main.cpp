@@ -12,7 +12,7 @@ void printUsage(const char* programName) {
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --filter <path>    Path to filter coefficients .bin file" << std::endl;
-    std::cout << "                     (default: data/coefficients/filter_131k_min_phase.bin)" << std::endl;
+    std::cout << "                     (default: data/coefficients/filter_1m_min_phase.bin)" << std::endl;
     std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << std::endl;
     std::cout << "  --block <size>     Block size for processing (default: 8192)" << std::endl;
     std::cout << "  --help             Show this help message" << std::endl;
@@ -25,7 +25,7 @@ void printUsage(const char* programName) {
 struct Config {
     std::string inputFile;
     std::string outputFile;
-    std::string filterPath = "data/coefficients/filter_131k_min_phase.bin";
+    std::string filterPath = "data/coefficients/filter_1m_min_phase.bin";
     int upsampleRatio = UPSAMPLE_RATIO;
     int blockSize = 8192;
 };
