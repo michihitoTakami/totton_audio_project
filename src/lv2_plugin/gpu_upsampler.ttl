@@ -4,6 +4,7 @@
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix units: <http://lv2plug.in/ns/extensions/units#> .
+@prefix work:  <http://lv2plug.in/ns/ext/worker#> .
 
 <https://github.com/michihitoTakami/gpu_upsampler>
     a lv2:Plugin ;
@@ -16,7 +17,9 @@
     ] ;
     lv2:project <https://github.com/michihitoTakami/gpu_upsampler> ;
     # Note: hardRTCapable removed - GPU processing is not suitable for hard realtime
-    # Will be implemented with lv2:workSchedule in future version (Week 4)
+    # Worker API used for async GPU processing to avoid blocking audio thread
+    lv2:requiredFeature work:schedule ;
+    lv2:extensionData work:interface ;
     lv2:port [
         a lv2:AudioPort ,
             lv2:InputPort ;
@@ -41,4 +44,12 @@
         lv2:index 3 ;
         lv2:symbol "out_r" ;
         lv2:name "Output Right" ;
+    ] , [
+        a lv2:OutputPort ,
+            lv2:ControlPort ;
+        lv2:index 4 ;
+        lv2:symbol "latency" ;
+        lv2:name "Latency" ;
+        lv2:designation lv2:latency ;
+        lv2:portProperty lv2:reportsLatency , lv2:integer ;
     ] .

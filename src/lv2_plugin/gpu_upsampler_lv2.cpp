@@ -1,4 +1,5 @@
 #include <lv2/core/lv2.h>
+#include <lv2/worker/worker.h>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -6,6 +7,28 @@
 
 #include "../../include/convolution_engine.h"
 #include "gpu_upsampler_lv2.h"
+
+// Work message types
+enum WorkMessageType {
+    WORK_MSG_PROCESS_AUDIO = 0
+};
+
+// Work message structure (sent from run() to work())
+struct WorkMessage {
+    WorkMessageType type;
+    uint32_t n_samples;
+    float* input_left;
+    float* input_right;
+};
+
+// Response message structure (sent from work() to work_response())
+struct ResponseMessage {
+    WorkMessageType type;
+    uint32_t output_samples;
+    float* output_left;
+    float* output_right;
+    bool success;
+};
 
 // Use ConvolutionEngine namespace
 using ConvolutionEngine::GPUUpsampler;
@@ -17,6 +40,7 @@ struct GPUUpsamplerLV2 {
     const float* input_right;
     float* output_left;
     float* output_right;
+    float* latency_port;
 
     // GPU upsampler engine
     GPUUpsampler* upsampler;
@@ -33,6 +57,9 @@ struct GPUUpsamplerLV2 {
 
     // Upsample ratio
     int upsample_ratio;
+
+    // Worker interface
+    LV2_Worker_Schedule* schedule;
 };
 
 // Instantiate the plugin
@@ -43,8 +70,6 @@ instantiate(const LV2_Descriptor* descriptor,
             const LV2_Feature* const* features)
 {
     (void)descriptor;
-    (void)bundle_path;
-    (void)features;
 
     GPUUpsamplerLV2* plugin = new GPUUpsamplerLV2();
     if (!plugin) {
@@ -55,10 +80,12 @@ instantiate(const LV2_Descriptor* descriptor,
     plugin->input_right = nullptr;
     plugin->output_left = nullptr;
     plugin->output_right = nullptr;
+    plugin->latency_port = nullptr;
     plugin->upsampler = nullptr;
     plugin->sample_rate = rate;
     plugin->output_buffer_left = new std::vector<float>();
     plugin->output_buffer_right = new std::vector<float>();
+    plugin->schedule = nullptr;
 
     // Construct filter path from bundle path (installed with plugin)
     std::string filter_path_str = std::string(bundle_path) + "/filter_1m_min_phase.bin";
@@ -67,6 +94,22 @@ instantiate(const LV2_Descriptor* descriptor,
     std::strcpy(filter_path_copy, filter_path_str.c_str());
     plugin->filter_path = filter_path_copy;
     plugin->upsample_ratio = 16;
+
+    // Get Worker schedule interface from host
+    for (int i = 0; features[i]; i++) {
+        if (!strcmp(features[i]->URI, LV2_WORKER__schedule)) {
+            plugin->schedule = (LV2_Worker_Schedule*)features[i]->data;
+        }
+    }
+
+    if (!plugin->schedule) {
+        // Worker interface is required
+        delete[] filter_path_copy;
+        delete plugin->output_buffer_left;
+        delete plugin->output_buffer_right;
+        delete plugin;
+        return nullptr;
+    }
 
     return (LV2_Handle)plugin;
 }
@@ -91,6 +134,9 @@ connect_port(LV2_Handle instance,
             break;
         case PORT_AUDIO_OUT_R:
             plugin->output_right = (float*)data;
+            break;
+        case PORT_LATENCY:
+            plugin->latency_port = (float*)data;
             break;
     }
 }
@@ -121,6 +167,12 @@ activate(LV2_Handle instance)
             delete plugin->upsampler;
             plugin->upsampler = nullptr;
         }
+    }
+
+    // Report latency to host (block size in samples)
+    // For now, using block size as latency (8192 samples at 44.1kHz = ~185ms)
+    if (plugin->latency_port) {
+        *plugin->latency_port = 8192.0f;
     }
 }
 
@@ -182,6 +234,74 @@ deactivate(LV2_Handle instance)
     }
 }
 
+// Worker thread function: performs GPU processing
+static LV2_Worker_Status
+work(LV2_Handle instance,
+     LV2_Worker_Respond_Function respond,
+     LV2_Worker_Respond_Handle handle,
+     uint32_t size,
+     const void* data)
+{
+    GPUUpsamplerLV2* plugin = (GPUUpsamplerLV2*)instance;
+
+    if (size != sizeof(WorkMessage)) {
+        return LV2_WORKER_ERR_UNKNOWN;
+    }
+
+    const WorkMessage* msg = (const WorkMessage*)data;
+
+    if (msg->type != WORK_MSG_PROCESS_AUDIO) {
+        return LV2_WORKER_ERR_UNKNOWN;
+    }
+
+    // Perform GPU processing in worker thread (non-realtime)
+    bool success = false;
+    if (plugin->upsampler) {
+        success = plugin->upsampler->processStereo(
+            msg->input_left,
+            msg->input_right,
+            msg->n_samples,
+            *plugin->output_buffer_left,
+            *plugin->output_buffer_right
+        );
+    }
+
+    // Prepare response message
+    ResponseMessage response;
+    response.type = WORK_MSG_PROCESS_AUDIO;
+    response.success = success;
+    response.output_samples = success ? plugin->output_buffer_left->size() : 0;
+    response.output_left = success ? plugin->output_buffer_left->data() : nullptr;
+    response.output_right = success ? plugin->output_buffer_right->data() : nullptr;
+
+    // Send response back to audio thread
+    respond(handle, sizeof(ResponseMessage), &response);
+
+    return LV2_WORKER_SUCCESS;
+}
+
+// Audio thread function: receives response from worker
+static LV2_Worker_Status
+work_response(LV2_Handle instance,
+              uint32_t size,
+              const void* data)
+{
+    GPUUpsamplerLV2* plugin = (GPUUpsamplerLV2*)instance;
+
+    if (size != sizeof(ResponseMessage)) {
+        return LV2_WORKER_ERR_UNKNOWN;
+    }
+
+    const ResponseMessage* response = (const ResponseMessage*)data;
+
+    // Response handling is done in run() function
+    // This function is called from audio thread, so just acknowledge
+    (void)plugin;
+    (void)response;
+
+    return LV2_WORKER_SUCCESS;
+}
+
 // Cleanup and free the plugin instance
 static void
 cleanup(LV2_Handle instance)
@@ -203,6 +323,23 @@ cleanup(LV2_Handle instance)
     delete plugin;
 }
 
+// Worker interface structure
+static const LV2_Worker_Interface worker_interface = {
+    work,
+    work_response,
+    nullptr  // end_run (optional)
+};
+
+// Extension data function: exposes Worker interface to host
+static const void*
+extension_data(const char* uri)
+{
+    if (!strcmp(uri, LV2_WORKER__interface)) {
+        return &worker_interface;
+    }
+    return nullptr;
+}
+
 // LV2 descriptor
 static const LV2_Descriptor descriptor = {
     GPU_UPSAMPLER_URI,
@@ -212,7 +349,7 @@ static const LV2_Descriptor descriptor = {
     run,
     deactivate,
     cleanup,
-    nullptr  // extension_data
+    extension_data
 };
 
 // Entry point: return descriptor
