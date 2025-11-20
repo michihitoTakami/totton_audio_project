@@ -92,8 +92,10 @@ def convert_to_minimum_phase(h_linear):
 
     # scipy.signal.minimum_phaseで変換
     # method='homomorphic': ホモモルフィック法（振幅特性保持）
-    # n_fft: FFTサイズ（精度向上のため大きめに設定）
-    n_fft = max(2048, 2 ** int(np.ceil(np.log2(len(h_linear)))))
+    # n_fft: FFTサイズ（時間エイリアシング防止のため、タップ数の4倍以上に設定）
+    # ホモモルフィック処理では周波数領域で対数操作を行うため、
+    # 十分なFFTサイズを確保しないと因果性が壊れプリリンギングが残留する
+    n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 4)))
 
     h_min_phase = signal.minimum_phase(h_linear, method='homomorphic', n_fft=n_fft)
 
@@ -134,27 +136,38 @@ def validate_specifications(h):
     stopband_mask = w >= STOPBAND_START
     stopband_attenuation = np.min(H_db[stopband_mask])
 
-    # インパルス応答の非対称性チェック（最小位相の特徴）
-    # 最小位相ではエネルギーが時間軸の前方に集中
+    # 最小位相特性の検証
+    # 最小位相フィルタの特徴:
+    # 1. ピーク位置が先頭付近（タップ数の1%以内）
+    # 2. エネルギーが因果的に分布（前半に集中）
     peak_idx = np.argmax(np.abs(h))
-    energy_before_peak = np.sum(h[:peak_idx]**2)
-    energy_after_peak = np.sum(h[peak_idx:]**2)
-    energy_ratio = energy_after_peak / (energy_before_peak + 1e-12)
+
+    # 前半50%と後半50%のエネルギー比較
+    mid_point = len(h) // 2
+    energy_first_half = np.sum(h[:mid_point]**2)
+    energy_second_half = np.sum(h[mid_point:]**2)
+    energy_ratio = energy_first_half / (energy_second_half + 1e-12)
+
+    # ピーク位置が先頭から1%以内 かつ エネルギーが前半に集中（比率>10）
+    peak_threshold = int(len(h) * 0.01)
+    is_peak_at_front = peak_idx < peak_threshold
+    is_energy_causal = energy_ratio > 10
 
     results = {
         'passband_ripple_db': float(passband_ripple_db),
         'stopband_attenuation_db': float(abs(stopband_attenuation)),
         'peak_position': int(peak_idx),
-        'energy_ratio_after_before': float(energy_ratio),
+        'peak_threshold_samples': int(peak_threshold),
+        'energy_ratio_first_to_second_half': float(energy_ratio),
         'meets_stopband_spec': bool(abs(stopband_attenuation) >= STOPBAND_ATTENUATION_DB),
-        'is_minimum_phase': bool(energy_ratio > 10)  # 後方にエネルギーが集中
+        'is_minimum_phase': bool(is_peak_at_front and is_energy_causal)
     }
 
     print(f"  通過帯域リップル: {passband_ripple_db:.3f} dB")
     print(f"  阻止帯域減衰: {abs(stopband_attenuation):.1f} dB (目標: {STOPBAND_ATTENUATION_DB} dB)")
     print(f"  阻止帯域スペック: {'✓ 合格' if results['meets_stopband_spec'] else '✗ 不合格'}")
-    print(f"  ピーク位置: サンプル {peak_idx}")
-    print(f"  エネルギー比(後/前): {energy_ratio:.1f} (目標: >10 で最小位相)")
+    print(f"  ピーク位置: サンプル {peak_idx} (先頭1%={peak_threshold}サンプル以内: {'✓' if is_peak_at_front else '✗'})")
+    print(f"  エネルギー比(前半/後半): {energy_ratio:.1f} (目標: >10)")
     print(f"  最小位相特性: {'✓ 確認' if results['is_minimum_phase'] else '✗ 未確認'}")
 
     return results
@@ -308,7 +321,13 @@ def export_coefficients(h, metadata, output_dir='data/coefficients'):
         f.write(f"constexpr int SAMPLE_RATE_OUTPUT = {metadata['sample_rate_output']};\n")
         f.write(f"constexpr int UPSAMPLE_RATIO = {metadata['upsample_ratio']};\n\n")
         f.write("// Filter coefficients (float32)\n")
-        f.write("// Note: For large arrays, consider loading from binary file instead\n")
+        f.write("// IMPORTANT: 131k taps (512KB) is too large for embedding in source code.\n")
+        f.write("// Recommended approach: Load from binary file at runtime using std::ifstream.\n")
+        f.write("// Binary file: filter_131k_min_phase.bin (same directory)\n")
+        f.write("// Example:\n")
+        f.write("//   std::ifstream ifs(\"filter_131k_min_phase.bin\", std::ios::binary);\n")
+        f.write("//   std::vector<float> coeffs(FILTER_TAPS);\n")
+        f.write("//   ifs.read(reinterpret_cast<char*>(coeffs.data()), FILTER_TAPS * sizeof(float));\n")
         f.write("extern const float FILTER_COEFFICIENTS[FILTER_TAPS];\n\n")
         f.write("#endif // FILTER_COEFFICIENTS_H\n")
     print(f"  保存: {header_path}")

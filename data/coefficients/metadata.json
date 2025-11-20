@@ -1,5 +1,5 @@
 {
-  "generation_date": "2025-11-21T01:00:43.263084",
+  "generation_date": "2025-11-21T01:28:16.915716",
   "n_taps": 131072,
   "sample_rate_input": 44100,
   "sample_rate_output": 705600,
@@ -9,11 +9,12 @@
   "target_stopband_attenuation_db": 180,
   "kaiser_beta": 40,
   "validation_results": {
-    "passband_ripple_db": 1.03759647851568e-06,
-    "stopband_attenuation_db": 186.5682568626866,
+    "passband_ripple_db": 1.1524853985207001e-07,
+    "stopband_attenuation_db": 200.57190804229617,
     "peak_position": 35,
-    "energy_ratio_after_before": 2.454995764676059,
+    "peak_threshold_samples": 1310,
+    "energy_ratio_first_to_second_half": 119189077361.31322,
     "meets_stopband_spec": true,
-    "is_minimum_phase": false
+    "is_minimum_phase": true
   }
 }
