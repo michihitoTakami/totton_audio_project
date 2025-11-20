@@ -1,0 +1,20 @@
+{
+  "generation_date": "2025-11-21T01:36:13.988417",
+  "n_taps": 131072,
+  "sample_rate_input": 44100,
+  "sample_rate_output": 705600,
+  "upsample_ratio": 16,
+  "passband_end_hz": 20000,
+  "stopband_start_hz": 22050,
+  "target_stopband_attenuation_db": 180,
+  "kaiser_beta": 40,
+  "validation_results": {
+    "passband_ripple_db": 2.6964760576820947e-07,
+    "stopband_attenuation_db": 189.76028895096718,
+    "peak_position": 35,
+    "peak_threshold_samples": 1310,
+    "energy_ratio_first_to_second_half": 119189320774.68459,
+    "meets_stopband_spec": true,
+    "is_minimum_phase": true
+  }
+}
