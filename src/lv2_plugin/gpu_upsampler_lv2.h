@@ -8,7 +8,8 @@ enum {
     PORT_AUDIO_IN_L = 0,
     PORT_AUDIO_IN_R = 1,
     PORT_AUDIO_OUT_L = 2,
-    PORT_AUDIO_OUT_R = 3
+    PORT_AUDIO_OUT_R = 3,
+    PORT_LATENCY = 4
 };
 
 #endif // GPU_UPSAMPLER_LV2_H
