@@ -1,6 +1,6 @@
 // Auto-generated filter coefficients
 // GPU Audio Upsampler - Phase 1
-// Generated: 2025-11-21T01:28:16.915716
+// Generated: 2025-11-21T01:36:13.988417
 
 #ifndef FILTER_COEFFICIENTS_H
 #define FILTER_COEFFICIENTS_H

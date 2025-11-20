@@ -92,10 +92,11 @@ def convert_to_minimum_phase(h_linear):
 
     # scipy.signal.minimum_phaseで変換
     # method='homomorphic': ホモモルフィック法（振幅特性保持）
-    # n_fft: FFTサイズ（時間エイリアシング防止のため、タップ数の4倍以上に設定）
+    # n_fft: FFTサイズ（時間エイリアシング防止のため、タップ数の8倍に設定）
     # ホモモルフィック処理では周波数領域で対数操作を行うため、
     # 十分なFFTサイズを確保しないと因果性が壊れプリリンギングが残留する
-    n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 4)))
+    # 131k tapsの場合、より精度の高い変換のため8倍=1,048,576を使用
+    n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 8)))
 
     h_min_phase = signal.minimum_phase(h_linear, method='homomorphic', n_fft=n_fft)
 
