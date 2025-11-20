@@ -38,6 +38,7 @@ set_target_properties(gpu_upsampler PROPERTIES
 target_link_libraries(gpu_upsampler
     CUDA::cudart
     CUDA::cufft
+    CUDA::nvml
     ${SNDFILE_LIBRARIES}
 )
 
