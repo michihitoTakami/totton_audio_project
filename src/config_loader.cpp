@@ -26,6 +26,10 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("gain")) outConfig.gain = j["gain"].get<float>();
         if (j.contains("filterPath")) outConfig.filterPath = j["filterPath"].get<std::string>();
 
+        // EQ settings
+        if (j.contains("eqEnabled")) outConfig.eqEnabled = j["eqEnabled"].get<bool>();
+        if (j.contains("eqProfilePath")) outConfig.eqProfilePath = j["eqProfilePath"].get<std::string>();
+
         if (verbose) {
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath) << std::endl;
         }

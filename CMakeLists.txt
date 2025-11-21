@@ -135,6 +135,8 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/config_loader.cpp
+    src/eq_parser.cpp
+    src/eq_to_fir.cpp
 )
 
 # Link against core library, PipeWire, ALSA, and JSON

@@ -9,13 +9,16 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+import shutil
+
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
+EQ_PROFILES_DIR = Path(__file__).parent.parent / "data" / "EQ"
 DAEMON_SERVICE = "gpu_upsampler_alsa"  # systemd service name (if using systemd)
 
 app = FastAPI(
@@ -43,6 +46,8 @@ class Settings(BaseModel):
     block_size: int = 4096
     gain: float = 16.0
     filter_path: str = "data/coefficients/filter_1m_min_phase.bin"
+    eq_enabled: bool = False
+    eq_profile_path: str = ""
 
 
 class SettingsUpdate(BaseModel):
@@ -54,6 +59,8 @@ class SettingsUpdate(BaseModel):
     block_size: Optional[int] = None
     gain: Optional[float] = None
     filter_path: Optional[str] = None
+    eq_enabled: Optional[bool] = None
+    eq_profile_path: Optional[str] = None
 
 
 class Status(BaseModel):
@@ -65,6 +72,7 @@ class Status(BaseModel):
     total_samples: int = 0
     clip_rate: float = 0.0
     daemon_running: bool = False
+    eq_active: bool = False
 
 
 class RewireRequest(BaseModel):
@@ -105,6 +113,8 @@ def load_config() -> Settings:
                 block_size=data.get("blockSize", 4096),
                 gain=data.get("gain", 16.0),
                 filter_path=data.get("filterPath", "data/coefficients/filter_1m_min_phase.bin"),
+                eq_enabled=data.get("eqEnabled", False),
+                eq_profile_path=data.get("eqProfilePath", ""),
             )
         except (json.JSONDecodeError, KeyError) as e:
             print(f"Config load error: {e}")
@@ -122,6 +132,8 @@ def save_config(settings: Settings) -> bool:
             "blockSize": settings.block_size,
             "gain": settings.gain,
             "filterPath": settings.filter_path,
+            "eqEnabled": settings.eq_enabled,
+            "eqProfilePath": settings.eq_profile_path,
         }
         with open(CONFIG_PATH, "w") as f:
             json.dump(data, f, indent=2)
@@ -237,6 +249,7 @@ async def get_status():
         total_samples=0,
         clip_rate=0.0,
         daemon_running=daemon_running,
+        eq_active=settings.eq_enabled and bool(settings.eq_profile_path),
     )
 
 
@@ -283,6 +296,16 @@ async def update_settings(update: SettingsUpdate):
         if current.filter_path != update.filter_path:
             restart_required = True
         current.filter_path = update.filter_path
+
+    if update.eq_enabled is not None:
+        if current.eq_enabled != update.eq_enabled:
+            restart_required = True
+        current.eq_enabled = update.eq_enabled
+
+    if update.eq_profile_path is not None:
+        if current.eq_profile_path != update.eq_profile_path:
+            restart_required = True
+        current.eq_profile_path = update.eq_profile_path
 
     # Save configuration
     if not save_config(current):
@@ -406,18 +429,124 @@ async def rewire_pipewire(request: RewireRequest):
         raise HTTPException(status_code=500, detail="pw-link not found. Is PipeWire installed?")
 
 
-@app.post("/eq-profile", response_model=ApiResponse)
-async def set_eq_profile(profile: EqProfile):
-    """
-    [Future] Set parametric EQ profile.
-    This endpoint is a placeholder for future EQ -> FIR coefficient generation.
-    """
-    # TODO: Implement EQ to FIR conversion
+# ============================================================================
+# EQ API Endpoints
+# ============================================================================
+
+@app.get("/eq/profiles")
+async def list_eq_profiles():
+    """List available EQ profiles in data/EQ directory"""
+    profiles = []
+    if EQ_PROFILES_DIR.exists():
+        for f in EQ_PROFILES_DIR.iterdir():
+            if f.is_file() and f.suffix == ".txt":
+                profiles.append({
+                    "name": f.stem,
+                    "filename": f.name,
+                    "path": str(f),
+                })
+    return {"profiles": profiles}
+
+
+@app.post("/eq/import", response_model=ApiResponse)
+async def import_eq_profile(file: UploadFile):
+    """Import an EQ profile file (AutoEq/Equalizer APO format)"""
+    if not file.filename or not file.filename.endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Only .txt files are supported")
+
+    # Ensure EQ profiles directory exists
+    EQ_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+
+    dest_path = EQ_PROFILES_DIR / file.filename
+    try:
+        with open(dest_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        return ApiResponse(
+            success=True,
+            message=f"Profile '{file.filename}' imported successfully",
+            data={"path": str(dest_path)},
+        )
+    except IOError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+
+@app.post("/eq/activate/{name}", response_model=ApiResponse)
+async def activate_eq_profile(name: str):
+    """Activate an EQ profile by name"""
+    # Find profile file
+    profile_path = EQ_PROFILES_DIR / f"{name}.txt"
+    if not profile_path.exists():
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+
+    # Update config
+    settings = load_config()
+    settings.eq_enabled = True
+    settings.eq_profile_path = str(profile_path)
+
+    if not save_config(settings):
+        raise HTTPException(status_code=500, detail="Failed to save configuration")
+
     return ApiResponse(
-        success=False,
-        message="EQ profile feature not yet implemented",
-        data={"profile_name": profile.name, "bands_count": len(profile.bands)},
+        success=True,
+        message=f"EQ profile '{name}' activated",
+        data={"path": str(profile_path)},
+        restart_required=True,
     )
+
+
+@app.post("/eq/deactivate", response_model=ApiResponse)
+async def deactivate_eq():
+    """Deactivate EQ (disable without removing profile)"""
+    settings = load_config()
+    settings.eq_enabled = False
+
+    if not save_config(settings):
+        raise HTTPException(status_code=500, detail="Failed to save configuration")
+
+    return ApiResponse(
+        success=True,
+        message="EQ deactivated",
+        restart_required=True,
+    )
+
+
+@app.delete("/eq/profiles/{name}", response_model=ApiResponse)
+async def delete_eq_profile(name: str):
+    """Delete an EQ profile by name"""
+    profile_path = EQ_PROFILES_DIR / f"{name}.txt"
+    if not profile_path.exists():
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+
+    # Check if currently active
+    settings = load_config()
+    if settings.eq_profile_path == str(profile_path):
+        # Deactivate first
+        settings.eq_enabled = False
+        settings.eq_profile_path = ""
+        save_config(settings)
+
+    try:
+        profile_path.unlink()
+        return ApiResponse(
+            success=True,
+            message=f"Profile '{name}' deleted",
+        )
+    except IOError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete: {e}")
+
+
+@app.get("/eq/active")
+async def get_active_eq():
+    """Get currently active EQ profile info"""
+    settings = load_config()
+    if settings.eq_enabled and settings.eq_profile_path:
+        path = Path(settings.eq_profile_path)
+        return {
+            "active": True,
+            "name": path.stem if path.exists() else None,
+            "path": settings.eq_profile_path,
+        }
+    return {"active": False, "name": None, "path": None}
 
 
 @app.get("/devices")
@@ -506,6 +635,9 @@ def get_embedded_html() -> str:
         .btn-primary { background: #00d4ff; color: #000; }
         .btn-primary:hover { background: #00a8cc; }
         .btn-primary:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .btn-secondary { background: #0f3460; color: #eee; }
+        .btn-secondary:hover { background: #1a4b7c; }
+        .btn-secondary:disabled { background: #333; color: #666; cursor: not-allowed; }
         .message {
             padding: 10px;
             border-radius: 4px;
@@ -532,6 +664,10 @@ def get_embedded_html() -> str:
                 <div class="label">PipeWire</div>
                 <div class="value">-</div>
             </div>
+            <div class="status-item" id="eqStatus">
+                <div class="label">EQ</div>
+                <div class="value">-</div>
+            </div>
             <div class="status-item" id="clipRate">
                 <div class="label">Clipping</div>
                 <div class="value">-</div>
@@ -554,10 +690,32 @@ def get_embedded_html() -> str:
         <div id="settingsMessage" class="message"></div>
     </div>
 
+    <h2>Parametric EQ</h2>
+    <div class="card">
+        <div class="form-group">
+            <label>Profile</label>
+            <select id="eqProfile">
+                <option value="">-- None --</option>
+            </select>
+        </div>
+        <div class="btn-row">
+            <button type="button" class="btn-primary" id="activateEqBtn">Activate</button>
+            <button type="button" class="btn-secondary" id="deactivateEqBtn">Off</button>
+        </div>
+        <div class="form-group" style="margin-top: 16px;">
+            <label>Import Profile (.txt)</label>
+            <input type="file" id="eqFile" accept=".txt" style="display: none;">
+            <button type="button" class="btn-secondary" id="importEqBtn" style="width: 100%;">Import File</button>
+        </div>
+        <div id="eqMessage" class="message"></div>
+    </div>
+
     <script>
         const API = '';
         let currentAlsaDevice = '';
         let deviceList = [];
+        let eqProfiles = [];
+        let currentEqProfile = '';
 
         async function fetchDevices() {
             try {
@@ -603,6 +761,7 @@ def get_embedded_html() -> str:
 
                 setStatus('daemonStatus', data.daemon_running ? 'Running' : 'Stopped', data.daemon_running);
                 setStatus('pwStatus', data.pipewire_connected ? 'OK' : 'N/A', data.pipewire_connected);
+                setStatus('eqStatus', data.eq_active ? 'ON' : 'OFF', data.eq_active);
                 setStatus('clipRate', data.clip_rate.toFixed(2) + '%', data.clip_rate < 0.1);
 
                 if (currentAlsaDevice !== data.settings.alsa_device) {
@@ -661,9 +820,109 @@ def get_embedded_html() -> str:
             }
         });
 
+        // EQ Functions
+        async function fetchEqProfiles() {
+            try {
+                const res = await fetch(API + '/eq/profiles');
+                const data = await res.json();
+                eqProfiles = data.profiles;
+                updateEqSelect();
+            } catch (e) {
+                console.error('Failed to fetch EQ profiles:', e);
+            }
+        }
+
+        async function fetchActiveEq() {
+            try {
+                const res = await fetch(API + '/eq/active');
+                const data = await res.json();
+                currentEqProfile = data.active ? data.name : '';
+                updateEqSelect();
+            } catch (e) {
+                console.error('Failed to fetch active EQ:', e);
+            }
+        }
+
+        function updateEqSelect() {
+            const select = document.getElementById('eqProfile');
+            select.innerHTML = '<option value="">-- None --</option>';
+            eqProfiles.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.name;
+                opt.textContent = p.name;
+                if (p.name === currentEqProfile) opt.selected = true;
+                select.appendChild(opt);
+            });
+        }
+
+        function showEqMessage(text, success) {
+            const el = document.getElementById('eqMessage');
+            el.textContent = text;
+            el.classList.remove('success', 'error');
+            el.classList.add(success ? 'success' : 'error');
+            setTimeout(() => el.classList.remove('success', 'error'), 4000);
+        }
+
+        document.getElementById('activateEqBtn').addEventListener('click', async () => {
+            const name = document.getElementById('eqProfile').value;
+            if (!name) {
+                showEqMessage('Select a profile first', false);
+                return;
+            }
+            try {
+                const res = await fetch(API + '/eq/activate/' + name, { method: 'POST' });
+                const data = await res.json();
+                showEqMessage(data.message, data.success);
+                if (data.success && data.restart_required) {
+                    await fetch(API + '/restart', { method: 'POST' });
+                    setTimeout(fetchStatus, 2000);
+                }
+                fetchActiveEq();
+            } catch (e) {
+                showEqMessage('Error: ' + e.message, false);
+            }
+        });
+
+        document.getElementById('deactivateEqBtn').addEventListener('click', async () => {
+            try {
+                const res = await fetch(API + '/eq/deactivate', { method: 'POST' });
+                const data = await res.json();
+                showEqMessage(data.message, data.success);
+                if (data.success && data.restart_required) {
+                    await fetch(API + '/restart', { method: 'POST' });
+                    setTimeout(fetchStatus, 2000);
+                }
+                fetchActiveEq();
+            } catch (e) {
+                showEqMessage('Error: ' + e.message, false);
+            }
+        });
+
+        document.getElementById('importEqBtn').addEventListener('click', () => {
+            document.getElementById('eqFile').click();
+        });
+
+        document.getElementById('eqFile').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                const res = await fetch(API + '/eq/import', { method: 'POST', body: formData });
+                const data = await res.json();
+                showEqMessage(data.message, data.success);
+                if (data.success) fetchEqProfiles();
+            } catch (e) {
+                showEqMessage('Error: ' + e.message, false);
+            }
+            e.target.value = '';
+        });
+
         // Initial load
         fetchDevices();
         fetchStatus();
+        fetchEqProfiles();
+        fetchActiveEq();
         setInterval(fetchStatus, 5000);
     </script>
 </body>

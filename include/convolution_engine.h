@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string>
+#include <complex>
 #include <cuda_runtime.h>
 #include <cufft.h>
 
@@ -70,6 +71,26 @@ public:
     const Stats& getStats() const { return stats_; }
     void resetStats() { stats_ = Stats(); }
 
+    // ========== EQ Support ==========
+
+    // Apply EQ frequency response to the filter
+    // eqResponse: complex frequency response (same size as filter FFT)
+    // The combined filter is stored as: H_combined = H_original * H_eq
+    // Call restoreOriginalFilter() to remove EQ
+    bool applyEqResponse(const std::vector<std::complex<double>>& eqResponse);
+
+    // Restore original filter (remove EQ)
+    void restoreOriginalFilter();
+
+    // Check if EQ is currently applied
+    bool isEqApplied() const { return eqApplied_; }
+
+    // Get filter FFT size (for computing EQ response with matching size)
+    size_t getFilterFftSize() const { return filterFftSize_; }
+
+    // Get input sample rate assumption (for EQ design)
+    static constexpr int getDefaultInputSampleRate() { return 44100; }
+
     // CUDA streams for async operations (public for daemon access)
     cudaStream_t stream_;          // Primary stream for mono
     cudaStream_t streamLeft_;      // Left channel for stereo parallel
@@ -107,7 +128,10 @@ private:
     // Filter coefficients
     std::vector<float> h_filterCoeffs_;  // Host
     float* d_filterCoeffs_;              // Device
-    cufftComplex* d_filterFFT_;          // Pre-computed filter FFT
+    cufftComplex* d_filterFFT_;          // Pre-computed filter FFT (may have EQ applied)
+    cufftComplex* d_originalFilterFFT_;  // Original filter FFT (without EQ, for restoration)
+    size_t filterFftSize_;               // Size of filter FFT arrays
+    bool eqApplied_;                     // True if EQ has been applied to d_filterFFT_
 
     // Working buffers
     float* d_inputBlock_;                // Device input block

@@ -1,5 +1,7 @@
 #include "convolution_engine.h"
 #include "config_loader.h"
+#include "eq_parser.h"
+#include "eq_to_fir.h"
 #include <alsa/asoundlib.h>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -56,6 +58,10 @@ static void print_config_summary(const AppConfig& cfg) {
     std::cout << "  Block size:     " << cfg.blockSize << std::endl;
     std::cout << "  Gain:           " << cfg.gain << std::endl;
     std::cout << "  Filter path:    " << cfg.filterPath << std::endl;
+    std::cout << "  EQ enabled:     " << (cfg.eqEnabled ? "yes" : "no") << std::endl;
+    if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
+        std::cout << "  EQ profile:     " << cfg.eqProfilePath << std::endl;
+    }
 }
 
 static void reset_runtime_state() {
@@ -517,6 +523,28 @@ int main(int argc, char* argv[]) {
             delete g_upsampler;
             exitCode = 1;
             break;
+        }
+
+        // Apply EQ profile if enabled
+        if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
+            std::cout << "Loading EQ profile: " << g_config.eqProfilePath << std::endl;
+            EQ::EqProfile eqProfile;
+            if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
+                std::cout << "  EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
+                          << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
+
+                // Compute EQ frequency response and apply to filter
+                size_t fftSize = g_upsampler->getFilterFftSize();
+                auto eqResponse = EQ::computeEqResponseForFft(fftSize, DEFAULT_INPUT_SAMPLE_RATE, eqProfile);
+
+                if (g_upsampler->applyEqResponse(eqResponse)) {
+                    std::cout << "  EQ: Applied to convolution filter" << std::endl;
+                } else {
+                    std::cerr << "  EQ: Failed to apply frequency response" << std::endl;
+                }
+            } else {
+                std::cerr << "  EQ: Failed to parse profile: " << g_config.eqProfilePath << std::endl;
+            }
         }
 
         // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
