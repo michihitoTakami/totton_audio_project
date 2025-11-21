@@ -18,7 +18,11 @@ constexpr int OUTPUT_SAMPLE_RATE = 705600;  // 16x upsampling (matches filter de
 constexpr int UPSAMPLE_RATIO = 16;
 constexpr int BLOCK_SIZE = 4096;
 constexpr int CHANNELS = 2;
+<<<<<<< Updated upstream
 constexpr const char* ALSA_DEVICE = "hw:3,0";  // SMSL DAC (card 3, device 0)
+=======
+constexpr const char* ALSA_DEVICE_DEFAULT = "hw:3,0";  // Default DAC (override via ALSA_DEVICE)
+>>>>>>> Stashed changes
 
 // Global state
 static std::atomic<bool> g_running{true};
