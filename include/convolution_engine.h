@@ -130,6 +130,13 @@ private:
     size_t streamValidInputPerBlock_;        // Input samples needed per block (at input rate)
     bool streamInitialized_;                 // Whether streaming mode is initialized
     int validOutputPerBlock_;                // Valid output samples per block (after FFT convolution)
+
+    // Streaming GPU buffers (pre-allocated to avoid malloc/free in callbacks)
+    float* d_streamInput_;                   // Device buffer for accumulated input
+    float* d_streamUpsampled_;               // Device buffer for upsampled input
+    float* d_streamPadded_;                  // Device buffer for [overlap | new] concatenation
+    cufftComplex* d_streamInputFFT_;         // FFT of padded input
+    float* d_streamConvResult_;              // Convolution result
 };
 
 // Utility functions

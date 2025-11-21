@@ -105,7 +105,7 @@ instantiate(const LV2_Descriptor* descriptor,
     char* filter_path_copy = new char[filter_path_str.length() + 1];
     std::strcpy(filter_path_copy, filter_path_str.c_str());
     plugin->filter_path = filter_path_copy;
-    plugin->upsample_ratio = 16;
+    plugin->upsample_ratio = 1;  // No upsampling - filter only (PipeWire provides 705.6kHz input)
 
     // Get Worker schedule interface from host
     for (int i = 0; features[i]; i++) {
