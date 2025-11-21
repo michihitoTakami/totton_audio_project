@@ -4,19 +4,130 @@ FastAPI-based control interface for the GPU audio upsampler daemon.
 """
 
 import asyncio
+import base64
 import json
+import secrets
 import subprocess
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 DAEMON_SERVICE = "gpu_upsampler_alsa"  # systemd service name (if using systemd)
+
+# HTTP Basic Auth security scheme
+security = HTTPBasic(auto_error=False)
+
+
+# ============================================================================
+# Authentication Configuration
+# ============================================================================
+
+class AuthConfig:
+    """Authentication configuration from config.json"""
+    enabled: bool = False
+    mode: str = "token"  # "token" or "basic"
+    token: str = ""
+    basic_username: str = ""
+    basic_password: str = ""
+
+
+def load_auth_config() -> AuthConfig:
+    """Load authentication configuration from JSON file"""
+    config = AuthConfig()
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH) as f:
+                data = json.load(f)
+            web_api = data.get("webApi", {})
+            auth = web_api.get("auth", {})
+            config.enabled = auth.get("enabled", False)
+            config.mode = auth.get("mode", "token")
+            config.token = auth.get("token", "")
+            config.basic_username = auth.get("basicUsername", "")
+            config.basic_password = auth.get("basicPassword", "")
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return config
+
+
+def load_web_api_config() -> dict:
+    """Load webApi configuration section"""
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH) as f:
+                data = json.load(f)
+            return data.get("webApi", {"host": "127.0.0.1", "port": 11881})
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return {"host": "127.0.0.1", "port": 11881}
+
+
+async def verify_auth(
+    request: Request,
+    credentials: Optional[HTTPBasicCredentials] = Depends(security),
+):
+    """
+    Verify authentication based on config.
+    Supports token auth (via X-API-Token header) and HTTP Basic Auth.
+    """
+    auth_config = load_auth_config()
+
+    # If auth is disabled, allow all requests
+    if not auth_config.enabled:
+        return True
+
+    # Token authentication
+    if auth_config.mode == "token":
+        token = request.headers.get("X-API-Token", "")
+        if not auth_config.token:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Token auth enabled but no token configured",
+            )
+        if not secrets.compare_digest(token.encode(), auth_config.token.encode()):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing API token",
+                headers={"WWW-Authenticate": "X-API-Token"},
+            )
+        return True
+
+    # Basic authentication
+    elif auth_config.mode == "basic":
+        if not auth_config.basic_username or not auth_config.basic_password:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Basic auth enabled but no credentials configured",
+            )
+        if credentials is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        username_ok = secrets.compare_digest(
+            credentials.username.encode(), auth_config.basic_username.encode()
+        )
+        password_ok = secrets.compare_digest(
+            credentials.password.encode(), auth_config.basic_password.encode()
+        )
+        if not (username_ok and password_ok):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        return True
+
+    return True
+
 
 app = FastAPI(
     title="GPU Upsampler Control",
@@ -112,8 +223,17 @@ def load_config() -> Settings:
 
 
 def save_config(settings: Settings) -> bool:
-    """Save configuration to JSON file"""
+    """Save configuration to JSON file, preserving webApi settings"""
     try:
+        # Load existing config to preserve webApi section
+        existing_data = {}
+        if CONFIG_PATH.exists():
+            try:
+                with open(CONFIG_PATH) as f:
+                    existing_data = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+
         data = {
             "alsaDevice": settings.alsa_device,
             "bufferSize": settings.buffer_size,
@@ -123,6 +243,11 @@ def save_config(settings: Settings) -> bool:
             "gain": settings.gain,
             "filterPath": settings.filter_path,
         }
+
+        # Preserve webApi section if it exists
+        if "webApi" in existing_data:
+            data["webApi"] = existing_data["webApi"]
+
         with open(CONFIG_PATH, "w") as f:
             json.dump(data, f, indent=2)
         return True
@@ -211,7 +336,7 @@ def get_alsa_devices() -> list[dict]:
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    """Serve the web UI"""
+    """Serve the web UI (no auth required - auth handled in JS)"""
     html_path = static_dir / "index.html"
     if html_path.exists():
         return FileResponse(html_path)
@@ -219,8 +344,21 @@ async def root():
     return get_embedded_html()
 
 
+@app.get("/auth-info")
+async def auth_info():
+    """
+    Get authentication configuration (public endpoint).
+    Returns whether auth is enabled and what mode is used.
+    """
+    auth_config = load_auth_config()
+    return {
+        "enabled": auth_config.enabled,
+        "mode": auth_config.mode if auth_config.enabled else None,
+    }
+
+
 @app.get("/status", response_model=Status)
-async def get_status():
+async def get_status(_: bool = Depends(verify_auth)):
     """
     Get current daemon status and settings.
     Returns configuration, connection state, and clipping statistics.
@@ -241,7 +379,7 @@ async def get_status():
 
 
 @app.post("/settings", response_model=ApiResponse)
-async def update_settings(update: SettingsUpdate):
+async def update_settings(update: SettingsUpdate, _: bool = Depends(verify_auth)):
     """
     Update daemon settings.
     Some settings require a daemon restart to take effect.
@@ -296,7 +434,7 @@ async def update_settings(update: SettingsUpdate):
 
 
 @app.post("/restart", response_model=ApiResponse)
-async def restart_daemon():
+async def restart_daemon(_: bool = Depends(verify_auth)):
     """
     Restart the daemon to apply new settings.
     Sends SIGHUP to trigger in-process config reload.
@@ -336,7 +474,7 @@ async def restart_daemon():
 
 
 @app.post("/rewire", response_model=ApiResponse)
-async def rewire_pipewire(request: RewireRequest):
+async def rewire_pipewire(request: RewireRequest, _: bool = Depends(verify_auth)):
     """
     Reconnect PipeWire audio routing for a specific application.
     Routes: app -> gpu_upsampler_sink
@@ -407,7 +545,7 @@ async def rewire_pipewire(request: RewireRequest):
 
 
 @app.post("/eq-profile", response_model=ApiResponse)
-async def set_eq_profile(profile: EqProfile):
+async def set_eq_profile(profile: EqProfile, _: bool = Depends(verify_auth)):
     """
     [Future] Set parametric EQ profile.
     This endpoint is a placeholder for future EQ -> FIR coefficient generation.
@@ -421,7 +559,7 @@ async def set_eq_profile(profile: EqProfile):
 
 
 @app.get("/devices")
-async def list_devices():
+async def list_devices(_: bool = Depends(verify_auth)):
     """List available ALSA playback devices"""
     devices = get_alsa_devices()
     return {"devices": devices}
@@ -432,7 +570,7 @@ async def list_devices():
 # ============================================================================
 
 def get_embedded_html() -> str:
-    """Return embedded HTML UI"""
+    """Return embedded HTML UI with authentication support"""
     return """
 <!DOCTYPE html>
 <html lang="ja">
@@ -478,7 +616,7 @@ def get_embedded_html() -> str:
             color: #aaa;
             font-size: 13px;
         }
-        .form-group select {
+        .form-group input, .form-group select {
             width: 100%;
             padding: 12px;
             border: 1px solid #0f3460;
@@ -486,9 +624,9 @@ def get_embedded_html() -> str:
             background: #0f3460;
             color: #eee;
             font-size: 14px;
-            cursor: pointer;
         }
-        .form-group select:focus {
+        .form-group select { cursor: pointer; }
+        .form-group input:focus, .form-group select:focus {
             outline: none;
             border-color: #00d4ff;
         }
@@ -506,6 +644,8 @@ def get_embedded_html() -> str:
         .btn-primary { background: #00d4ff; color: #000; }
         .btn-primary:hover { background: #00a8cc; }
         .btn-primary:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .btn-secondary { background: #444; color: #eee; }
+        .btn-secondary:hover { background: #555; }
         .message {
             padding: 10px;
             border-radius: 4px;
@@ -516,52 +656,212 @@ def get_embedded_html() -> str:
         }
         .message.success { background: #00ff8840; display: block; }
         .message.error { background: #ff444440; display: block; }
+        .hidden { display: none !important; }
+        #loginSection { margin-top: 40px; }
+        .auth-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: #00d4ff40;
+            color: #00d4ff;
+            margin-left: 8px;
+        }
     </style>
 </head>
 <body>
-    <h1>GPU Upsampler</h1>
+    <h1>GPU Upsampler <span id="authBadge" class="auth-badge hidden"></span></h1>
 
-    <h2>Status</h2>
-    <div class="card">
-        <div class="status-row">
-            <div class="status-item" id="daemonStatus">
-                <div class="label">Daemon</div>
-                <div class="value">-</div>
-            </div>
-            <div class="status-item" id="pwStatus">
-                <div class="label">PipeWire</div>
-                <div class="value">-</div>
-            </div>
-            <div class="status-item" id="clipRate">
-                <div class="label">Clipping</div>
-                <div class="value">-</div>
-            </div>
+    <!-- Login Section (shown when auth required) -->
+    <div id="loginSection" class="hidden">
+        <h2>Authentication Required</h2>
+        <div class="card">
+            <form id="loginForm">
+                <div id="tokenAuth" class="hidden">
+                    <div class="form-group">
+                        <label for="apiToken">API Token</label>
+                        <input type="password" id="apiToken" placeholder="Enter API token">
+                    </div>
+                </div>
+                <div id="basicAuth" class="hidden">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" placeholder="Username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" placeholder="Password">
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button type="submit" class="btn-primary" id="loginBtn">Login</button>
+                </div>
+            </form>
+            <div id="loginMessage" class="message"></div>
         </div>
     </div>
 
-    <h2>Output Device</h2>
-    <div class="card">
-        <form id="settingsForm">
-            <div class="form-group">
-                <select id="alsaDevice">
-                    <option value="">Loading...</option>
-                </select>
+    <!-- Main Content (hidden until authenticated) -->
+    <div id="mainContent" class="hidden">
+        <h2>Status</h2>
+        <div class="card">
+            <div class="status-row">
+                <div class="status-item" id="daemonStatus">
+                    <div class="label">Daemon</div>
+                    <div class="value">-</div>
+                </div>
+                <div class="status-item" id="pwStatus">
+                    <div class="label">PipeWire</div>
+                    <div class="value">-</div>
+                </div>
+                <div class="status-item" id="clipRate">
+                    <div class="label">Clipping</div>
+                    <div class="value">-</div>
+                </div>
             </div>
-            <div class="btn-row">
-                <button type="submit" class="btn-primary" id="saveBtn">Save & Restart</button>
-            </div>
-        </form>
-        <div id="settingsMessage" class="message"></div>
+        </div>
+
+        <h2>Output Device</h2>
+        <div class="card">
+            <form id="settingsForm">
+                <div class="form-group">
+                    <select id="alsaDevice">
+                        <option value="">Loading...</option>
+                    </select>
+                </div>
+                <div class="btn-row">
+                    <button type="submit" class="btn-primary" id="saveBtn">Save & Restart</button>
+                    <button type="button" class="btn-secondary hidden" id="logoutBtn">Logout</button>
+                </div>
+            </form>
+            <div id="settingsMessage" class="message"></div>
+        </div>
     </div>
 
     <script>
         const API = '';
         let currentAlsaDevice = '';
         let deviceList = [];
+        let authInfo = { enabled: false, mode: null };
+        let authCredentials = null;
+
+        // Get auth headers based on current credentials
+        function getAuthHeaders() {
+            if (!authInfo.enabled || !authCredentials) return {};
+            if (authInfo.mode === 'token') {
+                return { 'X-API-Token': authCredentials.token };
+            } else if (authInfo.mode === 'basic') {
+                const encoded = btoa(authCredentials.username + ':' + authCredentials.password);
+                return { 'Authorization': 'Basic ' + encoded };
+            }
+            return {};
+        }
+
+        // Authenticated fetch wrapper
+        async function authFetch(url, options = {}) {
+            const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
+            const res = await fetch(url, { ...options, headers });
+            if (res.status === 401) {
+                // Auth failed, show login
+                authCredentials = null;
+                localStorage.removeItem('gpu_upsampler_auth');
+                showLogin();
+                throw new Error('Authentication required');
+            }
+            return res;
+        }
+
+        async function checkAuth() {
+            try {
+                const res = await fetch(API + '/auth-info');
+                authInfo = await res.json();
+
+                if (!authInfo.enabled) {
+                    showMain();
+                    return;
+                }
+
+                // Try stored credentials
+                const stored = localStorage.getItem('gpu_upsampler_auth');
+                if (stored) {
+                    authCredentials = JSON.parse(stored);
+                    // Verify credentials still work
+                    try {
+                        await authFetch(API + '/status');
+                        showMain();
+                        return;
+                    } catch (e) {
+                        // Stored credentials invalid
+                    }
+                }
+
+                showLogin();
+            } catch (e) {
+                console.error('Auth check failed:', e);
+                showMain(); // Fallback to main on error
+            }
+        }
+
+        function showLogin() {
+            document.getElementById('loginSection').classList.remove('hidden');
+            document.getElementById('mainContent').classList.add('hidden');
+            document.getElementById('authBadge').classList.add('hidden');
+
+            if (authInfo.mode === 'token') {
+                document.getElementById('tokenAuth').classList.remove('hidden');
+                document.getElementById('basicAuth').classList.add('hidden');
+            } else {
+                document.getElementById('tokenAuth').classList.add('hidden');
+                document.getElementById('basicAuth').classList.remove('hidden');
+            }
+        }
+
+        function showMain() {
+            document.getElementById('loginSection').classList.add('hidden');
+            document.getElementById('mainContent').classList.remove('hidden');
+
+            if (authInfo.enabled) {
+                document.getElementById('authBadge').textContent = authInfo.mode.toUpperCase();
+                document.getElementById('authBadge').classList.remove('hidden');
+                document.getElementById('logoutBtn').classList.remove('hidden');
+            }
+
+            fetchDevices();
+            fetchStatus();
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const msgEl = document.getElementById('loginMessage');
+
+            if (authInfo.mode === 'token') {
+                authCredentials = { token: document.getElementById('apiToken').value };
+            } else {
+                authCredentials = {
+                    username: document.getElementById('username').value,
+                    password: document.getElementById('password').value,
+                };
+            }
+
+            try {
+                await authFetch(API + '/status');
+                localStorage.setItem('gpu_upsampler_auth', JSON.stringify(authCredentials));
+                showMain();
+            } catch (e) {
+                msgEl.textContent = 'Authentication failed';
+                msgEl.classList.remove('success');
+                msgEl.classList.add('error');
+            }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            authCredentials = null;
+            localStorage.removeItem('gpu_upsampler_auth');
+            showLogin();
+        });
 
         async function fetchDevices() {
             try {
-                const res = await fetch(API + '/devices');
+                const res = await authFetch(API + '/devices');
                 const data = await res.json();
                 deviceList = data.devices;
                 updateDeviceSelect();
@@ -585,7 +885,6 @@ def get_embedded_html() -> str:
                 select.appendChild(opt);
             });
 
-            // If current device not in list, add it
             const ids = deviceList.map(d => d.id);
             if (currentAlsaDevice && !ids.some(id => currentAlsaDevice.includes(id.split(',')[0].split('=')[1]))) {
                 const opt = document.createElement('option');
@@ -598,7 +897,7 @@ def get_embedded_html() -> str:
 
         async function fetchStatus() {
             try {
-                const res = await fetch(API + '/status');
+                const res = await authFetch(API + '/status');
                 const data = await res.json();
 
                 setStatus('daemonStatus', data.daemon_running ? 'Running' : 'Stopped', data.daemon_running);
@@ -638,7 +937,7 @@ def get_embedded_html() -> str:
             btn.textContent = 'Saving...';
 
             try {
-                const res = await fetch(API + '/settings', {
+                const res = await authFetch(API + '/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ alsa_device: newDevice }),
@@ -647,7 +946,7 @@ def get_embedded_html() -> str:
 
                 if (data.success && data.restart_required) {
                     btn.textContent = 'Restarting...';
-                    await fetch(API + '/restart', { method: 'POST' });
+                    await authFetch(API + '/restart', { method: 'POST' });
                     showMessage('Daemon restarting...', true);
                     setTimeout(fetchStatus, 2000);
                 } else {
@@ -661,10 +960,13 @@ def get_embedded_html() -> str:
             }
         });
 
-        // Initial load
-        fetchDevices();
-        fetchStatus();
-        setInterval(fetchStatus, 5000);
+        // Initial auth check
+        checkAuth();
+        setInterval(() => {
+            if (!document.getElementById('mainContent').classList.contains('hidden')) {
+                fetchStatus();
+            }
+        }, 5000);
     </script>
 </body>
 </html>
@@ -677,4 +979,17 @@ def get_embedded_html() -> str:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=11881)
+
+    web_config = load_web_api_config()
+    host = web_config.get("host", "127.0.0.1")
+    port = web_config.get("port", 11881)
+
+    auth_config = load_auth_config()
+    if auth_config.enabled:
+        print(f"Auth enabled: mode={auth_config.mode}")
+        if host != "127.0.0.1":
+            print(f"WARNING: Binding to {host} with auth enabled")
+    elif host != "127.0.0.1":
+        print(f"WARNING: Binding to {host} without auth! Consider enabling auth.")
+
+    uvicorn.run(app, host=host, port=port)
