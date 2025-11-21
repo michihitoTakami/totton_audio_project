@@ -42,11 +42,11 @@ cmake --build build -j$(nproc)
 - LV2プラグインはホストから通常の方法で読み込んでください。
 
 ### Easy Effects を通す場合のPipeWire配線例
-- 出力経路にイコライザ等を挿入したいときは、Spotifyなどの再生側を `easyeffects_sink` に向け、Easy Effects のモニター出力を本プロジェクトのシンクへ接続します。
+- 出力経路にイコライザ等を挿入したいときは、再生側を `easyeffects_sink` に向け、Easy Effects のモニター出力を本プロジェクトのシンクへ接続します。
   ```bash
   # 再生アプリ → Easy Effects
-  pw-link spotify:output_FL easyeffects_sink:playback_0
-  pw-link spotify:output_FR easyeffects_sink:playback_1
+  pw-link <app>:output_FL easyeffects_sink:playback_0
+  pw-link <app>:output_FR easyeffects_sink:playback_1
 
   # Easy Effects モニタ → GPU Upsampler
   pw-link easyeffects_sink:monitor_0 gpu_upsampler_sink:playback_0
