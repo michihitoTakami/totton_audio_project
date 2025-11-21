@@ -55,11 +55,15 @@ target_link_libraries(gpu_upsampler_core PUBLIC
 )
 
 # Command-line executable
-add_executable(gpu_upsampler src/main.cpp)
+add_executable(gpu_upsampler
+    src/main.cpp
+    src/config_loader.cpp
+)
 
 # Link against core library
 target_link_libraries(gpu_upsampler
     gpu_upsampler_core
+    nlohmann_json::nlohmann_json
 )
 
 # Compiler flags for core library
@@ -128,7 +132,10 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 )
 
 # ALSA Direct Output Daemon executable
-add_executable(gpu_upsampler_alsa src/alsa_daemon.cpp)
+add_executable(gpu_upsampler_alsa
+    src/alsa_daemon.cpp
+    src/config_loader.cpp
+)
 
 # Link against core library, PipeWire, ALSA, and JSON
 target_link_libraries(gpu_upsampler_alsa

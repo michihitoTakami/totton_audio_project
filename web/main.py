@@ -3,6 +3,7 @@ GPU Upsampler Web Control API
 FastAPI-based control interface for the GPU audio upsampler daemon.
 """
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -298,10 +299,8 @@ async def update_settings(update: SettingsUpdate):
 async def restart_daemon():
     """
     Restart the daemon to apply new settings.
-    Sends SIGHUP to trigger graceful shutdown, then starts a new instance.
+    Sends SIGHUP to trigger in-process config reload.
     """
-    import time
-
     try:
         # Try to find daemon PID
         result = subprocess.run(
@@ -311,61 +310,25 @@ async def restart_daemon():
             timeout=5,
         )
 
-        if result.returncode == 0:
-            pid = result.stdout.strip().split()[0]
-            # Send SIGHUP for graceful shutdown (daemon will reload config on next start)
-            subprocess.run(["kill", "-HUP", pid], timeout=5)
+        if result.returncode != 0:
+            return ApiResponse(
+                success=False,
+                message="Daemon not running. Start it manually with ./build/gpu_upsampler_alsa",
+            )
 
-            # Wait for process to exit (up to 5 seconds)
-            for _ in range(10):
-                time.sleep(0.5)
-                check = subprocess.run(
-                    ["kill", "-0", pid],
-                    capture_output=True,
-                    timeout=1,
-                )
-                if check.returncode != 0:
-                    break
+        pid = result.stdout.strip().split()[0]
+        hup_result = subprocess.run(["kill", "-HUP", pid], timeout=5)
+        if hup_result.returncode != 0:
+            raise HTTPException(status_code=500, detail="Failed to send SIGHUP to daemon")
 
-            # Start new daemon instance in background
-            daemon_path = Path(__file__).parent.parent / "build" / "gpu_upsampler_alsa"
-            if daemon_path.exists():
-                subprocess.Popen(
-                    [str(daemon_path)],
-                    cwd=str(Path(__file__).parent.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                return ApiResponse(
-                    success=True,
-                    message=f"Daemon restarted (old PID {pid})",
-                )
-            else:
-                return ApiResponse(
-                    success=True,
-                    message=f"Daemon stopped (PID {pid}). Binary not found at {daemon_path}",
-                )
-        else:
-            # Daemon not running, try to start it
-            daemon_path = Path(__file__).parent.parent / "build" / "gpu_upsampler_alsa"
-            if daemon_path.exists():
-                subprocess.Popen(
-                    [str(daemon_path)],
-                    cwd=str(Path(__file__).parent.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                return ApiResponse(
-                    success=True,
-                    message="Daemon started",
-                )
-            else:
-                return ApiResponse(
-                    success=False,
-                    message=f"Daemon not running and binary not found at {daemon_path}",
-                )
+        await asyncio.sleep(0.25)
+        running = check_daemon_running()
+
+        return ApiResponse(
+            success=True,
+            message=f"Reload signal sent to daemon (PID {pid})",
+            restart_required=not running,
+        )
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Restart command timed out")
     except Exception as e:

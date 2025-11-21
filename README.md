@@ -17,7 +17,15 @@
   ```bash
   python scripts/generate_filter.py --input-rate 48000 --stopband-start 24000 --passband-end 21500 --output-prefix filter_48k_1m_min_phase
   ```
+- 48kHz用のバイナリが無い場合は、警告の上で44.1kHz用フィルタにフォールバックします（生成を推奨）。
 - その他レートは非サポート。必要に応じて適合フィルタを生成してください。
+
+## 設定ファイルと再読込
+- `config.json` をルートに置くと、CLIのデフォルト値と `gpu_upsampler_alsa` の起動設定（ALSAデバイス、バッファ、フィルタ、ゲインなど）に適用されます。  
+- `gpu_upsampler_alsa` は SIGHUP で設定を再読込し、内部を再初期化します。Web UI の `/restart` も SIGHUP を送ります。手動で再読込したい場合:
+  ```bash
+  pkill -HUP -f gpu_upsampler_alsa   # または PID を指定
+  ```
 
 ### 信号フロー (ALSAデーモン)
 ```
