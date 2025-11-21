@@ -73,14 +73,7 @@ public:
 
     // ========== EQ Support ==========
 
-    // Apply EQ frequency response to the filter (legacy - preserves biquad phase)
-    // eqResponse: complex frequency response (same size as filter FFT)
-    // The combined filter is stored as: H_combined = H_original * H_eq
-    // Call restoreOriginalFilter() to remove EQ
-    // WARNING: This may break minimum phase property. Use applyEqMagnitude() instead.
-    bool applyEqResponse(const std::vector<std::complex<double>>& eqResponse);
-
-    // Apply EQ magnitude with minimum phase reconstruction (recommended)
+    // Apply EQ magnitude with minimum phase reconstruction
     // eqMagnitude: EQ magnitude response |H_eq(f)| (same size as filter FFT)
     // Process:
     //   1. Combined magnitude = |H_original| * |H_eq|

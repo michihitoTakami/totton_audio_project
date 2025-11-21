@@ -1040,103 +1040,6 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
 // ========== EQ Support Methods ==========
 
-// CUDA kernel for complex multiplication with double precision EQ response
-__global__ void applyEqKernel(cufftComplex* filterFFT,
-                               const cufftComplex* originalFFT,
-                               const double* eqReal,
-                               const double* eqImag,
-                               int size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size) {
-        // Load original filter FFT
-        float a = originalFFT[idx].x;
-        float b = originalFFT[idx].y;
-
-        // Load EQ response
-        float c = static_cast<float>(eqReal[idx]);
-        float d = static_cast<float>(eqImag[idx]);
-
-        // Complex multiplication: H_combined = H_original * H_eq
-        filterFFT[idx].x = a * c - b * d;
-        filterFFT[idx].y = a * d + b * c;
-    }
-}
-
-bool GPUUpsampler::applyEqResponse(const std::vector<std::complex<double>>& eqResponse) {
-    if (!d_filterFFT_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
-        std::cerr << "EQ: Filter not initialized" << std::endl;
-        return false;
-    }
-
-    if (eqResponse.size() != filterFftSize_) {
-        std::cerr << "EQ: Response size mismatch: expected " << filterFftSize_
-                  << ", got " << eqResponse.size() << std::endl;
-        return false;
-    }
-
-    // RAII wrapper for CUDA memory (ensures cleanup on exception)
-    struct CudaDeleter {
-        void operator()(double* ptr) const { if (ptr) cudaFree(ptr); }
-    };
-    using CudaPtr = std::unique_ptr<double, CudaDeleter>;
-
-    try {
-        // Separate real and imaginary parts for GPU transfer
-        std::vector<double> eqReal(filterFftSize_);
-        std::vector<double> eqImag(filterFftSize_);
-        for (size_t i = 0; i < filterFftSize_; ++i) {
-            eqReal[i] = eqResponse[i].real();
-            eqImag[i] = eqResponse[i].imag();
-        }
-
-        // Allocate device memory for EQ response (RAII managed)
-        double* rawReal = nullptr;
-        double* rawImag = nullptr;
-        Utils::checkCudaError(
-            cudaMalloc(&rawReal, filterFftSize_ * sizeof(double)),
-            "cudaMalloc EQ real"
-        );
-        CudaPtr d_eqReal(rawReal);
-
-        Utils::checkCudaError(
-            cudaMalloc(&rawImag, filterFftSize_ * sizeof(double)),
-            "cudaMalloc EQ imag"
-        );
-        CudaPtr d_eqImag(rawImag);
-
-        // Transfer EQ response to device
-        Utils::checkCudaError(
-            cudaMemcpy(d_eqReal.get(), eqReal.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
-            "cudaMemcpy EQ real"
-        );
-        Utils::checkCudaError(
-            cudaMemcpy(d_eqImag.get(), eqImag.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
-            "cudaMemcpy EQ imag"
-        );
-
-        // Apply EQ: H_combined = H_original * H_eq
-        int blockSize = 256;
-        int numBlocks = (filterFftSize_ + blockSize - 1) / blockSize;
-        applyEqKernel<<<numBlocks, blockSize>>>(
-            d_filterFFT_, d_originalFilterFFT_,
-            d_eqReal.get(), d_eqImag.get(),
-            static_cast<int>(filterFftSize_)
-        );
-
-        Utils::checkCudaError(cudaDeviceSynchronize(), "applyEqKernel sync");
-
-        // d_eqReal and d_eqImag automatically freed by RAII
-
-        eqApplied_ = true;
-        std::cout << "EQ: Applied to filter successfully" << std::endl;
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "EQ: Failed to apply: " << e.what() << std::endl;
-        return false;
-    }
-}
-
 void GPUUpsampler::restoreOriginalFilter() {
     if (!d_filterFFT_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
         return;
@@ -1155,15 +1058,24 @@ void GPUUpsampler::restoreOriginalFilter() {
     }
 }
 
-// CUDA kernel for cepstrum causality window
+// CUDA kernel for cepstrum causality window with normalization
+// Applies: 1/N normalization (cuFFT doesn't normalize IFFT)
+// Plus causality: c[0] unchanged, c[1..N/2-1] *= 2, c[N/2] unchanged, c[N/2+1..N-1] = 0
 __global__ void applyCausalityWindowKernel(cufftDoubleReal* cepstrum, int fullN) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= fullN) return;
 
-    // c[0] unchanged, c[1..N/2-1] *= 2, c[N/2] unchanged, c[N/2+1..N-1] = 0
-    if (idx > 0 && idx < fullN / 2) {
-        cepstrum[idx] *= 2.0;
-    } else if (idx > fullN / 2) {
+    double invN = 1.0 / static_cast<double>(fullN);
+
+    // Apply normalization and causality window together
+    if (idx == 0 || idx == fullN / 2) {
+        // DC and Nyquist: just normalize
+        cepstrum[idx] *= invN;
+    } else if (idx < fullN / 2) {
+        // Positive time: normalize and double
+        cepstrum[idx] *= 2.0 * invN;
+    } else {
+        // Negative time: zero out
         cepstrum[idx] = 0.0;
     }
 }

@@ -152,27 +152,6 @@ std::vector<double> generateR2cFftFrequencies(size_t numBins, size_t fullFftSize
     return frequencies;
 }
 
-void applyEqToFilterFft(
-    std::vector<std::complex<float>>& filterFFT,
-    const std::vector<std::complex<double>>& eqResponse
-) {
-    if (filterFFT.size() != eqResponse.size()) {
-        std::cerr << "EQ: FFT size mismatch: filter=" << filterFFT.size()
-                  << " eq=" << eqResponse.size() << std::endl;
-        return;
-    }
-
-    for (size_t i = 0; i < filterFFT.size(); ++i) {
-        // Complex multiplication
-        std::complex<double> f(filterFFT[i].real(), filterFFT[i].imag());
-        std::complex<double> result = f * eqResponse[i];
-        filterFFT[i] = std::complex<float>(
-            static_cast<float>(result.real()),
-            static_cast<float>(result.imag())
-        );
-    }
-}
-
 std::vector<std::complex<double>> computeEqResponseForFft(
     size_t filterFftSize,
     size_t fullFftSize,
