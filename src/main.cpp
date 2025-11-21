@@ -1,10 +1,12 @@
 #include "audio_io.h"
 #include "convolution_engine.h"
-#include "filter_coefficients.h"
+#include "config_loader.h"
+#include "filter_metadata.h"
+#include <chrono>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <string>
-#include <chrono>
-#include <iomanip>
 
 void printUsage(const char* programName) {
     std::cout << "GPU Audio Upsampler - Phase 2" << std::endl;
@@ -25,9 +27,11 @@ void printUsage(const char* programName) {
 struct Config {
     std::string inputFile;
     std::string outputFile;
-    std::string filterPath = "data/coefficients/filter_1m_min_phase.bin";
-    int upsampleRatio = UPSAMPLE_RATIO;
+    std::string filterPath = std::string(FILTER_PRESET_44K.path);
+    int upsampleRatio = FILTER_PRESET_44K.upsampleRatio;
     int blockSize = 8192;
+    bool filterOverridden = false;
+    bool configLoaded = false;
 };
 
 bool parseArguments(int argc, char* argv[], Config& config) {
@@ -45,6 +49,7 @@ bool parseArguments(int argc, char* argv[], Config& config) {
             return false;
         } else if (arg == "--filter" && i + 1 < argc) {
             config.filterPath = argv[++i];
+            config.filterOverridden = true;
         } else if (arg == "--ratio" && i + 1 < argc) {
             config.upsampleRatio = std::stoi(argv[++i]);
         } else if (arg == "--block" && i + 1 < argc) {
@@ -65,11 +70,29 @@ int main(int argc, char* argv[]) {
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
-    // Parse command line arguments
+    AppConfig appConfig;
     Config config;
+    if (loadAppConfig(DEFAULT_CONFIG_FILE, appConfig)) {
+        config.filterPath = appConfig.filterPath;
+        config.upsampleRatio = appConfig.upsampleRatio;
+        config.blockSize = appConfig.blockSize;
+        if (!appConfig.filterPath.empty() &&
+            appConfig.filterPath != std::string(FILTER_PRESET_44K.path)) {
+            config.filterOverridden = true;
+        }
+        config.configLoaded = true;
+    }
+
+    // Parse command line arguments
     if (!parseArguments(argc, argv, config)) {
         printUsage(argv[0]);
         return 1;
+    }
+    if (config.blockSize <= 0) {
+        config.blockSize = 8192;
+    }
+    if (config.upsampleRatio <= 0) {
+        config.upsampleRatio = FILTER_PRESET_44K.upsampleRatio;
     }
 
     try {
@@ -88,11 +111,75 @@ int main(int argc, char* argv[]) {
         }
         reader.close();
 
-        // Validate sample rate
-        if (inputAudio.sampleRate != SAMPLE_RATE_INPUT &&
-            inputAudio.sampleRate != 48000) {
-            std::cerr << "Warning: Input sample rate " << inputAudio.sampleRate
-                      << " Hz may not be optimal. Expected 44100 or 48000 Hz." << std::endl;
+        // Validate and select filter based on sample rate (unless user overrides)
+        auto applyPreset = [&](const FilterPreset& preset) -> bool {
+            if (!std::filesystem::exists(preset.path)) {
+                return false;
+            }
+            config.filterPath = std::string(preset.path);
+            if (config.upsampleRatio != preset.upsampleRatio) {
+                std::cout << "Info: Overriding upsample ratio to preset value "
+                          << preset.upsampleRatio << "x for "
+                          << inputAudio.sampleRate << " Hz input" << std::endl;
+                config.upsampleRatio = preset.upsampleRatio;
+            }
+            std::cout << "Auto-selected filter: " << preset.description << std::endl;
+            return true;
+        };
+
+        if (!config.filterOverridden) {
+            const FilterPreset* targetPreset = nullptr;
+            if (inputAudio.sampleRate == FILTER_PRESET_44K.inputSampleRate) {
+                targetPreset = &FILTER_PRESET_44K;
+            } else if (inputAudio.sampleRate == FILTER_PRESET_48K.inputSampleRate) {
+                targetPreset = &FILTER_PRESET_48K;
+            } else {
+                std::cerr << "Error: Unsupported input sample rate " << inputAudio.sampleRate
+                          << " Hz. Supported: 44100 Hz or 48000 Hz." << std::endl;
+                return 1;
+            }
+
+            if (targetPreset && applyPreset(*targetPreset)) {
+                // OK
+            } else if (targetPreset == &FILTER_PRESET_48K) {
+                std::cerr << "Warning: 48kHz preset filter missing: "
+                          << FILTER_PRESET_48K.path << std::endl;
+                std::cerr << "To generate: "
+                          << "python scripts/generate_filter.py --input-rate 48000 "
+                          << "--stopband-start 24000 --passband-end 21500 "
+                          << "--output-prefix filter_48k_1m_min_phase" << std::endl;
+                if (!applyPreset(FILTER_PRESET_44K)) {
+                    std::cerr << "Error: 44.1kHz fallback filter also missing: "
+                              << FILTER_PRESET_44K.path << std::endl;
+                    return 1;
+                }
+                std::cout << "Falling back to 44.1kHz preset filter." << std::endl;
+            } else {
+                std::cerr << "Error: Preset filter file not found: "
+                          << (targetPreset ? targetPreset->path : "") << std::endl;
+                std::cerr << "Generate it via scripts/generate_filter.py or specify with --filter." << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "User-specified filter will be used: " << config.filterPath << std::endl;
+            if (inputAudio.sampleRate != FILTER_PRESET_44K.inputSampleRate &&
+                inputAudio.sampleRate != FILTER_PRESET_48K.inputSampleRate) {
+                std::cerr << "Warning: Input sample rate " << inputAudio.sampleRate
+                          << " Hz is not validated against provided filter." << std::endl;
+            }
+        }
+
+        if (!std::filesystem::exists(config.filterPath)) {
+            std::cerr << "Error: Filter file not found: " << config.filterPath << std::endl;
+            if (inputAudio.sampleRate == FILTER_PRESET_48K.inputSampleRate) {
+                std::cerr << "Generate it via: "
+                          << "python scripts/generate_filter.py --input-rate 48000 "
+                          << "--stopband-start 24000 --passband-end 21500 "
+                          << "--output-prefix filter_48k_1m_min_phase" << std::endl;
+            } else {
+                std::cerr << "Generate it via scripts/generate_filter.py or specify with --filter." << std::endl;
+            }
+            return 1;
         }
 
         // Step 2: Initialize GPU upsampler

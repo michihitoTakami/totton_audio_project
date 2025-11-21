@@ -12,14 +12,7 @@ constexpr int SAMPLE_RATE_INPUT = 44100;
 constexpr int SAMPLE_RATE_OUTPUT = 705600;
 constexpr int UPSAMPLE_RATIO = 16;
 
-// Filter coefficients (float32)
-// IMPORTANT: 1M taps (3.8MB) is too large for embedding in source code.
-// Recommended approach: Load from binary file at runtime using std::ifstream.
-// Binary file: filter_1m_min_phase.bin (same directory)
-// Example:
-//   std::ifstream ifs("filter_1m_min_phase.bin", std::ios::binary);
-//   std::vector<float> coeffs(FILTER_TAPS);
-//   ifs.read(reinterpret_cast<char*>(coeffs.data()), FILTER_TAPS * sizeof(float));
-extern const float FILTER_COEFFICIENTS[FILTER_TAPS];
+// Filter coefficients are loaded from external binary files at runtime.
+// See data/coefficients/*.bin and filter_metadata.h for available presets.
 
 #endif // FILTER_COEFFICIENTS_H

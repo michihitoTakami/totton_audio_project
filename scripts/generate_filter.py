@@ -14,26 +14,26 @@ GPU Audio Upsampler - Phase 1: Filter Coefficient Generation
 - アップサンプリング倍率: 16倍
 """
 
+import argparse
 import json
 from pathlib import Path
 import numpy as np
 from scipy import signal
 import matplotlib.pyplot as plt
 
-# 定数定義
+# デフォルト定数（必要に応じてコマンドラインで上書き）
 N_TAPS = 1_000_000  # 1M taps (100万タップ)
 SAMPLE_RATE_INPUT = 44100  # 入力サンプルレート (Hz)
 UPSAMPLE_RATIO = 16  # アップサンプリング倍率
-SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO  # 705.6 kHz
+SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO  # 出力サンプルレート
 
-# フィルタ設計パラメータ
+# フィルタ設計パラメータ（デフォルト）
 PASSBAND_END = 20000  # 通過帯域終端 (Hz)
 STOPBAND_START = 22050  # 阻止帯域開始 (Hz) - ナイキスト周波数
-STOPBAND_ATTENUATION_DB = 220  # 阻止帯域減衰量 (dB) - 100万タップで-220dB以上達成可能
+STOPBAND_ATTENUATION_DB = 220  # 阻止帯域減衰量 (dB)
 # Kaiser βパラメータ: A(dB)の減衰量に対して β ≈ 0.1102*(A-8.7)
-# A=220dBの場合、β ≈ 0.1102*(220-8.7) ≈ 23.3
-# より安全マージンを持たせて β=50 を使用（超急峻な遮断特性）
 KAISER_BETA = 50  # Kaiser窓のβパラメータ
+OUTPUT_PREFIX = None
 
 
 def design_linear_phase_filter():
@@ -304,9 +304,12 @@ def export_coefficients(h, metadata, output_dir='data/coefficients'):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    taps_label = f"{N_TAPS // 1_000_000}m" if N_TAPS % 1_000_000 == 0 else f"{N_TAPS}"
+    base_name = OUTPUT_PREFIX or f"filter_{SAMPLE_RATE_INPUT // 1000}k_{taps_label}_min_phase"
+
     # 1. バイナリ形式（float32）
     h_float32 = h.astype(np.float32)
-    binary_path = output_path / 'filter_1m_min_phase.bin'
+    binary_path = output_path / f'{base_name}.bin'
     h_float32.tofile(binary_path)
     file_size_mb = binary_path.stat().st_size / (1024 * 1024)
     print(f"  保存: {binary_path} ({file_size_mb:.2f} MB)")
@@ -324,23 +327,35 @@ def export_coefficients(h, metadata, output_dir='data/coefficients'):
         f.write(f"constexpr int SAMPLE_RATE_INPUT = {metadata['sample_rate_input']};\n")
         f.write(f"constexpr int SAMPLE_RATE_OUTPUT = {metadata['sample_rate_output']};\n")
         f.write(f"constexpr int UPSAMPLE_RATIO = {metadata['upsample_ratio']};\n\n")
-        f.write("// Filter coefficients (float32)\n")
-        f.write("// IMPORTANT: 1M taps (3.8MB) is too large for embedding in source code.\n")
-        f.write("// Recommended approach: Load from binary file at runtime using std::ifstream.\n")
-        f.write("// Binary file: filter_1m_min_phase.bin (same directory)\n")
-        f.write("// Example:\n")
-        f.write("//   std::ifstream ifs(\"filter_1m_min_phase.bin\", std::ios::binary);\n")
-        f.write("//   std::vector<float> coeffs(FILTER_TAPS);\n")
-        f.write("//   ifs.read(reinterpret_cast<char*>(coeffs.data()), FILTER_TAPS * sizeof(float));\n")
-        f.write("extern const float FILTER_COEFFICIENTS[FILTER_TAPS];\n\n")
+        f.write("// Filter coefficients are stored in external .bin files.\n")
+        f.write(f"// Default binary: {base_name}.bin\n\n")
         f.write("#endif // FILTER_COEFFICIENTS_H\n")
     print(f"  保存: {header_path}")
 
     # 3. メタデータJSON
-    metadata_path = output_path / 'metadata.json'
+    metadata_path = output_path / f'{base_name}.json'
     with open(metadata_path, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
     print(f"  保存: {metadata_path}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate minimum-phase FIR filter coefficients.")
+    parser.add_argument("--input-rate", type=int, default=44100,
+                        help="Input sample rate (Hz). Default: 44100")
+    parser.add_argument("--upsample-ratio", type=int, default=16,
+                        help="Upsampling ratio. Default: 16")
+    parser.add_argument("--taps", type=int, default=1_000_000,
+                        help="Number of filter taps. Default: 1000000")
+    parser.add_argument("--passband-end", type=int, default=20000,
+                        help="Passband end frequency (Hz). Default: 20000")
+    parser.add_argument("--stopband-start", type=int, default=22050,
+                        help="Stopband start frequency (Hz). Default: 22050")
+    parser.add_argument("--kaiser-beta", type=float, default=50.0,
+                        help="Kaiser window beta. Default: 50")
+    parser.add_argument("--output-prefix", type=str, default=None,
+                        help="Output file basename (without extension). Default: auto (e.g., filter_48k_1m_min_phase)")
+    return parser.parse_args()
 
 
 def main():
@@ -348,6 +363,20 @@ def main():
     print("=" * 70)
     print("GPU Audio Upsampler - Phase 1: Filter Coefficient Generation")
     print("=" * 70)
+
+    args = parse_args()
+    global SAMPLE_RATE_INPUT, UPSAMPLE_RATIO, SAMPLE_RATE_OUTPUT
+    global PASSBAND_END, STOPBAND_START, STOPBAND_ATTENUATION_DB, KAISER_BETA
+    global N_TAPS, OUTPUT_PREFIX
+
+    SAMPLE_RATE_INPUT = args.input_rate
+    UPSAMPLE_RATIO = args.upsample_ratio
+    SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO
+    PASSBAND_END = args.passband_end
+    STOPBAND_START = args.stopband_start
+    KAISER_BETA = args.kaiser_beta
+    N_TAPS = args.taps
+    OUTPUT_PREFIX = args.output_prefix
 
     # 1. 線形位相フィルタ設計
     h_linear = design_linear_phase_filter()
@@ -377,17 +406,20 @@ def main():
     }
 
     # 6. 係数エクスポート
+    taps_label = f"{N_TAPS // 1_000_000}m" if N_TAPS % 1_000_000 == 0 else f"{N_TAPS}"
+    base_name = OUTPUT_PREFIX or f"filter_{SAMPLE_RATE_INPUT // 1000}k_{taps_label}_min_phase"
+    metadata['output_basename'] = base_name
     export_coefficients(h_min_phase, metadata)
 
     # 7. 最終レポート
     print("\n" + "=" * 70)
-    print("Phase 1 完了 - 100万タップフィルタ")
+    print(f"Phase 1 完了 - {N_TAPS:,}タップフィルタ")
     print("=" * 70)
     print(f"✓ {N_TAPS:,}タップ最小位相FIRフィルタ生成完了")
     print(f"✓ 阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
     print(f"  {'合格' if validation_results['meets_stopband_spec'] else '不合格'} (目標: {STOPBAND_ATTENUATION_DB} dB以上)")
     print(f"✓ 最小位相特性: {'確認済み' if validation_results['is_minimum_phase'] else '要確認'}")
-    print(f"✓ 係数ファイル: data/coefficients/filter_1m_min_phase.bin")
+    print(f"✓ 係数ファイル: data/coefficients/{base_name}.bin")
     print(f"✓ 検証プロット: plots/analysis/")
     print("=" * 70)
 
