@@ -1,12 +1,11 @@
 # GPU Audio Upsampler
 
-高品位なFIRフィルタをCUDAで並列実行し、44.1kHzオーディオを最大16倍 (705.6/352.8kHz) にリアルタイム/オフラインでアップサンプリングするプロジェクトです。PipeWire経由の入力をGPUで処理し、ALSA/DACへ高サンプルレート出力するデーモンと、オフライン変換用CLI/LV2プラグインを同梱します。
+高品位なFIRフィルタをCUDAで並列実行し、44.1kHzオーディオを最大16倍 (705.6/352.8kHz) にリアルタイム/オフラインでアップサンプリングするプロジェクトです。PipeWire経由の入力をGPUで処理し、ALSA/DACへ高サンプルレート出力するデーモンと、オフライン変換用CLIを提供します（LV2プラグイン実装は現在削除済み）。
 
 ## アーキテクチャ概要
 - `src/convolution_engine.cu`: Overlap-Save方式の1Mタップ最小位相FIRをCUDA/cuFFTで実装するコア。ステレオ並列ストリーム、オーバーラップ保持付きストリーミングAPIを提供。
 - `src/alsa_daemon.cpp`: PipeWireから44.1kHz floatを受信し、GPUで16xアップサンプル後、ALSA `hw:3,0` へ705.6kHz S32_LE出力するデーモン（SMSL D400EX想定）。
 - `src/pipewire_daemon.cpp`: PipeWire→GPU→PipeWireのラウンドトリップ用デーモン。
-- `src/lv2_plugin/`: LV2プラグイン実装（ホスト側が705.6kHz入力を提供する構成）。
 - `scripts/`: フィルタ生成/解析ツール（例: `scripts/analyze_waveform.py` でクリック検出）。
 - `data/coefficients/`: 1MタップFIR係数 (`filter_1m_min_phase.bin`) とメタデータ。
 - `docs/`: 調査・セットアップ資料（`setup_guide.md`, `crackling_noise_investigation.md` など）。
@@ -55,8 +54,6 @@ cmake --build build -j$(nproc)
   ```bash
   ./build/gpu_upsampler_daemon
   ```
-- LV2プラグインはホストから通常の方法で読み込んでください。
-
 ### 再起動後のクイック手順
 1. デーモン起動（必要ならデバイス指定）  
    ```bash
@@ -91,7 +88,7 @@ cmake --build build -j$(nproc)
 - アップサンプル比: 16x（44.1kHz→705.6kHz）/ オプションで8x。
 - FIRフィルタ: 1,000,000タップ最小位相、FFTサイズ1,048,576。
 - Overlap-Save: オーバーラップ999,999サンプル、有効出力48,577サンプル/ブロック。
-- 出力形式: S32_LE (デーモン), float32 (PipeWire/LV2内部)。
+- 出力形式: S32_LE (デーモン), float32 (PipeWire内部)。
 
 ## トラブルシュートの入口
 - プチプチ音・クリック: `docs/crackling_noise_investigation.md` を参照し、オーバーラップ保存とストリーミング設定を確認。
