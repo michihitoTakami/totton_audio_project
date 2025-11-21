@@ -14,8 +14,8 @@
 
 // Configuration
 constexpr int INPUT_SAMPLE_RATE = 44100;
-constexpr int OUTPUT_SAMPLE_RATE = 352800;  // 8x upsampling
-constexpr int UPSAMPLE_RATIO = 8;
+constexpr int OUTPUT_SAMPLE_RATE = 705600;  // 16x upsampling (matches filter design)
+constexpr int UPSAMPLE_RATIO = 16;
 constexpr int BLOCK_SIZE = 4096;
 constexpr int CHANNELS = 2;
 constexpr const char* ALSA_DEVICE = "hw:3,0";  // SMSL DAC (card 3, device 0)
@@ -30,6 +30,12 @@ static std::condition_variable g_buffer_cv;
 static std::vector<float> g_output_buffer_left;
 static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
+
+// Streaming input accumulation buffers
+static std::vector<float> g_stream_input_left;
+static std::vector<float> g_stream_input_right;
+static size_t g_stream_accumulated_left = 0;
+static size_t g_stream_accumulated_right = 0;
 
 // PipeWire objects
 struct Data {
@@ -67,17 +73,33 @@ static void on_input_process(void* userdata) {
             right[i] = input_samples[i * 2 + 1];
         }
 
-        // Process through GPU upsampler
+        // Process through GPU upsampler using streaming API
+        // This preserves overlap buffer across calls
         std::vector<float> output_left, output_right;
-        bool success = g_upsampler->processStereo(
+
+        // Process left channel
+        bool left_generated = g_upsampler->processStreamBlock(
             left.data(),
-            right.data(),
             n_frames,
             output_left,
-            output_right
+            g_upsampler->streamLeft_,
+            g_stream_input_left,
+            g_stream_accumulated_left
         );
 
-        if (success) {
+        // Process right channel
+        bool right_generated = g_upsampler->processStreamBlock(
+            right.data(),
+            n_frames,
+            output_right,
+            g_upsampler->streamRight_,
+            g_stream_input_right,
+            g_stream_accumulated_right
+        );
+
+        // Only store output if both channels generated output
+        // (they should synchronize due to same input size)
+        if (left_generated && right_generated) {
             // Store output for ALSA thread consumption
             std::lock_guard<std::mutex> lock(g_buffer_mutex);
             g_output_buffer_left.insert(g_output_buffer_left.end(),
@@ -224,21 +246,26 @@ void alsa_output_thread() {
                 float left_sample = g_output_buffer_left[g_output_read_pos + i] * gain;
                 float right_sample = g_output_buffer_right[g_output_read_pos + i] * gain;
 
-                // Detect clipping before clamping
+                // Detect clipping before soft-clipping
                 if (left_sample > 1.0f || left_sample < -1.0f ||
                     right_sample > 1.0f || right_sample < -1.0f) {
                     current_clips++;
                     clip_count++;
                 }
 
-                // Clamp to [-1.0, 1.0] to prevent overflow
-                left_sample = std::max(-1.0f, std::min(1.0f, left_sample));
-                right_sample = std::max(-1.0f, std::min(1.0f, right_sample));
+                // Soft clipping using tanh (reduces harmonic distortion compared to hard clipping)
+                // tanh(x) smoothly compresses values above ±1.0 instead of abruptly cutting them
+                // This is gentler on the audio and produces less audible artifacts
+                left_sample = std::tanh(left_sample);
+                right_sample = std::tanh(right_sample);
 
-                // Proper float to int32 conversion with correct scaling and rounding
-                // Use 2^31 = 2147483648.0 for symmetric range, and add 0.5 for rounding
-                int32_t left_int = static_cast<int32_t>(left_sample * 2147483648.0f);
-                int32_t right_int = static_cast<int32_t>(right_sample * 2147483648.0f);
+                // CRITICAL FIX: Float to int32 conversion
+                // Use 2^31-1 = 2147483647 (INT32_MAX) to avoid overflow
+                // 2^31 = 2147483648 causes undefined behavior for sample = 1.0
+                // Use lroundf() for proper rounding instead of truncation
+                constexpr float INT32_MAX_FLOAT = 2147483647.0f;
+                int32_t left_int = static_cast<int32_t>(std::lroundf(left_sample * INT32_MAX_FLOAT));
+                int32_t right_int = static_cast<int32_t>(std::lroundf(right_sample * INT32_MAX_FLOAT));
 
                 interleaved_buffer[i * 2] = left_int;
                 interleaved_buffer[i * 2 + 1] = right_int;
@@ -313,6 +340,22 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "GPU upsampler ready (16x upsampling, " << BLOCK_SIZE << " samples/block)" << std::endl;
+
+    // Initialize streaming mode to preserve overlap buffers across PipeWire callbacks
+    if (!g_upsampler->initializeStreaming()) {
+        std::cerr << "Failed to initialize streaming mode" << std::endl;
+        delete g_upsampler;
+        return 1;
+    }
+
+    // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
+    // This will be set by initializeStreaming() to validOutputPerBlock / upsampleRatio
+    size_t buffer_capacity = 10000;  // Conservative estimate for buffer size
+    g_stream_input_left.resize(buffer_capacity, 0.0f);
+    g_stream_input_right.resize(buffer_capacity, 0.0f);
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+
     std::cout << std::endl;
 
     // Start ALSA output thread

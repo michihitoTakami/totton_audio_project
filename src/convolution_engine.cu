@@ -112,7 +112,8 @@ GPUUpsampler::GPUUpsampler()
       d_inputBlock_(nullptr), d_outputBlock_(nullptr),
       d_inputFFT_(nullptr), d_convResult_(nullptr),
       fftPlanForward_(0), fftPlanInverse_(0),
-      overlapSize_(0), stream_(nullptr), streamLeft_(nullptr), streamRight_(nullptr) {
+      overlapSize_(0), stream_(nullptr), streamLeft_(nullptr), streamRight_(nullptr),
+      streamValidInputPerBlock_(0), streamInitialized_(false), validOutputPerBlock_(0) {
     stats_ = Stats();
 }
 
@@ -389,12 +390,15 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         // (excluding the overlap region that gets discarded)
         int validOutputPerBlock = fftSize_ - overlapSize_;
 
-        // Reset overlap buffer at start of new channel processing
-        std::fill(overlapBuffer.begin(), overlapBuffer.end(), 0.0f);
+        // NOTE: Do NOT reset overlap buffer here - it must persist between stereo channels
+        // to maintain phase continuity. Buffer is initialized once in setupGPUResources().
+        // CRITICAL FIX: Removing this line resolves crackling noise in stereo processing.
+        // std::fill(overlapBuffer.begin(), overlapBuffer.end(), 0.0f);
 
         // Process audio in blocks
         size_t outputPos = 0;
         size_t inputPos = 0;
+        size_t blockCount = 0;  // DEBUG: Track block number
 
         while (outputPos < outputFrames) {
             // Calculate current block size
@@ -415,6 +419,12 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                                    overlapSize_ * sizeof(float), cudaMemcpyHostToDevice, stream),
                     "cudaMemcpy overlap to device"
                 );
+
+                // DEBUG: Log overlap buffer state (first few blocks only to avoid spam)
+                if (blockCount < 3) {
+                    fprintf(stderr, "[DEBUG] Block %zu: Loaded overlap - first sample=%.6f, last sample=%.6f\n",
+                            blockCount, overlapBuffer[0], overlapBuffer[overlapSize_-1]);
+                }
             }
 
             // Copy new input data from upsampled signal
@@ -515,13 +525,26 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                                            overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
                             "cudaMemcpy overlap from device"
                         );
+
+                        // DEBUG: Log saved overlap positions (first few blocks only)
+                        if (blockCount < 3) {
+                            fprintf(stderr, "[DEBUG] Block %zu: Saved overlap from position %zu (nextBlockStart=%zu - overlapSize=%d)\n",
+                                    blockCount, overlapStart, nextBlockStart, overlapSize_);
+                        }
                     }
                 }
+            }
+
+            // DEBUG: Log block processing summary (first few blocks only)
+            if (blockCount < 3) {
+                fprintf(stderr, "[DEBUG] Block %zu: inputPos=%zu, outputPos=%zu, validOutputSize=%zu, currentBlockSize=%zu\n",
+                        blockCount, inputPos, outputPos, validOutputSize, currentBlockSize);
             }
 
             // Advance positions
             outputPos += validOutputSize;
             inputPos += validOutputSize;
+            blockCount++;  // DEBUG: Increment block counter
         }
 
         // Synchronize stream before cleanup
@@ -571,8 +594,17 @@ bool GPUUpsampler::processStereo(const float* leftInput,
     bool rightSuccess = processChannelWithStream(rightInput, inputFrames, rightOutput,
                                                  streamRight_, overlapBufferRight_);
 
-    // Both streams are synchronized within processChannelWithStream
-    // So results are ready when both calls return
+    // CRITICAL FIX: Explicitly synchronize both streams to prevent race conditions
+    // Even though processChannelWithStream() synchronizes internally, we need to ensure
+    // both channels complete before accessing shared resources or returning results
+    Utils::checkCudaError(
+        cudaStreamSynchronize(streamLeft_),
+        "cudaStreamSynchronize left channel final"
+    );
+    Utils::checkCudaError(
+        cudaStreamSynchronize(streamRight_),
+        "cudaStreamSynchronize right channel final"
+    );
 
     if (leftSuccess && rightSuccess) {
         auto endTime = std::chrono::high_resolution_clock::now();
@@ -612,6 +644,217 @@ void GPUUpsampler::cleanup() {
     stream_ = nullptr;
     streamLeft_ = nullptr;
     streamRight_ = nullptr;
+}
+
+// Streaming mode methods
+bool GPUUpsampler::initializeStreaming() {
+    if (fftSize_ == 0 || overlapSize_ == 0) {
+        std::cerr << "ERROR: GPU resources not initialized. Call initialize() first." << std::endl;
+        return false;
+    }
+
+    validOutputPerBlock_ = fftSize_ - overlapSize_;
+    streamValidInputPerBlock_ = validOutputPerBlock_ / upsampleRatio_;
+
+    streamInitialized_ = true;
+
+    fprintf(stderr, "[Streaming] Initialized:\n");
+    fprintf(stderr, "  - Input samples needed per block: %zu (at input rate %d Hz)\n",
+            streamValidInputPerBlock_, 44100);
+    fprintf(stderr, "  - Output samples generated per block: %d (at output rate %d Hz)\n",
+            validOutputPerBlock_, 705600);
+    fprintf(stderr, "  - Latency: ~%.1f ms\n",
+            1000.0 * streamValidInputPerBlock_ / 44100.0);
+
+    return true;
+}
+
+void GPUUpsampler::resetStreaming() {
+    std::fill(overlapBuffer_.begin(), overlapBuffer_.end(), 0.0f);
+    std::fill(overlapBufferRight_.begin(), overlapBufferRight_.end(), 0.0f);
+    fprintf(stderr, "[Streaming] Reset: overlap buffers cleared\n");
+}
+
+bool GPUUpsampler::processStreamBlock(const float* inputData,
+                                       size_t inputFrames,
+                                       std::vector<float>& outputData,
+                                       cudaStream_t stream,
+                                       std::vector<float>& streamInputBuffer,
+                                       size_t& streamInputAccumulated) {
+    if (!streamInitialized_) {
+        std::cerr << "ERROR: Streaming mode not initialized. Call initializeStreaming() first." << std::endl;
+        return false;
+    }
+
+    // 1. Accumulate input samples
+    if (streamInputAccumulated + inputFrames > streamInputBuffer.size()) {
+        std::cerr << "ERROR: Stream input buffer overflow" << std::endl;
+        return false;
+    }
+
+    std::copy(inputData, inputData + inputFrames,
+              streamInputBuffer.begin() + streamInputAccumulated);
+    streamInputAccumulated += inputFrames;
+
+    // 2. Check if we have enough samples for one block
+    if (streamInputAccumulated < streamValidInputPerBlock_) {
+        // Not enough data yet - return false (no output generated)
+        outputData.clear();
+        return false;
+    }
+
+    // 3. Process one block
+    size_t samplesToProcess = streamValidInputPerBlock_;
+    size_t outputFrames = samplesToProcess * upsampleRatio_;
+
+    // Step 3a: Allocate GPU memory for this block
+    float* d_input = nullptr;
+    float* d_upsampledInput = nullptr;
+
+    Utils::checkCudaError(
+        cudaMalloc(&d_input, samplesToProcess * sizeof(float)),
+        "cudaMalloc streaming input"
+    );
+
+    Utils::checkCudaError(
+        cudaMalloc(&d_upsampledInput, outputFrames * sizeof(float)),
+        "cudaMalloc streaming upsampled"
+    );
+
+    Utils::checkCudaError(
+        cudaMemcpyAsync(d_input, streamInputBuffer.data(), samplesToProcess * sizeof(float),
+                       cudaMemcpyHostToDevice, stream),
+        "cudaMemcpy streaming input to device"
+    );
+
+    // Step 3b: Zero-padding (upsampling)
+    int threadsPerBlock = 256;
+    int blocks = (samplesToProcess + threadsPerBlock - 1) / threadsPerBlock;
+    zeroPadKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+        d_input, d_upsampledInput, samplesToProcess, upsampleRatio_
+    );
+
+    cudaFree(d_input);
+
+    // Step 3c: Overlap-Save FFT convolution (ONE BLOCK ONLY)
+    float* d_paddedInput = nullptr;
+    cufftComplex* d_inputFFT = nullptr;
+    float* d_convResult = nullptr;
+
+    Utils::checkCudaError(
+        cudaMalloc(&d_paddedInput, fftSize_ * sizeof(float)),
+        "cudaMalloc streaming padded input"
+    );
+
+    int fftComplexSize = fftSize_ / 2 + 1;
+    Utils::checkCudaError(
+        cudaMalloc(&d_inputFFT, fftComplexSize * sizeof(cufftComplex)),
+        "cudaMalloc streaming input FFT"
+    );
+
+    Utils::checkCudaError(
+        cudaMalloc(&d_convResult, fftSize_ * sizeof(float)),
+        "cudaMalloc streaming conv result"
+    );
+
+    // Prepare input: [overlap | new samples]
+    Utils::checkCudaError(
+        cudaMemsetAsync(d_paddedInput, 0, fftSize_ * sizeof(float), stream),
+        "cudaMemset streaming padded"
+    );
+
+    // Determine which overlap buffer to use based on which stream this is
+    std::vector<float>& overlap = (stream == streamLeft_) ? overlapBuffer_ :
+                                  (stream == streamRight_) ? overlapBufferRight_ : overlapBuffer_;
+
+    if (overlapSize_ > 0) {
+        Utils::checkCudaError(
+            cudaMemcpyAsync(d_paddedInput, overlap.data(),
+                           overlapSize_ * sizeof(float), cudaMemcpyHostToDevice, stream),
+            "cudaMemcpy streaming overlap to device"
+        );
+    }
+
+    Utils::checkCudaError(
+        cudaMemcpyAsync(d_paddedInput + overlapSize_, d_upsampledInput,
+                       outputFrames * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+        "cudaMemcpy streaming block to padded"
+    );
+
+    // FFT convolution
+    Utils::checkCufftError(
+        cufftSetStream(fftPlanForward_, stream),
+        "cufftSetStream forward"
+    );
+
+    Utils::checkCufftError(
+        cufftExecR2C(fftPlanForward_, d_paddedInput, d_inputFFT),
+        "cufftExecR2C streaming"
+    );
+
+    threadsPerBlock = 256;
+    blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
+    complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+        d_inputFFT, d_filterFFT_, fftComplexSize
+    );
+
+    Utils::checkCufftError(
+        cufftSetStream(fftPlanInverse_, stream),
+        "cufftSetStream inverse"
+    );
+
+    Utils::checkCufftError(
+        cufftExecC2R(fftPlanInverse_, d_inputFFT, d_convResult),
+        "cufftExecC2R streaming"
+    );
+
+    // Scale
+    float scale = 1.0f / fftSize_;
+    int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
+    scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
+        d_convResult, fftSize_, scale
+    );
+
+    // Extract valid output (discard first overlapSize_ samples)
+    outputData.resize(validOutputPerBlock_);
+    Utils::checkCudaError(
+        cudaMemcpyAsync(outputData.data(), d_convResult + overlapSize_,
+                       validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+        "cudaMemcpy streaming output to host"
+    );
+
+    // Save overlap for next block
+    if (outputFrames >= static_cast<size_t>(overlapSize_)) {
+        size_t overlapStart = outputFrames - overlapSize_;
+        Utils::checkCudaError(
+            cudaMemcpyAsync(overlap.data(), d_upsampledInput + overlapStart,
+                           overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+            "cudaMemcpy streaming overlap from device"
+        );
+    }
+
+    // Synchronize stream to ensure all operations complete
+    Utils::checkCudaError(
+        cudaStreamSynchronize(stream),
+        "cudaStreamSynchronize streaming"
+    );
+
+    // Cleanup
+    cudaFree(d_paddedInput);
+    cudaFree(d_inputFFT);
+    cudaFree(d_convResult);
+    cudaFree(d_upsampledInput);
+
+    // 4. Shift remaining samples in input buffer
+    size_t remaining = streamInputAccumulated - samplesToProcess;
+    if (remaining > 0) {
+        std::copy(streamInputBuffer.begin() + samplesToProcess,
+                  streamInputBuffer.begin() + streamInputAccumulated,
+                  streamInputBuffer.begin());
+    }
+    streamInputAccumulated = remaining;
+
+    return true; // Output was generated
 }
 
 } // namespace ConvolutionEngine
