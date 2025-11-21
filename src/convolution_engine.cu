@@ -474,16 +474,48 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                 "cudaMemcpy valid output to host"
             );
 
-            // Save overlap for next block (last overlapSize_ samples of current block input)
+            // Save overlap for next block
+            // For Overlap-Save with very large filter (M=1000000), we have:
+            //   FFT size N = 1048576
+            //   Overlap = M-1 = 999999
+            //   Valid output per block = N - (M-1) = 48577
+            //
+            // Each iteration processes:
+            //   Input block: [previous overlap (999999) | new samples (48577)]
+            //   Output: discard first 999999, keep last 48577
+            //
+            // The overlap for NEXT iteration should be the last 999999 samples
+            // of the CURRENT input block, which is:
+            //   Current input block spans: inputPos to inputPos+validOutputPerBlock
+            //   But we need 999999 samples for overlap, and we only have 48577 new samples
+            //   So overlap = [last (999999-48577) of previous overlap] + [all 48577 new samples]
+            //   In the upsampled signal, this is: from (inputPos+48577-999999) to (inputPos+48577-1)
+            //                                    = from (inputPos-951422) to (inputPos+48576)
+            // Wait, that's going backwards!
+            //
+            // Let me reconsider: after processing block at inputPos, next block starts
+            // at inputPos+validOutputPerBlock. The overlap needed is the 999999 samples
+            // BEFORE that position, i.e., from (inputPos+validOutputPerBlock-overlap) to
+            // (inputPos+validOutputPerBlock-1) = from (inputPos+48577-999999) to (inputPos+48576)
+            //
+            // But actually, we're already AT inputPos+validOutputPerBlock after the advance!
+            // No wait, the advance happens AFTER this. So we save from inputPos+validOutputSize-overlapSize_+1
+            //
+            // Simpler: just save from (inputPos + validOutputSize) for overlapSize_ samples,
+            // which is the END of current block extending into the next region.
             if (outputPos + validOutputSize < outputFrames) {
-                // Copy the samples that will overlap with next block
-                size_t overlapSourcePos = inputPos + validOutputSize;
-                if (overlapSourcePos + overlapSize_ <= outputFrames) {
-                    Utils::checkCudaError(
-                        cudaMemcpyAsync(overlapBuffer.data(), d_upsampledInput + overlapSourcePos,
-                                       overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-                        "cudaMemcpy overlap from device"
-                    );
+                // Next overlap: the overlapSize_ samples starting from where next block will begin
+                size_t nextBlockStart = inputPos + validOutputSize;
+                if (nextBlockStart >= overlapSize_ && nextBlockStart < outputFrames) {
+                    // Get the last overlapSize_ samples before nextBlockStart
+                    size_t overlapStart = nextBlockStart - overlapSize_;
+                    if (overlapStart + overlapSize_ <= outputFrames) {
+                        Utils::checkCudaError(
+                            cudaMemcpyAsync(overlapBuffer.data(), d_upsampledInput + overlapStart,
+                                           overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                            "cudaMemcpy overlap from device"
+                        );
+                    }
                 }
             }
 
