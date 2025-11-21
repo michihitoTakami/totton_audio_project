@@ -40,6 +40,7 @@ if static_dir.exists():
 class Settings(BaseModel):
     """Daemon configuration settings"""
     alsa_device: str = "hw:USB"
+    input_sample_rate: int = 44100
     buffer_size: int = 262144
     period_size: int = 32768
     upsample_ratio: int = 16
@@ -53,6 +54,7 @@ class Settings(BaseModel):
 class SettingsUpdate(BaseModel):
     """Partial settings update"""
     alsa_device: Optional[str] = None
+    input_sample_rate: Optional[int] = None
     buffer_size: Optional[int] = None
     period_size: Optional[int] = None
     upsample_ratio: Optional[int] = None
@@ -107,6 +109,7 @@ def load_config() -> Settings:
             # Convert camelCase to snake_case
             return Settings(
                 alsa_device=data.get("alsaDevice", "hw:USB"),
+                input_sample_rate=data.get("inputSampleRate", 44100),
                 buffer_size=data.get("bufferSize", 262144),
                 period_size=data.get("periodSize", 32768),
                 upsample_ratio=data.get("upsampleRatio", 16),
@@ -126,6 +129,7 @@ def save_config(settings: Settings) -> bool:
     try:
         data = {
             "alsaDevice": settings.alsa_device,
+            "inputSampleRate": settings.input_sample_rate,
             "bufferSize": settings.buffer_size,
             "periodSize": settings.period_size,
             "upsampleRatio": settings.upsample_ratio,

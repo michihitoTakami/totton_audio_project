@@ -50,8 +50,11 @@ static size_t g_stream_accumulated_left = 0;
 static size_t g_stream_accumulated_right = 0;
 
 static void print_config_summary(const AppConfig& cfg) {
+    int outputRate = cfg.inputSampleRate * cfg.upsampleRatio;
     std::cout << "Config:" << std::endl;
     std::cout << "  ALSA device:    " << cfg.alsaDevice << std::endl;
+    std::cout << "  Input rate:     " << cfg.inputSampleRate << " Hz" << std::endl;
+    std::cout << "  Output rate:    " << outputRate << " Hz (" << (outputRate / 1000.0) << " kHz)" << std::endl;
     std::cout << "  Buffer size:    " << cfg.bufferSize << std::endl;
     std::cout << "  Period size:    " << cfg.periodSize << std::endl;
     std::cout << "  Upsample ratio: " << cfg.upsampleRatio << std::endl;
@@ -85,6 +88,9 @@ static void load_runtime_config() {
     if (g_config.blockSize <= 0) g_config.blockSize = DEFAULT_BLOCK_SIZE;
     if (g_config.bufferSize <= 0) g_config.bufferSize = 262144;
     if (g_config.periodSize <= 0) g_config.periodSize = 32768;
+    if (g_config.inputSampleRate != 44100 && g_config.inputSampleRate != 48000) {
+        g_config.inputSampleRate = DEFAULT_INPUT_SAMPLE_RATE;
+    }
 
     if (!found) {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
@@ -221,7 +227,7 @@ static snd_pcm_t* open_and_configure_pcm() {
     }
 
     // Calculate output sample rate from config
-    unsigned int rate = DEFAULT_INPUT_SAMPLE_RATE * g_config.upsampleRatio;
+    unsigned int rate = g_config.inputSampleRate * g_config.upsampleRatio;
     if ((err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0)) < 0) {
         std::cerr << "ALSA: Cannot set sample rate: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
@@ -468,7 +474,6 @@ void alsa_output_thread() {
 int main(int argc, char* argv[]) {
     std::cout << "========================================" << std::endl;
     std::cout << "  GPU Audio Upsampler - ALSA Direct Output" << std::endl;
-    std::cout << "  44.1kHz → 705.6kHz (16x upsampling)" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
@@ -497,6 +502,30 @@ int main(int argc, char* argv[]) {
         if (argc > 1) {
             g_config.filterPath = argv[1];
             std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
+        }
+
+        // Auto-select filter based on sample rate if configured filter doesn't exist
+        // but a sample-rate-specific version does
+        if (!std::filesystem::exists(g_config.filterPath)) {
+            // Try to find sample-rate-specific filter
+            std::string basePath = g_config.filterPath;
+            size_t dotPos = basePath.rfind('.');
+            if (dotPos != std::string::npos) {
+                std::string rateSpecificPath = basePath.substr(0, dotPos) + "_" +
+                    std::to_string(g_config.inputSampleRate) + basePath.substr(dotPos);
+                if (std::filesystem::exists(rateSpecificPath)) {
+                    std::cout << "Config: Using sample-rate-specific filter: " << rateSpecificPath << std::endl;
+                    g_config.filterPath = rateSpecificPath;
+                }
+            }
+        }
+
+        // Warn if using 44.1kHz filter with 48kHz input
+        if (g_config.inputSampleRate == 48000 &&
+            g_config.filterPath.find("44100") == std::string::npos &&
+            g_config.filterPath.find("48000") == std::string::npos) {
+            std::cout << "Warning: Using generic filter with 48kHz input. "
+                      << "For optimal quality, generate a 48kHz-optimized filter." << std::endl;
         }
 
         if (!std::filesystem::exists(g_config.filterPath)) {
@@ -536,8 +565,7 @@ int main(int argc, char* argv[]) {
                 // Compute EQ frequency response and apply to filter
                 size_t filterFftSize = g_upsampler->getFilterFftSize();  // N/2+1 (R2C output)
                 size_t fullFftSize = g_upsampler->getFullFftSize();      // N (full FFT)
-                int upsampleRatio = g_upsampler->getUpsampleRatio();
-                double outputSampleRate = DEFAULT_INPUT_SAMPLE_RATE * upsampleRatio;
+                double outputSampleRate = static_cast<double>(g_config.inputSampleRate) * g_config.upsampleRatio;
                 auto eqResponse = EQ::computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
                 if (g_upsampler->applyEqResponse(eqResponse)) {
@@ -593,13 +621,13 @@ int main(int argc, char* argv[]) {
             &data
         );
 
-        // Configure input stream audio format (32-bit float stereo @ 44.1kHz)
+        // Configure input stream audio format (32-bit float stereo)
         uint8_t input_buffer[1024];
         struct spa_pod_builder input_builder = SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
 
         struct spa_audio_info_raw input_info = {};
         input_info.format = SPA_AUDIO_FORMAT_F32;
-        input_info.rate = DEFAULT_INPUT_SAMPLE_RATE;
+        input_info.rate = g_config.inputSampleRate;
         input_info.channels = CHANNELS;
         input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
         input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
@@ -618,14 +646,14 @@ int main(int argc, char* argv[]) {
             input_params, 1
         );
 
+        double outputRateKHz = g_config.inputSampleRate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
         std::cout << "System ready. Audio routing configured:" << std::endl;
         std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)" << std::endl;
         std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (" << g_config.upsampleRatio << "x upsampling)" << std::endl;
-        std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << (DEFAULT_INPUT_SAMPLE_RATE * g_config.upsampleRatio / 1000.0) << "kHz direct)" << std::endl;
+        std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)" << std::endl;
         std::cout << std::endl;
-        std::cout << "Select 'GPU Upsampler (" << (DEFAULT_INPUT_SAMPLE_RATE * g_config.upsampleRatio / 1000.0)
-                  << "kHz)' as output device in sound settings." << std::endl;
+        std::cout << "Select 'GPU Upsampler (" << outputRateKHz << "kHz)' as output device in sound settings." << std::endl;
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
