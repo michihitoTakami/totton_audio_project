@@ -171,8 +171,8 @@ static snd_pcm_t* open_and_configure_pcm() {
         return nullptr;
     }
 
-    snd_pcm_uframes_t buffer_size = 131072;
-    snd_pcm_uframes_t period_size = 16384;
+    snd_pcm_uframes_t buffer_size = 262144;   // larger buffer for stability
+    snd_pcm_uframes_t period_size = 32768;    // larger period to reduce underrun risk
     snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size);
     snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, 0);
 
@@ -348,11 +348,11 @@ void alsa_output_thread() {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
                         pcm_handle = open_and_configure_pcm();
                     }
-                    if (pcm_handle) {
-                        // resize buffer to new period size if needed
-                        snd_pcm_uframes_t new_period = 0;
-                        snd_pcm_hw_params_t* hw_params;
-                        snd_pcm_hw_params_alloca(&hw_params);
+            if (pcm_handle) {
+                // resize buffer to new period size if needed
+                snd_pcm_uframes_t new_period = 0;
+                snd_pcm_hw_params_t* hw_params;
+                snd_pcm_hw_params_alloca(&hw_params);
                         if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
                             snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) == 0 &&
                             new_period != period_size) {
@@ -373,7 +373,25 @@ void alsa_output_thread() {
                 }
             }
         } else {
+            // Not enough data → write silence to keep device fed and avoid xrun
             lock.unlock();
+            std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
+            snd_pcm_sframes_t frames_written = snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
+            if (frames_written < 0) {
+                snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
+                if (rec < 0) {
+                    std::cerr << "ALSA: Silence write error: " << snd_strerror(frames_written)
+                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..." << std::endl;
+                    if (pcm_handle) {
+                        snd_pcm_close(pcm_handle);
+                        pcm_handle = nullptr;
+                    }
+                    while (g_running && !pcm_handle) {
+                        std::this_thread::sleep_for(std::chrono::seconds(5));
+                        pcm_handle = open_and_configure_pcm();
+                    }
+                }
+            }
         }
     }
 
