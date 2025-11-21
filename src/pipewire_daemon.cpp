@@ -111,10 +111,17 @@ static void on_input_process(void* userdata) {
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
     if (input_samples && n_frames > 0 && data->gpu_ready) {
-        // Deinterleave input (stereo interleaved → separate L/R) using scratch buffers
-        if (data->input_left.size() < n_frames) data->input_left.resize(n_frames);
-        if (data->input_right.size() < n_frames) data->input_right.resize(n_frames);
+        // Validate against pre-allocated buffer size (avoid heap alloc in RT thread)
+        if (n_frames > data->input_left.size()) {
+            // This should not happen with proper preallocation; skip this buffer
+            std::cerr << "Warning: n_frames (" << n_frames
+                      << ") exceeds pre-allocated buffer (" << data->input_left.size()
+                      << ") - skipping" << std::endl;
+            pw_stream_queue_buffer(data->input_stream, buf);
+            return;
+        }
 
+        // Deinterleave input (stereo interleaved → separate L/R) using pre-allocated buffers
         for (uint32_t i = 0; i < n_frames; ++i) {
             data->input_left[i] = input_samples[i * 2];
             data->input_right[i] = input_samples[i * 2 + 1];
@@ -273,8 +280,19 @@ int main(int argc, char* argv[]) {
     Data data = {};
     data.gpu_ready = true;
 
-    // Pre-allocate streaming input buffers (tolerant capacity; avoids reallocation in callbacks)
+    // Pre-allocate all buffers to avoid heap allocations in RT callbacks
+    constexpr size_t MAX_FRAMES_PER_CALLBACK = 8192;  // PipeWire typically delivers smaller chunks
     constexpr size_t STREAM_INPUT_BUFFER_CAPACITY = 12000;
+
+    // Input deinterleave buffers
+    data.input_left.resize(MAX_FRAMES_PER_CALLBACK, 0.0f);
+    data.input_right.resize(MAX_FRAMES_PER_CALLBACK, 0.0f);
+
+    // Output buffers (upsampled: input * UPSAMPLE_RATIO)
+    data.output_left.reserve(MAX_FRAMES_PER_CALLBACK * UPSAMPLE_RATIO);
+    data.output_right.reserve(MAX_FRAMES_PER_CALLBACK * UPSAMPLE_RATIO);
+
+    // Streaming input accumulation buffers
     data.stream_input_left.resize(STREAM_INPUT_BUFFER_CAPACITY, 0.0f);
     data.stream_input_right.resize(STREAM_INPUT_BUFFER_CAPACITY, 0.0f);
     data.stream_accum_left = 0;
