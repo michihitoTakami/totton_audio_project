@@ -1,4 +1,5 @@
 #include "convolution_engine.h"
+#include "config_loader.h"
 #include <alsa/asoundlib.h>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -13,18 +14,25 @@
 #include <chrono>
 #include <cstdlib>
 #include <string>
+#include <filesystem>
 
-// Configuration
-constexpr int INPUT_SAMPLE_RATE = 44100;
-constexpr int OUTPUT_SAMPLE_RATE = 705600;  // 16x upsampling (matches filter design)
-constexpr int UPSAMPLE_RATIO = 16;
-constexpr int BLOCK_SIZE = 4096;
+// Default configuration values
+constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
+constexpr int DEFAULT_UPSAMPLE_RATIO = 16;
+constexpr int DEFAULT_BLOCK_SIZE = 4096;
 constexpr int CHANNELS = 2;
-constexpr const char* ALSA_DEVICE_DEFAULT = "hw:USB";  // Default to USB card; override via ALSA_DEVICE
+constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
+constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_1m_min_phase.bin";
+constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
+
+// Runtime configuration (loaded from config.json)
+static AppConfig g_config;
 
 // Global state
 static std::atomic<bool> g_running{true};
+static std::atomic<bool> g_reload_requested{false};
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
+static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
 
 // Audio buffer for thread communication
 static std::mutex g_buffer_mutex;
@@ -32,13 +40,51 @@ static std::condition_variable g_buffer_cv;
 static std::vector<float> g_output_buffer_left;
 static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
-static std::string g_alsa_device = ALSA_DEVICE_DEFAULT;
 
 // Streaming input accumulation buffers
 static std::vector<float> g_stream_input_left;
 static std::vector<float> g_stream_input_right;
 static size_t g_stream_accumulated_left = 0;
 static size_t g_stream_accumulated_right = 0;
+
+static void print_config_summary(const AppConfig& cfg) {
+    std::cout << "Config:" << std::endl;
+    std::cout << "  ALSA device:    " << cfg.alsaDevice << std::endl;
+    std::cout << "  Buffer size:    " << cfg.bufferSize << std::endl;
+    std::cout << "  Period size:    " << cfg.periodSize << std::endl;
+    std::cout << "  Upsample ratio: " << cfg.upsampleRatio << std::endl;
+    std::cout << "  Block size:     " << cfg.blockSize << std::endl;
+    std::cout << "  Gain:           " << cfg.gain << std::endl;
+    std::cout << "  Filter path:    " << cfg.filterPath << std::endl;
+}
+
+static void reset_runtime_state() {
+    g_output_buffer_left.clear();
+    g_output_buffer_right.clear();
+    g_output_read_pos = 0;
+    g_stream_input_left.clear();
+    g_stream_input_right.clear();
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+}
+
+static void load_runtime_config() {
+    AppConfig loaded;
+    bool found = loadAppConfig(CONFIG_FILE_PATH, loaded);
+    g_config = loaded;
+
+    if (g_config.alsaDevice.empty()) g_config.alsaDevice = DEFAULT_ALSA_DEVICE;
+    if (g_config.filterPath.empty()) g_config.filterPath = DEFAULT_FILTER_PATH;
+    if (g_config.upsampleRatio <= 0) g_config.upsampleRatio = DEFAULT_UPSAMPLE_RATIO;
+    if (g_config.blockSize <= 0) g_config.blockSize = DEFAULT_BLOCK_SIZE;
+    if (g_config.bufferSize <= 0) g_config.bufferSize = 262144;
+    if (g_config.periodSize <= 0) g_config.periodSize = 32768;
+
+    if (!found) {
+        std::cout << "Config: Using defaults (no config.json found)" << std::endl;
+    }
+    print_config_summary(g_config);
+}
 
 // PipeWire objects
 struct Data {
@@ -49,8 +95,17 @@ struct Data {
 
 // Signal handler for graceful shutdown
 static void signal_handler(int sig) {
-    std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
+    if (sig == SIGHUP) {
+        std::cout << "\nReceived SIGHUP, restarting for config reload..." << std::endl;
+        g_reload_requested = true;
+    } else {
+        std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
+    }
     g_running = false;
+    // Quit PipeWire main loop to trigger clean shutdown
+    if (g_pw_loop) {
+        pw_main_loop_quit(g_pw_loop);
+    }
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
@@ -140,9 +195,9 @@ static snd_pcm_t* open_and_configure_pcm() {
     snd_pcm_t* pcm_handle = nullptr;
     int err;
 
-    err = snd_pcm_open(&pcm_handle, g_alsa_device.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+    err = snd_pcm_open(&pcm_handle, g_config.alsaDevice.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
     if (err < 0) {
-        std::cerr << "ALSA: Cannot open device " << g_alsa_device << ": "
+        std::cerr << "ALSA: Cannot open device " << g_config.alsaDevice << ": "
                   << snd_strerror(err) << std::endl;
         return nullptr;
     }
@@ -159,7 +214,8 @@ static snd_pcm_t* open_and_configure_pcm() {
         return nullptr;
     }
 
-    unsigned int rate = OUTPUT_SAMPLE_RATE;
+    // Calculate output sample rate from config
+    unsigned int rate = DEFAULT_INPUT_SAMPLE_RATE * g_config.upsampleRatio;
     if ((err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0)) < 0) {
         std::cerr << "ALSA: Cannot set sample rate: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
@@ -171,8 +227,8 @@ static snd_pcm_t* open_and_configure_pcm() {
         return nullptr;
     }
 
-    snd_pcm_uframes_t buffer_size = 262144;   // larger buffer for stability
-    snd_pcm_uframes_t period_size = 32768;    // larger period to reduce underrun risk
+    snd_pcm_uframes_t buffer_size = static_cast<snd_pcm_uframes_t>(g_config.bufferSize);
+    snd_pcm_uframes_t period_size = static_cast<snd_pcm_uframes_t>(g_config.periodSize);
     snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size);
     snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, 0);
 
@@ -272,8 +328,8 @@ void alsa_output_thread() {
         size_t available = g_output_buffer_left.size() - g_output_read_pos;
         if (available >= period_size) {
             // Interleave L/R channels and convert float→int32
-            // Restore upsampling補償ゲイン（元設定: UPSAMPLE_RATIO）
-            constexpr float gain = static_cast<float>(UPSAMPLE_RATIO);
+            // Apply configured gain (compensates for energy distribution in upsampled signal)
+            const float gain = g_config.gain;
 
             // Statistics for debugging
             static size_t clip_count = 0;
@@ -410,136 +466,165 @@ int main(int argc, char* argv[]) {
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
-    // ALSA device override via env or arg
-    if (const char* env_dev = std::getenv("ALSA_DEVICE")) {
-        g_alsa_device = env_dev;
-    }
-
-    // Parse filter path
-    std::string filter_path = "data/coefficients/filter_1m_min_phase.bin";
-    if (argc > 1) {
-        filter_path = argv[1];
-    }
-
-    // Install signal handlers
+    // Install signal handlers (SIGHUP for restart, SIGINT/SIGTERM for shutdown)
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
+    std::signal(SIGHUP, signal_handler);
 
-    // Initialize GPU upsampler
-    std::cout << "Initializing GPU upsampler..." << std::endl;
-    g_upsampler = new ConvolutionEngine::GPUUpsampler();
-    if (!g_upsampler->initialize(filter_path, UPSAMPLE_RATIO, BLOCK_SIZE)) {
-        std::cerr << "Failed to initialize GPU upsampler" << std::endl;
+    int exitCode = 0;
+
+    do {
+        g_running = true;
+        g_reload_requested = false;
+        reset_runtime_state();
+
+        // Load configuration from config.json (if exists)
+        load_runtime_config();
+
+        // Environment variable overrides config.json
+        if (const char* env_dev = std::getenv("ALSA_DEVICE")) {
+            g_config.alsaDevice = env_dev;
+            std::cout << "Config: ALSA_DEVICE env override: " << env_dev << std::endl;
+        }
+
+        // Command line argument overrides filter path
+        if (argc > 1) {
+            g_config.filterPath = argv[1];
+            std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
+        }
+
+        if (!std::filesystem::exists(g_config.filterPath)) {
+            std::cerr << "Config error: Filter file not found: " << g_config.filterPath << std::endl;
+            exitCode = 1;
+            break;
+        }
+
+        // Initialize GPU upsampler with configured values
+        std::cout << "Initializing GPU upsampler..." << std::endl;
+        g_upsampler = new ConvolutionEngine::GPUUpsampler();
+        if (!g_upsampler->initialize(g_config.filterPath, g_config.upsampleRatio, g_config.blockSize)) {
+            std::cerr << "Failed to initialize GPU upsampler" << std::endl;
+            delete g_upsampler;
+            exitCode = 1;
+            break;
+        }
+        std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
+                  << g_config.blockSize << " samples/block)" << std::endl;
+
+        // Initialize streaming mode to preserve overlap buffers across PipeWire callbacks
+        if (!g_upsampler->initializeStreaming()) {
+            std::cerr << "Failed to initialize streaming mode" << std::endl;
+            delete g_upsampler;
+            exitCode = 1;
+            break;
+        }
+
+        // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
+        size_t buffer_capacity = 10000;  // Conservative estimate for buffer size
+        g_stream_input_left.resize(buffer_capacity, 0.0f);
+        g_stream_input_right.resize(buffer_capacity, 0.0f);
+        g_stream_accumulated_left = 0;
+        g_stream_accumulated_right = 0;
+
+        std::cout << std::endl;
+
+        // Start ALSA output thread
+        std::cout << "Starting ALSA output thread..." << std::endl;
+        std::thread alsa_thread(alsa_output_thread);
+
+        // Initialize PipeWire input
+        pw_init(&argc, &argv);
+
+        Data data = {};
+        data.gpu_ready = true;
+
+        // Create main loop (store globally for signal handler access)
+        data.loop = pw_main_loop_new(nullptr);
+        g_pw_loop = data.loop;
+        struct pw_loop* loop = pw_main_loop_get_loop(data.loop);
+
+        // Create Capture stream from gpu_upsampler_sink.monitor
+        std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..." << std::endl;
+        data.input_stream = pw_stream_new_simple(
+            loop,
+            "GPU Upsampler Input",
+            pw_properties_new(
+                PW_KEY_MEDIA_TYPE, "Audio",
+                PW_KEY_MEDIA_CATEGORY, "Capture",
+                PW_KEY_MEDIA_ROLE, "Music",
+                PW_KEY_NODE_DESCRIPTION, "GPU Upsampler Input",
+                PW_KEY_NODE_TARGET, "gpu_upsampler_sink.monitor",
+                "audio.channels", "2",
+                "audio.position", "FL,FR",
+                nullptr
+            ),
+            &input_stream_events,
+            &data
+        );
+
+        // Configure input stream audio format (32-bit float stereo @ 44.1kHz)
+        uint8_t input_buffer[1024];
+        struct spa_pod_builder input_builder = SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
+
+        struct spa_audio_info_raw input_info = {};
+        input_info.format = SPA_AUDIO_FORMAT_F32;
+        input_info.rate = DEFAULT_INPUT_SAMPLE_RATE;
+        input_info.channels = CHANNELS;
+        input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
+        input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
+
+        const struct spa_pod* input_params[1];
+        input_params[0] = spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
+
+        pw_stream_connect(
+            data.input_stream,
+            PW_DIRECTION_INPUT,
+            PW_ID_ANY,
+            static_cast<pw_stream_flags>(
+                PW_STREAM_FLAG_MAP_BUFFERS |
+                PW_STREAM_FLAG_RT_PROCESS
+            ),
+            input_params, 1
+        );
+
+        std::cout << std::endl;
+        std::cout << "System ready. Audio routing configured:" << std::endl;
+        std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)" << std::endl;
+        std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (" << g_config.upsampleRatio << "x upsampling)" << std::endl;
+        std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << (DEFAULT_INPUT_SAMPLE_RATE * g_config.upsampleRatio / 1000.0) << "kHz direct)" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Select 'GPU Upsampler (" << (DEFAULT_INPUT_SAMPLE_RATE * g_config.upsampleRatio / 1000.0)
+                  << "kHz)' as output device in sound settings." << std::endl;
+        std::cout << "Press Ctrl+C to stop." << std::endl;
+        std::cout << "========================================" << std::endl;
+
+        // Run main loop
+        pw_main_loop_run(data.loop);
+
+        // Cleanup
+        std::cout << "Shutting down..." << std::endl;
+
+        if (data.input_stream) {
+            pw_stream_destroy(data.input_stream);
+        }
+        if (data.loop) {
+            pw_main_loop_destroy(data.loop);
+            g_pw_loop = nullptr;
+        }
+
+        g_running = false;
+        g_buffer_cv.notify_all();
+        alsa_thread.join();
+
         delete g_upsampler;
-        return 1;
-    }
-    std::cout << "GPU upsampler ready (16x upsampling, " << BLOCK_SIZE << " samples/block)" << std::endl;
+        g_upsampler = nullptr;
+        pw_deinit();
 
-    // Initialize streaming mode to preserve overlap buffers across PipeWire callbacks
-    if (!g_upsampler->initializeStreaming()) {
-        std::cerr << "Failed to initialize streaming mode" << std::endl;
-        delete g_upsampler;
-        return 1;
-    }
-
-    // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
-    // This will be set by initializeStreaming() to validOutputPerBlock / upsampleRatio
-    size_t buffer_capacity = 10000;  // Conservative estimate for buffer size
-    g_stream_input_left.resize(buffer_capacity, 0.0f);
-    g_stream_input_right.resize(buffer_capacity, 0.0f);
-    g_stream_accumulated_left = 0;
-    g_stream_accumulated_right = 0;
-
-    std::cout << std::endl;
-
-    // Start ALSA output thread
-    std::cout << "Starting ALSA output thread..." << std::endl;
-    std::thread alsa_thread(alsa_output_thread);
-
-    // Initialize PipeWire input
-    pw_init(&argc, &argv);
-
-    Data data = {};
-    data.gpu_ready = true;
-
-    // Create main loop
-    data.loop = pw_main_loop_new(nullptr);
-    struct pw_loop* loop = pw_main_loop_get_loop(data.loop);
-
-    // Create Capture stream from gpu_upsampler_sink.monitor
-    std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..." << std::endl;
-    data.input_stream = pw_stream_new_simple(
-        loop,
-        "GPU Upsampler Input",
-        pw_properties_new(
-            PW_KEY_MEDIA_TYPE, "Audio",
-            PW_KEY_MEDIA_CATEGORY, "Capture",
-            PW_KEY_MEDIA_ROLE, "Music",
-            PW_KEY_NODE_DESCRIPTION, "GPU Upsampler Input",
-            PW_KEY_NODE_TARGET, "gpu_upsampler_sink.monitor",
-            "audio.channels", "2",
-            "audio.position", "FL,FR",
-            nullptr
-        ),
-        &input_stream_events,
-        &data
-    );
-
-    // Configure input stream audio format (32-bit float stereo @ 44.1kHz)
-    uint8_t input_buffer[1024];
-    struct spa_pod_builder input_builder = SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
-
-    struct spa_audio_info_raw input_info = {};
-    input_info.format = SPA_AUDIO_FORMAT_F32;
-    input_info.rate = INPUT_SAMPLE_RATE;
-    input_info.channels = CHANNELS;
-    input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
-    input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
-
-    const struct spa_pod* input_params[1];
-    input_params[0] = spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
-
-    pw_stream_connect(
-        data.input_stream,
-        PW_DIRECTION_INPUT,
-        PW_ID_ANY,
-        static_cast<pw_stream_flags>(
-            PW_STREAM_FLAG_MAP_BUFFERS |
-            PW_STREAM_FLAG_RT_PROCESS
-        ),
-        input_params, 1
-    );
-
-    std::cout << std::endl;
-    std::cout << "System ready. Audio routing configured:" << std::endl;
-    std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)" << std::endl;
-    std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (8x upsampling)" << std::endl;
-    std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (352.8kHz direct)" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Select 'GPU Upsampler (705.6kHz)' as output device in sound settings." << std::endl;
-    std::cout << "Press Ctrl+C to stop." << std::endl;
-    std::cout << "========================================" << std::endl;
-
-    // Run main loop
-    pw_main_loop_run(data.loop);
-
-    // Cleanup
-    std::cout << "Shutting down..." << std::endl;
-
-    if (data.input_stream) {
-        pw_stream_destroy(data.input_stream);
-    }
-    if (data.loop) {
-        pw_main_loop_destroy(data.loop);
-    }
-
-    g_running = false;
-    g_buffer_cv.notify_all();
-    alsa_thread.join();
-
-    delete g_upsampler;
-    pw_deinit();
+        if (g_reload_requested) {
+            std::cout << "Reload requested. Restarting daemon with updated config..." << std::endl;
+        }
+    } while (g_reload_requested);
 
     std::cout << "Goodbye!" << std::endl;
-    return 0;
+    return exitCode;
 }

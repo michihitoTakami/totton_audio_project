@@ -11,6 +11,22 @@
 - `data/coefficients/`: 1MタップFIR係数 (`filter_1m_min_phase.bin`) とメタデータ。
 - `docs/`: 調査・セットアップ資料（`setup_guide.md`, `crackling_noise_investigation.md` など）。
 
+## フィルタとサンプルレート
+- 44.1kHz入力: `data/coefficients/filter_1m_min_phase.bin` を自動選択 (16x)。
+- 48kHz入力: `data/coefficients/filter_48k_1m_min_phase.bin` が存在すれば自動選択 (16x)。未生成の場合は明示的に `--filter` で指定するか、以下で生成:
+  ```bash
+  python scripts/generate_filter.py --input-rate 48000 --stopband-start 24000 --passband-end 21500 --output-prefix filter_48k_1m_min_phase
+  ```
+- 48kHz用のバイナリが無い場合は、警告の上で44.1kHz用フィルタにフォールバックします（生成を推奨）。
+- その他レートは非サポート。必要に応じて適合フィルタを生成してください。
+
+## 設定ファイルと再読込
+- `config.json` をルートに置くと、CLIのデフォルト値と `gpu_upsampler_alsa` の起動設定（ALSAデバイス、バッファ、フィルタ、ゲインなど）に適用されます。  
+- `gpu_upsampler_alsa` は SIGHUP で設定を再読込し、内部を再初期化します。Web UI の `/restart` も SIGHUP を送ります。手動で再読込したい場合:
+  ```bash
+  pkill -HUP -f gpu_upsampler_alsa   # または PID を指定
+  ```
+
 ### 信号フロー (ALSAデーモン)
 ```
 App (PipeWire) -> gpu_upsampler_sink.monitor -> GPU Upsampler (CUDA 16x) -> ALSA hw:3,0 -> USB DAC -> Analog

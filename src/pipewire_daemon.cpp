@@ -149,7 +149,7 @@ static void on_input_process(void* userdata) {
                 // Store output for consumption by output stream
                 if (!g_output_buffer_left.write(data->output_left.data(), data->output_left.size()) ||
                     !g_output_buffer_right.write(data->output_right.data(), data->output_right.size())) {
-                    std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
+                std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
                 }
                 // Continue loop: there might be enough accumulated input for another block.
                 first_iteration = false;
