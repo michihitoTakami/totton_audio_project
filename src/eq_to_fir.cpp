@@ -138,18 +138,15 @@ std::vector<std::complex<double>> computeEqFrequencyResponse(
     return response;
 }
 
-std::vector<double> generateFftFrequencies(size_t fftSize, double sampleRate) {
-    std::vector<double> frequencies(fftSize);
-    double df = sampleRate / static_cast<double>(fftSize);
+std::vector<double> generateR2cFftFrequencies(size_t numBins, size_t fullFftSize, double sampleRate) {
+    // For R2C FFT, we only have positive frequencies: DC to Nyquist
+    // numBins = N/2 + 1 for full FFT size N
+    // Frequency resolution = sampleRate / N
+    std::vector<double> frequencies(numBins);
+    double df = sampleRate / static_cast<double>(fullFftSize);
 
-    for (size_t i = 0; i < fftSize; ++i) {
-        if (i <= fftSize / 2) {
-            // Positive frequencies (DC to Nyquist)
-            frequencies[i] = i * df;
-        } else {
-            // Negative frequencies (wrap around)
-            frequencies[i] = (static_cast<double>(i) - static_cast<double>(fftSize)) * df;
-        }
+    for (size_t i = 0; i < numBins; ++i) {
+        frequencies[i] = i * df;  // 0, df, 2*df, ..., Nyquist
     }
 
     return frequencies;
@@ -177,19 +174,21 @@ void applyEqToFilterFft(
 }
 
 std::vector<std::complex<double>> computeEqResponseForFft(
-    size_t fftSize,
-    double inputSampleRate,
+    size_t filterFftSize,
+    size_t fullFftSize,
+    double outputSampleRate,
     const EqProfile& profile
 ) {
-    // EQ is designed at input sample rate (44.1kHz or 48kHz)
-    // But filter FFT is at upsampled rate
-    // We need to compute EQ response at the frequencies that matter
+    // Generate frequencies for R2C FFT bins at OUTPUT sample rate
+    // filterFftSize = N/2+1 (R2C output bins)
+    // fullFftSize = N (for frequency resolution)
+    // outputSampleRate = input_rate * upsample_ratio (e.g., 705600 Hz)
+    auto frequencies = generateR2cFftFrequencies(filterFftSize, fullFftSize, outputSampleRate);
 
-    // For simplicity, compute at input sample rate frequencies
-    // The upsampling filter will handle the high frequencies anyway
-    auto frequencies = generateFftFrequencies(fftSize, inputSampleRate);
-
-    return computeEqFrequencyResponse(frequencies, profile, inputSampleRate);
+    // Compute EQ response at OUTPUT sample rate
+    // The biquad coefficients are computed for the upsampled rate
+    // so that EQ frequencies remain correct (1kHz stays at 1kHz)
+    return computeEqFrequencyResponse(frequencies, profile, outputSampleRate);
 }
 
 }  // namespace EQ

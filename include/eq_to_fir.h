@@ -39,11 +39,12 @@ std::vector<std::complex<double>> computeEqFrequencyResponse(
     double sampleRate
 );
 
-// Generate frequency array for FFT bins
-// fftSize: size of FFT (e.g., 2^20 for 1M-tap filter)
+// Generate frequency array for R2C FFT bins (positive frequencies only)
+// numBins: number of FFT bins (N/2+1 for R2C output)
+// fullFftSize: full FFT size N (for frequency resolution calculation)
 // sampleRate: output sample rate after upsampling (e.g., 705600)
-// Returns: frequency values for each FFT bin (DC to Nyquist, then negative)
-std::vector<double> generateFftFrequencies(size_t fftSize, double sampleRate);
+// Returns: frequency values for each FFT bin (DC to Nyquist only)
+std::vector<double> generateR2cFftFrequencies(size_t numBins, size_t fullFftSize, double sampleRate);
 
 // Apply EQ response to existing filter FFT
 // filterFFT: complex FFT of FIR filter (modified in place)
@@ -54,14 +55,16 @@ void applyEqToFilterFft(
     const std::vector<std::complex<double>>& eqResponse
 );
 
-// Convenience function: compute EQ response sized for filter FFT
-// fftSize: size of filter FFT
-// inputSampleRate: original sample rate (44100 or 48000)
+// Compute EQ response sized for filter FFT (R2C output)
+// filterFftSize: R2C FFT output size (N/2+1)
+// fullFftSize: full FFT size (N)
+// outputSampleRate: sample rate after upsampling (e.g., 705600)
 // profile: EQ profile
-// Returns: EQ frequency response sized for filter FFT
+// Returns: EQ frequency response sized for filter FFT (N/2+1 bins)
 std::vector<std::complex<double>> computeEqResponseForFft(
-    size_t fftSize,
-    double inputSampleRate,
+    size_t filterFftSize,
+    size_t fullFftSize,
+    double outputSampleRate,
     const EqProfile& profile
 );
 

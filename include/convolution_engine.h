@@ -85,8 +85,14 @@ public:
     // Check if EQ is currently applied
     bool isEqApplied() const { return eqApplied_; }
 
-    // Get filter FFT size (for computing EQ response with matching size)
+    // Get filter FFT size (R2C output size = N/2+1, for computing EQ response)
     size_t getFilterFftSize() const { return filterFftSize_; }
+
+    // Get full FFT size (N, for frequency calculation)
+    size_t getFullFftSize() const { return fftSize_; }
+
+    // Get upsample ratio
+    int getUpsampleRatio() const { return upsampleRatio_; }
 
     // Get input sample rate assumption (for EQ design)
     static constexpr int getDefaultInputSampleRate() { return 44100; }

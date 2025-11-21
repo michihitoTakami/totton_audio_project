@@ -135,8 +135,11 @@ int main(int argc, char* argv[]) {
 
     // Compute EQ response and apply
     std::cout << "\n5. Applying EQ to filter..." << std::endl;
-    size_t fftSize = upsampler.getFilterFftSize();
-    auto eqResponse = EQ::computeEqResponseForFft(fftSize, SAMPLE_RATE, eqProfile);
+    size_t filterFftSize = upsampler.getFilterFftSize();  // N/2+1 (R2C output)
+    size_t fullFftSize = upsampler.getFullFftSize();      // N (full FFT)
+    int upsampleRatio = upsampler.getUpsampleRatio();
+    double outputSampleRate = SAMPLE_RATE * upsampleRatio;
+    auto eqResponse = EQ::computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
     if (!upsampler.applyEqResponse(eqResponse)) {
         std::cerr << "Failed to apply EQ response" << std::endl;
@@ -162,7 +165,7 @@ int main(int argc, char* argv[]) {
     // Analyze frequency response
     std::cout << "\n7. Analyzing frequency response..." << std::endl;
     int analysisFFTSize = 16384;
-    int outputSampleRate = SAMPLE_RATE * UPSAMPLE_RATIO;
+    // outputSampleRate already defined above as double
 
     auto spectrumNoEq = computeSpectrum(outputNoEq, analysisFFTSize);
     auto spectrumWithEq = computeSpectrum(outputWithEq, analysisFFTSize);

@@ -534,8 +534,11 @@ int main(int argc, char* argv[]) {
                           << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
 
                 // Compute EQ frequency response and apply to filter
-                size_t fftSize = g_upsampler->getFilterFftSize();
-                auto eqResponse = EQ::computeEqResponseForFft(fftSize, DEFAULT_INPUT_SAMPLE_RATE, eqProfile);
+                size_t filterFftSize = g_upsampler->getFilterFftSize();  // N/2+1 (R2C output)
+                size_t fullFftSize = g_upsampler->getFullFftSize();      // N (full FFT)
+                int upsampleRatio = g_upsampler->getUpsampleRatio();
+                double outputSampleRate = DEFAULT_INPUT_SAMPLE_RATE * upsampleRatio;
+                auto eqResponse = EQ::computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
                 if (g_upsampler->applyEqResponse(eqResponse)) {
                     std::cout << "  EQ: Applied to convolution filter" << std::endl;
