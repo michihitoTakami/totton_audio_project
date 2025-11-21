@@ -11,6 +11,14 @@
 - `data/coefficients/`: 1MタップFIR係数 (`filter_1m_min_phase.bin`) とメタデータ。
 - `docs/`: 調査・セットアップ資料（`setup_guide.md`, `crackling_noise_investigation.md` など）。
 
+## フィルタとサンプルレート
+- 44.1kHz入力: `data/coefficients/filter_1m_min_phase.bin` を自動選択 (16x)。
+- 48kHz入力: `data/coefficients/filter_48k_1m_min_phase.bin` が存在すれば自動選択 (16x)。未生成の場合は明示的に `--filter` で指定するか、以下で生成:
+  ```bash
+  python scripts/generate_filter.py --input-rate 48000 --stopband-start 24000 --passband-end 21500 --output-prefix filter_48k_1m_min_phase
+  ```
+- その他レートは非サポート。必要に応じて適合フィルタを生成してください。
+
 ### 信号フロー (ALSAデーモン)
 ```
 App (PipeWire) -> gpu_upsampler_sink.monitor -> GPU Upsampler (CUDA 16x) -> ALSA hw:3,0 -> USB DAC -> Analog

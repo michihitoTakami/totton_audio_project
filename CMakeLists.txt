@@ -99,7 +99,9 @@ install(FILES
 # Install filter coefficients to LV2 bundle
 install(FILES
     data/coefficients/filter_1m_min_phase.bin
+    data/coefficients/filter_48k_1m_min_phase.bin
     DESTINATION ${LV2_INSTALL_DIR}
+    OPTIONAL
 )
 
 # PipeWire Daemon executable
