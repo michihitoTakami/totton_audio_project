@@ -211,8 +211,8 @@ static bool pcm_alive(snd_pcm_t* pcm_handle) {
 // ALSA output thread (705.6kHz direct to DAC)
 void alsa_output_thread() {
     snd_pcm_t* pcm_handle = open_and_configure_pcm();
-    std::vector<int32_t> interleaved_buffer(16384 * CHANNELS);  // resized after open
-    snd_pcm_uframes_t period_size = 16384;
+    std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
+    snd_pcm_uframes_t period_size = 32768;
     if (!pcm_handle) {
         // Retry loop until device appears or shutdown
         while (g_running && !pcm_handle) {
@@ -348,11 +348,11 @@ void alsa_output_thread() {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
                         pcm_handle = open_and_configure_pcm();
                     }
-            if (pcm_handle) {
-                // resize buffer to new period size if needed
-                snd_pcm_uframes_t new_period = 0;
-                snd_pcm_hw_params_t* hw_params;
-                snd_pcm_hw_params_alloca(&hw_params);
+                    if (pcm_handle) {
+                        // resize buffer to new period size if needed
+                        snd_pcm_uframes_t new_period = 0;
+                        snd_pcm_hw_params_t* hw_params;
+                        snd_pcm_hw_params_alloca(&hw_params);
                         if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
                             snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) == 0 &&
                             new_period != period_size) {
