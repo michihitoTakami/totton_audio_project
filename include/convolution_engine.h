@@ -73,11 +73,14 @@ public:
 
     // ========== EQ Support ==========
 
-    // Apply EQ frequency response to the filter
-    // eqResponse: complex frequency response (same size as filter FFT)
-    // The combined filter is stored as: H_combined = H_original * H_eq
-    // Call restoreOriginalFilter() to remove EQ
-    bool applyEqResponse(const std::vector<std::complex<double>>& eqResponse);
+    // Apply EQ magnitude with minimum phase reconstruction
+    // eqMagnitude: EQ magnitude response |H_eq(f)| (same size as filter FFT)
+    // Process:
+    //   1. Combined magnitude = |H_original| * |H_eq|
+    //   2. Compute minimum phase via Hilbert transform (cepstrum method)
+    //   3. Store result as new filter
+    // This preserves minimum phase property (no pre-ringing)
+    bool applyEqMagnitude(const std::vector<double>& eqMagnitude);
 
     // Restore original filter (remove EQ)
     void restoreOriginalFilter();
@@ -134,10 +137,14 @@ private:
     // Filter coefficients
     std::vector<float> h_filterCoeffs_;  // Host
     float* d_filterCoeffs_;              // Device
-    cufftComplex* d_filterFFT_;          // Pre-computed filter FFT (may have EQ applied)
+
+    // Double-buffered filter FFT (ping-pong) for glitch-free EQ updates
+    cufftComplex* d_filterFFT_A_;        // Filter FFT buffer A
+    cufftComplex* d_filterFFT_B_;        // Filter FFT buffer B
+    cufftComplex* d_activeFilterFFT_;    // Currently active filter (points to A or B)
     cufftComplex* d_originalFilterFFT_;  // Original filter FFT (without EQ, for restoration)
     size_t filterFftSize_;               // Size of filter FFT arrays
-    bool eqApplied_;                     // True if EQ has been applied to d_filterFFT_
+    bool eqApplied_;                     // True if EQ has been applied
 
     // Working buffers
     float* d_inputBlock_;                // Device input block
@@ -148,6 +155,13 @@ private:
     // cuFFT plans
     cufftHandle fftPlanForward_;
     cufftHandle fftPlanInverse_;
+
+    // EQ-specific resources (persistent to avoid allocation during real-time EQ switching)
+    cufftHandle eqPlanD2Z_;               // Double-precision R2C for EQ
+    cufftHandle eqPlanZ2D_;               // Double-precision C2R for EQ
+    cufftDoubleReal* d_eqLogMag_;         // GPU buffer for log magnitude (reused)
+    cufftDoubleComplex* d_eqComplexSpec_; // GPU buffer for complex spectrum (reused)
+    std::vector<cufftComplex> h_originalFilterFft_;  // Host cache of original filter FFT
 
     // Statistics
     Stats stats_;

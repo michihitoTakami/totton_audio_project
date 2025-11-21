@@ -155,11 +155,13 @@ void GPUUpsampler::resizeOverlapBuffers(size_t newSize) {
 
 GPUUpsampler::GPUUpsampler()
     : upsampleRatio_(1), blockSize_(8192), filterTaps_(0), fftSize_(0),
-      d_filterCoeffs_(nullptr), d_filterFFT_(nullptr),
+      d_filterCoeffs_(nullptr),
+      d_filterFFT_A_(nullptr), d_filterFFT_B_(nullptr), d_activeFilterFFT_(nullptr),
       d_originalFilterFFT_(nullptr), filterFftSize_(0), eqApplied_(false),
       d_inputBlock_(nullptr), d_outputBlock_(nullptr),
       d_inputFFT_(nullptr), d_convResult_(nullptr),
       fftPlanForward_(0), fftPlanInverse_(0),
+      eqPlanD2Z_(0), eqPlanZ2D_(0), d_eqLogMag_(nullptr), d_eqComplexSpec_(nullptr),
       overlapSize_(0), stream_(nullptr), streamLeft_(nullptr), streamRight_(nullptr),
       streamValidInputPerBlock_(0), streamInitialized_(false), validOutputPerBlock_(0),
       streamOverlapSize_(0),
@@ -297,10 +299,17 @@ bool GPUUpsampler::setupGPUResources() {
         );
 
         filterFftSize_ = fftComplexSize;
+
+        // Allocate double-buffered filter FFT (ping-pong) for glitch-free EQ updates
         Utils::checkCudaError(
-            cudaMalloc(&d_filterFFT_, fftComplexSize * sizeof(cufftComplex)),
-            "cudaMalloc filter FFT"
+            cudaMalloc(&d_filterFFT_A_, fftComplexSize * sizeof(cufftComplex)),
+            "cudaMalloc filter FFT A"
         );
+        Utils::checkCudaError(
+            cudaMalloc(&d_filterFFT_B_, fftComplexSize * sizeof(cufftComplex)),
+            "cudaMalloc filter FFT B"
+        );
+        d_activeFilterFFT_ = d_filterFFT_A_;  // Start with buffer A
 
         // Allocate backup for original filter FFT (for EQ restore)
         Utils::checkCudaError(
@@ -342,16 +351,50 @@ bool GPUUpsampler::setupGPUResources() {
             "cudaMemcpy filter to padded"
         );
 
+        // Compute filter FFT into buffer A
         Utils::checkCufftError(
-            cufftExecR2C(fftPlanForward_, d_filterPadded, d_filterFFT_),
+            cufftExecR2C(fftPlanForward_, d_filterPadded, d_filterFFT_A_),
             "cufftExecR2C filter"
+        );
+
+        // Copy to buffer B (both start with same initial filter)
+        Utils::checkCudaError(
+            cudaMemcpy(d_filterFFT_B_, d_filterFFT_A_,
+                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+            "cudaMemcpy filter FFT A to B"
         );
 
         // Backup original filter FFT for EQ restore
         Utils::checkCudaError(
-            cudaMemcpy(d_originalFilterFFT_, d_filterFFT_,
+            cudaMemcpy(d_originalFilterFFT_, d_filterFFT_A_,
                       filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
             "cudaMemcpy backup original filter FFT"
+        );
+
+        // Host cache for original filter FFT (avoids D→H copy during EQ application)
+        h_originalFilterFft_.resize(filterFftSize_);
+        Utils::checkCudaError(
+            cudaMemcpy(h_originalFilterFft_.data(), d_filterFFT_A_,
+                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+            "cudaMemcpy original filter to host cache"
+        );
+
+        // Pre-allocate EQ-specific resources (persistent for real-time EQ switching)
+        Utils::checkCufftError(
+            cufftPlan1d(&eqPlanD2Z_, fftSize_, CUFFT_D2Z, 1),
+            "cufftPlan1d EQ D2Z"
+        );
+        Utils::checkCufftError(
+            cufftPlan1d(&eqPlanZ2D_, fftSize_, CUFFT_Z2D, 1),
+            "cufftPlan1d EQ Z2D"
+        );
+        Utils::checkCudaError(
+            cudaMalloc(&d_eqLogMag_, fftSize_ * sizeof(cufftDoubleReal)),
+            "cudaMalloc EQ log magnitude buffer"
+        );
+        Utils::checkCudaError(
+            cudaMalloc(&d_eqComplexSpec_, filterFftSize_ * sizeof(cufftDoubleComplex)),
+            "cudaMalloc EQ complex spectrum buffer"
         );
 
         cudaFree(d_filterPadded);
@@ -604,7 +647,7 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
             blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
 
             complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-                d_inputFFT, d_filterFFT_, fftComplexSize
+                d_inputFFT, d_activeFilterFFT_, fftComplexSize
             );
 
             Utils::checkCudaError(
@@ -739,7 +782,9 @@ void GPUUpsampler::cleanup() {
     unregisterHostBuffers();
 
     if (d_filterCoeffs_) cudaFree(d_filterCoeffs_);
-    if (d_filterFFT_) cudaFree(d_filterFFT_);
+    // Free double-buffered filter FFT (ping-pong)
+    if (d_filterFFT_A_) cudaFree(d_filterFFT_A_);
+    if (d_filterFFT_B_) cudaFree(d_filterFFT_B_);
     if (d_originalFilterFFT_) cudaFree(d_originalFilterFFT_);
     if (d_inputBlock_) cudaFree(d_inputBlock_);
     if (d_outputBlock_) cudaFree(d_outputBlock_);
@@ -756,12 +801,21 @@ void GPUUpsampler::cleanup() {
     if (fftPlanForward_) cufftDestroy(fftPlanForward_);
     if (fftPlanInverse_) cufftDestroy(fftPlanInverse_);
 
+    // Free EQ-specific resources
+    if (eqPlanD2Z_) cufftDestroy(eqPlanD2Z_);
+    if (eqPlanZ2D_) cufftDestroy(eqPlanZ2D_);
+    if (d_eqLogMag_) cudaFree(d_eqLogMag_);
+    if (d_eqComplexSpec_) cudaFree(d_eqComplexSpec_);
+    h_originalFilterFft_.clear();
+
     if (stream_) cudaStreamDestroy(stream_);
     if (streamLeft_) cudaStreamDestroy(streamLeft_);
     if (streamRight_) cudaStreamDestroy(streamRight_);
 
     d_filterCoeffs_ = nullptr;
-    d_filterFFT_ = nullptr;
+    d_filterFFT_A_ = nullptr;
+    d_filterFFT_B_ = nullptr;
+    d_activeFilterFFT_ = nullptr;
     d_originalFilterFFT_ = nullptr;
     filterFftSize_ = 0;
     eqApplied_ = false;
@@ -972,7 +1026,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         threadsPerBlock = 256;
         blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
         complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-            d_streamInputFFT_, d_filterFFT_, fftComplexSize
+            d_streamInputFFT_, d_activeFilterFFT_, fftComplexSize
         );
 
         Utils::checkCufftError(
@@ -1040,118 +1094,192 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
 // ========== EQ Support Methods ==========
 
-// CUDA kernel for complex multiplication with double precision EQ response
-__global__ void applyEqKernel(cufftComplex* filterFFT,
-                               const cufftComplex* originalFFT,
-                               const double* eqReal,
-                               const double* eqImag,
-                               int size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size) {
-        // Load original filter FFT
-        float a = originalFFT[idx].x;
-        float b = originalFFT[idx].y;
-
-        // Load EQ response
-        float c = static_cast<float>(eqReal[idx]);
-        float d = static_cast<float>(eqImag[idx]);
-
-        // Complex multiplication: H_combined = H_original * H_eq
-        filterFFT[idx].x = a * c - b * d;
-        filterFFT[idx].y = a * d + b * c;
-    }
-}
-
-bool GPUUpsampler::applyEqResponse(const std::vector<std::complex<double>>& eqResponse) {
-    if (!d_filterFFT_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
-        std::cerr << "EQ: Filter not initialized" << std::endl;
-        return false;
-    }
-
-    if (eqResponse.size() != filterFftSize_) {
-        std::cerr << "EQ: Response size mismatch: expected " << filterFftSize_
-                  << ", got " << eqResponse.size() << std::endl;
-        return false;
-    }
-
-    // RAII wrapper for CUDA memory (ensures cleanup on exception)
-    struct CudaDeleter {
-        void operator()(double* ptr) const { if (ptr) cudaFree(ptr); }
-    };
-    using CudaPtr = std::unique_ptr<double, CudaDeleter>;
-
-    try {
-        // Separate real and imaginary parts for GPU transfer
-        std::vector<double> eqReal(filterFftSize_);
-        std::vector<double> eqImag(filterFftSize_);
-        for (size_t i = 0; i < filterFftSize_; ++i) {
-            eqReal[i] = eqResponse[i].real();
-            eqImag[i] = eqResponse[i].imag();
-        }
-
-        // Allocate device memory for EQ response (RAII managed)
-        double* rawReal = nullptr;
-        double* rawImag = nullptr;
-        Utils::checkCudaError(
-            cudaMalloc(&rawReal, filterFftSize_ * sizeof(double)),
-            "cudaMalloc EQ real"
-        );
-        CudaPtr d_eqReal(rawReal);
-
-        Utils::checkCudaError(
-            cudaMalloc(&rawImag, filterFftSize_ * sizeof(double)),
-            "cudaMalloc EQ imag"
-        );
-        CudaPtr d_eqImag(rawImag);
-
-        // Transfer EQ response to device
-        Utils::checkCudaError(
-            cudaMemcpy(d_eqReal.get(), eqReal.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
-            "cudaMemcpy EQ real"
-        );
-        Utils::checkCudaError(
-            cudaMemcpy(d_eqImag.get(), eqImag.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
-            "cudaMemcpy EQ imag"
-        );
-
-        // Apply EQ: H_combined = H_original * H_eq
-        int blockSize = 256;
-        int numBlocks = (filterFftSize_ + blockSize - 1) / blockSize;
-        applyEqKernel<<<numBlocks, blockSize>>>(
-            d_filterFFT_, d_originalFilterFFT_,
-            d_eqReal.get(), d_eqImag.get(),
-            static_cast<int>(filterFftSize_)
-        );
-
-        Utils::checkCudaError(cudaDeviceSynchronize(), "applyEqKernel sync");
-
-        // d_eqReal and d_eqImag automatically freed by RAII
-
-        eqApplied_ = true;
-        std::cout << "EQ: Applied to filter successfully" << std::endl;
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "EQ: Failed to apply: " << e.what() << std::endl;
-        return false;
-    }
-}
-
 void GPUUpsampler::restoreOriginalFilter() {
-    if (!d_filterFFT_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
+    if (!d_filterFFT_A_ || !d_filterFFT_B_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
         return;
     }
 
     try {
+        // Ping-pong: write to back buffer, then swap
+        cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
+                                    ? d_filterFFT_B_ : d_filterFFT_A_;
+
         Utils::checkCudaError(
-            cudaMemcpy(d_filterFFT_, d_originalFilterFFT_,
+            cudaMemcpy(backBuffer, d_originalFilterFFT_,
                       filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
-            "cudaMemcpy restore original filter"
+            "cudaMemcpy restore original filter to back buffer"
         );
+
+        // Synchronize to ensure copy is complete before swapping
+        Utils::checkCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize before swap");
+
+        // Atomic swap: now convolution kernel will use the restored filter
+        d_activeFilterFFT_ = backBuffer;
+
         eqApplied_ = false;
-        std::cout << "EQ: Restored original filter" << std::endl;
+        std::cout << "EQ: Restored original filter (ping-pong)" << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "EQ: Failed to restore: " << e.what() << std::endl;
+    }
+}
+
+// CUDA kernel for cepstrum causality window with normalization
+// Applies: 1/N normalization (cuFFT doesn't normalize IFFT)
+// Plus causality: c[0] unchanged, c[1..N/2-1] *= 2, c[N/2] unchanged, c[N/2+1..N-1] = 0
+__global__ void applyCausalityWindowKernel(cufftDoubleReal* cepstrum, int fullN) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= fullN) return;
+
+    double invN = 1.0 / static_cast<double>(fullN);
+
+    // Apply normalization and causality window together
+    if (idx == 0 || idx == fullN / 2) {
+        // DC and Nyquist: just normalize
+        cepstrum[idx] *= invN;
+    } else if (idx < fullN / 2) {
+        // Positive time: normalize and double
+        cepstrum[idx] *= 2.0 * invN;
+    } else {
+        // Negative time: zero out
+        cepstrum[idx] = 0.0;
+    }
+}
+
+// CUDA kernel to exponentiate complex values
+__global__ void exponentiateComplexKernel(cufftDoubleComplex* data, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    double re = data[idx].x;
+    double im = data[idx].y;
+    double expRe = exp(re);
+    data[idx].x = expRe * cos(im);
+    data[idx].y = expRe * sin(im);
+}
+
+// CUDA kernel to convert double complex to float complex
+__global__ void doubleToFloatComplexKernel(cufftComplex* out, const cufftDoubleComplex* in, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    out[idx].x = static_cast<float>(in[idx].x);
+    out[idx].y = static_cast<float>(in[idx].y);
+}
+
+// Apply EQ magnitude with minimum phase reconstruction.
+// IMPORTANT: This function assumes the original filter is MINIMUM PHASE.
+// If the original filter were linear phase, the group delay characteristics would change
+// because we reconstruct minimum phase from combined magnitude |H_filter| × |H_eq|.
+// This is intentional for this project (see CLAUDE.md - minimum phase is mandatory).
+bool GPUUpsampler::applyEqMagnitude(const std::vector<double>& eqMagnitude) {
+    if (!d_filterFFT_A_ || !d_filterFFT_B_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
+        std::cerr << "EQ: Filter not initialized" << std::endl;
+        return false;
+    }
+
+    if (eqMagnitude.size() != filterFftSize_) {
+        std::cerr << "EQ: Magnitude size mismatch: expected " << filterFftSize_
+                  << ", got " << eqMagnitude.size() << std::endl;
+        return false;
+    }
+
+    // Verify persistent EQ resources are initialized
+    if (!eqPlanD2Z_ || !eqPlanZ2D_ || !d_eqLogMag_ || !d_eqComplexSpec_) {
+        std::cerr << "EQ: Persistent EQ resources not initialized" << std::endl;
+        return false;
+    }
+
+    // Auto-normalization: prevent clipping by normalizing if max boost > 0dB
+    std::vector<double> normalizedMagnitude = eqMagnitude;
+    double maxMag = *std::max_element(eqMagnitude.begin(), eqMagnitude.end());
+    double normalizationFactor = 1.0;
+
+    if (maxMag > 1.0) {
+        normalizationFactor = 1.0 / maxMag;
+        for (size_t i = 0; i < normalizedMagnitude.size(); ++i) {
+            normalizedMagnitude[i] *= normalizationFactor;
+        }
+        double normDb = 20.0 * std::log10(normalizationFactor);
+        std::cout << "EQ: Auto-normalization applied: " << normDb << " dB "
+                  << "(max boost was +" << 20.0 * std::log10(maxMag) << " dB)" << std::endl;
+    }
+
+    try {
+        size_t fullN = fftSize_;
+        size_t halfN = filterFftSize_;  // N/2 + 1
+
+        // Step 1: Use host-cached original filter FFT (no D→H copy needed)
+        // h_originalFilterFft_ is populated once at initialization
+
+        // Step 2: Compute combined log magnitude = log(|H_original| * |H_eq|)
+        // Uses normalizedMagnitude which has auto-normalization applied if needed
+        std::vector<double> logMag(fullN);
+        for (size_t i = 0; i < halfN; ++i) {
+            double origMag = std::sqrt(h_originalFilterFft_[i].x * h_originalFilterFft_[i].x +
+                                       h_originalFilterFft_[i].y * h_originalFilterFft_[i].y);
+            double combined = origMag * normalizedMagnitude[i];
+            if (combined < 1e-30) combined = 1e-30;  // Avoid log(0)
+            logMag[i] = std::log(combined);
+        }
+        // Hermitian symmetry for negative frequencies
+        for (size_t i = 1; i < fullN / 2; ++i) {
+            logMag[fullN - i] = logMag[i];
+        }
+
+        // Step 3: Convert log magnitude to complex spectrum (for C2R transform)
+        // We treat log magnitude as purely real spectrum
+        // Using persistent d_eqComplexSpec_ buffer
+        std::vector<cufftDoubleComplex> logMagComplex(halfN);
+        for (size_t i = 0; i < halfN; ++i) {
+            logMagComplex[i].x = logMag[i];
+            logMagComplex[i].y = 0.0;
+        }
+        Utils::checkCudaError(
+            cudaMemcpy(d_eqComplexSpec_, logMagComplex.data(),
+                      halfN * sizeof(cufftDoubleComplex), cudaMemcpyHostToDevice),
+            "cudaMemcpy logMag to device"
+        );
+
+        // Step 4: IFFT to get cepstrum (using persistent eqPlanZ2D_ and d_eqLogMag_)
+        if (cufftExecZ2D(eqPlanZ2D_, d_eqComplexSpec_, d_eqLogMag_) != CUFFT_SUCCESS) {
+            throw std::runtime_error("cufftExecZ2D failed");
+        }
+
+        // Step 5: Apply causality window on GPU (includes 1/N normalization)
+        int blockSize = 256;
+        int numBlocks = (fullN + blockSize - 1) / blockSize;
+        applyCausalityWindowKernel<<<numBlocks, blockSize>>>(d_eqLogMag_, fullN);
+
+        // Step 6: FFT back (using persistent eqPlanD2Z_)
+        if (cufftExecD2Z(eqPlanD2Z_, d_eqLogMag_, d_eqComplexSpec_) != CUFFT_SUCCESS) {
+            throw std::runtime_error("cufftExecD2Z failed");
+        }
+
+        // Step 7: Exponentiate on GPU
+        numBlocks = (halfN + blockSize - 1) / blockSize;
+        exponentiateComplexKernel<<<numBlocks, blockSize>>>(d_eqComplexSpec_, halfN);
+
+        // Step 8: Convert to float and upload to back buffer (ping-pong)
+        // Determine back buffer (not currently active)
+        cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
+                                    ? d_filterFFT_B_ : d_filterFFT_A_;
+
+        doubleToFloatComplexKernel<<<numBlocks, blockSize>>>(backBuffer, d_eqComplexSpec_, halfN);
+
+        // Single sync point: ensure all GPU operations complete before pointer swap
+        Utils::checkCudaError(cudaDeviceSynchronize(), "EQ cudaDeviceSynchronize");
+
+        // Atomic swap: now convolution kernel will use the new EQ'd filter
+        d_activeFilterFFT_ = backBuffer;
+
+        eqApplied_ = true;
+        std::cout << "EQ: Applied with minimum phase reconstruction (GPU, ping-pong)" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        // No cleanup needed - persistent resources remain valid
+        std::cerr << "EQ: Failed to apply minimum phase: " << e.what() << std::endl;
+        return false;
     }
 }
 

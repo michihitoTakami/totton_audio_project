@@ -562,14 +562,14 @@ int main(int argc, char* argv[]) {
                 std::cout << "  EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
                           << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
 
-                // Compute EQ frequency response and apply to filter
+                // Compute EQ magnitude response and apply with minimum phase reconstruction
                 size_t filterFftSize = g_upsampler->getFilterFftSize();  // N/2+1 (R2C output)
                 size_t fullFftSize = g_upsampler->getFullFftSize();      // N (full FFT)
                 double outputSampleRate = static_cast<double>(g_config.inputSampleRate) * g_config.upsampleRatio;
-                auto eqResponse = EQ::computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
-                if (g_upsampler->applyEqResponse(eqResponse)) {
-                    std::cout << "  EQ: Applied to convolution filter" << std::endl;
+                if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
+                    std::cout << "  EQ: Applied with minimum phase reconstruction" << std::endl;
                 } else {
                     std::cerr << "  EQ: Failed to apply frequency response" << std::endl;
                 }

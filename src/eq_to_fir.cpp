@@ -152,27 +152,6 @@ std::vector<double> generateR2cFftFrequencies(size_t numBins, size_t fullFftSize
     return frequencies;
 }
 
-void applyEqToFilterFft(
-    std::vector<std::complex<float>>& filterFFT,
-    const std::vector<std::complex<double>>& eqResponse
-) {
-    if (filterFFT.size() != eqResponse.size()) {
-        std::cerr << "EQ: FFT size mismatch: filter=" << filterFFT.size()
-                  << " eq=" << eqResponse.size() << std::endl;
-        return;
-    }
-
-    for (size_t i = 0; i < filterFFT.size(); ++i) {
-        // Complex multiplication
-        std::complex<double> f(filterFFT[i].real(), filterFFT[i].imag());
-        std::complex<double> result = f * eqResponse[i];
-        filterFFT[i] = std::complex<float>(
-            static_cast<float>(result.real()),
-            static_cast<float>(result.imag())
-        );
-    }
-}
-
 std::vector<std::complex<double>> computeEqResponseForFft(
     size_t filterFftSize,
     size_t fullFftSize,
@@ -189,6 +168,24 @@ std::vector<std::complex<double>> computeEqResponseForFft(
     // The biquad coefficients are computed for the upsampled rate
     // so that EQ frequencies remain correct (1kHz stays at 1kHz)
     return computeEqFrequencyResponse(frequencies, profile, outputSampleRate);
+}
+
+std::vector<double> computeEqMagnitudeForFft(
+    size_t filterFftSize,
+    size_t fullFftSize,
+    double outputSampleRate,
+    const EqProfile& profile
+) {
+    // Compute full complex response first
+    auto complexResponse = computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, profile);
+
+    // Extract magnitude only (discard phase)
+    std::vector<double> magnitude(complexResponse.size());
+    for (size_t i = 0; i < complexResponse.size(); ++i) {
+        magnitude[i] = std::abs(complexResponse[i]);
+    }
+
+    return magnitude;
 }
 
 }  // namespace EQ
