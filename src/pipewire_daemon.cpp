@@ -124,10 +124,11 @@ static void on_input_process(void* userdata) {
 
         // Process through GPU upsampler using streaming API (pre-allocated buffers)
         // PipeWire may deliver more than one streaming block; consume until input is drained.
+        bool first_call = true;
         while (true) {
             bool left_generated = g_upsampler->processStreamBlock(
                 data->input_left.data(),
-                n_frames,
+                first_call ? n_frames : 0,  // avoid re-appending the same chunk
                 data->output_left,
                 g_upsampler->streamLeft_,
                 data->stream_input_left,
@@ -135,18 +136,19 @@ static void on_input_process(void* userdata) {
             );
             bool right_generated = g_upsampler->processStreamBlock(
                 data->input_right.data(),
-                n_frames,
+                first_call ? n_frames : 0,
                 data->output_right,
                 g_upsampler->streamRight_,
                 data->stream_input_right,
                 data->stream_accum_right
             );
+            first_call = false;
 
             if (left_generated && right_generated) {
                 // Store output for consumption by output stream
                 if (!g_output_buffer_left.write(data->output_left.data(), data->output_left.size()) ||
                     !g_output_buffer_right.write(data->output_right.data(), data->output_right.size())) {
-                    std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
+                std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
                 }
                 // Continue loop: there might be enough accumulated input for another block.
                 continue;
