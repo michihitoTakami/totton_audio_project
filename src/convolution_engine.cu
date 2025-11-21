@@ -668,14 +668,15 @@ bool GPUUpsampler::initializeStreaming() {
     }
 
     // Calculate valid output per block (samples at output rate that don't overlap)
-    int rawValidOutput = fftSize_ - overlapSize_;
+    // CRITICAL: This must equal fftSize_ - overlapSize_ to avoid buffer overrun
+    validOutputPerBlock_ = fftSize_ - overlapSize_;
 
     // Calculate input samples needed (with ceiling division to avoid truncation)
-    // We need enough input so that: inputSamples * upsampleRatio >= rawValidOutput
-    streamValidInputPerBlock_ = (rawValidOutput + upsampleRatio_ - 1) / upsampleRatio_;
+    // We need enough input so that: inputSamples * upsampleRatio >= validOutputPerBlock_
+    streamValidInputPerBlock_ = (validOutputPerBlock_ + upsampleRatio_ - 1) / upsampleRatio_;
 
-    // Recalculate valid output based on actual input samples (ensures consistency)
-    validOutputPerBlock_ = streamValidInputPerBlock_ * upsampleRatio_;
+    // Note: streamValidInputPerBlock_ * upsampleRatio_ may be slightly larger than validOutputPerBlock_
+    // (e.g., 3037 * 16 = 48592 > 48577), but we only extract validOutputPerBlock_ samples from FFT result
 
     // Pre-allocate GPU buffers to avoid malloc/free in real-time callbacks
     size_t upsampledSize = streamValidInputPerBlock_ * upsampleRatio_;
@@ -756,7 +757,8 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
     // 3. Process one block using pre-allocated GPU buffers
     size_t samplesToProcess = streamValidInputPerBlock_;
-    size_t outputFrames = samplesToProcess * upsampleRatio_;
+    // Note: samplesToProcess * upsampleRatio_ may be > validOutputPerBlock_ due to ceiling division
+    // We only use validOutputPerBlock_ samples to stay within FFT buffer bounds
 
     // Step 3a: Transfer input to GPU using pre-allocated d_streamInput_
     Utils::checkCudaError(
@@ -793,9 +795,11 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         );
     }
 
+    // Copy only validOutputPerBlock_ samples to stay within FFT buffer bounds
+    // (samplesToProcess * upsampleRatio_ may be slightly larger due to ceiling division)
     Utils::checkCudaError(
         cudaMemcpyAsync(d_streamPadded_ + overlapSize_, d_streamUpsampled_,
-                       outputFrames * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+                       validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
         "cudaMemcpy streaming block to padded"
     );
 
