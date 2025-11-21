@@ -171,8 +171,8 @@ static snd_pcm_t* open_and_configure_pcm() {
         return nullptr;
     }
 
-    snd_pcm_uframes_t buffer_size = 131072;
-    snd_pcm_uframes_t period_size = 16384;
+    snd_pcm_uframes_t buffer_size = 262144;   // larger buffer for stability
+    snd_pcm_uframes_t period_size = 32768;    // larger period to reduce underrun risk
     snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size);
     snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, 0);
 
@@ -211,8 +211,8 @@ static bool pcm_alive(snd_pcm_t* pcm_handle) {
 // ALSA output thread (705.6kHz direct to DAC)
 void alsa_output_thread() {
     snd_pcm_t* pcm_handle = open_and_configure_pcm();
-    std::vector<int32_t> interleaved_buffer(16384 * CHANNELS);  // resized after open
-    snd_pcm_uframes_t period_size = 16384;
+    std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
+    snd_pcm_uframes_t period_size = 32768;
     if (!pcm_handle) {
         // Retry loop until device appears or shutdown
         while (g_running && !pcm_handle) {
@@ -373,7 +373,25 @@ void alsa_output_thread() {
                 }
             }
         } else {
+            // Not enough data → write silence to keep device fed and avoid xrun
             lock.unlock();
+            std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
+            snd_pcm_sframes_t frames_written = snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
+            if (frames_written < 0) {
+                snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
+                if (rec < 0) {
+                    std::cerr << "ALSA: Silence write error: " << snd_strerror(frames_written)
+                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..." << std::endl;
+                    if (pcm_handle) {
+                        snd_pcm_close(pcm_handle);
+                        pcm_handle = nullptr;
+                    }
+                    while (g_running && !pcm_handle) {
+                        std::this_thread::sleep_for(std::chrono::seconds(5));
+                        pcm_handle = open_and_configure_pcm();
+                    }
+                }
+            }
         }
     }
 
