@@ -667,8 +667,15 @@ bool GPUUpsampler::initializeStreaming() {
         return false;
     }
 
-    validOutputPerBlock_ = fftSize_ - overlapSize_;
-    streamValidInputPerBlock_ = validOutputPerBlock_ / upsampleRatio_;
+    // Calculate valid output per block (samples at output rate that don't overlap)
+    int rawValidOutput = fftSize_ - overlapSize_;
+
+    // Calculate input samples needed (with ceiling division to avoid truncation)
+    // We need enough input so that: inputSamples * upsampleRatio >= rawValidOutput
+    streamValidInputPerBlock_ = (rawValidOutput + upsampleRatio_ - 1) / upsampleRatio_;
+
+    // Recalculate valid output based on actual input samples (ensures consistency)
+    validOutputPerBlock_ = streamValidInputPerBlock_ * upsampleRatio_;
 
     // Pre-allocate GPU buffers to avoid malloc/free in real-time callbacks
     size_t upsampledSize = streamValidInputPerBlock_ * upsampleRatio_;
@@ -835,12 +842,14 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
     );
 
     // Save overlap for next block
-    // CRITICAL: Must save from d_streamPadded_ (overlap+new concatenated), not d_streamUpsampled_ (new only)
-    // Save the LAST overlapSize_ samples from the concatenated buffer [overlap | new]
-    // Total size = overlapSize_ + outputFrames, so start at outputFrames
-    if (fftSize_ >= overlapSize_) {
+    // CRITICAL: Must save from d_streamConvResult_ (convolution output), not d_streamPadded_ (convolution input)
+    // The convolution result contains [first overlapSize_ = corrupted | validOutputPerBlock_ = valid output]
+    // For next iteration, we need the LAST overlapSize_ samples from the padded input buffer
+    // which corresponds to: d_streamPadded_[validOutputPerBlock_ : validOutputPerBlock_ + overlapSize_]
+    // These are the "new" samples that will become "old overlap" in the next iteration
+    if (validOutputPerBlock_ + overlapSize_ <= fftSize_) {
         Utils::checkCudaError(
-            cudaMemcpyAsync(overlap.data(), d_streamPadded_ + (fftSize_ - overlapSize_),
+            cudaMemcpyAsync(overlap.data(), d_streamPadded_ + validOutputPerBlock_,
                            overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
             "cudaMemcpy streaming overlap from device"
         );
