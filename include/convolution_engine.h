@@ -140,14 +140,24 @@ private:
     cufftComplex* d_streamInputFFT_;         // FFT of padded input
     float* d_streamConvResult_;              // Convolution result
 
-    // Host pinned buffers (registered once to reduce DMA jitter)
+    // Host pinned buffers (long-lived buffers use manual register/unregister;
+    // temporary outputs use ScopedHostPin inside implementations)
     struct PinnedHostBuffer {
         void* ptr;
         size_t bytes;
     };
     std::vector<PinnedHostBuffer> pinnedHostBuffers_;
 
+    void* pinnedStreamInputLeft_;
+    void* pinnedStreamInputRight_;
+    void* pinnedStreamInputMono_;
+    size_t pinnedStreamInputLeftBytes_;
+    size_t pinnedStreamInputRightBytes_;
+    size_t pinnedStreamInputMonoBytes_;
+
     void registerHostBuffer(void* ptr, size_t bytes, const char* context);
+    void registerStreamInputBuffer(std::vector<float>& buffer, cudaStream_t stream);
+    void removePinnedHostBuffer(void* ptr);
     void unregisterHostBuffers();
 };
 
