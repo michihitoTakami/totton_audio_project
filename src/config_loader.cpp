@@ -25,6 +25,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("blockSize")) outConfig.blockSize = j["blockSize"].get<int>();
         if (j.contains("gain")) outConfig.gain = j["gain"].get<float>();
         if (j.contains("filterPath")) outConfig.filterPath = j["filterPath"].get<std::string>();
+        if (j.contains("inputSampleRate")) outConfig.inputSampleRate = j["inputSampleRate"].get<int>();
 
         // EQ settings
         if (j.contains("eqEnabled")) outConfig.eqEnabled = j["eqEnabled"].get<bool>();

@@ -1,5 +1,6 @@
 {
   "alsaDevice": "hw:AUDIO",
+  "inputSampleRate": 44100,
   "bufferSize": 262144,
   "periodSize": 32768,
   "upsampleRatio": 16,

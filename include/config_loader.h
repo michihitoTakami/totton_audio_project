@@ -14,6 +14,7 @@ struct AppConfig {
     int blockSize = 4096;
     float gain = 16.0f;
     std::string filterPath = "data/coefficients/filter_1m_min_phase.bin";
+    int inputSampleRate = 44100;  // Input sample rate (44100 or 48000)
 
     // EQ settings
     bool eqEnabled = false;
