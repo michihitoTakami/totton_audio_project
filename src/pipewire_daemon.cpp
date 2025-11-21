@@ -79,6 +79,18 @@ struct Data {
     struct pw_stream* input_stream;
     struct pw_stream* output_stream;
     bool gpu_ready;
+
+    // Scratch buffers to avoid allocations in real-time callbacks
+    std::vector<float> input_left;
+    std::vector<float> input_right;
+    std::vector<float> output_left;
+    std::vector<float> output_right;
+
+    // Streaming input accumulation buffers (per channel)
+    std::vector<float> stream_input_left;
+    std::vector<float> stream_input_right;
+    size_t stream_accum_left = 0;
+    size_t stream_accum_right = 0;
 };
 
 // Signal handler for graceful shutdown
@@ -101,31 +113,49 @@ static void on_input_process(void* userdata) {
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
     if (input_samples && n_frames > 0 && data->gpu_ready) {
-        // Deinterleave input (stereo interleaved → separate L/R)
-        std::vector<float> left(n_frames);
-        std::vector<float> right(n_frames);
+        // Deinterleave input (stereo interleaved → separate L/R) using scratch buffers
+        if (data->input_left.size() < n_frames) data->input_left.resize(n_frames);
+        if (data->input_right.size() < n_frames) data->input_right.resize(n_frames);
 
         for (uint32_t i = 0; i < n_frames; ++i) {
-            left[i] = input_samples[i * 2];
-            right[i] = input_samples[i * 2 + 1];
+            data->input_left[i] = input_samples[i * 2];
+            data->input_right[i] = input_samples[i * 2 + 1];
         }
 
-        // Process through GPU upsampler
-        std::vector<float> output_left, output_right;
-        bool success = g_upsampler->processStereo(
-            left.data(),
-            right.data(),
-            n_frames,
-            output_left,
-            output_right
-        );
+        // Process through GPU upsampler using streaming API (pre-allocated buffers)
+        // PipeWire may deliver more than one streaming block; consume until input is drained.
+        bool first_call = true;
+        while (true) {
+            bool left_generated = g_upsampler->processStreamBlock(
+                data->input_left.data(),
+                first_call ? n_frames : 0,  // avoid re-appending the same chunk
+                data->output_left,
+                g_upsampler->streamLeft_,
+                data->stream_input_left,
+                data->stream_accum_left
+            );
+            bool right_generated = g_upsampler->processStreamBlock(
+                data->input_right.data(),
+                first_call ? n_frames : 0,
+                data->output_right,
+                g_upsampler->streamRight_,
+                data->stream_input_right,
+                data->stream_accum_right
+            );
+            first_call = false;
 
-        if (success) {
-            // Store output for consumption by output stream
-            if (!g_output_buffer_left.write(output_left.data(), output_left.size()) ||
-                !g_output_buffer_right.write(output_right.data(), output_right.size())) {
+            if (left_generated && right_generated) {
+                // Store output for consumption by output stream
+                if (!g_output_buffer_left.write(data->output_left.data(), data->output_left.size()) ||
+                    !g_output_buffer_right.write(data->output_right.data(), data->output_right.size())) {
                 std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
+                }
+                // Continue loop: there might be enough accumulated input for another block.
+                continue;
             }
+
+            // No output generated (either insufficient input or error) - exit loop.
+            break;
         }
     }
 
@@ -227,6 +257,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "GPU upsampler ready (16x upsampling, " << BLOCK_SIZE << " samples/block)" << std::endl;
+    if (!g_upsampler->initializeStreaming()) {
+        std::cerr << "Failed to initialize streaming mode" << std::endl;
+        delete g_upsampler;
+        return 1;
+    }
     std::cout << std::endl;
 
     // Initialize PipeWire
@@ -237,6 +272,13 @@ int main(int argc, char* argv[]) {
 
     Data data = {};
     data.gpu_ready = true;
+
+    // Pre-allocate streaming input buffers (tolerant capacity; avoids reallocation in callbacks)
+    constexpr size_t STREAM_INPUT_BUFFER_CAPACITY = 12000;
+    data.stream_input_left.resize(STREAM_INPUT_BUFFER_CAPACITY, 0.0f);
+    data.stream_input_right.resize(STREAM_INPUT_BUFFER_CAPACITY, 0.0f);
+    data.stream_accum_left = 0;
+    data.stream_accum_right = 0;
 
     // Create main loop
     data.loop = pw_main_loop_new(nullptr);
