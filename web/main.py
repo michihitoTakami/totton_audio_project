@@ -126,7 +126,12 @@ async def verify_auth(
             )
         return True
 
-    return True
+    # Unknown auth mode - fail closed to prevent misconfiguration bypass
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unknown auth mode: '{auth_config.mode}'. Valid modes: 'token', 'basic'",
+        )
 
 
 app = FastAPI(
