@@ -123,29 +123,37 @@ static void on_input_process(void* userdata) {
         }
 
         // Process through GPU upsampler using streaming API (pre-allocated buffers)
-        bool left_generated = g_upsampler->processStreamBlock(
-            data->input_left.data(),
-            n_frames,
-            data->output_left,
-            g_upsampler->streamLeft_,
-            data->stream_input_left,
-            data->stream_accum_left
-        );
-        bool right_generated = g_upsampler->processStreamBlock(
-            data->input_right.data(),
-            n_frames,
-            data->output_right,
-            g_upsampler->streamRight_,
-            data->stream_input_right,
-            data->stream_accum_right
-        );
+        // PipeWire may deliver more than one streaming block; consume until input is drained.
+        while (true) {
+            bool left_generated = g_upsampler->processStreamBlock(
+                data->input_left.data(),
+                n_frames,
+                data->output_left,
+                g_upsampler->streamLeft_,
+                data->stream_input_left,
+                data->stream_accum_left
+            );
+            bool right_generated = g_upsampler->processStreamBlock(
+                data->input_right.data(),
+                n_frames,
+                data->output_right,
+                g_upsampler->streamRight_,
+                data->stream_input_right,
+                data->stream_accum_right
+            );
 
-        if (left_generated && right_generated) {
-            // Store output for consumption by output stream
-            if (!g_output_buffer_left.write(data->output_left.data(), data->output_left.size()) ||
-                !g_output_buffer_right.write(data->output_right.data(), data->output_right.size())) {
-                std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
+            if (left_generated && right_generated) {
+                // Store output for consumption by output stream
+                if (!g_output_buffer_left.write(data->output_left.data(), data->output_left.size()) ||
+                    !g_output_buffer_right.write(data->output_right.data(), data->output_right.size())) {
+                    std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
+                }
+                // Continue loop: there might be enough accumulated input for another block.
+                continue;
             }
+
+            // No output generated (either insufficient input or error) - exit loop.
+            break;
         }
     }
 
