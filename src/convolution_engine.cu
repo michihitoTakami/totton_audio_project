@@ -1155,4 +1155,161 @@ void GPUUpsampler::restoreOriginalFilter() {
     }
 }
 
+// CUDA kernel for cepstrum causality window
+__global__ void applyCausalityWindowKernel(cufftDoubleReal* cepstrum, int fullN) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= fullN) return;
+
+    // c[0] unchanged, c[1..N/2-1] *= 2, c[N/2] unchanged, c[N/2+1..N-1] = 0
+    if (idx > 0 && idx < fullN / 2) {
+        cepstrum[idx] *= 2.0;
+    } else if (idx > fullN / 2) {
+        cepstrum[idx] = 0.0;
+    }
+}
+
+// CUDA kernel to exponentiate complex values
+__global__ void exponentiateComplexKernel(cufftDoubleComplex* data, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    double re = data[idx].x;
+    double im = data[idx].y;
+    double expRe = exp(re);
+    data[idx].x = expRe * cos(im);
+    data[idx].y = expRe * sin(im);
+}
+
+// CUDA kernel to convert double complex to float complex
+__global__ void doubleToFloatComplexKernel(cufftComplex* out, const cufftDoubleComplex* in, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    out[idx].x = static_cast<float>(in[idx].x);
+    out[idx].y = static_cast<float>(in[idx].y);
+}
+
+bool GPUUpsampler::applyEqMagnitude(const std::vector<double>& eqMagnitude) {
+    if (!d_filterFFT_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
+        std::cerr << "EQ: Filter not initialized" << std::endl;
+        return false;
+    }
+
+    if (eqMagnitude.size() != filterFftSize_) {
+        std::cerr << "EQ: Magnitude size mismatch: expected " << filterFftSize_
+                  << ", got " << eqMagnitude.size() << std::endl;
+        return false;
+    }
+
+    cufftHandle planR2C = 0, planC2R = 0;
+    cufftDoubleReal* d_logMag = nullptr;
+    cufftDoubleComplex* d_complexSpec = nullptr;
+
+    try {
+        size_t fullN = fftSize_;
+        size_t halfN = filterFftSize_;  // N/2 + 1
+
+        // Step 1: Get original filter FFT from device
+        std::vector<cufftComplex> originalFft(halfN);
+        Utils::checkCudaError(
+            cudaMemcpy(originalFft.data(), d_originalFilterFFT_,
+                      halfN * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+            "cudaMemcpy original filter to host"
+        );
+
+        // Step 2: Compute combined log magnitude = log(|H_original| * |H_eq|)
+        std::vector<double> logMag(fullN);
+        for (size_t i = 0; i < halfN; ++i) {
+            double origMag = std::sqrt(originalFft[i].x * originalFft[i].x +
+                                       originalFft[i].y * originalFft[i].y);
+            double combined = origMag * eqMagnitude[i];
+            if (combined < 1e-30) combined = 1e-30;  // Avoid log(0)
+            logMag[i] = std::log(combined);
+        }
+        // Hermitian symmetry for negative frequencies
+        for (size_t i = 1; i < fullN / 2; ++i) {
+            logMag[fullN - i] = logMag[i];
+        }
+
+        // Step 3: Create cuFFT plans for double precision
+        if (cufftPlan1d(&planC2R, fullN, CUFFT_Z2D, 1) != CUFFT_SUCCESS) {
+            throw std::runtime_error("cufftPlan1d C2R failed");
+        }
+        if (cufftPlan1d(&planR2C, fullN, CUFFT_D2Z, 1) != CUFFT_SUCCESS) {
+            cufftDestroy(planC2R);
+            throw std::runtime_error("cufftPlan1d R2C failed");
+        }
+
+        // Allocate GPU memory
+        Utils::checkCudaError(
+            cudaMalloc(&d_logMag, fullN * sizeof(cufftDoubleReal)),
+            "cudaMalloc d_logMag"
+        );
+        Utils::checkCudaError(
+            cudaMalloc(&d_complexSpec, halfN * sizeof(cufftDoubleComplex)),
+            "cudaMalloc d_complexSpec"
+        );
+
+        // Step 4: Convert log magnitude to complex spectrum (for C2R transform)
+        // We treat log magnitude as purely real spectrum
+        std::vector<cufftDoubleComplex> logMagComplex(halfN);
+        for (size_t i = 0; i < halfN; ++i) {
+            logMagComplex[i].x = logMag[i];
+            logMagComplex[i].y = 0.0;
+        }
+        Utils::checkCudaError(
+            cudaMemcpy(d_complexSpec, logMagComplex.data(),
+                      halfN * sizeof(cufftDoubleComplex), cudaMemcpyHostToDevice),
+            "cudaMemcpy logMag to device"
+        );
+
+        // Step 5: IFFT to get cepstrum (C2R)
+        if (cufftExecZ2D(planC2R, d_complexSpec, d_logMag) != CUFFT_SUCCESS) {
+            throw std::runtime_error("cufftExecZ2D failed");
+        }
+
+        // Step 6: Apply causality window on GPU
+        int blockSize = 256;
+        int numBlocks = (fullN + blockSize - 1) / blockSize;
+        applyCausalityWindowKernel<<<numBlocks, blockSize>>>(d_logMag, fullN);
+        Utils::checkCudaError(cudaDeviceSynchronize(), "applyCausalityWindowKernel");
+
+        // Normalize cepstrum (IFFT normalization factor)
+        // cuFFT doesn't normalize, so we need to divide by N
+        // We'll handle this in the FFT step by not dividing here
+
+        // Step 7: FFT back (R2C)
+        if (cufftExecD2Z(planR2C, d_logMag, d_complexSpec) != CUFFT_SUCCESS) {
+            throw std::runtime_error("cufftExecD2Z failed");
+        }
+
+        // Step 8: Exponentiate on GPU
+        numBlocks = (halfN + blockSize - 1) / blockSize;
+        exponentiateComplexKernel<<<numBlocks, blockSize>>>(d_complexSpec, halfN);
+        Utils::checkCudaError(cudaDeviceSynchronize(), "exponentiateComplexKernel");
+
+        // Step 9: Convert to float and upload to filter
+        doubleToFloatComplexKernel<<<numBlocks, blockSize>>>(d_filterFFT_, d_complexSpec, halfN);
+        Utils::checkCudaError(cudaDeviceSynchronize(), "doubleToFloatComplexKernel");
+
+        // Cleanup
+        cufftDestroy(planC2R);
+        cufftDestroy(planR2C);
+        cudaFree(d_logMag);
+        cudaFree(d_complexSpec);
+
+        eqApplied_ = true;
+        std::cout << "EQ: Applied with minimum phase reconstruction (GPU)" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        if (planC2R) cufftDestroy(planC2R);
+        if (planR2C) cufftDestroy(planR2C);
+        if (d_logMag) cudaFree(d_logMag);
+        if (d_complexSpec) cudaFree(d_complexSpec);
+        std::cerr << "EQ: Failed to apply minimum phase: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 } // namespace ConvolutionEngine

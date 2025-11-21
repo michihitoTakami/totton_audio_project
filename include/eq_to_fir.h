@@ -68,6 +68,17 @@ std::vector<std::complex<double>> computeEqResponseForFft(
     const EqProfile& profile
 );
 
+// Compute EQ magnitude response only (for minimum phase reconstruction)
+// Same parameters as computeEqResponseForFft
+// Returns: EQ magnitude |H_eq(f)| for each FFT bin (N/2+1 values)
+// Note: Phase is discarded; use with applyEqMagnitude() for minimum phase EQ
+std::vector<double> computeEqMagnitudeForFft(
+    size_t filterFftSize,
+    size_t fullFftSize,
+    double outputSampleRate,
+    const EqProfile& profile
+);
+
 }  // namespace EQ
 
 #endif  // EQ_TO_FIR_H
