@@ -41,6 +41,19 @@ cmake --build build -j$(nproc)
   ```
 - LV2プラグインはホストから通常の方法で読み込んでください。
 
+### 再起動後のクイック手順
+1. デーモン起動（必要ならデバイス指定）  
+   ```bash
+   ./scripts/restart_alsa_daemon.sh hw:3,0
+   ```
+2. PipeWireシンク作成・配線（アプリ名は任意、デフォルトspotify）  
+   ```bash
+   ./scripts/setup_pw_links.sh spotify
+   ```
+3. サウンド設定で出力デバイスを「GPU Upsampler (705.6kHz)」に選択。  
+
+※ Easy Effects を経由する場合も同じ手順で、アプリは Easy Effects Sink に向ける。
+
 ### Easy Effects を通す場合のPipeWire配線例
 - 出力経路にイコライザ等を挿入したいときは、再生側を `easyeffects_sink` に向け、Easy Effects のモニター出力を本プロジェクトのシンクへ接続します。
   ```bash
