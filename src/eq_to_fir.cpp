@@ -191,4 +191,22 @@ std::vector<std::complex<double>> computeEqResponseForFft(
     return computeEqFrequencyResponse(frequencies, profile, outputSampleRate);
 }
 
+std::vector<double> computeEqMagnitudeForFft(
+    size_t filterFftSize,
+    size_t fullFftSize,
+    double outputSampleRate,
+    const EqProfile& profile
+) {
+    // Compute full complex response first
+    auto complexResponse = computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, profile);
+
+    // Extract magnitude only (discard phase)
+    std::vector<double> magnitude(complexResponse.size());
+    for (size_t i = 0; i < complexResponse.size(); ++i) {
+        magnitude[i] = std::abs(complexResponse[i]);
+    }
+
+    return magnitude;
+}
+
 }  // namespace EQ

@@ -133,19 +133,19 @@ int main(int argc, char* argv[]) {
     std::cout << "   EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
               << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
 
-    // Compute EQ response and apply
-    std::cout << "\n5. Applying EQ to filter..." << std::endl;
+    // Compute EQ magnitude and apply with minimum phase reconstruction
+    std::cout << "\n5. Applying EQ to filter (minimum phase)..." << std::endl;
     size_t filterFftSize = upsampler.getFilterFftSize();  // N/2+1 (R2C output)
     size_t fullFftSize = upsampler.getFullFftSize();      // N (full FFT)
     int upsampleRatio = upsampler.getUpsampleRatio();
     double outputSampleRate = SAMPLE_RATE * upsampleRatio;
-    auto eqResponse = EQ::computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+    auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
-    if (!upsampler.applyEqResponse(eqResponse)) {
-        std::cerr << "Failed to apply EQ response" << std::endl;
+    if (!upsampler.applyEqMagnitude(eqMagnitude)) {
+        std::cerr << "Failed to apply EQ magnitude" << std::endl;
         return 1;
     }
-    std::cout << "   EQ applied successfully" << std::endl;
+    std::cout << "   EQ applied with minimum phase reconstruction" << std::endl;
 
     // Re-initialize for clean processing (reset overlap buffers)
     // Process WITH EQ
