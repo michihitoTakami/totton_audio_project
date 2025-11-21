@@ -5,6 +5,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <memory>
 #include <nvml.h>
 
 namespace ConvolutionEngine {
@@ -1073,6 +1074,12 @@ bool GPUUpsampler::applyEqResponse(const std::vector<std::complex<double>>& eqRe
         return false;
     }
 
+    // RAII wrapper for CUDA memory (ensures cleanup on exception)
+    struct CudaDeleter {
+        void operator()(double* ptr) const { if (ptr) cudaFree(ptr); }
+    };
+    using CudaPtr = std::unique_ptr<double, CudaDeleter>;
+
     try {
         // Separate real and imaginary parts for GPU transfer
         std::vector<double> eqReal(filterFftSize_);
@@ -1082,25 +1089,28 @@ bool GPUUpsampler::applyEqResponse(const std::vector<std::complex<double>>& eqRe
             eqImag[i] = eqResponse[i].imag();
         }
 
-        // Allocate device memory for EQ response
-        double* d_eqReal;
-        double* d_eqImag;
+        // Allocate device memory for EQ response (RAII managed)
+        double* rawReal = nullptr;
+        double* rawImag = nullptr;
         Utils::checkCudaError(
-            cudaMalloc(&d_eqReal, filterFftSize_ * sizeof(double)),
+            cudaMalloc(&rawReal, filterFftSize_ * sizeof(double)),
             "cudaMalloc EQ real"
         );
+        CudaPtr d_eqReal(rawReal);
+
         Utils::checkCudaError(
-            cudaMalloc(&d_eqImag, filterFftSize_ * sizeof(double)),
+            cudaMalloc(&rawImag, filterFftSize_ * sizeof(double)),
             "cudaMalloc EQ imag"
         );
+        CudaPtr d_eqImag(rawImag);
 
         // Transfer EQ response to device
         Utils::checkCudaError(
-            cudaMemcpy(d_eqReal, eqReal.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
+            cudaMemcpy(d_eqReal.get(), eqReal.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
             "cudaMemcpy EQ real"
         );
         Utils::checkCudaError(
-            cudaMemcpy(d_eqImag, eqImag.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
+            cudaMemcpy(d_eqImag.get(), eqImag.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
             "cudaMemcpy EQ imag"
         );
 
@@ -1109,15 +1119,13 @@ bool GPUUpsampler::applyEqResponse(const std::vector<std::complex<double>>& eqRe
         int numBlocks = (filterFftSize_ + blockSize - 1) / blockSize;
         applyEqKernel<<<numBlocks, blockSize>>>(
             d_filterFFT_, d_originalFilterFFT_,
-            d_eqReal, d_eqImag,
+            d_eqReal.get(), d_eqImag.get(),
             static_cast<int>(filterFftSize_)
         );
 
         Utils::checkCudaError(cudaDeviceSynchronize(), "applyEqKernel sync");
 
-        // Free temporary buffers
-        cudaFree(d_eqReal);
-        cudaFree(d_eqImag);
+        // d_eqReal and d_eqImag automatically freed by RAII
 
         eqApplied_ = true;
         std::cout << "EQ: Applied to filter successfully" << std::endl;
