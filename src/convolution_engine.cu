@@ -5,6 +5,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <memory>
 #include <nvml.h>
 
 namespace ConvolutionEngine {
@@ -155,6 +156,7 @@ void GPUUpsampler::resizeOverlapBuffers(size_t newSize) {
 GPUUpsampler::GPUUpsampler()
     : upsampleRatio_(1), blockSize_(8192), filterTaps_(0), fftSize_(0),
       d_filterCoeffs_(nullptr), d_filterFFT_(nullptr),
+      d_originalFilterFFT_(nullptr), filterFftSize_(0), eqApplied_(false),
       d_inputBlock_(nullptr), d_outputBlock_(nullptr),
       d_inputFFT_(nullptr), d_convResult_(nullptr),
       fftPlanForward_(0), fftPlanInverse_(0),
@@ -294,9 +296,16 @@ bool GPUUpsampler::setupGPUResources() {
             "cudaMalloc input FFT"
         );
 
+        filterFftSize_ = fftComplexSize;
         Utils::checkCudaError(
             cudaMalloc(&d_filterFFT_, fftComplexSize * sizeof(cufftComplex)),
             "cudaMalloc filter FFT"
+        );
+
+        // Allocate backup for original filter FFT (for EQ restore)
+        Utils::checkCudaError(
+            cudaMalloc(&d_originalFilterFFT_, fftComplexSize * sizeof(cufftComplex)),
+            "cudaMalloc original filter FFT"
         );
 
         Utils::checkCudaError(
@@ -338,7 +347,15 @@ bool GPUUpsampler::setupGPUResources() {
             "cufftExecR2C filter"
         );
 
+        // Backup original filter FFT for EQ restore
+        Utils::checkCudaError(
+            cudaMemcpy(d_originalFilterFFT_, d_filterFFT_,
+                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+            "cudaMemcpy backup original filter FFT"
+        );
+
         cudaFree(d_filterPadded);
+        eqApplied_ = false;
 
         std::cout << "  GPU resources allocated successfully" << std::endl;
         return true;
@@ -723,6 +740,7 @@ void GPUUpsampler::cleanup() {
 
     if (d_filterCoeffs_) cudaFree(d_filterCoeffs_);
     if (d_filterFFT_) cudaFree(d_filterFFT_);
+    if (d_originalFilterFFT_) cudaFree(d_originalFilterFFT_);
     if (d_inputBlock_) cudaFree(d_inputBlock_);
     if (d_outputBlock_) cudaFree(d_outputBlock_);
     if (d_inputFFT_) cudaFree(d_inputFFT_);
@@ -744,6 +762,9 @@ void GPUUpsampler::cleanup() {
 
     d_filterCoeffs_ = nullptr;
     d_filterFFT_ = nullptr;
+    d_originalFilterFFT_ = nullptr;
+    filterFftSize_ = 0;
+    eqApplied_ = false;
     d_inputBlock_ = nullptr;
     d_outputBlock_ = nullptr;
     d_inputFFT_ = nullptr;
@@ -1014,6 +1035,123 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
     } catch (const std::exception& e) {
         std::cerr << "Error in processStreamBlock: " << e.what() << std::endl;
         return false;
+    }
+}
+
+// ========== EQ Support Methods ==========
+
+// CUDA kernel for complex multiplication with double precision EQ response
+__global__ void applyEqKernel(cufftComplex* filterFFT,
+                               const cufftComplex* originalFFT,
+                               const double* eqReal,
+                               const double* eqImag,
+                               int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        // Load original filter FFT
+        float a = originalFFT[idx].x;
+        float b = originalFFT[idx].y;
+
+        // Load EQ response
+        float c = static_cast<float>(eqReal[idx]);
+        float d = static_cast<float>(eqImag[idx]);
+
+        // Complex multiplication: H_combined = H_original * H_eq
+        filterFFT[idx].x = a * c - b * d;
+        filterFFT[idx].y = a * d + b * c;
+    }
+}
+
+bool GPUUpsampler::applyEqResponse(const std::vector<std::complex<double>>& eqResponse) {
+    if (!d_filterFFT_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
+        std::cerr << "EQ: Filter not initialized" << std::endl;
+        return false;
+    }
+
+    if (eqResponse.size() != filterFftSize_) {
+        std::cerr << "EQ: Response size mismatch: expected " << filterFftSize_
+                  << ", got " << eqResponse.size() << std::endl;
+        return false;
+    }
+
+    // RAII wrapper for CUDA memory (ensures cleanup on exception)
+    struct CudaDeleter {
+        void operator()(double* ptr) const { if (ptr) cudaFree(ptr); }
+    };
+    using CudaPtr = std::unique_ptr<double, CudaDeleter>;
+
+    try {
+        // Separate real and imaginary parts for GPU transfer
+        std::vector<double> eqReal(filterFftSize_);
+        std::vector<double> eqImag(filterFftSize_);
+        for (size_t i = 0; i < filterFftSize_; ++i) {
+            eqReal[i] = eqResponse[i].real();
+            eqImag[i] = eqResponse[i].imag();
+        }
+
+        // Allocate device memory for EQ response (RAII managed)
+        double* rawReal = nullptr;
+        double* rawImag = nullptr;
+        Utils::checkCudaError(
+            cudaMalloc(&rawReal, filterFftSize_ * sizeof(double)),
+            "cudaMalloc EQ real"
+        );
+        CudaPtr d_eqReal(rawReal);
+
+        Utils::checkCudaError(
+            cudaMalloc(&rawImag, filterFftSize_ * sizeof(double)),
+            "cudaMalloc EQ imag"
+        );
+        CudaPtr d_eqImag(rawImag);
+
+        // Transfer EQ response to device
+        Utils::checkCudaError(
+            cudaMemcpy(d_eqReal.get(), eqReal.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
+            "cudaMemcpy EQ real"
+        );
+        Utils::checkCudaError(
+            cudaMemcpy(d_eqImag.get(), eqImag.data(), filterFftSize_ * sizeof(double), cudaMemcpyHostToDevice),
+            "cudaMemcpy EQ imag"
+        );
+
+        // Apply EQ: H_combined = H_original * H_eq
+        int blockSize = 256;
+        int numBlocks = (filterFftSize_ + blockSize - 1) / blockSize;
+        applyEqKernel<<<numBlocks, blockSize>>>(
+            d_filterFFT_, d_originalFilterFFT_,
+            d_eqReal.get(), d_eqImag.get(),
+            static_cast<int>(filterFftSize_)
+        );
+
+        Utils::checkCudaError(cudaDeviceSynchronize(), "applyEqKernel sync");
+
+        // d_eqReal and d_eqImag automatically freed by RAII
+
+        eqApplied_ = true;
+        std::cout << "EQ: Applied to filter successfully" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "EQ: Failed to apply: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void GPUUpsampler::restoreOriginalFilter() {
+    if (!d_filterFFT_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
+        return;
+    }
+
+    try {
+        Utils::checkCudaError(
+            cudaMemcpy(d_filterFFT_, d_originalFilterFFT_,
+                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+            "cudaMemcpy restore original filter"
+        );
+        eqApplied_ = false;
+        std::cout << "EQ: Restored original filter" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "EQ: Failed to restore: " << e.what() << std::endl;
     }
 }
 

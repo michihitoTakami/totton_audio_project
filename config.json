@@ -1,9 +1,11 @@
 {
-  "alsaDevice": "hw:CARD=AUDIO,DEV=0",
+  "alsaDevice": "hw:AUDIO",
   "bufferSize": 262144,
   "periodSize": 32768,
   "upsampleRatio": 16,
   "blockSize": 4096,
-  "gain": 12.0,
-  "filterPath": "data/coefficients/filter_1m_min_phase.bin"
+  "gain": 16.0,
+  "filterPath": "data/coefficients/filter_1m_min_phase.bin",
+  "eqEnabled": true,
+  "eqProfilePath": "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt"
 }

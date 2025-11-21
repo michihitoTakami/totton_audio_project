@@ -93,6 +93,8 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/config_loader.cpp
+    src/eq_parser.cpp
+    src/eq_to_fir.cpp
 )
 
 # Link against core library, PipeWire, ALSA, and JSON
@@ -105,6 +107,21 @@ target_link_libraries(gpu_upsampler_alsa
 
 # Compiler flags for ALSA daemon
 target_compile_options(gpu_upsampler_alsa PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+# EQ Test executable
+add_executable(test_eq
+    src/test_eq.cpp
+    src/eq_parser.cpp
+    src/eq_to_fir.cpp
+)
+
+target_link_libraries(test_eq
+    gpu_upsampler_core
+)
+
+target_compile_options(test_eq PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 

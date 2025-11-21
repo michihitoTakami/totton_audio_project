@@ -14,6 +14,10 @@ struct AppConfig {
     int blockSize = 4096;
     float gain = 16.0f;
     std::string filterPath = "data/coefficients/filter_1m_min_phase.bin";
+
+    // EQ settings
+    bool eqEnabled = false;
+    std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)
 };
 
 bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig, bool verbose = true);
