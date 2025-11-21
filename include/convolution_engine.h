@@ -43,6 +43,23 @@ public:
                       std::vector<float>& leftOutput,
                       std::vector<float>& rightOutput);
 
+    // Initialize streaming mode for real-time processing
+    // This pre-allocates buffers and prepares the engine for incremental processing
+    bool initializeStreaming();
+
+    // Reset streaming state (clears accumulated input and overlap buffers)
+    void resetStreaming();
+
+    // Process streaming audio block (real-time mode)
+    // Accumulates input samples and processes when enough data is available
+    // Returns true if output was generated, false if still accumulating
+    bool processStreamBlock(const float* inputData,
+                           size_t inputFrames,
+                           std::vector<float>& outputData,
+                           cudaStream_t stream,
+                           std::vector<float>& streamInputBuffer,
+                           size_t& streamInputAccumulated);
+
     // Get performance statistics
     struct Stats {
         double totalProcessingTime;  // seconds
@@ -52,6 +69,11 @@ public:
 
     const Stats& getStats() const { return stats_; }
     void resetStats() { stats_ = Stats(); }
+
+    // CUDA streams for async operations (public for daemon access)
+    cudaStream_t stream_;          // Primary stream for mono
+    cudaStream_t streamLeft_;      // Left channel for stereo parallel
+    cudaStream_t streamRight_;     // Right channel for stereo parallel
 
 private:
     // Load filter coefficients from binary file
@@ -104,10 +126,17 @@ private:
     std::vector<float> overlapBufferRight_;  // Store overlap for right channel
     int overlapSize_;
 
-    // CUDA streams for async operations
-    cudaStream_t stream_;          // Primary stream for mono
-    cudaStream_t streamLeft_;      // Left channel for stereo parallel
-    cudaStream_t streamRight_;     // Right channel for stereo parallel
+    // Streaming state
+    size_t streamValidInputPerBlock_;        // Input samples needed per block (at input rate)
+    bool streamInitialized_;                 // Whether streaming mode is initialized
+    int validOutputPerBlock_;                // Valid output samples per block (after FFT convolution)
+
+    // Streaming GPU buffers (pre-allocated to avoid malloc/free in callbacks)
+    float* d_streamInput_;                   // Device buffer for accumulated input
+    float* d_streamUpsampled_;               // Device buffer for upsampled input
+    float* d_streamPadded_;                  // Device buffer for [overlap | new] concatenation
+    cufftComplex* d_streamInputFFT_;         // FFT of padded input
+    float* d_streamConvResult_;              // Convolution result
 };
 
 // Utility functions

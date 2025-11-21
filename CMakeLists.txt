@@ -11,6 +11,8 @@ find_package(CUDAToolkit REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SNDFILE REQUIRED sndfile)
 pkg_check_modules(LV2 REQUIRED lv2)
+pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
+pkg_check_modules(ALSA REQUIRED alsa)
 
 # Include directories
 include_directories(
@@ -18,6 +20,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/data/coefficients
     ${SNDFILE_INCLUDE_DIRS}
     ${LV2_INCLUDE_DIRS}
+    ${PIPEWIRE_INCLUDE_DIRS}
+    ${ALSA_INCLUDE_DIRS}
 )
 
 # Core library (static) - Phase 2 GPU upsampling engine
@@ -98,7 +102,38 @@ install(FILES
     DESTINATION ${LV2_INSTALL_DIR}
 )
 
+# PipeWire Daemon executable
+add_executable(gpu_upsampler_daemon src/pipewire_daemon.cpp)
+
+# Link against core library and PipeWire
+target_link_libraries(gpu_upsampler_daemon
+    gpu_upsampler_core
+    ${PIPEWIRE_LIBRARIES}
+)
+
+# Compiler flags for daemon
+target_compile_options(gpu_upsampler_daemon PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+# ALSA Direct Output Daemon executable
+add_executable(gpu_upsampler_alsa src/alsa_daemon.cpp)
+
+# Link against core library, PipeWire, and ALSA
+target_link_libraries(gpu_upsampler_alsa
+    gpu_upsampler_core
+    ${PIPEWIRE_LIBRARIES}
+    ${ALSA_LIBRARIES}
+)
+
+# Compiler flags for ALSA daemon
+target_compile_options(gpu_upsampler_alsa PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)
+install(TARGETS gpu_upsampler_daemon DESTINATION bin)
+install(TARGETS gpu_upsampler_alsa DESTINATION bin)
 install(TARGETS gpu_upsampler_core DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
