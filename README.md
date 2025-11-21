@@ -6,6 +6,7 @@
 - `src/convolution_engine.cu`: Overlap-Save方式の1Mタップ最小位相FIRをCUDA/cuFFTで実装するコア。ステレオ並列ストリーム、オーバーラップ保持付きストリーミングAPIを提供。
 - `src/alsa_daemon.cpp`: PipeWireから44.1kHz floatを受信し、GPUで16xアップサンプル後、ALSA `hw:3,0` へ705.6kHz S32_LE出力するデーモン（SMSL D400EX想定）。
 - `src/pipewire_daemon.cpp`: PipeWire→GPU→PipeWireのラウンドトリップ用デーモン。
+- `scripts/daemon.sh`: デーモン起動/停止/再起動スクリプト（PipeWireリンク自動設定、EQプロファイル指定対応）。
 - `scripts/`: フィルタ生成/解析ツール（例: `scripts/analyze_waveform.py` でクリック検出）。
 - `data/coefficients/`: 1MタップFIR係数 (`filter_1m_min_phase.bin`) とメタデータ。
 - `docs/`: 調査・セットアップ資料（`setup_guide.md`, `crackling_noise_investigation.md` など）。
@@ -55,15 +56,29 @@ cmake --build build -j$(nproc)
   ./build/gpu_upsampler_daemon
   ```
 ### 再起動後のクイック手順
-1. デーモン起動（必要ならデバイス指定）  
-   ```bash
-   ./scripts/restart_alsa_daemon.sh hw:3,0
-   ```
-2. PipeWireシンク作成・配線（アプリ名は任意、デフォルトspotify）  
-   ```bash
-   ./scripts/setup_pw_links.sh spotify
-   ```
-3. サウンド設定で出力デバイスを「GPU Upsampler (705.6kHz)」に選択。  
+```bash
+# デーモン起動（PipeWireリンクも自動設定）
+./scripts/daemon.sh start
+
+# 状態確認
+./scripts/daemon.sh status
+
+# 再起動
+./scripts/daemon.sh restart
+
+# EQプロファイル指定で再起動
+./scripts/daemon.sh restart data/EQ/Sample_EQ.txt
+
+# EQ無効で再起動
+./scripts/daemon.sh restart off
+
+# 停止
+./scripts/daemon.sh stop
+
+# PipeWireリンクのみ再設定
+./scripts/daemon.sh links
+```
+サウンド設定で出力デバイスを「GPU Upsampler (705.6kHz)」に選択。
 
 ※ Easy Effects を経由する場合も同じ手順で、アプリは Easy Effects Sink に向ける。
 
@@ -84,11 +99,19 @@ cmake --build build -j$(nproc)
   ```
   Easy Effects 内部の「出力デバイス」を `Easy Effects Sink`、「モニター」を有効化しておくと上記配線が活きます。
 
+## パラメトリックEQ
+- AutoEq/Equalizer APO形式 (`.txt`) のEQプロファイルをサポート。
+- サポートフィルタ: PK (Peaking), LS (LowShelf), HS (HighShelf)
+- EQは最小位相再構成によりFIRフィルタと統合（プリリンギングなし）
+- ダブルバッファリング（ピンポン）でグリッチなく切り替え可能
+- 設定: `config.json` の `eqEnabled`, `eqProfilePath`、または `daemon.sh restart <profile>`
+
 ## 主要仕様
 - アップサンプル比: 16x（44.1kHz→705.6kHz）/ オプションで8x。
 - FIRフィルタ: 1,000,000タップ最小位相、FFTサイズ1,048,576。
 - Overlap-Save: オーバーラップ999,999サンプル、有効出力48,577サンプル/ブロック。
 - 出力形式: S32_LE (デーモン), float32 (PipeWire内部)。
+- EQ: 最小位相再構成、GPU上でFIRと統合処理。
 
 ## トラブルシュートの入口
 - プチプチ音・クリック: `docs/crackling_noise_investigation.md` を参照し、オーバーラップ保存とストリーミング設定を確認。
