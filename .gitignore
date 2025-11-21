@@ -62,3 +62,4 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.log
+worktrees/

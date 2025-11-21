@@ -126,7 +126,10 @@ async def verify_auth(
             )
         return True
 
-    return True
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Unsupported auth mode: {auth_config.mode}",
+    )
 
 
 app = FastAPI(
