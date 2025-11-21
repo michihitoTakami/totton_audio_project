@@ -1,0 +1,53 @@
+# Clang-format configuration for GPU Audio Upsampler
+# Based on Google style with modifications for this project
+
+BasedOnStyle: Google
+Language: Cpp
+
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+IndentCaseLabels: false
+NamespaceIndentation: None
+
+# Line length
+ColumnLimit: 100
+
+# Braces
+BreakBeforeBraces: Attach
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Alignment
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+AlignOperands: true
+
+# Includes
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Project headers
+  - Regex: '^".*\.h"'
+    Priority: 1
+  # CUDA headers
+  - Regex: '^<cuda.*>'
+    Priority: 2
+  - Regex: '^<cufft.*>'
+    Priority: 2
+  # System headers
+  - Regex: '^<.*>'
+    Priority: 3
+
+# Pointers and references
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Other
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesInAngles: false

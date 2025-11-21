@@ -1,0 +1,29 @@
+# Clang-tidy configuration for GPU Audio Upsampler
+# Focus on bug prevention and performance
+
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-auto,
+  readability-braces-around-statements,
+  readability-inconsistent-declaration-parameter-name,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions
+
+# Treat these as errors (optional - uncomment to enforce)
+# WarningsAsErrors: 'bugprone-*'
+
+CheckOptions:
+  - key: modernize-use-auto.MinTypeNameLength
+    value: '5'
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: 'std::function;std::shared_ptr'
+
+# Header filter - only check project headers
+HeaderFilterRegex: '.*/(include|src)/.*\.h(pp)?$'
+
+# Skip system headers and third-party code
+SystemHeaders: false
