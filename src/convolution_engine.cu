@@ -1,7 +1,7 @@
 #include "convolution_engine.h"
-#include "filter_coefficients.h"
 #include <fstream>
 #include <iostream>
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstring>
@@ -46,6 +46,39 @@ __global__ void scaleKernel(float* data, int size, float scale) {
         data[idx] *= scale;
     }
 }
+
+namespace {
+
+// RAII for short-lived host buffers; long-lived buffers are registered via
+// registerHostBuffer/unregisterHostBuffers to avoid repetitive cudaHostRegister calls.
+class ScopedHostPin {
+public:
+    ScopedHostPin(void* ptr, size_t bytes, const char* context)
+        : ptr_(ptr), registered_(false) {
+        if (ptr_ && bytes > 0) {
+            ConvolutionEngine::Utils::checkCudaError(
+                cudaHostRegister(ptr_, bytes, cudaHostRegisterDefault),
+                context
+            );
+            registered_ = true;
+        }
+    }
+
+    ~ScopedHostPin() {
+        if (registered_) {
+            cudaHostUnregister(ptr_);
+        }
+    }
+
+    ScopedHostPin(const ScopedHostPin&) = delete;
+    ScopedHostPin& operator=(const ScopedHostPin&) = delete;
+
+private:
+    void* ptr_;
+    bool registered_;
+};
+
+} // namespace
 
 // Utility functions implementation
 namespace Utils {
@@ -106,6 +139,19 @@ double getGPUUtilization() {
 } // namespace Utils
 
 // GPUUpsampler implementation
+void GPUUpsampler::resizeOverlapBuffers(size_t newSize) {
+    unregisterHostBuffers();
+    overlapBuffer_.assign(newSize, 0.0f);
+    overlapBufferRight_.assign(newSize, 0.0f);
+
+    registerHostBuffer(overlapBuffer_.data(),
+                       overlapBuffer_.size() * sizeof(float),
+                       "cudaHostRegister overlap buffer (L)");
+    registerHostBuffer(overlapBufferRight_.data(),
+                       overlapBufferRight_.size() * sizeof(float),
+                       "cudaHostRegister overlap buffer (R)");
+}
+
 GPUUpsampler::GPUUpsampler()
     : upsampleRatio_(1), blockSize_(8192), filterTaps_(0), fftSize_(0),
       d_filterCoeffs_(nullptr), d_filterFFT_(nullptr),
@@ -114,8 +160,13 @@ GPUUpsampler::GPUUpsampler()
       fftPlanForward_(0), fftPlanInverse_(0),
       overlapSize_(0), stream_(nullptr), streamLeft_(nullptr), streamRight_(nullptr),
       streamValidInputPerBlock_(0), streamInitialized_(false), validOutputPerBlock_(0),
+      streamOverlapSize_(0),
       d_streamInput_(nullptr), d_streamUpsampled_(nullptr), d_streamPadded_(nullptr),
-      d_streamInputFFT_(nullptr), d_streamConvResult_(nullptr) {
+      d_streamInputFFT_(nullptr), d_streamConvResult_(nullptr),
+      pinnedStreamInputLeft_(nullptr), pinnedStreamInputRight_(nullptr),
+      pinnedStreamInputMono_(nullptr),
+      pinnedStreamInputLeftBytes_(0), pinnedStreamInputRightBytes_(0),
+      pinnedStreamInputMonoBytes_(0) {
     stats_ = Stats();
 }
 
@@ -208,8 +259,7 @@ bool GPUUpsampler::setupGPUResources() {
         std::cout << "  FFT size: " << fftSize_ << std::endl;
 
         overlapSize_ = filterTaps_ - 1;
-        overlapBuffer_.resize(overlapSize_, 0.0f);
-        overlapBufferRight_.resize(overlapSize_, 0.0f);
+        resizeOverlapBuffers(overlapSize_);
 
         // Allocate device memory for filter coefficients
         Utils::checkCudaError(
@@ -300,6 +350,86 @@ bool GPUUpsampler::setupGPUResources() {
     }
 }
 
+void GPUUpsampler::registerHostBuffer(void* ptr, size_t bytes, const char* context) {
+    if (!ptr || bytes == 0) {
+        return;
+    }
+
+    for (const auto& buf : pinnedHostBuffers_) {
+        if (buf.ptr == ptr) {
+            return;  // Already registered
+        }
+    }
+
+    Utils::checkCudaError(
+        cudaHostRegister(ptr, bytes, cudaHostRegisterDefault),
+        context
+    );
+    pinnedHostBuffers_.push_back({ptr, bytes});
+}
+
+void GPUUpsampler::removePinnedHostBuffer(void* ptr) {
+    pinnedHostBuffers_.erase(
+        std::remove_if(pinnedHostBuffers_.begin(), pinnedHostBuffers_.end(),
+                       [ptr](const PinnedHostBuffer& buf) { return buf.ptr == ptr; }),
+        pinnedHostBuffers_.end()
+    );
+}
+
+void GPUUpsampler::registerStreamInputBuffer(std::vector<float>& buffer, cudaStream_t stream) {
+    if (buffer.empty()) {
+        return;
+    }
+
+    void* ptr = buffer.data();
+    size_t bytes = buffer.size() * sizeof(float);
+
+    // Track per-stream host buffers to avoid duplicate registrations when vectors reallocate
+    void** trackedPtr = nullptr;
+    size_t* trackedBytes = nullptr;
+    const char* context = nullptr;
+
+    if (stream == streamLeft_) {
+        trackedPtr = &pinnedStreamInputLeft_;
+        trackedBytes = &pinnedStreamInputLeftBytes_;
+        context = "cudaHostRegister streaming input buffer (L)";
+    } else if (stream == streamRight_) {
+        trackedPtr = &pinnedStreamInputRight_;
+        trackedBytes = &pinnedStreamInputRightBytes_;
+        context = "cudaHostRegister streaming input buffer (R)";
+    } else {
+        trackedPtr = &pinnedStreamInputMono_;
+        trackedBytes = &pinnedStreamInputMonoBytes_;
+        context = "cudaHostRegister streaming input buffer (mono)";
+    }
+
+    if (*trackedPtr == ptr && *trackedBytes == bytes) {
+        return;  // Already registered for this stream
+    }
+
+    if (*trackedPtr) {
+        cudaHostUnregister(*trackedPtr);
+        removePinnedHostBuffer(*trackedPtr);
+    }
+
+    registerHostBuffer(ptr, bytes, context);
+    *trackedPtr = ptr;
+    *trackedBytes = bytes;
+}
+
+void GPUUpsampler::unregisterHostBuffers() {
+    for (const auto& buf : pinnedHostBuffers_) {
+        cudaHostUnregister(buf.ptr);
+    }
+    pinnedHostBuffers_.clear();
+    pinnedStreamInputLeft_ = nullptr;
+    pinnedStreamInputRight_ = nullptr;
+    pinnedStreamInputMono_ = nullptr;
+    pinnedStreamInputLeftBytes_ = 0;
+    pinnedStreamInputRightBytes_ = 0;
+    pinnedStreamInputMonoBytes_ = 0;
+}
+
 bool GPUUpsampler::processChannel(const float* inputData,
                                   size_t inputFrames,
                                   std::vector<float>& outputData) {
@@ -335,6 +465,9 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
     try {
         size_t outputFrames = inputFrames * upsampleRatio_;
         outputData.resize(outputFrames, 0.0f);
+        ScopedHostPin outputPinned(outputData.data(),
+                                   outputFrames * sizeof(float),
+                                   "cudaHostRegister output buffer (offline)");
 
         // Step 1: Zero-pad input signal (upsample) in one go
         Utils::checkCudaError(
@@ -440,6 +573,10 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
 
             // Perform FFT convolution on this block
             Utils::checkCufftError(
+                cufftSetStream(fftPlanForward_, stream),
+                "cufftSetStream forward (offline)"
+            );
+            Utils::checkCufftError(
                 cufftExecR2C(fftPlanForward_, d_paddedInput, d_inputFFT),
                 "cufftExecR2C block"
             );
@@ -459,6 +596,10 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
             );
 
             // Inverse FFT (operate on d_inputFFT since we modified it in-place)
+            Utils::checkCufftError(
+                cufftSetStream(fftPlanInverse_, stream),
+                "cufftSetStream inverse (offline)"
+            );
             Utils::checkCufftError(
                 cufftExecC2R(fftPlanInverse_, d_inputFFT, d_convResult),
                 "cufftExecC2R block"
@@ -486,56 +627,13 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                 "cudaMemcpy valid output to host"
             );
 
-            // Save overlap for next block
-            // For Overlap-Save with very large filter (M=1000000), we have:
-            //   FFT size N = 1048576
-            //   Overlap = M-1 = 999999
-            //   Valid output per block = N - (M-1) = 48577
-            //
-            // Each iteration processes:
-            //   Input block: [previous overlap (999999) | new samples (48577)]
-            //   Output: discard first 999999, keep last 48577
-            //
-            // The overlap for NEXT iteration should be the last 999999 samples
-            // of the CURRENT input block, which is:
-            //   Current input block spans: inputPos to inputPos+validOutputPerBlock
-            //   But we need 999999 samples for overlap, and we only have 48577 new samples
-            //   So overlap = [last (999999-48577) of previous overlap] + [all 48577 new samples]
-            //   In the upsampled signal, this is: from (inputPos+48577-999999) to (inputPos+48577-1)
-            //                                    = from (inputPos-951422) to (inputPos+48576)
-            // Wait, that's going backwards!
-            //
-            // Let me reconsider: after processing block at inputPos, next block starts
-            // at inputPos+validOutputPerBlock. The overlap needed is the 999999 samples
-            // BEFORE that position, i.e., from (inputPos+validOutputPerBlock-overlap) to
-            // (inputPos+validOutputPerBlock-1) = from (inputPos+48577-999999) to (inputPos+48576)
-            //
-            // But actually, we're already AT inputPos+validOutputPerBlock after the advance!
-            // No wait, the advance happens AFTER this. So we save from inputPos+validOutputSize-overlapSize_+1
-            //
-            // Simpler: just save from (inputPos + validOutputSize) for overlapSize_ samples,
-            // which is the END of current block extending into the next region.
-            if (outputPos + validOutputSize < outputFrames) {
-                // Next overlap: the overlapSize_ samples starting from where next block will begin
-                size_t nextBlockStart = inputPos + validOutputSize;
-                if (nextBlockStart >= overlapSize_ && nextBlockStart < outputFrames) {
-                    // Get the last overlapSize_ samples before nextBlockStart
-                    size_t overlapStart = nextBlockStart - overlapSize_;
-                    if (overlapStart + overlapSize_ <= outputFrames) {
-                        Utils::checkCudaError(
-                            cudaMemcpyAsync(overlapBuffer.data(), d_upsampledInput + overlapStart,
-                                           overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-                            "cudaMemcpy overlap from device"
-                        );
-
-                        // DEBUG: Log saved overlap positions (first few blocks only)
-                        if (blockCount < 3) {
-                            fprintf(stderr, "[DEBUG] Block %zu: Saved overlap from position %zu (nextBlockStart=%zu - overlapSize=%d)\n",
-                                    blockCount, overlapStart, nextBlockStart, overlapSize_);
-                        }
-                    }
-                }
-            }
+            // Save overlap for next block: take the last overlapSize_ samples
+            // from the padded input buffer (tail = validOutputPerBlock position).
+            Utils::checkCudaError(
+                cudaMemcpyAsync(overlapBuffer.data(), d_paddedInput + validOutputPerBlock,
+                               overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                "cudaMemcpy overlap from device"
+            );
 
             // DEBUG: Log block processing summary (first few blocks only)
             if (blockCount < 3) {
@@ -621,6 +719,8 @@ bool GPUUpsampler::processStereo(const float* leftInput,
 }
 
 void GPUUpsampler::cleanup() {
+    unregisterHostBuffers();
+
     if (d_filterCoeffs_) cudaFree(d_filterCoeffs_);
     if (d_filterFFT_) cudaFree(d_filterFFT_);
     if (d_inputBlock_) cudaFree(d_inputBlock_);
@@ -658,6 +758,10 @@ void GPUUpsampler::cleanup() {
     stream_ = nullptr;
     streamLeft_ = nullptr;
     streamRight_ = nullptr;
+    streamValidInputPerBlock_ = 0;
+    validOutputPerBlock_ = 0;
+    streamOverlapSize_ = 0;
+    streamInitialized_ = false;
 }
 
 // Streaming mode methods
@@ -681,6 +785,12 @@ bool GPUUpsampler::initializeStreaming() {
 
     // Calculate adjusted overlap size for perfect alignment
     int adjustedOverlapSize = fftSize_ - validOutputPerBlock_;
+    streamOverlapSize_ = adjustedOverlapSize;
+
+    // Ensure host overlap buffers are large enough for adjusted size
+    if (static_cast<int>(overlapBuffer_.size()) < streamOverlapSize_) {
+        resizeOverlapBuffers(streamOverlapSize_);
+    }
 
     fprintf(stderr, "Streaming alignment adjustment:\n");
     fprintf(stderr, "  Ideal valid output: %d (from FFT %d - overlap %d)\n",
@@ -725,12 +835,9 @@ bool GPUUpsampler::initializeStreaming() {
     streamInitialized_ = true;
 
     fprintf(stderr, "[Streaming] Initialized:\n");
-    fprintf(stderr, "  - Input samples needed per block: %zu (at input rate %d Hz)\n",
-            streamValidInputPerBlock_, 44100);
-    fprintf(stderr, "  - Output samples generated per block: %d (at output rate %d Hz)\n",
-            validOutputPerBlock_, 705600);
-    fprintf(stderr, "  - Latency: ~%.1f ms\n",
-            1000.0 * streamValidInputPerBlock_ / 44100.0);
+    fprintf(stderr, "  - Input samples per block: %zu\n", streamValidInputPerBlock_);
+    fprintf(stderr, "  - Output samples per block: %d\n", validOutputPerBlock_);
+    fprintf(stderr, "  - Overlap (stream): %d samples\n", streamOverlapSize_);
     fprintf(stderr, "  - GPU streaming buffers pre-allocated\n");
 
     return true;
@@ -748,151 +855,166 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                                        cudaStream_t stream,
                                        std::vector<float>& streamInputBuffer,
                                        size_t& streamInputAccumulated) {
-    if (!streamInitialized_) {
-        std::cerr << "ERROR: Streaming mode not initialized. Call initializeStreaming() first." << std::endl;
-        return false;
-    }
+    try {
+        if (!streamInitialized_) {
+            std::cerr << "ERROR: Streaming mode not initialized. Call initializeStreaming() first." << std::endl;
+            return false;
+        }
 
-    // 1. Accumulate input samples
-    if (streamInputAccumulated + inputFrames > streamInputBuffer.size()) {
-        std::cerr << "ERROR: Stream input buffer overflow" << std::endl;
-        return false;
-    }
+        // 1. Accumulate input samples (pin once per stream to avoid repeated cudaHostRegister)
+        if (streamInputBuffer.empty()) {
+            std::cerr << "ERROR: Streaming input buffer not allocated" << std::endl;
+            return false;
+        }
 
-    std::copy(inputData, inputData + inputFrames,
-              streamInputBuffer.begin() + streamInputAccumulated);
-    streamInputAccumulated += inputFrames;
+        registerStreamInputBuffer(streamInputBuffer, stream);
 
-    // 2. Check if we have enough samples for one block
-    if (streamInputAccumulated < streamValidInputPerBlock_) {
-        // Not enough data yet - return false (no output generated)
-        outputData.clear();
-        return false;
-    }
+        if (streamInputAccumulated + inputFrames > streamInputBuffer.size()) {
+            std::cerr << "ERROR: Stream input buffer overflow" << std::endl;
+            return false;
+        }
 
-    // Calculate adjusted overlap size for perfect alignment
-    // This ensures: adjustedOverlapSize + validOutputPerBlock_ == fftSize_
-    int adjustedOverlapSize = fftSize_ - validOutputPerBlock_;
+        std::copy(inputData, inputData + inputFrames,
+                  streamInputBuffer.begin() + streamInputAccumulated);
+        streamInputAccumulated += inputFrames;
 
-    // 3. Process one block using pre-allocated GPU buffers
-    size_t samplesToProcess = streamValidInputPerBlock_;
-    // Note: samplesToProcess * upsampleRatio_ may be > validOutputPerBlock_ due to rounding
-    // We only use validOutputPerBlock_ samples to stay within FFT buffer bounds
+        // 2. Check if we have enough samples for one block
+        if (streamInputAccumulated < streamValidInputPerBlock_) {
+            // Not enough data yet - return false (no output generated)
+            outputData.clear();
+            return false;
+        }
 
-    // Step 3a: Transfer input to GPU using pre-allocated d_streamInput_
-    Utils::checkCudaError(
-        cudaMemcpyAsync(d_streamInput_, streamInputBuffer.data(), samplesToProcess * sizeof(float),
-                       cudaMemcpyHostToDevice, stream),
-        "cudaMemcpy streaming input to device"
-    );
+        // Use adjusted overlap size for perfect alignment (set in initializeStreaming)
+        int adjustedOverlapSize = streamOverlapSize_;
 
-    // Step 3b: Zero-padding (upsampling) using pre-allocated d_streamUpsampled_
-    int threadsPerBlock = 256;
-    int blocks = (samplesToProcess + threadsPerBlock - 1) / threadsPerBlock;
-    zeroPadKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-        d_streamInput_, d_streamUpsampled_, samplesToProcess, upsampleRatio_
-    );
+        // 3. Process one block using pre-allocated GPU buffers
+        size_t samplesToProcess = streamValidInputPerBlock_;
+        // Note: samplesToProcess * upsampleRatio_ may be > validOutputPerBlock_ due to rounding
+        // We only use validOutputPerBlock_ samples to stay within FFT buffer bounds
 
-    // Step 3c: Overlap-Save FFT convolution using pre-allocated buffers
-    int fftComplexSize = fftSize_ / 2 + 1;
-
-    // Prepare input: [overlap | new samples] using pre-allocated d_streamPadded_
-    Utils::checkCudaError(
-        cudaMemsetAsync(d_streamPadded_, 0, fftSize_ * sizeof(float), stream),
-        "cudaMemset streaming padded"
-    );
-
-    // Determine which overlap buffer to use based on which stream this is
-    std::vector<float>& overlap = (stream == streamLeft_) ? overlapBuffer_ :
-                                  (stream == streamRight_) ? overlapBufferRight_ : overlapBuffer_;
-
-    // Copy overlap from previous block (adjusted size for perfect alignment)
-    if (adjustedOverlapSize > 0) {
+        // Step 3a: Transfer input to GPU using pre-allocated d_streamInput_
         Utils::checkCudaError(
-            cudaMemcpyAsync(d_streamPadded_, overlap.data(),
-                           adjustedOverlapSize * sizeof(float), cudaMemcpyHostToDevice, stream),
-            "cudaMemcpy streaming overlap to device"
+            cudaMemcpyAsync(d_streamInput_, streamInputBuffer.data(), samplesToProcess * sizeof(float),
+                           cudaMemcpyHostToDevice, stream),
+            "cudaMemcpy streaming input to device"
         );
+
+        // Step 3b: Zero-padding (upsampling) using pre-allocated d_streamUpsampled_
+        int threadsPerBlock = 256;
+        int blocks = (samplesToProcess + threadsPerBlock - 1) / threadsPerBlock;
+        zeroPadKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+            d_streamInput_, d_streamUpsampled_, samplesToProcess, upsampleRatio_
+        );
+
+        // Step 3c: Overlap-Save FFT convolution using pre-allocated buffers
+        int fftComplexSize = fftSize_ / 2 + 1;
+
+        // Prepare input: [overlap | new samples] using pre-allocated d_streamPadded_
+        Utils::checkCudaError(
+            cudaMemsetAsync(d_streamPadded_, 0, fftSize_ * sizeof(float), stream),
+            "cudaMemset streaming padded"
+        );
+
+        // Determine which overlap buffer to use based on which stream this is
+        std::vector<float>& overlap = (stream == streamLeft_) ? overlapBuffer_ :
+                                      (stream == streamRight_) ? overlapBufferRight_ : overlapBuffer_;
+
+        // Copy overlap from previous block (adjusted size for perfect alignment)
+        if (adjustedOverlapSize > 0) {
+            Utils::checkCudaError(
+                cudaMemcpyAsync(d_streamPadded_, overlap.data(),
+                               adjustedOverlapSize * sizeof(float), cudaMemcpyHostToDevice, stream),
+                "cudaMemcpy streaming overlap to device"
+            );
+        }
+
+        // Copy only validOutputPerBlock_ samples to stay within FFT buffer bounds
+        // (samplesToProcess * upsampleRatio_ may be slightly larger due to rounding)
+        Utils::checkCudaError(
+            cudaMemcpyAsync(d_streamPadded_ + adjustedOverlapSize, d_streamUpsampled_,
+                           validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+            "cudaMemcpy streaming block to padded"
+        );
+
+        // FFT convolution using pre-allocated buffers
+        Utils::checkCufftError(
+            cufftSetStream(fftPlanForward_, stream),
+            "cufftSetStream forward"
+        );
+
+        Utils::checkCufftError(
+            cufftExecR2C(fftPlanForward_, d_streamPadded_, d_streamInputFFT_),
+            "cufftExecR2C streaming"
+        );
+
+        threadsPerBlock = 256;
+        blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
+        complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+            d_streamInputFFT_, d_filterFFT_, fftComplexSize
+        );
+
+        Utils::checkCufftError(
+            cufftSetStream(fftPlanInverse_, stream),
+            "cufftSetStream inverse"
+        );
+
+        Utils::checkCufftError(
+            cufftExecC2R(fftPlanInverse_, d_streamInputFFT_, d_streamConvResult_),
+            "cufftExecC2R streaming"
+        );
+
+        // Scale
+        float scale = 1.0f / fftSize_;
+        int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
+        scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
+            d_streamConvResult_, fftSize_, scale
+        );
+
+        // Extract valid output (discard first adjustedOverlapSize samples)
+        // The adjusted overlap size ensures perfect alignment with validOutputPerBlock_
+        outputData.resize(validOutputPerBlock_);
+        ScopedHostPin outputPinned(outputData.data(),
+                                   outputData.size() * sizeof(float),
+                                   "cudaHostRegister streaming output");
+        Utils::checkCudaError(
+            cudaMemcpyAsync(outputData.data(), d_streamConvResult_ + adjustedOverlapSize,
+                           validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+            "cudaMemcpy streaming output to host"
+        );
+
+        // Save overlap for next block
+        // CRITICAL: Must save from d_streamPadded_ (input buffer), not d_streamConvResult_ (convolution output)
+        // For next iteration, we need the LAST samples from the padded input buffer
+        // which corresponds to: d_streamPadded_[validOutputPerBlock_ : fftSize_]
+        // These are the "new" samples that will become "old overlap" in the next iteration
+        Utils::checkCudaError(
+            cudaMemcpyAsync(overlap.data(), d_streamPadded_ + validOutputPerBlock_,
+                           adjustedOverlapSize * sizeof(float), cudaMemcpyDeviceToHost, stream),
+            "cudaMemcpy streaming overlap from device"
+        );
+
+        // Synchronize stream to ensure all operations complete
+        Utils::checkCudaError(
+            cudaStreamSynchronize(stream),
+            "cudaStreamSynchronize streaming"
+        );
+
+        // 4. Shift remaining samples in input buffer
+        size_t remaining = streamInputAccumulated - samplesToProcess;
+        if (remaining > 0) {
+            std::copy(streamInputBuffer.begin() + samplesToProcess,
+                      streamInputBuffer.begin() + streamInputAccumulated,
+                      streamInputBuffer.begin());
+        }
+        streamInputAccumulated = remaining;
+
+        return true; // Output was generated
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error in processStreamBlock: " << e.what() << std::endl;
+        return false;
     }
-
-    // Copy only validOutputPerBlock_ samples to stay within FFT buffer bounds
-    // (samplesToProcess * upsampleRatio_ may be slightly larger due to rounding)
-    Utils::checkCudaError(
-        cudaMemcpyAsync(d_streamPadded_ + adjustedOverlapSize, d_streamUpsampled_,
-                       validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
-        "cudaMemcpy streaming block to padded"
-    );
-
-    // FFT convolution using pre-allocated buffers
-    Utils::checkCufftError(
-        cufftSetStream(fftPlanForward_, stream),
-        "cufftSetStream forward"
-    );
-
-    Utils::checkCufftError(
-        cufftExecR2C(fftPlanForward_, d_streamPadded_, d_streamInputFFT_),
-        "cufftExecR2C streaming"
-    );
-
-    threadsPerBlock = 256;
-    blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
-    complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-        d_streamInputFFT_, d_filterFFT_, fftComplexSize
-    );
-
-    Utils::checkCufftError(
-        cufftSetStream(fftPlanInverse_, stream),
-        "cufftSetStream inverse"
-    );
-
-    Utils::checkCufftError(
-        cufftExecC2R(fftPlanInverse_, d_streamInputFFT_, d_streamConvResult_),
-        "cufftExecC2R streaming"
-    );
-
-    // Scale
-    float scale = 1.0f / fftSize_;
-    int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
-    scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
-        d_streamConvResult_, fftSize_, scale
-    );
-
-    // Extract valid output (discard first adjustedOverlapSize samples)
-    // The adjusted overlap size ensures perfect alignment with validOutputPerBlock_
-    outputData.resize(validOutputPerBlock_);
-    Utils::checkCudaError(
-        cudaMemcpyAsync(outputData.data(), d_streamConvResult_ + adjustedOverlapSize,
-                       validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-        "cudaMemcpy streaming output to host"
-    );
-
-    // Save overlap for next block
-    // CRITICAL: Must save from d_streamPadded_ (input buffer), not d_streamConvResult_ (convolution output)
-    // For next iteration, we need the LAST samples from the padded input buffer
-    // which corresponds to: d_streamPadded_[validOutputPerBlock_ : fftSize_]
-    // These are the "new" samples that will become "old overlap" in the next iteration
-    Utils::checkCudaError(
-        cudaMemcpyAsync(overlap.data(), d_streamPadded_ + validOutputPerBlock_,
-                       adjustedOverlapSize * sizeof(float), cudaMemcpyDeviceToHost, stream),
-        "cudaMemcpy streaming overlap from device"
-    );
-
-    // Synchronize stream to ensure all operations complete
-    Utils::checkCudaError(
-        cudaStreamSynchronize(stream),
-        "cudaStreamSynchronize streaming"
-    );
-
-    // 4. Shift remaining samples in input buffer
-    size_t remaining = streamInputAccumulated - samplesToProcess;
-    if (remaining > 0) {
-        std::copy(streamInputBuffer.begin() + samplesToProcess,
-                  streamInputBuffer.begin() + streamInputAccumulated,
-                  streamInputBuffer.begin());
-    }
-    streamInputAccumulated = remaining;
-
-    return true; // Output was generated
 }
 
 } // namespace ConvolutionEngine

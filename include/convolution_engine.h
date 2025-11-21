@@ -81,6 +81,7 @@ private:
 
     // Setup CUDA memory and cuFFT plans
     bool setupGPUResources();
+    void resizeOverlapBuffers(size_t newSize);
 
     // Perform Overlap-Save FFT convolution
     bool overlapSaveConvolution(const float* input,
@@ -130,6 +131,7 @@ private:
     size_t streamValidInputPerBlock_;        // Input samples needed per block (at input rate)
     bool streamInitialized_;                 // Whether streaming mode is initialized
     int validOutputPerBlock_;                // Valid output samples per block (after FFT convolution)
+    int streamOverlapSize_;                  // Adjusted overlap per block for streaming alignment
 
     // Streaming GPU buffers (pre-allocated to avoid malloc/free in callbacks)
     float* d_streamInput_;                   // Device buffer for accumulated input
@@ -137,6 +139,26 @@ private:
     float* d_streamPadded_;                  // Device buffer for [overlap | new] concatenation
     cufftComplex* d_streamInputFFT_;         // FFT of padded input
     float* d_streamConvResult_;              // Convolution result
+
+    // Host pinned buffers (long-lived buffers use manual register/unregister;
+    // temporary outputs use ScopedHostPin inside implementations)
+    struct PinnedHostBuffer {
+        void* ptr;
+        size_t bytes;
+    };
+    std::vector<PinnedHostBuffer> pinnedHostBuffers_;
+
+    void* pinnedStreamInputLeft_;
+    void* pinnedStreamInputRight_;
+    void* pinnedStreamInputMono_;
+    size_t pinnedStreamInputLeftBytes_;
+    size_t pinnedStreamInputRightBytes_;
+    size_t pinnedStreamInputMonoBytes_;
+
+    void registerHostBuffer(void* ptr, size_t bytes, const char* context);
+    void registerStreamInputBuffer(std::vector<float>& buffer, cudaStream_t stream);
+    void removePinnedHostBuffer(void* ptr);
+    void unregisterHostBuffers();
 };
 
 // Utility functions

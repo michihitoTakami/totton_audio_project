@@ -7,6 +7,7 @@
 #include <cstring>
 #include <csignal>
 #include <atomic>
+#include <algorithm>
 
 // Configuration
 constexpr int INPUT_SAMPLE_RATE = 44100;
@@ -19,12 +20,58 @@ constexpr int CHANNELS = 2;
 static std::atomic<bool> g_running{true};
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 
-// Ring buffers for async processing
-static std::vector<float> g_input_buffer_left;
-static std::vector<float> g_input_buffer_right;
-static std::vector<float> g_output_buffer_left;
-static std::vector<float> g_output_buffer_right;
-static size_t g_output_read_pos = 0;
+// Simple lock-free ring buffer (single producer/consumer) for audio samples
+struct AudioRingBuffer {
+    std::vector<float> buffer;
+    size_t head = 0;  // read position
+    size_t tail = 0;  // write position
+    size_t size = 0;  // samples stored
+
+    void init(size_t capacity) {
+        buffer.assign(capacity, 0.0f);
+        head = tail = size = 0;
+    }
+
+    size_t capacity() const { return buffer.size(); }
+    size_t availableToRead() const { return size; }
+    size_t availableToWrite() const { return capacity() - size; }
+
+    bool write(const float* data, size_t count) {
+        if (count > availableToWrite()) {
+            return false;
+        }
+        size_t first = std::min(count, capacity() - tail);
+        std::memcpy(buffer.data() + tail, data, first * sizeof(float));
+        size_t remaining = count - first;
+        if (remaining > 0) {
+            std::memcpy(buffer.data(), data + first, remaining * sizeof(float));
+        }
+        tail = (tail + count) % capacity();
+        size += count;
+        return true;
+    }
+
+    bool read(float* dst, size_t count) {
+        if (count > size) {
+            return false;
+        }
+        size_t first = std::min(count, capacity() - head);
+        std::memcpy(dst, buffer.data() + head, first * sizeof(float));
+        size_t remaining = count - first;
+        if (remaining > 0) {
+            std::memcpy(dst + first, buffer.data(), remaining * sizeof(float));
+        }
+        head = (head + count) % capacity();
+        size -= count;
+        return true;
+    }
+};
+
+static AudioRingBuffer g_output_buffer_left;
+static AudioRingBuffer g_output_buffer_right;
+static std::vector<float> g_output_temp_left;
+static std::vector<float> g_output_temp_right;
+static constexpr size_t OUTPUT_RING_CAPACITY = OUTPUT_SAMPLE_RATE * 2; // ~2 seconds per channel
 
 // PipeWire objects
 struct Data {
@@ -75,10 +122,10 @@ static void on_input_process(void* userdata) {
 
         if (success) {
             // Store output for consumption by output stream
-            g_output_buffer_left.insert(g_output_buffer_left.end(),
-                                       output_left.begin(), output_left.end());
-            g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                        output_right.begin(), output_right.end());
+            if (!g_output_buffer_left.write(output_left.data(), output_left.size()) ||
+                !g_output_buffer_right.write(output_right.data(), output_right.size())) {
+                std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
+            }
         }
     }
 
@@ -99,23 +146,24 @@ static void on_output_process(void* userdata) {
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
     if (output_samples && n_frames > 0) {
-        size_t available = g_output_buffer_left.size() - g_output_read_pos;
+        size_t available = std::min(g_output_buffer_left.availableToRead(),
+                                    g_output_buffer_right.availableToRead());
 
         if (available >= n_frames) {
-            // Interleave output (separate L/R → stereo interleaved)
-            for (uint32_t i = 0; i < n_frames; ++i) {
-                output_samples[i * 2] = g_output_buffer_left[g_output_read_pos + i];
-                output_samples[i * 2 + 1] = g_output_buffer_right[g_output_read_pos + i];
-            }
-            g_output_read_pos += n_frames;
+            if (g_output_temp_left.size() < n_frames) g_output_temp_left.resize(n_frames);
+            if (g_output_temp_right.size() < n_frames) g_output_temp_right.resize(n_frames);
 
-            // Clear consumed data when buffer gets large
-            if (g_output_read_pos > 100000) {
-                g_output_buffer_left.erase(g_output_buffer_left.begin(),
-                                          g_output_buffer_left.begin() + g_output_read_pos);
-                g_output_buffer_right.erase(g_output_buffer_right.begin(),
-                                           g_output_buffer_right.begin() + g_output_read_pos);
-                g_output_read_pos = 0;
+            bool read_left = g_output_buffer_left.read(g_output_temp_left.data(), n_frames);
+            bool read_right = g_output_buffer_right.read(g_output_temp_right.data(), n_frames);
+
+            if (read_left && read_right) {
+                // Interleave output (separate L/R → stereo interleaved)
+                for (uint32_t i = 0; i < n_frames; ++i) {
+                    output_samples[i * 2] = g_output_temp_left[i];
+                    output_samples[i * 2 + 1] = g_output_temp_right[i];
+                }
+            } else {
+                std::memset(output_samples, 0, n_frames * CHANNELS * sizeof(float));
             }
         } else {
             // Underrun - output silence
@@ -183,6 +231,9 @@ int main(int argc, char* argv[]) {
 
     // Initialize PipeWire
     pw_init(&argc, &argv);
+
+    g_output_buffer_left.init(OUTPUT_RING_CAPACITY);
+    g_output_buffer_right.init(OUTPUT_RING_CAPACITY);
 
     Data data = {};
     data.gpu_ready = true;
