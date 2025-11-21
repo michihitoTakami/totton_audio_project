@@ -14,6 +14,15 @@ pkg_check_modules(LV2 REQUIRED lv2)
 pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
 pkg_check_modules(ALSA REQUIRED alsa)
 
+# Fetch nlohmann_json (header-only JSON library)
+include(FetchContent)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
@@ -121,11 +130,12 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa src/alsa_daemon.cpp)
 
-# Link against core library, PipeWire, and ALSA
+# Link against core library, PipeWire, ALSA, and JSON
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
+    nlohmann_json::nlohmann_json
 )
 
 # Compiler flags for ALSA daemon

@@ -110,6 +110,19 @@ int main(int argc, char* argv[]) {
 
         if (selectedPreset) {
             config.filterPath = std::string(selectedPreset->path);
+
+            // Check if auto-selected filter exists; fallback to 44.1kHz filter if not
+            if (!std::filesystem::exists(config.filterPath)) {
+                if (inputAudio.sampleRate == 48000 &&
+                    std::filesystem::exists(std::string(FILTER_PRESET_44K.path))) {
+                    std::cerr << "Warning: 48kHz filter not found: " << config.filterPath << std::endl;
+                    std::cerr << "         Falling back to 44.1kHz filter (may cause slight aliasing)." << std::endl;
+                    std::cerr << "         Generate 48kHz filter with: uv run python scripts/generate_filter.py --rate 48000" << std::endl;
+                    config.filterPath = std::string(FILTER_PRESET_44K.path);
+                    // Note: still use 16x ratio; output will be 768kHz
+                }
+            }
+
             if (config.upsampleRatio != selectedPreset->upsampleRatio) {
                 std::cout << "Info: Overriding upsample ratio to preset value "
                           << selectedPreset->upsampleRatio << "x for "
