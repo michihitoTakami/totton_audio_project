@@ -5,5 +5,16 @@
   "upsampleRatio": 16,
   "blockSize": 4096,
   "gain": 12.0,
-  "filterPath": "data/coefficients/filter_1m_min_phase.bin"
+  "filterPath": "data/coefficients/filter_1m_min_phase.bin",
+  "webApi": {
+    "host": "127.0.0.1",
+    "port": 11881,
+    "auth": {
+      "enabled": false,
+      "mode": "token",
+      "token": "",
+      "basicUsername": "",
+      "basicPassword": ""
+    }
+  }
 }

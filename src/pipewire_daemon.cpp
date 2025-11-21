@@ -16,9 +16,22 @@ constexpr int UPSAMPLE_RATIO = 16;
 constexpr int BLOCK_SIZE = 4096;
 constexpr int CHANNELS = 2;
 
+// Maximum expected frames per PipeWire callback (preallocate for worst case)
+constexpr size_t MAX_FRAMES_PER_CALLBACK = 8192;
+
 // Global state
 static std::atomic<bool> g_running{true};
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
+
+// Pre-allocated buffers for RT-safe deinterleaving (avoid heap alloc in callback)
+static std::vector<float> g_deinterleave_left;
+static std::vector<float> g_deinterleave_right;
+
+// Streaming input accumulation buffers (for processStreamBlock)
+static std::vector<float> g_stream_input_left;
+static std::vector<float> g_stream_input_right;
+static size_t g_stream_accumulated_left = 0;
+static size_t g_stream_accumulated_right = 0;
 
 // Simple lock-free ring buffer (single producer/consumer) for audio samples
 struct AudioRingBuffer {
@@ -88,6 +101,7 @@ static void signal_handler(int sig) {
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
+// IMPORTANT: This runs in PipeWire's RT thread - avoid heap allocations!
 static void on_input_process(void* userdata) {
     Data* data = static_cast<Data*>(userdata);
 
@@ -101,26 +115,48 @@ static void on_input_process(void* userdata) {
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
     if (input_samples && n_frames > 0 && data->gpu_ready) {
-        // Deinterleave input (stereo interleaved → separate L/R)
-        std::vector<float> left(n_frames);
-        std::vector<float> right(n_frames);
-
-        for (uint32_t i = 0; i < n_frames; ++i) {
-            left[i] = input_samples[i * 2];
-            right[i] = input_samples[i * 2 + 1];
+        // Use pre-allocated buffers for deinterleaving (RT-safe)
+        // Note: g_deinterleave_left/right are pre-sized to MAX_FRAMES_PER_CALLBACK
+        if (n_frames > g_deinterleave_left.size()) {
+            // Fallback: this shouldn't happen with proper preallocation
+            // Log warning but don't allocate in RT thread
+            std::cerr << "Warning: n_frames (" << n_frames << ") exceeds preallocated buffer size" << std::endl;
+            pw_stream_queue_buffer(data->input_stream, buf);
+            return;
         }
 
-        // Process through GPU upsampler
+        // Deinterleave input (stereo interleaved → separate L/R)
+        for (uint32_t i = 0; i < n_frames; ++i) {
+            g_deinterleave_left[i] = input_samples[i * 2];
+            g_deinterleave_right[i] = input_samples[i * 2 + 1];
+        }
+
+        // Process through GPU upsampler using streaming API
+        // This uses pre-allocated GPU buffers (initializeStreaming must be called first)
         std::vector<float> output_left, output_right;
-        bool success = g_upsampler->processStereo(
-            left.data(),
-            right.data(),
+
+        // Process left channel
+        bool left_generated = g_upsampler->processStreamBlock(
+            g_deinterleave_left.data(),
             n_frames,
             output_left,
-            output_right
+            g_upsampler->streamLeft_,
+            g_stream_input_left,
+            g_stream_accumulated_left
         );
 
-        if (success) {
+        // Process right channel
+        bool right_generated = g_upsampler->processStreamBlock(
+            g_deinterleave_right.data(),
+            n_frames,
+            output_right,
+            g_upsampler->streamRight_,
+            g_stream_input_right,
+            g_stream_accumulated_right
+        );
+
+        // Only store output if both channels generated output
+        if (left_generated && right_generated) {
             // Store output for consumption by output stream
             if (!g_output_buffer_left.write(output_left.data(), output_left.size()) ||
                 !g_output_buffer_right.write(output_right.data(), output_right.size())) {
@@ -227,6 +263,26 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "GPU upsampler ready (16x upsampling, " << BLOCK_SIZE << " samples/block)" << std::endl;
+
+    // Initialize streaming mode to pre-allocate GPU buffers (RT-safe processing)
+    if (!g_upsampler->initializeStreaming()) {
+        std::cerr << "Failed to initialize streaming mode" << std::endl;
+        delete g_upsampler;
+        return 1;
+    }
+    std::cout << "Streaming mode initialized (GPU buffers pre-allocated)" << std::endl;
+
+    // Pre-allocate deinterleave buffers for RT-safe callback processing
+    g_deinterleave_left.resize(MAX_FRAMES_PER_CALLBACK, 0.0f);
+    g_deinterleave_right.resize(MAX_FRAMES_PER_CALLBACK, 0.0f);
+
+    // Pre-allocate streaming input accumulation buffers
+    constexpr size_t STREAM_BUFFER_CAPACITY = 10000;  // Conservative estimate
+    g_stream_input_left.resize(STREAM_BUFFER_CAPACITY, 0.0f);
+    g_stream_input_right.resize(STREAM_BUFFER_CAPACITY, 0.0f);
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+
     std::cout << std::endl;
 
     // Initialize PipeWire
