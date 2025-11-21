@@ -4,17 +4,16 @@
 - Think in English and output in Japanese.
 
 ## Project Structure & Module Organization
-- `src/`: CLI entry (`main.cpp`), GPU core (`convolution_engine.cu`, `audio_io.cpp`), daemons (`pipewire_daemon.cpp`, `alsa_daemon.cpp`), and LV2 plugin code (`src/lv2_plugin/`).
+- `src/`: CLI entry (`main.cpp`), GPU core (`convolution_engine.cu`, `audio_io.cpp`), daemons (`pipewire_daemon.cpp`, `alsa_daemon.cpp`).
 - `include/`: Public headers for the C++/CUDA targets.
 - `data/coefficients/`: FIR tap binaries and metadata; keep any regenerated filters aligned with `filter_coefficients.h`.
 - `scripts/`: Python tools for filter generation/verification and waveform analysis.
 - `docs/` and `test_data/`: Setup notes, reports, and reference WAVs. Avoid rewriting large binaries unless strictly needed.
 
 ## Build, Test, and Development Commands
-- Configure & build: `cmake -B build -DCMAKE_BUILD_TYPE=Release` then `cmake --build build -j$(nproc)` (builds CLI, LV2 plugin, and daemons).
+- Configure & build: `cmake -B build -DCMAKE_BUILD_TYPE=Release` then `cmake --build build -j$(nproc)` (builds CLIとデーモン)。
 - Run CLI: `./build/gpu_upsampler input.wav output.wav --ratio 16 --block 4096`.
 - Daemons: `./build/gpu_upsampler_alsa` (ALSA direct), `./build/gpu_upsampler_daemon` (PipeWire capture).
-- Install LV2 bundle locally: `cmake --install build`.
 - Python helpers (>=3.11): e.g., `python scripts/verify_frequency_response.py data/coefficients/filter_1m_min_phase.bin`.
 
 ## Coding Style & Naming Conventions
