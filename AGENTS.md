@@ -27,6 +27,12 @@
 - For filter or DSP changes, run `scripts/verify_frequency_response.py` and attach plots/metrics.
 - For realtime paths, test end-to-end via `gpu_upsampler_alsa` with the PipeWire null sink (see `docs/setup_guide.md`), confirming stable streaming and correct sample rate.
 
+## Git Workflow (Worktree-based)
+- **Never commit directly to main.** Use Git Worktree for all feature development and bug fixes.
+- Create worktree: `git worktree add ../gpu_os_<name> -b feature/<name>`
+- Work in the worktree, then push and create PR via `gh pr create`.
+- Clean up after merge: `git worktree remove ../gpu_os_<name>`
+
 ## Commit & Pull Request Guidelines
 - Commit messages: short, imperative summaries similar to existing history (`Fix overlap-save blocking`, `Add PipeWire daemon logging`).
 - PRs should describe what changed, why, how to verify (commands + expected logs/plots), and any performance impact.

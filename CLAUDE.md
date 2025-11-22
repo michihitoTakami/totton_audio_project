@@ -157,6 +157,33 @@ uv run python scripts/generate_filter.py
 **Phase 3 (LV2 Plugin):**
 *TBD - Add LV2 build/install commands, Easy Effects loading instructions*
 
+## Git Workflow
+
+**Always use Git Worktree for feature development and bug fixes.**
+
+Do NOT commit directly to main. Instead:
+
+```bash
+# Create a new worktree for the feature branch
+git worktree add ../gpu_os_<feature-name> -b feature/<feature-name>
+
+# Work in the worktree directory
+cd ../gpu_os_<feature-name>
+
+# After completion, push and create PR
+git push -u origin feature/<feature-name>
+gh pr create --title "..." --body "..."
+
+# Clean up after PR is merged
+git worktree remove ../gpu_os_<feature-name>
+```
+
+**Rationale:**
+- Keeps main branch clean and stable
+- Enables parallel work on multiple features
+- Facilitates proper code review via PRs
+- Avoids accidental pushes to main
+
 ## Reference Projects
 
 - **HQPlayer:** Commercial benchmark for target audio quality
