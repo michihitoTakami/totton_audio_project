@@ -29,6 +29,9 @@
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
+// Stats file path (JSON format for Web API)
+constexpr const char* STATS_FILE_PATH = "/tmp/gpu_upsampler_stats.json";
+
 // Default configuration values
 constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
 constexpr int DEFAULT_UPSAMPLE_RATIO = 16;
@@ -46,6 +49,10 @@ static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_reload_requested{false};
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
+
+// Statistics (atomic for thread-safe access from stats writer)
+static std::atomic<size_t> g_clip_count{0};
+static std::atomic<size_t> g_total_samples{0};
 
 // Audio buffer for thread communication
 static std::mutex g_buffer_mutex;
@@ -124,6 +131,35 @@ static void release_pid_lock() {
     }
     // Remove the PID file on clean shutdown
     unlink(PID_FILE_PATH);
+    // Remove the stats file on clean shutdown
+    unlink(STATS_FILE_PATH);
+}
+
+// ========== Statistics File ==========
+
+// Write statistics to JSON file for Web API consumption
+static void write_stats_file() {
+    size_t clips = g_clip_count.load(std::memory_order_relaxed);
+    size_t total = g_total_samples.load(std::memory_order_relaxed);
+    double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
+    auto now = std::chrono::system_clock::now();
+    auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+        now.time_since_epoch()).count();
+
+    // Write to temp file and rename for atomic update
+    std::string tmp_path = std::string(STATS_FILE_PATH) + ".tmp";
+    std::ofstream ofs(tmp_path);
+    if (ofs) {
+        ofs << "{\n"
+            << "  \"clip_count\": " << clips << ",\n"
+            << "  \"total_samples\": " << total << ",\n"
+            << "  \"clip_rate\": " << clip_rate << ",\n"
+            << "  \"last_updated\": " << epoch << "\n"
+            << "}\n";
+        ofs.close();
+        // Atomic rename
+        std::rename(tmp_path.c_str(), STATS_FILE_PATH);
+    }
 }
 
 // ========== Configuration ==========
@@ -422,9 +458,8 @@ void alsa_output_thread() {
             // Apply configured gain (compensates for energy distribution in upsampled signal)
             const float gain = g_config.gain;
 
-            // Statistics for debugging
-            static size_t clip_count = 0;
-            static size_t total_samples = 0;
+            // Statistics for debugging (uses global atomics)
+            static auto last_stats_write = std::chrono::steady_clock::now();
             size_t current_clips = 0;
 
             for (size_t i = 0; i < period_size; ++i) {
@@ -439,7 +474,7 @@ void alsa_output_thread() {
                 if (left_sample > 1.0f || left_sample < -1.0f ||
                     right_sample > 1.0f || right_sample < -1.0f) {
                     current_clips++;
-                    clip_count++;
+                    g_clip_count.fetch_add(1, std::memory_order_relaxed);
                 }
 
                 // Hard clipping as safety net only - should never trigger with proper gain staging
@@ -461,13 +496,22 @@ void alsa_output_thread() {
                 interleaved_buffer[i * 2 + 1] = right_int;
             }
 
-            total_samples += period_size * 2;
+            g_total_samples.fetch_add(period_size * 2, std::memory_order_relaxed);
 
             // Report clipping infrequently to avoid log spam
-            if (total_samples % (period_size * 2 * 100) == 0 && clip_count > 0) {
-                std::cout << "WARNING: Clipping detected - " << clip_count
-                          << " samples clipped out of " << total_samples
-                          << " (" << (100.0 * clip_count / total_samples) << "%)" << std::endl;
+            size_t total = g_total_samples.load(std::memory_order_relaxed);
+            size_t clips = g_clip_count.load(std::memory_order_relaxed);
+            if (total % (period_size * 2 * 100) == 0 && clips > 0) {
+                std::cout << "WARNING: Clipping detected - " << clips
+                          << " samples clipped out of " << total
+                          << " (" << (100.0 * clips / total) << "%)" << std::endl;
+            }
+
+            // Write stats file every second
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_stats_write >= std::chrono::seconds(1)) {
+                write_stats_file();
+                last_stats_write = now;
             }
             g_output_read_pos += period_size;
 

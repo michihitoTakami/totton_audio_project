@@ -24,6 +24,7 @@ EQ_PROFILES_DIR = Path(__file__).parent.parent / "data" / "EQ"
 DAEMON_SERVICE = "gpu_upsampler_alsa"  # systemd service name (if using systemd)
 DAEMON_BINARY = Path(__file__).parent.parent / "build" / "gpu_upsampler_alsa"
 PID_FILE_PATH = Path("/tmp/gpu_upsampler_alsa.pid")
+STATS_FILE_PATH = Path("/tmp/gpu_upsampler_stats.json")
 
 app = FastAPI(
     title="GPU Upsampler Control",
@@ -245,6 +246,22 @@ def check_pipewire_sink() -> bool:
         return False
 
 
+def load_stats() -> dict:
+    """Load statistics from daemon stats file"""
+    if not STATS_FILE_PATH.exists():
+        return {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+    try:
+        with open(STATS_FILE_PATH) as f:
+            data = json.load(f)
+        return {
+            "clip_count": data.get("clip_count", 0),
+            "total_samples": data.get("total_samples", 0),
+            "clip_rate": data.get("clip_rate", 0.0),
+        }
+    except (json.JSONDecodeError, IOError):
+        return {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+
+
 def get_alsa_devices() -> list[dict]:
     """List available ALSA playback devices with friendly names"""
     devices = []
@@ -315,14 +332,15 @@ async def get_status():
     settings = load_config()
     daemon_running = check_daemon_running()
     pw_connected = check_pipewire_sink() if daemon_running else False
+    stats = load_stats() if daemon_running else {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
 
     return Status(
         settings=settings,
         pipewire_connected=pw_connected,
         alsa_connected=daemon_running,  # Simplified: assume ALSA connected if daemon running
-        clip_count=0,  # TODO: Read from daemon stats file
-        total_samples=0,
-        clip_rate=0.0,
+        clip_count=stats["clip_count"],
+        total_samples=stats["total_samples"],
+        clip_rate=stats["clip_rate"],
         daemon_running=daemon_running,
         eq_active=settings.eq_enabled and bool(settings.eq_profile_path),
     )
