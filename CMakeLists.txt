@@ -16,14 +16,26 @@ pkg_check_modules(SNDFILE REQUIRED sndfile)
 pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
 pkg_check_modules(ALSA REQUIRED alsa)
 
-# Fetch nlohmann_json (header-only JSON library)
+# Fetch dependencies
 include(FetchContent)
+
+# nlohmann_json (header-only JSON library)
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.11.3
 )
-FetchContent_MakeAvailable(nlohmann_json)
+
+# GoogleTest (testing framework)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.14.0
+)
+# Prevent GoogleTest from overriding compiler/linker options
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(nlohmann_json googletest)
 
 # Include directories
 include_directories(
@@ -171,3 +183,40 @@ configure_file(
 )
 install(FILES ${CMAKE_BINARY_DIR}/gpu-upsampler.service
         DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
+
+# ============================================================
+# Testing
+# ============================================================
+enable_testing()
+include(GoogleTest)
+
+# CPU-only unit tests (no GPU required)
+# Tests RateFamily detection and other CPU-only functionality
+add_executable(cpu_tests
+    tests/cpp/test_rate_family.cpp
+)
+target_link_libraries(cpu_tests
+    GTest::gtest_main
+    gpu_upsampler_core
+)
+target_include_directories(cpu_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(cpu_tests)
+
+# GPU integration tests (requires CUDA GPU)
+add_executable(gpu_tests
+    tests/gpu/test_convolution_engine.cu
+)
+target_link_libraries(gpu_tests
+    GTest::gtest_main
+    gpu_upsampler_core
+)
+target_include_directories(gpu_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+set_target_properties(gpu_tests PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_ARCHITECTURES "75"
+)
+gtest_discover_tests(gpu_tests)
