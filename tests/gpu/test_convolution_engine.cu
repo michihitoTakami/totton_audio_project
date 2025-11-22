@@ -6,9 +6,94 @@
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <random>
 #include "convolution_engine.h"
 
 using namespace ConvolutionEngine;
+
+// RAII wrapper for temporary coefficient directory
+// Automatically cleans up on destruction (handles ASSERT_* early returns)
+class TempCoeffDir {
+public:
+    static constexpr int TEST_TAPS = 1024;
+
+    TempCoeffDir() : valid_(false) {
+        // Generate unique directory name using high-resolution time + random
+        auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 999999);
+
+        path_ = std::filesystem::temp_directory_path().string() +
+                "/gpu_os_test_" + std::to_string(now) + "_" + std::to_string(dis(gen));
+
+        std::error_code ec;
+        std::filesystem::create_directories(path_, ec);
+        if (ec) {
+            error_ = "Failed to create temp directory: " + ec.message();
+            return;
+        }
+
+        // Generate impulse response (delta function) for each configuration
+        std::vector<float> impulse(TEST_TAPS, 0.0f);
+        impulse[0] = 1.0f;  // Unit impulse at t=0
+
+        // Generate all 8 coefficient files
+        const char* configs[] = {
+            "44k_16x", "44k_8x", "44k_4x", "44k_2x",
+            "48k_16x", "48k_8x", "48k_4x", "48k_2x"
+        };
+
+        for (const char* config : configs) {
+            std::string filename = path_ + "/filter_" + config + "_" +
+                                   std::to_string(TEST_TAPS) + "_min_phase.bin";
+            if (!writeCoeffFile(filename, impulse)) {
+                error_ = "Failed to write coefficient file: " + filename;
+                cleanup();
+                return;
+            }
+        }
+
+        valid_ = true;
+    }
+
+    ~TempCoeffDir() {
+        cleanup();
+    }
+
+    // Non-copyable, non-movable
+    TempCoeffDir(const TempCoeffDir&) = delete;
+    TempCoeffDir& operator=(const TempCoeffDir&) = delete;
+
+    bool isValid() const { return valid_; }
+    const std::string& path() const { return path_; }
+    const std::string& error() const { return error_; }
+
+private:
+    void cleanup() {
+        if (!path_.empty()) {
+            std::error_code ec;
+            std::filesystem::remove_all(path_, ec);
+            // Ignore cleanup errors (best effort)
+        }
+    }
+
+    static bool writeCoeffFile(const std::string& path, const std::vector<float>& coeffs) {
+        std::ofstream ofs(path, std::ios::binary);
+        if (!ofs) {
+            return false;
+        }
+        ofs.write(reinterpret_cast<const char*>(coeffs.data()), coeffs.size() * sizeof(float));
+        return ofs.good();
+    }
+
+    std::string path_;
+    std::string error_;
+    bool valid_;
+};
 
 class ConvolutionEngineTest : public ::testing::Test {
 protected:
@@ -580,21 +665,13 @@ TEST_F(ConvolutionEngineTest, MultiRateNotEnabledByDefault) {
     EXPECT_FALSE(upsampler.isMultiRateEnabled());
 }
 
-// This test requires multi-rate coefficient files
+// Test multi-rate initialization (generates coefficients dynamically)
 TEST_F(ConvolutionEngineTest, InitializeMultiRate) {
+    TempCoeffDir tempDir;  // RAII: auto-cleanup on scope exit
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
     GPUUpsampler upsampler;
-
-    const char* coeffDir = "data/coefficients";
-
-    // Check if multi-rate coefficient files exist
-    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
-    FILE* f = fopen(testFile.c_str(), "rb");
-    if (f == nullptr) {
-        GTEST_SKIP() << "Multi-rate coefficient files not found in " << coeffDir;
-    }
-    fclose(f);
-
-    bool result = upsampler.initializeMultiRate(coeffDir, 8192, 44100);
+    bool result = upsampler.initializeMultiRate(tempDir.path(), 8192, 44100);
     EXPECT_TRUE(result);
     EXPECT_TRUE(upsampler.isMultiRateEnabled());
     EXPECT_EQ(upsampler.getCurrentInputRate(), 44100);
@@ -603,18 +680,11 @@ TEST_F(ConvolutionEngineTest, InitializeMultiRate) {
 }
 
 TEST_F(ConvolutionEngineTest, InitializeMultiRateWith48k) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
     GPUUpsampler upsampler;
-
-    const char* coeffDir = "data/coefficients";
-
-    std::string testFile = std::string(coeffDir) + "/filter_48k_16x_1024_min_phase.bin";
-    FILE* f = fopen(testFile.c_str(), "rb");
-    if (f == nullptr) {
-        GTEST_SKIP() << "Multi-rate coefficient files not found";
-    }
-    fclose(f);
-
-    bool result = upsampler.initializeMultiRate(coeffDir, 8192, 48000);
+    bool result = upsampler.initializeMultiRate(tempDir.path(), 8192, 48000);
     EXPECT_TRUE(result);
     EXPECT_TRUE(upsampler.isMultiRateEnabled());
     EXPECT_EQ(upsampler.getCurrentInputRate(), 48000);
@@ -623,18 +693,11 @@ TEST_F(ConvolutionEngineTest, InitializeMultiRateWith48k) {
 }
 
 TEST_F(ConvolutionEngineTest, SwitchToInputRate) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
     GPUUpsampler upsampler;
-
-    const char* coeffDir = "data/coefficients";
-
-    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
-    FILE* f = fopen(testFile.c_str(), "rb");
-    if (f == nullptr) {
-        GTEST_SKIP() << "Multi-rate coefficient files not found";
-    }
-    fclose(f);
-
-    ASSERT_TRUE(upsampler.initializeMultiRate(coeffDir, 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
 
     // Switch to 88200 (8x)
     EXPECT_TRUE(upsampler.switchToInputRate(88200));
@@ -656,18 +719,11 @@ TEST_F(ConvolutionEngineTest, SwitchToInputRate) {
 }
 
 TEST_F(ConvolutionEngineTest, SwitchToSameInputRate) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
     GPUUpsampler upsampler;
-
-    const char* coeffDir = "data/coefficients";
-
-    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
-    FILE* f = fopen(testFile.c_str(), "rb");
-    if (f == nullptr) {
-        GTEST_SKIP() << "Multi-rate coefficient files not found";
-    }
-    fclose(f);
-
-    ASSERT_TRUE(upsampler.initializeMultiRate(coeffDir, 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
 
     // Switch to same rate should succeed
     EXPECT_TRUE(upsampler.switchToInputRate(44100));
@@ -675,18 +731,11 @@ TEST_F(ConvolutionEngineTest, SwitchToSameInputRate) {
 }
 
 TEST_F(ConvolutionEngineTest, SwitchToInvalidInputRate) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
     GPUUpsampler upsampler;
-
-    const char* coeffDir = "data/coefficients";
-
-    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
-    FILE* f = fopen(testFile.c_str(), "rb");
-    if (f == nullptr) {
-        GTEST_SKIP() << "Multi-rate coefficient files not found";
-    }
-    fclose(f);
-
-    ASSERT_TRUE(upsampler.initializeMultiRate(coeffDir, 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
 
     // Switch to invalid rate should fail
     EXPECT_FALSE(upsampler.switchToInputRate(44000));
