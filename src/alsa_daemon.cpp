@@ -141,7 +141,7 @@ static void release_pid_lock() {
 static void write_stats_file() {
     size_t clips = g_clip_count.load(std::memory_order_relaxed);
     size_t total = g_total_samples.load(std::memory_order_relaxed);
-    double clip_rate = (total > 0) ? (100.0 * clips / total) : 0.0;
+    double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
     auto now = std::chrono::system_clock::now();
     auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
         now.time_since_epoch()).count();
