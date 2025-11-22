@@ -21,7 +21,11 @@ from pydantic import BaseModel
 
 # Add scripts directory to path for OPRA module
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-from opra import convert_opra_to_apo, get_database as get_opra_database
+from opra import (
+    apply_modern_target_correction,
+    convert_opra_to_apo,
+    get_database as get_opra_database,
+)
 
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
@@ -840,8 +844,14 @@ async def opra_product(product_id: str):
 
 
 @app.get("/opra/eq/{eq_id}")
-async def opra_eq_profile(eq_id: str):
-    """Get a specific EQ profile with APO format preview"""
+async def opra_eq_profile(eq_id: str, apply_correction: bool = False):
+    """
+    Get a specific EQ profile with APO format preview.
+
+    Args:
+        eq_id: EQ profile ID
+        apply_correction: If True, apply Modern Target (KB5000_7) correction
+    """
     try:
         db = get_opra_database()
         eq_data = db.get_eq_profile(eq_id)
@@ -853,13 +863,18 @@ async def opra_eq_profile(eq_id: str):
         # Convert to APO format
         apo_profile = convert_opra_to_apo(eq_data)
 
+        # Apply Modern Target correction if requested
+        if apply_correction:
+            apo_profile = apply_modern_target_correction(apo_profile)
+
         return {
             "id": eq_id,
             "name": eq_data.get("name", ""),
             "author": eq_data.get("author", ""),
-            "details": eq_data.get("details", ""),
+            "details": apo_profile.details,  # Includes correction info if applied
             "parameters": eq_data.get("parameters", {}),
             "apo_format": apo_profile.to_apo_format(),
+            "modern_target_applied": apply_correction,
             "attribution": {
                 "license": "CC BY-SA 4.0",
                 "source": "OPRA Project",
@@ -871,10 +886,14 @@ async def opra_eq_profile(eq_id: str):
 
 
 @app.post("/opra/apply/{eq_id}", response_model=ApiResponse)
-async def opra_apply_eq(eq_id: str):
+async def opra_apply_eq(eq_id: str, apply_correction: bool = False):
     """
     Apply an OPRA EQ profile.
     Converts to APO format, saves to data/EQ, and activates.
+
+    Args:
+        eq_id: EQ profile ID
+        apply_correction: If True, apply Modern Target (KB5000_7) correction
     """
     try:
         db = get_opra_database()
@@ -886,14 +905,22 @@ async def opra_apply_eq(eq_id: str):
 
         # Convert to APO format
         apo_profile = convert_opra_to_apo(eq_data)
+
+        # Apply Modern Target correction if requested
+        if apply_correction:
+            apo_profile = apply_modern_target_correction(apo_profile)
+
         apo_content = apo_profile.to_apo_format()
 
         # Add attribution comment
         author = eq_data.get("author", "unknown")
-        details = eq_data.get("details", "")
         header = f"# OPRA: {eq_data.get('name', eq_id)}\n"
         header += f"# Author: {author}\n"
-        header += f"# Details: {details}\n"
+        header += (
+            f"# Details: {apo_profile.details}\n"  # Includes correction info if applied
+        )
+        if apply_correction:
+            header += "# Modern Target: KB5000_7 correction applied\n"
         header += "# License: CC BY-SA 4.0\n"
         header += "# Source: https://github.com/opra-project/OPRA\n\n"
         apo_content = header + apo_content
@@ -902,7 +929,8 @@ async def opra_apply_eq(eq_id: str):
         EQ_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
         # Use safe filename: replace problematic chars
         safe_name = eq_id.replace("/", "_").replace("\\", "_")
-        profile_path = EQ_PROFILES_DIR / f"opra_{safe_name}.txt"
+        suffix = "_kb5000_7" if apply_correction else ""
+        profile_path = EQ_PROFILES_DIR / f"opra_{safe_name}{suffix}.txt"
         profile_path.write_text(apo_content)
 
         # Update config to activate
@@ -913,12 +941,14 @@ async def opra_apply_eq(eq_id: str):
         if not save_config(settings):
             raise HTTPException(status_code=500, detail="Failed to save configuration")
 
+        correction_msg = " (Modern Target)" if apply_correction else ""
         return ApiResponse(
             success=True,
-            message=f"OPRA EQ '{eq_data.get('name', eq_id)}' by {author} activated",
+            message=f"OPRA EQ '{eq_data.get('name', eq_id)}' by {author}{correction_msg} activated",
             data={
                 "path": str(profile_path),
                 "author": author,
+                "modern_target_applied": apply_correction,
                 "attribution": "CC BY-SA 4.0 - OPRA Project",
             },
             restart_required=True,

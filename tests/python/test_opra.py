@@ -6,9 +6,11 @@ import pytest
 
 from opra import (
     DEFAULT_OPRA_PATH,
+    MODERN_TARGET_CORRECTION_BAND,
     EqBand,
     EqProfile,
     OpraDatabase,
+    apply_modern_target_correction,
     convert_opra_band,
     convert_opra_to_apo,
     slope_to_q,
@@ -289,6 +291,118 @@ class TestConvertOpraToApo:
         profile = convert_opra_to_apo(opra_data)
 
         assert len(profile.bands) == 2  # band_pass should be filtered out
+
+
+class TestModernTargetCorrection:
+    """Tests for Modern Target (KB5000_7) correction."""
+
+    def test_correction_band_values(self):
+        """Verify correction band constant values match specification."""
+        # From CLAUDE.md: Filter 11: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5
+        assert MODERN_TARGET_CORRECTION_BAND["filter_type"] == "PK"
+        assert MODERN_TARGET_CORRECTION_BAND["frequency"] == 5366.0
+        assert MODERN_TARGET_CORRECTION_BAND["gain_db"] == 2.8
+        assert MODERN_TARGET_CORRECTION_BAND["q"] == 1.5
+
+    def test_apply_correction_adds_band(self):
+        """Correction should add one additional band."""
+        original = EqProfile(
+            name="Test",
+            preamp_db=-6.0,
+            bands=[
+                EqBand(filter_type="PK", frequency=1000.0, gain_db=-3.0, q=1.0),
+                EqBand(filter_type="PK", frequency=2000.0, gain_db=2.0, q=1.5),
+            ],
+            author="test",
+            details="Original details",
+        )
+
+        corrected = apply_modern_target_correction(original)
+
+        # Should have one more band
+        assert len(corrected.bands) == len(original.bands) + 1
+
+    def test_apply_correction_preserves_original_bands(self):
+        """Correction should not modify original bands."""
+        original = EqProfile(
+            name="Test",
+            preamp_db=-6.0,
+            bands=[
+                EqBand(filter_type="PK", frequency=1000.0, gain_db=-3.0, q=1.0),
+            ],
+        )
+
+        corrected = apply_modern_target_correction(original)
+
+        # First band should be unchanged
+        assert corrected.bands[0].frequency == 1000.0
+        assert corrected.bands[0].gain_db == -3.0
+
+    def test_apply_correction_band_is_last(self):
+        """Correction band should be appended at the end."""
+        original = EqProfile(
+            name="Test",
+            bands=[
+                EqBand(filter_type="PK", frequency=1000.0, gain_db=-3.0, q=1.0),
+            ],
+        )
+
+        corrected = apply_modern_target_correction(original)
+        last_band = corrected.bands[-1]
+
+        assert last_band.frequency == 5366.0
+        assert last_band.gain_db == 2.8
+        assert last_band.q == 1.5
+
+    def test_apply_correction_updates_details(self):
+        """Correction should update details field."""
+        original = EqProfile(details="Harman Target")
+        corrected = apply_modern_target_correction(original)
+
+        assert "Modern Target" in corrected.details
+        assert "KB5000_7" in corrected.details
+        assert "Harman Target" in corrected.details
+
+    def test_apply_correction_empty_details(self):
+        """Correction should work with empty details."""
+        original = EqProfile(details="")
+        corrected = apply_modern_target_correction(original)
+
+        assert "Modern Target" in corrected.details
+        assert "KB5000_7" in corrected.details
+
+    def test_apply_correction_preserves_metadata(self):
+        """Correction should preserve other profile metadata."""
+        original = EqProfile(
+            name="HD650",
+            preamp_db=-5.5,
+            author="oratory1990",
+            source="OPRA",
+        )
+
+        corrected = apply_modern_target_correction(original)
+
+        assert corrected.name == original.name
+        assert corrected.preamp_db == original.preamp_db
+        assert corrected.author == original.author
+        assert corrected.source == original.source
+
+    def test_apply_correction_apo_format(self):
+        """Correction band should appear in APO format output."""
+        original = EqProfile(
+            preamp_db=-6.0,
+            bands=[
+                EqBand(filter_type="PK", frequency=1000.0, gain_db=-3.0, q=1.0),
+            ],
+        )
+
+        corrected = apply_modern_target_correction(original)
+        apo = corrected.to_apo_format()
+
+        # Should contain the correction band
+        assert "5366.0" in apo
+        assert "2.8" in apo
+        assert "1.50" in apo  # Q is formatted to 2 decimal places
 
 
 @requires_opra_submodule
