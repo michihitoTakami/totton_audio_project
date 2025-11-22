@@ -167,6 +167,7 @@ GPUUpsampler::GPUUpsampler()
       streamOverlapSize_(0),
       d_streamInput_(nullptr), d_streamUpsampled_(nullptr), d_streamPadded_(nullptr),
       d_streamInputFFT_(nullptr), d_streamConvResult_(nullptr),
+      d_overlapLeft_(nullptr), d_overlapRight_(nullptr),
       pinnedStreamInputLeft_(nullptr), pinnedStreamInputRight_(nullptr),
       pinnedStreamInputMono_(nullptr),
       pinnedStreamInputLeftBytes_(0), pinnedStreamInputRightBytes_(0),
@@ -797,6 +798,8 @@ void GPUUpsampler::cleanup() {
     if (d_streamPadded_) cudaFree(d_streamPadded_);
     if (d_streamInputFFT_) cudaFree(d_streamInputFFT_);
     if (d_streamConvResult_) cudaFree(d_streamConvResult_);
+    if (d_overlapLeft_) cudaFree(d_overlapLeft_);
+    if (d_overlapRight_) cudaFree(d_overlapRight_);
 
     if (fftPlanForward_) cufftDestroy(fftPlanForward_);
     if (fftPlanInverse_) cufftDestroy(fftPlanInverse_);
@@ -828,6 +831,8 @@ void GPUUpsampler::cleanup() {
     d_streamPadded_ = nullptr;
     d_streamInputFFT_ = nullptr;
     d_streamConvResult_ = nullptr;
+    d_overlapLeft_ = nullptr;
+    d_overlapRight_ = nullptr;
     fftPlanForward_ = 0;
     fftPlanInverse_ = 0;
     stream_ = nullptr;
@@ -847,36 +852,33 @@ bool GPUUpsampler::initializeStreaming() {
     }
 
     // Calculate valid output per block (samples at output rate that don't overlap)
-    // For streaming mode, we need validOutputPerBlock_ to be divisible by upsampleRatio_
-    // to ensure perfect alignment: inputSamples * upsampleRatio_ == validOutputPerBlock_
     //
-    // Original: validOutputPerBlock_ = fftSize_ - overlapSize_ = 1048576 - 999999 = 48577
-    // Problem: 48577 is NOT divisible by 16 (48577 / 16 = 3035.5625)
+    // CRITICAL: validOutputPerBlock_ MUST be divisible by upsampleRatio_ to maintain
+    // exact input/output sample rate ratio (1:16). Otherwise, cumulative drift causes
+    // buffer underflow and audio glitches.
     //
-    // Solution: Adjust to nearest divisible value: 48576 = 16 * 3036
-    // This requires: overlapSize_ = fftSize_ - 48576 = 1048576 - 48576 = 1000000
-    int idealValidOutput = fftSize_ - overlapSize_;
-    validOutputPerBlock_ = (idealValidOutput / upsampleRatio_) * upsampleRatio_;
+    // Overlap-save theory: validOutput = N - (L-1) = 1048576 - 999999 = 48577
+    // But 48577 is not divisible by 16, so we round down to 48576.
+    //
+    // streamOverlapSize_ uses the EXACT L-1 value (999999) to maintain correct
+    // overlap-save semantics. The remaining 1 sample in d_streamPadded_ is zero-padded
+    // (already done by cudaMemsetAsync at the start of each block).
+    //
+    // d_streamPadded_ layout: [overlap 999999 | new 48576 | zero 1] = 1048576
+    int idealValidOutput = fftSize_ - overlapSize_;  // = 48577
+    validOutputPerBlock_ = (idealValidOutput / upsampleRatio_) * upsampleRatio_;  // = 48576
+    streamOverlapSize_ = overlapSize_;  // = L-1 = 999999 (exact, fixes original drift bug)
 
-    // Calculate adjusted overlap size for perfect alignment
-    int adjustedOverlapSize = fftSize_ - validOutputPerBlock_;
-    streamOverlapSize_ = adjustedOverlapSize;
+    fprintf(stderr, "Streaming parameters:\n");
+    fprintf(stderr, "  FFT size: %d\n", fftSize_);
+    fprintf(stderr, "  Filter overlap (L-1): %d\n", overlapSize_);
+    fprintf(stderr, "  Ideal valid output: %d (not divisible by %d)\n", idealValidOutput, upsampleRatio_);
+    fprintf(stderr, "  Actual valid output: %d (rounded to multiple of %d)\n", validOutputPerBlock_, upsampleRatio_);
+    fprintf(stderr, "  Stream overlap size: %d (exact L-1)\n", streamOverlapSize_);
+    fprintf(stderr, "  Zero-padding at end: %d sample(s)\n", fftSize_ - streamOverlapSize_ - validOutputPerBlock_);
 
-    // Ensure host overlap buffers are large enough for adjusted size
-    if (static_cast<int>(overlapBuffer_.size()) < streamOverlapSize_) {
-        resizeOverlapBuffers(streamOverlapSize_);
-    }
-
-    fprintf(stderr, "Streaming alignment adjustment:\n");
-    fprintf(stderr, "  Ideal valid output: %d (from FFT %d - overlap %d)\n",
-            idealValidOutput, fftSize_, overlapSize_);
-    fprintf(stderr, "  Adjusted valid output: %d (divisible by %d)\n",
-            validOutputPerBlock_, upsampleRatio_);
-    fprintf(stderr, "  Adjusted overlap: %d (was %d, diff: %d samples)\n",
-            adjustedOverlapSize, overlapSize_, adjustedOverlapSize - overlapSize_);
-
-    // Calculate input samples needed (perfect alignment guaranteed)
-    streamValidInputPerBlock_ = validOutputPerBlock_ / upsampleRatio_;
+    // Calculate input samples needed per block (exact division, no rounding needed)
+    streamValidInputPerBlock_ = validOutputPerBlock_ / upsampleRatio_;  // = 3036
 
     // Pre-allocate GPU buffers to avoid malloc/free in real-time callbacks
     size_t upsampledSize = streamValidInputPerBlock_ * upsampleRatio_;
@@ -907,6 +909,27 @@ bool GPUUpsampler::initializeStreaming() {
         "cudaMalloc streaming conv result buffer"
     );
 
+    // Allocate device-resident overlap buffers (eliminates H↔D transfers in real-time path)
+    // These stay on GPU and are updated via D2D copies only
+    Utils::checkCudaError(
+        cudaMalloc(&d_overlapLeft_, streamOverlapSize_ * sizeof(float)),
+        "cudaMalloc device overlap buffer (left)"
+    );
+    Utils::checkCudaError(
+        cudaMalloc(&d_overlapRight_, streamOverlapSize_ * sizeof(float)),
+        "cudaMalloc device overlap buffer (right)"
+    );
+
+    // Zero-initialize device overlap buffers
+    Utils::checkCudaError(
+        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float)),
+        "cudaMemset device overlap buffer (left)"
+    );
+    Utils::checkCudaError(
+        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float)),
+        "cudaMemset device overlap buffer (right)"
+    );
+
     streamInitialized_ = true;
 
     fprintf(stderr, "[Streaming] Initialized:\n");
@@ -914,14 +937,20 @@ bool GPUUpsampler::initializeStreaming() {
     fprintf(stderr, "  - Output samples per block: %d\n", validOutputPerBlock_);
     fprintf(stderr, "  - Overlap (stream): %d samples\n", streamOverlapSize_);
     fprintf(stderr, "  - GPU streaming buffers pre-allocated\n");
+    fprintf(stderr, "  - Device-resident overlap buffers allocated (no H↔D in RT path)\n");
 
     return true;
 }
 
 void GPUUpsampler::resetStreaming() {
-    std::fill(overlapBuffer_.begin(), overlapBuffer_.end(), 0.0f);
-    std::fill(overlapBufferRight_.begin(), overlapBufferRight_.end(), 0.0f);
-    fprintf(stderr, "[Streaming] Reset: overlap buffers cleared\n");
+    // Reset device-resident overlap buffers (D2D zero, no H↔D)
+    if (d_overlapLeft_) {
+        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float));
+    }
+    if (d_overlapRight_) {
+        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float));
+    }
+    fprintf(stderr, "[Streaming] Reset: device overlap buffers cleared\n");
 }
 
 bool GPUUpsampler::processStreamBlock(const float* inputData,
@@ -991,16 +1020,16 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             "cudaMemset streaming padded"
         );
 
-        // Determine which overlap buffer to use based on which stream this is
-        std::vector<float>& overlap = (stream == streamLeft_) ? overlapBuffer_ :
-                                      (stream == streamRight_) ? overlapBufferRight_ : overlapBuffer_;
+        // Select device-resident overlap buffer based on stream (D2D only, no H↔D)
+        float* d_overlap = (stream == streamLeft_) ? d_overlapLeft_ :
+                           (stream == streamRight_) ? d_overlapRight_ : d_overlapLeft_;
 
-        // Copy overlap from previous block (adjusted size for perfect alignment)
+        // Copy overlap from previous block (D2D - no host transfer!)
         if (adjustedOverlapSize > 0) {
             Utils::checkCudaError(
-                cudaMemcpyAsync(d_streamPadded_, overlap.data(),
-                               adjustedOverlapSize * sizeof(float), cudaMemcpyHostToDevice, stream),
-                "cudaMemcpy streaming overlap to device"
+                cudaMemcpyAsync(d_streamPadded_, d_overlap,
+                               adjustedOverlapSize * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+                "cudaMemcpy streaming overlap D2D"
             );
         }
 
@@ -1058,15 +1087,15 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             "cudaMemcpy streaming output to host"
         );
 
-        // Save overlap for next block
+        // Save overlap for next block (D2D - no host transfer!)
         // CRITICAL: Must save from d_streamPadded_ (input buffer), not d_streamConvResult_ (convolution output)
         // For next iteration, we need the LAST samples from the padded input buffer
         // which corresponds to: d_streamPadded_[validOutputPerBlock_ : fftSize_]
         // These are the "new" samples that will become "old overlap" in the next iteration
         Utils::checkCudaError(
-            cudaMemcpyAsync(overlap.data(), d_streamPadded_ + validOutputPerBlock_,
-                           adjustedOverlapSize * sizeof(float), cudaMemcpyDeviceToHost, stream),
-            "cudaMemcpy streaming overlap from device"
+            cudaMemcpyAsync(d_overlap, d_streamPadded_ + validOutputPerBlock_,
+                           adjustedOverlapSize * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+            "cudaMemcpy streaming overlap D2D save"
         );
 
         // Synchronize stream to ensure all operations complete

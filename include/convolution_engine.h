@@ -184,6 +184,10 @@ private:
     cufftComplex* d_streamInputFFT_;         // FFT of padded input
     float* d_streamConvResult_;              // Convolution result
 
+    // Device-resident overlap buffers (eliminates H↔D transfers in real-time path)
+    float* d_overlapLeft_;                   // GPU overlap buffer for left channel
+    float* d_overlapRight_;                  // GPU overlap buffer for right channel
+
     // Host pinned buffers (long-lived buffers use manual register/unregister;
     // temporary outputs use ScopedHostPin inside implementations)
     struct PinnedHostBuffer {
