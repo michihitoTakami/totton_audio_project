@@ -78,12 +78,21 @@ cmake --build build -j$(nproc)
 
 **Never commit directly to main.** Use Git Worktree:
 
+### Mandatory Rules
+
+1. **GitHub CLI (`gh`) Required:** GitHub操作（Issue、PR、ラベル等）は必ず `gh` コマンドを使用
+2. **Issue Number Required:** ブランチ名・PR名には必ずIssue番号を含める
+   - ブランチ名: `feature/#123-feature-name` または `fix/#456-bug-description`
+   - PR名: `#123 機能の説明` または `Fix #456: バグの説明`
+
+### Workflow
+
 ```bash
-git worktree add ../gpu_os_<feature> -b feature/<feature>
-cd ../gpu_os_<feature>
+git worktree add ../gpu_os_#123-feature -b feature/#123-feature
+cd ../gpu_os_#123-feature
 # ... work ...
-git push -u origin feature/<feature>
-gh pr create
+git push -u origin feature/#123-feature
+gh pr create --title "#123 機能の説明" --body "..."
 ```
 
 ## Testing
