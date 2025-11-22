@@ -14,7 +14,7 @@ from typing import Optional
 
 import shutil
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -370,6 +370,32 @@ async def get_status():
         daemon_running=daemon_running,
         eq_active=settings.eq_enabled and bool(settings.eq_profile_path),
     )
+
+
+@app.websocket("/ws/stats")
+async def websocket_stats(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time stats streaming.
+    Sends stats.json data every second while connected.
+    When daemon is stopped, returns zero values (consistent with /status endpoint).
+    """
+    await websocket.accept()
+    try:
+        while True:
+            daemon_running = check_daemon_running()
+            if daemon_running:
+                stats = load_stats()
+            else:
+                # Return zero values when daemon is stopped (consistent with /status)
+                stats = {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+            stats["daemon_running"] = daemon_running
+            await websocket.send_json(stats)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        # Connection closed unexpectedly
+        pass
 
 
 @app.post("/settings", response_model=ApiResponse)
@@ -1512,6 +1538,62 @@ def get_admin_html() -> str:
 
     <script>
         const API = '';
+        let statsWebSocket = null;
+        let wsReconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = protocol + '//' + window.location.host + '/ws/stats';
+
+            try {
+                statsWebSocket = new WebSocket(wsUrl);
+
+                statsWebSocket.onopen = () => {
+                    console.log('WebSocket connected');
+                    wsReconnectAttempts = 0;
+                };
+
+                statsWebSocket.onmessage = (event) => {
+                    try {
+                        const stats = JSON.parse(event.data);
+                        updateStatsFromWebSocket(stats);
+                    } catch (e) {
+                        console.error('Failed to parse WebSocket message:', e);
+                    }
+                };
+
+                statsWebSocket.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    statsWebSocket = null;
+                    // Attempt to reconnect
+                    if (wsReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        wsReconnectAttempts++;
+                        setTimeout(connectWebSocket, 2000 * wsReconnectAttempts);
+                    }
+                };
+
+                statsWebSocket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                };
+            } catch (e) {
+                console.error('Failed to create WebSocket:', e);
+            }
+        }
+
+        function updateStatsFromWebSocket(stats) {
+            // Stats - clip_rate is now a ratio (0-1), multiply by 100 for percentage
+            const clipPct = (stats.clip_rate * 100).toFixed(4);
+            setStat('clipRate', clipPct + '%', stats.clip_rate < 0.001 ? '' : (stats.clip_rate < 0.01 ? 'warning' : 'error'));
+            setStat('clipCount', formatNumber(stats.clip_count), '');
+            setStat('totalSamples', formatNumber(stats.total_samples), '');
+
+            // Daemon running status from WebSocket
+            const daemonRunning = stats.daemon_running;
+            setStatus('daemonStatus', daemonRunning ? 'Running' : 'Stopped', daemonRunning);
+            document.getElementById('startBtn').disabled = daemonRunning;
+            document.getElementById('stopBtn').disabled = !daemonRunning;
+        }
 
         async function fetchStatus() {
             try {
@@ -1625,7 +1707,10 @@ def get_admin_html() -> str:
 
         // Initial load and auto-refresh
         fetchStatus();
-        setInterval(fetchStatus, 3000);
+        // Full status refresh every 5 seconds (for daemon info, settings, etc.)
+        setInterval(fetchStatus, 5000);
+        // Connect WebSocket for real-time stats (1 second updates)
+        connectWebSocket();
     </script>
 </body>
 </html>
