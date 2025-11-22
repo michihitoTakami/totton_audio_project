@@ -30,6 +30,10 @@ env/
 .uv/
 uv.lock
 
+# aqua (local cache)
+.aqua/
+aqua-checksums.json
+
 # IDE
 .vscode/
 .idea/
