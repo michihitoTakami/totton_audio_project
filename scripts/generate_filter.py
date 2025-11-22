@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """
-GPU Audio Upsampler - Phase 1: Filter Coefficient Generation
+GPU Audio Upsampler - Multi-Rate Filter Coefficient Generation
 
 最小位相FIRフィルタを生成し、検証する。
 
+サポートするアップサンプリング比率:
+- 16x: 44.1kHz → 705.6kHz, 48kHz → 768kHz
+- 8x:  88.2kHz → 705.6kHz, 96kHz → 768kHz
+- 4x:  176.4kHz → 705.6kHz, 192kHz → 768kHz
+- 2x:  352.8kHz → 705.6kHz, 384kHz → 768kHz
+
 仕様:
-- タップ数: 2,000,000 (2M) デフォルト、コマンドラインで変更可能
+- タップ数: 2,000,000 (2M) デフォルト
 - 位相特性: 最小位相（プリリンギング排除）
 - 通過帯域: 0-20,000 Hz
-- 阻止帯域: 22,050 Hz以降
-- 阻止帯域減衰: -220 dB以下
+- 阻止帯域: 入力Nyquist周波数以降
+- 阻止帯域減衰: -197 dB以下
 - 窓関数: Kaiser (β ≈ 55)
-- アップサンプリング倍率: 16倍
 
 注意:
-- タップ数は16の倍数であること（アップサンプリング比率との整合性）
+- タップ数はアップサンプリング比率の倍数であること
 - クリッピング防止のため係数は正規化される
 """
 
@@ -33,13 +38,28 @@ UPSAMPLE_RATIO = 16  # アップサンプリング倍率
 SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO  # 出力サンプルレート
 
 # フィルタ設計パラメータ（デフォルト）
-PASSBAND_END = 20000  # 通過帯域終端 (Hz)
-STOPBAND_START = 22050  # 阻止帯域開始 (Hz) - ナイキスト周波数
-STOPBAND_ATTENUATION_DB = 220  # 阻止帯域減衰量 (dB)
+PASSBAND_END = 20000  # 通過帯域終端 (Hz) - 可聴帯域
+STOPBAND_START = 22050  # 阻止帯域開始 (Hz) - 入力Nyquist周波数
+STOPBAND_ATTENUATION_DB = 197  # 阻止帯域減衰量 (dB)
 # Kaiser βパラメータ: A(dB)の減衰量に対して β ≈ 0.1102*(A-8.7)
 # 2Mタップでは55を使用してより高い減衰を目指す
 KAISER_BETA = 55  # Kaiser窓のβパラメータ
 OUTPUT_PREFIX = None
+
+# マルチレート設定
+# 44.1kHz系と48kHz系、それぞれ16x/8x/4x/2xの組み合わせ
+MULTI_RATE_CONFIGS = {
+    # 44.1kHz family -> 705.6kHz output
+    "44k_16x": {"input_rate": 44100, "ratio": 16, "stopband": 22050},
+    "44k_8x": {"input_rate": 88200, "ratio": 8, "stopband": 44100},
+    "44k_4x": {"input_rate": 176400, "ratio": 4, "stopband": 88200},
+    "44k_2x": {"input_rate": 352800, "ratio": 2, "stopband": 176400},
+    # 48kHz family -> 768kHz output
+    "48k_16x": {"input_rate": 48000, "ratio": 16, "stopband": 24000},
+    "48k_8x": {"input_rate": 96000, "ratio": 8, "stopband": 48000},
+    "48k_4x": {"input_rate": 192000, "ratio": 4, "stopband": 96000},
+    "48k_2x": {"input_rate": 384000, "ratio": 2, "stopband": 192000},
+}
 
 
 def design_linear_phase_filter():
@@ -214,7 +234,7 @@ def plot_responses(h_linear, h_min_phase, output_dir="plots/analysis"):
 
     # 線形位相インパルス応答（中央部分のみ表示）
     center = len(h_linear) // 2
-    display_range = 2000
+    display_range = min(2000, center)  # 配列サイズに合わせて調整
     t_linear = np.arange(-display_range, display_range)
     h_linear_center = h_linear[center - display_range : center + display_range]
 
@@ -227,7 +247,7 @@ def plot_responses(h_linear, h_min_phase, output_dir="plots/analysis"):
     axes[0].legend()
 
     # 最小位相インパルス応答（先頭部分のみ表示）
-    display_range_min = 4000
+    display_range_min = min(4000, len(h_min_phase))  # 配列サイズに合わせて調整
     t_min = np.arange(display_range_min)
     h_min_display = h_min_phase[:display_range_min]
 
@@ -342,8 +362,10 @@ def export_coefficients(h, metadata, output_dir="data/coefficients"):
     output_path.mkdir(parents=True, exist_ok=True)
 
     taps_label = f"{N_TAPS // 1_000_000}m" if N_TAPS % 1_000_000 == 0 else f"{N_TAPS}"
+    # ファイル名に比率を含める: filter_44k_16x_2m_min_phase.bin
+    family = "44k" if SAMPLE_RATE_INPUT % 44100 == 0 else "48k"
     base_name = (
-        OUTPUT_PREFIX or f"filter_{SAMPLE_RATE_INPUT // 1000}k_{taps_label}_min_phase"
+        OUTPUT_PREFIX or f"filter_{family}_{UPSAMPLE_RATIO}x_{taps_label}_min_phase"
     )
 
     # 1. バイナリ形式（float32）
@@ -382,7 +404,34 @@ def export_coefficients(h, metadata, output_dir="data/coefficients"):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Generate minimum-phase FIR filter coefficients."
+        description="Generate minimum-phase FIR filter coefficients.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Generate single filter (44.1kHz, 16x)
+  %(prog)s --input-rate 44100 --upsample-ratio 16
+
+  # Generate all 8 filter configurations
+  %(prog)s --generate-all
+
+  # Generate only 44.1kHz family (4 filters)
+  %(prog)s --generate-all --family 44k
+
+  # Generate only 48kHz family (4 filters)
+  %(prog)s --generate-all --family 48k
+""",
+    )
+    parser.add_argument(
+        "--generate-all",
+        action="store_true",
+        help="Generate all 8 filter configurations (44k/48k × 16x/8x/4x/2x)",
+    )
+    parser.add_argument(
+        "--family",
+        type=str,
+        choices=["44k", "48k", "all"],
+        default="all",
+        help="Rate family to generate (only with --generate-all). Default: all",
     )
     parser.add_argument(
         "--input-rate",
@@ -408,14 +457,14 @@ def parse_args():
     parser.add_argument(
         "--stopband-start",
         type=int,
-        default=22050,
-        help="Stopband start frequency (Hz). Default: 22050",
+        default=None,
+        help="Stopband start frequency (Hz). Default: auto (input Nyquist)",
     )
     parser.add_argument(
         "--stopband-attenuation",
         type=int,
-        default=220,
-        help="Target stopband attenuation (dB). Default: 220",
+        default=197,
+        help="Target stopband attenuation (dB). Default: 197",
     )
     parser.add_argument(
         "--kaiser-beta",
@@ -427,7 +476,7 @@ def parse_args():
         "--output-prefix",
         type=str,
         default=None,
-        help="Output file basename (without extension). Default: auto (e.g., filter_44k_2m_min_phase)",
+        help="Output file basename (without extension). Default: auto",
     )
     return parser.parse_args()
 
@@ -495,13 +544,8 @@ def normalize_coefficients(h):
     return h_normalized, info
 
 
-def main():
-    """メイン処理"""
-    print("=" * 70)
-    print("GPU Audio Upsampler - Phase 1: Filter Coefficient Generation")
-    print("=" * 70)
-
-    args = parse_args()
+def generate_single_filter(args):
+    """単一フィルタを生成する（main関数の内部処理）"""
     global SAMPLE_RATE_INPUT, UPSAMPLE_RATIO, SAMPLE_RATE_OUTPUT
     global PASSBAND_END, STOPBAND_START, STOPBAND_ATTENUATION_DB, KAISER_BETA
     global N_TAPS, OUTPUT_PREFIX
@@ -510,13 +554,16 @@ def main():
     UPSAMPLE_RATIO = args.upsample_ratio
     SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO
     PASSBAND_END = args.passband_end
-    STOPBAND_START = args.stopband_start
+    # stopband_startが指定されていない場合は入力Nyquist周波数を使用
+    STOPBAND_START = (
+        args.stopband_start if args.stopband_start else (SAMPLE_RATE_INPUT // 2)
+    )
     STOPBAND_ATTENUATION_DB = args.stopband_attenuation
     KAISER_BETA = args.kaiser_beta
     N_TAPS = args.taps
     OUTPUT_PREFIX = args.output_prefix
 
-    # 0. タップ数の検証（16の倍数であること）
+    # 0. タップ数の検証
     validate_tap_count(N_TAPS, UPSAMPLE_RATIO)
 
     # 1. 線形位相フィルタ設計
@@ -551,8 +598,9 @@ def main():
 
     # 7. 係数エクスポート
     taps_label = f"{N_TAPS // 1_000_000}m" if N_TAPS % 1_000_000 == 0 else f"{N_TAPS}"
+    family = "44k" if SAMPLE_RATE_INPUT % 44100 == 0 else "48k"
     base_name = (
-        OUTPUT_PREFIX or f"filter_{SAMPLE_RATE_INPUT // 1000}k_{taps_label}_min_phase"
+        OUTPUT_PREFIX or f"filter_{family}_{UPSAMPLE_RATIO}x_{taps_label}_min_phase"
     )
     metadata["output_basename"] = base_name
     export_coefficients(h_min_phase, metadata)
@@ -573,6 +621,78 @@ def main():
     print(f"✓ 係数ファイル: data/coefficients/{base_name}.bin")
     print("✓ 検証プロット: plots/analysis/")
     print("=" * 70)
+
+
+def generate_all_filters(args):
+    """
+    全8種類のフィルタを一括生成する。
+
+    44.1kHz系: 16x, 8x, 4x, 2x
+    48kHz系: 16x, 8x, 4x, 2x
+    """
+    import copy
+
+    # 対象ファミリーを決定
+    if args.family == "44k":
+        configs = {k: v for k, v in MULTI_RATE_CONFIGS.items() if k.startswith("44k")}
+    elif args.family == "48k":
+        configs = {k: v for k, v in MULTI_RATE_CONFIGS.items() if k.startswith("48k")}
+    else:
+        configs = MULTI_RATE_CONFIGS
+
+    total = len(configs)
+    print("=" * 70)
+    print(f"Multi-Rate Filter Generation - {total} filters")
+    print("=" * 70)
+    print("\nTarget configurations:")
+    for name, cfg in configs.items():
+        output_rate = cfg["input_rate"] * cfg["ratio"]
+        print(f"  {name}: {cfg['input_rate']}Hz × {cfg['ratio']}x → {output_rate}Hz")
+    print()
+
+    results = []
+    for i, (name, cfg) in enumerate(configs.items(), 1):
+        print("\n" + "=" * 70)
+        print(f"[{i}/{total}] Generating {name}...")
+        print("=" * 70)
+
+        # 引数をコピーして設定を上書き
+        filter_args = copy.copy(args)
+        filter_args.input_rate = cfg["input_rate"]
+        filter_args.upsample_ratio = cfg["ratio"]
+        filter_args.stopband_start = cfg["stopband"]
+        filter_args.output_prefix = None  # 自動生成
+
+        try:
+            generate_single_filter(filter_args)
+            results.append((name, "✓ Success"))
+        except Exception as e:
+            results.append((name, f"✗ Failed: {e}"))
+            print(f"ERROR: {e}")
+
+    # 最終サマリー
+    print("\n" + "=" * 70)
+    print("GENERATION SUMMARY")
+    print("=" * 70)
+    for name, status in results:
+        print(f"  {name}: {status}")
+    print("=" * 70)
+
+    success_count = sum(1 for _, s in results if s.startswith("✓"))
+    print(f"\nCompleted: {success_count}/{total} filters generated successfully")
+
+
+def main():
+    """メイン処理"""
+    args = parse_args()
+
+    if args.generate_all:
+        generate_all_filters(args)
+    else:
+        print("=" * 70)
+        print("GPU Audio Upsampler - Filter Coefficient Generation")
+        print("=" * 70)
+        generate_single_filter(args)
 
 
 if __name__ == "__main__":
