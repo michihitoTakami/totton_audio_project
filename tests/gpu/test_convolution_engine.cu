@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
+#include <algorithm>
 #include "convolution_engine.h"
 
 using namespace ConvolutionEngine;
@@ -490,4 +491,225 @@ TEST_F(ConvolutionEngineTest, OutputFiniteValues) {
 
 TEST_F(ConvolutionEngineTest, DefaultInputSampleRate) {
     EXPECT_EQ(GPUUpsampler::getDefaultInputSampleRate(), 44100);
+}
+
+// ============================================================
+// Multi-Rate Support Tests
+// ============================================================
+
+TEST_F(ConvolutionEngineTest, GetSupportedInputRates) {
+    auto rates = GPUUpsampler::getSupportedInputRates();
+
+    // Should return 8 rates (4 for 44k family + 4 for 48k family)
+    EXPECT_EQ(rates.size(), 8u);
+
+    // Check 44k family rates
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 44100), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 88200), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 176400), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 352800), rates.end());
+
+    // Check 48k family rates
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 48000), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 96000), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 192000), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 384000), rates.end());
+}
+
+TEST_F(ConvolutionEngineTest, FindMultiRateConfigIndex) {
+    // Test valid rates
+    EXPECT_EQ(findMultiRateConfigIndex(44100), 0);
+    EXPECT_EQ(findMultiRateConfigIndex(88200), 1);
+    EXPECT_EQ(findMultiRateConfigIndex(176400), 2);
+    EXPECT_EQ(findMultiRateConfigIndex(352800), 3);
+    EXPECT_EQ(findMultiRateConfigIndex(48000), 4);
+    EXPECT_EQ(findMultiRateConfigIndex(96000), 5);
+    EXPECT_EQ(findMultiRateConfigIndex(192000), 6);
+    EXPECT_EQ(findMultiRateConfigIndex(384000), 7);
+
+    // Test invalid rates
+    EXPECT_EQ(findMultiRateConfigIndex(44000), -1);
+    EXPECT_EQ(findMultiRateConfigIndex(48001), -1);
+    EXPECT_EQ(findMultiRateConfigIndex(0), -1);
+}
+
+TEST_F(ConvolutionEngineTest, GetUpsampleRatioForInputRate) {
+    // 44k family: 16x, 8x, 4x, 2x
+    EXPECT_EQ(getUpsampleRatioForInputRate(44100), 16);
+    EXPECT_EQ(getUpsampleRatioForInputRate(88200), 8);
+    EXPECT_EQ(getUpsampleRatioForInputRate(176400), 4);
+    EXPECT_EQ(getUpsampleRatioForInputRate(352800), 2);
+
+    // 48k family: 16x, 8x, 4x, 2x
+    EXPECT_EQ(getUpsampleRatioForInputRate(48000), 16);
+    EXPECT_EQ(getUpsampleRatioForInputRate(96000), 8);
+    EXPECT_EQ(getUpsampleRatioForInputRate(192000), 4);
+    EXPECT_EQ(getUpsampleRatioForInputRate(384000), 2);
+
+    // Invalid rate
+    EXPECT_EQ(getUpsampleRatioForInputRate(44000), 0);
+}
+
+TEST_F(ConvolutionEngineTest, MultiRateConfigValues) {
+    // Verify MULTI_RATE_CONFIGS values
+    EXPECT_EQ(MULTI_RATE_CONFIG_COUNT, 8);
+
+    // 44k family configs (indices 0-3)
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(MULTI_RATE_CONFIGS[i].family, RateFamily::RATE_44K);
+        EXPECT_EQ(MULTI_RATE_CONFIGS[i].outputRate, 705600);
+    }
+
+    // 48k family configs (indices 4-7)
+    for (int i = 4; i < 8; ++i) {
+        EXPECT_EQ(MULTI_RATE_CONFIGS[i].family, RateFamily::RATE_48K);
+        EXPECT_EQ(MULTI_RATE_CONFIGS[i].outputRate, 768000);
+    }
+
+    // Verify ratio * inputRate = outputRate
+    for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {
+        const auto& config = MULTI_RATE_CONFIGS[i];
+        EXPECT_EQ(config.inputRate * config.ratio, config.outputRate);
+    }
+}
+
+TEST_F(ConvolutionEngineTest, MultiRateNotEnabledByDefault) {
+    GPUUpsampler upsampler;
+
+    // Before initialization, multi-rate should be disabled
+    EXPECT_FALSE(upsampler.isMultiRateEnabled());
+}
+
+// This test requires multi-rate coefficient files
+TEST_F(ConvolutionEngineTest, InitializeMultiRate) {
+    GPUUpsampler upsampler;
+
+    const char* coeffDir = "data/coefficients";
+
+    // Check if multi-rate coefficient files exist
+    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
+    FILE* f = fopen(testFile.c_str(), "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Multi-rate coefficient files not found in " << coeffDir;
+    }
+    fclose(f);
+
+    bool result = upsampler.initializeMultiRate(coeffDir, 8192, 44100);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(upsampler.isMultiRateEnabled());
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 44100);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), 16);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+}
+
+TEST_F(ConvolutionEngineTest, InitializeMultiRateWith48k) {
+    GPUUpsampler upsampler;
+
+    const char* coeffDir = "data/coefficients";
+
+    std::string testFile = std::string(coeffDir) + "/filter_48k_16x_1024_min_phase.bin";
+    FILE* f = fopen(testFile.c_str(), "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Multi-rate coefficient files not found";
+    }
+    fclose(f);
+
+    bool result = upsampler.initializeMultiRate(coeffDir, 8192, 48000);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(upsampler.isMultiRateEnabled());
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 48000);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), 16);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+}
+
+TEST_F(ConvolutionEngineTest, SwitchToInputRate) {
+    GPUUpsampler upsampler;
+
+    const char* coeffDir = "data/coefficients";
+
+    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
+    FILE* f = fopen(testFile.c_str(), "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Multi-rate coefficient files not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initializeMultiRate(coeffDir, 8192, 44100));
+
+    // Switch to 88200 (8x)
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), 8);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+
+    // Switch to 48000 (16x, different family)
+    EXPECT_TRUE(upsampler.switchToInputRate(48000));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 48000);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), 16);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+
+    // Switch to 192000 (4x)
+    EXPECT_TRUE(upsampler.switchToInputRate(192000));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 192000);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), 4);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+}
+
+TEST_F(ConvolutionEngineTest, SwitchToSameInputRate) {
+    GPUUpsampler upsampler;
+
+    const char* coeffDir = "data/coefficients";
+
+    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
+    FILE* f = fopen(testFile.c_str(), "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Multi-rate coefficient files not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initializeMultiRate(coeffDir, 8192, 44100));
+
+    // Switch to same rate should succeed
+    EXPECT_TRUE(upsampler.switchToInputRate(44100));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 44100);
+}
+
+TEST_F(ConvolutionEngineTest, SwitchToInvalidInputRate) {
+    GPUUpsampler upsampler;
+
+    const char* coeffDir = "data/coefficients";
+
+    std::string testFile = std::string(coeffDir) + "/filter_44k_16x_1024_min_phase.bin";
+    FILE* f = fopen(testFile.c_str(), "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Multi-rate coefficient files not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initializeMultiRate(coeffDir, 8192, 44100));
+
+    // Switch to invalid rate should fail
+    EXPECT_FALSE(upsampler.switchToInputRate(44000));
+    EXPECT_FALSE(upsampler.switchToInputRate(0));
+
+    // Current rate should remain unchanged
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 44100);
+}
+
+TEST_F(ConvolutionEngineTest, SwitchToInputRateWithoutMultiRateInit) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    // Initialize with single-rate mode
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    // switchToInputRate should fail when not in multi-rate mode
+    EXPECT_FALSE(upsampler.switchToInputRate(48000));
 }
