@@ -9,12 +9,44 @@
 
 namespace ConvolutionEngine {
 
+// Rate family enumeration for multi-rate support
+enum class RateFamily {
+    RATE_44K = 0,  // 44.1kHz family (44100, 88200, 176400 Hz)
+    RATE_48K = 1,  // 48kHz family (48000, 96000, 192000 Hz)
+    RATE_UNKNOWN = -1
+};
+
+// Detect rate family from sample rate
+inline RateFamily detectRateFamily(int sampleRate) {
+    if (sampleRate % 44100 == 0) return RateFamily::RATE_44K;
+    if (sampleRate % 48000 == 0) return RateFamily::RATE_48K;
+    return RateFamily::RATE_UNKNOWN;
+}
+
+// Get output sample rate for a rate family (16x upsampling)
+inline int getOutputSampleRate(RateFamily family) {
+    switch (family) {
+        case RateFamily::RATE_44K: return 705600;
+        case RateFamily::RATE_48K: return 768000;
+        default: return 0;
+    }
+}
+
+// Get base sample rate for a rate family
+inline int getBaseSampleRate(RateFamily family) {
+    switch (family) {
+        case RateFamily::RATE_44K: return 44100;
+        case RateFamily::RATE_48K: return 48000;
+        default: return 0;
+    }
+}
+
 class GPUUpsampler {
 public:
     GPUUpsampler();
     ~GPUUpsampler();
 
-    // Initialize with filter coefficients file and block size
+    // Initialize with filter coefficients file and block size (single rate family)
     //
     // Parameters:
     //   filterCoeffPath: Path to binary file containing filter coefficients (float32 array)
@@ -31,6 +63,33 @@ public:
     bool initialize(const std::string& filterCoeffPath,
                    int upsampleRatio,
                    int blockSize = 8192);
+
+    // Initialize with dual rate family support (44.1kHz and 48kHz)
+    //
+    // Parameters:
+    //   filterCoeffPath44k: Path to 44.1kHz family filter coefficients
+    //   filterCoeffPath48k: Path to 48kHz family filter coefficients
+    //   upsampleRatio: Integer upsampling ratio (typically 16)
+    //   blockSize: FFT processing block size
+    //   initialFamily: Initial rate family to use (default: 44.1kHz)
+    //
+    // Both coefficient files are loaded and pre-processed (FFT) at initialization.
+    // Switching between families is then glitch-free using double buffering.
+    bool initializeDualRate(const std::string& filterCoeffPath44k,
+                            const std::string& filterCoeffPath48k,
+                            int upsampleRatio,
+                            int blockSize = 8192,
+                            RateFamily initialFamily = RateFamily::RATE_44K);
+
+    // Switch to a different rate family (glitch-free via double buffering)
+    // Returns true if switch was successful, false if already at target or error
+    bool switchRateFamily(RateFamily targetFamily);
+
+    // Get current rate family
+    RateFamily getCurrentRateFamily() const { return currentRateFamily_; }
+
+    // Check if dual-rate mode is enabled
+    bool isDualRateEnabled() const { return dualRateEnabled_; }
 
     // Process single channel audio (mono)
     bool processChannel(const float* inputData,
@@ -97,7 +156,17 @@ public:
     // Get upsample ratio
     int getUpsampleRatio() const { return upsampleRatio_; }
 
-    // Get input sample rate assumption (for EQ design)
+    // Get input sample rate for current rate family (for EQ design)
+    int getInputSampleRate() const {
+        return getBaseSampleRate(currentRateFamily_);
+    }
+
+    // Get output sample rate for current rate family
+    int getOutputSampleRate() const {
+        return ConvolutionEngine::getOutputSampleRate(currentRateFamily_);
+    }
+
+    // Legacy: Get default input sample rate (44.1kHz)
     static constexpr int getDefaultInputSampleRate() { return 44100; }
 
     // CUDA streams for async operations (public for daemon access)
@@ -134,9 +203,21 @@ private:
     int filterTaps_;
     int fftSize_;                        // Pre-computed FFT size
 
-    // Filter coefficients
+    // Filter coefficients (single-rate mode)
     std::vector<float> h_filterCoeffs_;  // Host
     float* d_filterCoeffs_;              // Device
+
+    // Dual-rate support
+    bool dualRateEnabled_;                    // True if dual-rate mode is active
+    RateFamily currentRateFamily_;            // Currently active rate family
+
+    // 44.1kHz family coefficients
+    std::vector<float> h_filterCoeffs44k_;    // Host coefficients for 44.1kHz family
+    cufftComplex* d_filterFFT_44k_;           // Pre-computed FFT for 44.1kHz family
+
+    // 48kHz family coefficients
+    std::vector<float> h_filterCoeffs48k_;    // Host coefficients for 48kHz family
+    cufftComplex* d_filterFFT_48k_;           // Pre-computed FFT for 48kHz family
 
     // Double-buffered filter FFT (ping-pong) for glitch-free EQ updates
     cufftComplex* d_filterFFT_A_;        // Filter FFT buffer A

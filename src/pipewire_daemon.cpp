@@ -10,11 +10,16 @@
 #include <algorithm>
 
 // Configuration
-constexpr int INPUT_SAMPLE_RATE = 44100;
-constexpr int OUTPUT_SAMPLE_RATE = 705600;  // 16x upsampling
+constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
+constexpr int DEFAULT_OUTPUT_SAMPLE_RATE = 705600;  // 16x upsampling
 constexpr int UPSAMPLE_RATIO = 16;
 constexpr int BLOCK_SIZE = 4096;
 constexpr int CHANNELS = 2;
+
+// Dynamic rate configuration (updated at runtime based on input detection)
+static int g_current_input_rate = DEFAULT_INPUT_SAMPLE_RATE;
+static int g_current_output_rate = DEFAULT_OUTPUT_SAMPLE_RATE;
+static ConvolutionEngine::RateFamily g_current_rate_family = ConvolutionEngine::RateFamily::RATE_44K;
 
 // Global state
 static std::atomic<bool> g_running{true};
@@ -71,7 +76,7 @@ static AudioRingBuffer g_output_buffer_left;
 static AudioRingBuffer g_output_buffer_right;
 static std::vector<float> g_output_temp_left;
 static std::vector<float> g_output_temp_right;
-static constexpr size_t OUTPUT_RING_CAPACITY = OUTPUT_SAMPLE_RATE * 2; // ~2 seconds per channel
+static constexpr size_t OUTPUT_RING_CAPACITY = DEFAULT_OUTPUT_SAMPLE_RATE * 2; // ~2 seconds per channel
 
 // PipeWire objects
 struct Data {
@@ -97,6 +102,38 @@ struct Data {
 static void signal_handler(int sig) {
     std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
     g_running = false;
+}
+
+// Rate family switching helper
+// Called when input sample rate changes (e.g., from PipeWire param event or ZeroMQ)
+static bool handle_rate_change(int detected_sample_rate) {
+    if (!g_upsampler || !g_upsampler->isDualRateEnabled()) {
+        return false;  // Dual-rate not enabled
+    }
+
+    auto new_family = ConvolutionEngine::detectRateFamily(detected_sample_rate);
+    if (new_family == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
+        std::cerr << "Warning: Unknown sample rate " << detected_sample_rate << " Hz" << std::endl;
+        return false;
+    }
+
+    if (new_family == g_current_rate_family) {
+        return true;  // Already at correct family
+    }
+
+    std::cout << "Rate family change detected: " << detected_sample_rate << " Hz" << std::endl;
+
+    // Switch coefficient set (glitch-free via double buffering)
+    if (g_upsampler->switchRateFamily(new_family)) {
+        g_current_rate_family = new_family;
+        g_current_input_rate = ConvolutionEngine::getBaseSampleRate(new_family);
+        g_current_output_rate = ConvolutionEngine::getOutputSampleRate(new_family);
+        std::cout << "Switched to " << (new_family == ConvolutionEngine::RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
+                  << " family (" << g_current_input_rate << " -> " << g_current_output_rate << " Hz)" << std::endl;
+        return true;
+    }
+
+    return false;
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
@@ -236,14 +273,27 @@ static const struct pw_stream_events output_stream_events = {
 int main(int argc, char* argv[]) {
     std::cout << "========================================" << std::endl;
     std::cout << "  GPU Audio Upsampler - PipeWire Daemon" << std::endl;
-    std::cout << "  44.1kHz → 705.6kHz (16x upsampling)" << std::endl;
+    std::cout << "  Multi-Rate: 44.1k/48k → 705.6k/768k" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
-    // Parse filter path
-    std::string filter_path = "data/coefficients/filter_1m_min_phase.bin";
-    if (argc > 1) {
-        filter_path = argv[1];
+    // Parse filter paths (supports both single and dual-rate modes)
+    // Usage: pipewire_daemon [filter_44k.bin] [filter_48k.bin]
+    //   Single-rate: pipewire_daemon filter.bin
+    //   Dual-rate:   pipewire_daemon filter_44k.bin filter_48k.bin
+    std::string filter_path_44k = "data/coefficients/filter_44k_2m_min_phase.bin";
+    std::string filter_path_48k = "data/coefficients/filter_48k_2m_min_phase.bin";
+    bool use_dual_rate = true;
+
+    if (argc == 2) {
+        // Single filter path - use legacy single-rate mode
+        filter_path_44k = argv[1];
+        use_dual_rate = false;
+    } else if (argc >= 3) {
+        // Dual filter paths
+        filter_path_44k = argv[1];
+        filter_path_48k = argv[2];
+        use_dual_rate = true;
     }
 
     // Install signal handlers
@@ -253,7 +303,23 @@ int main(int argc, char* argv[]) {
     // Initialize GPU upsampler
     std::cout << "Initializing GPU upsampler..." << std::endl;
     g_upsampler = new ConvolutionEngine::GPUUpsampler();
-    if (!g_upsampler->initialize(filter_path, UPSAMPLE_RATIO, BLOCK_SIZE)) {
+
+    bool init_success = false;
+    if (use_dual_rate) {
+        std::cout << "Mode: Dual-Rate (44.1kHz + 48kHz families)" << std::endl;
+        init_success = g_upsampler->initializeDualRate(
+            filter_path_44k,
+            filter_path_48k,
+            UPSAMPLE_RATIO,
+            BLOCK_SIZE,
+            ConvolutionEngine::RateFamily::RATE_44K
+        );
+    } else {
+        std::cout << "Mode: Single-Rate (44.1kHz family only)" << std::endl;
+        init_success = g_upsampler->initialize(filter_path_44k, UPSAMPLE_RATIO, BLOCK_SIZE);
+    }
+
+    if (!init_success) {
         std::cerr << "Failed to initialize GPU upsampler" << std::endl;
         delete g_upsampler;
         return 1;
@@ -311,7 +377,7 @@ int main(int argc, char* argv[]) {
 
     struct spa_audio_info_raw input_info = {};
     input_info.format = SPA_AUDIO_FORMAT_F32;
-    input_info.rate = INPUT_SAMPLE_RATE;
+    input_info.rate = g_current_input_rate;
     input_info.channels = CHANNELS;
     input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
     input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
@@ -355,7 +421,7 @@ int main(int argc, char* argv[]) {
 
     struct spa_audio_info_raw output_info = {};
     output_info.format = SPA_AUDIO_FORMAT_F32;
-    output_info.rate = OUTPUT_SAMPLE_RATE;
+    output_info.rate = g_current_output_rate;
     output_info.channels = CHANNELS;
     output_info.position[0] = SPA_AUDIO_CHANNEL_FL;
     output_info.position[1] = SPA_AUDIO_CHANNEL_FR;
