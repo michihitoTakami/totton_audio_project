@@ -240,21 +240,48 @@ gpu_os/
 
 ## Git Workflow
 
+### Mandatory Rules
+
+1. **GitHub CLI (`gh`) Required:** GitHub操作（Issue、PR、ラベル等）は必ず `gh` コマンドを使用すること
+2. **Issue Number Required:** ブランチ名・PR名には必ずIssue番号を含めること
+   - ブランチ名: `feature/#123-feature-name` または `fix/#456-bug-description`
+   - PR名: `#123 機能の説明` または `Fix #456: バグの説明`
+
+### Git Worktree
+
 **Always use Git Worktree for feature development and bug fixes.**
 
 ```bash
-# Create a new worktree for the feature branch
-git worktree add ../gpu_os_<feature-name> -b feature/<feature-name>
+# Create a new worktree for the feature branch (with Issue number)
+git worktree add ../gpu_os_#123-feature-name -b feature/#123-feature-name
 
 # Work in the worktree directory
-cd ../gpu_os_<feature-name>
+cd ../gpu_os_#123-feature-name
 
-# After completion, push and create PR
-git push -u origin feature/<feature-name>
-gh pr create --title "..." --body "..."
+# After completion, push and create PR (with Issue number in title)
+git push -u origin feature/#123-feature-name
+gh pr create --title "#123 機能の説明" --body "..."
 
 # Clean up after PR is merged
-git worktree remove ../gpu_os_<feature-name>
+git worktree remove ../gpu_os_#123-feature-name
+```
+
+### GitHub Operations (via `gh` command)
+
+```bash
+# Issue操作
+gh issue list
+gh issue view 123
+gh issue create --title "..." --body "..."
+
+# PR操作
+gh pr create --title "#123 ..." --body "..."
+gh pr list
+gh pr view 123
+
+# ラベル・マイルストーン
+gh label list
+gh milestone list
 ```
 
 ## Reference Projects
