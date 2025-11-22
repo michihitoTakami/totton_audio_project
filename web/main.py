@@ -165,13 +165,19 @@ def check_daemon_running() -> bool:
 
 
 def get_daemon_pid() -> Optional[int]:
-    """Get daemon PID from PID file"""
+    """Get daemon PID from PID file, with process name verification"""
     if not PID_FILE_PATH.exists():
         return None
     try:
         pid = int(PID_FILE_PATH.read_text().strip())
         # Verify process exists
         os.kill(pid, 0)
+        # Verify it's actually our daemon (guard against PID reuse)
+        comm_path = Path(f"/proc/{pid}/comm")
+        if comm_path.exists():
+            comm = comm_path.read_text().strip()
+            if comm != "gpu_upsampler_a":  # comm is truncated to 15 chars
+                return None  # PID was reused by another process
         return pid
     except (ValueError, OSError):
         return None
@@ -434,17 +440,22 @@ async def daemon_restart():
     # Stop if running
     if check_daemon_running():
         stop_success, stop_msg = stop_daemon()
-        if stop_success:
-            # Wait for graceful shutdown
-            for _ in range(10):
-                await asyncio.sleep(0.3)
-                if not check_daemon_running():
-                    break
-            else:
-                return ApiResponse(
-                    success=False,
-                    message="Daemon did not stop in time for restart",
-                )
+        if not stop_success:
+            # Abort restart if stop failed
+            return ApiResponse(
+                success=False,
+                message=f"Restart aborted: failed to stop daemon ({stop_msg})",
+            )
+        # Wait for graceful shutdown
+        for _ in range(10):
+            await asyncio.sleep(0.3)
+            if not check_daemon_running():
+                break
+        else:
+            return ApiResponse(
+                success=False,
+                message="Daemon did not stop in time for restart",
+            )
 
     # Start daemon
     start_success, start_msg = start_daemon()
