@@ -7,6 +7,7 @@
 #include <spa/param/audio/format-utils.h>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <cstring>
 #include <csignal>
 #include <atomic>
@@ -354,18 +355,21 @@ void alsa_output_thread() {
                 float left_sample = g_output_buffer_left[g_output_read_pos + i] * gain;
                 float right_sample = g_output_buffer_right[g_output_read_pos + i] * gain;
 
-                // Detect clipping before soft-clipping
+                // Detect and count clipping (for diagnostics only)
+                // Clipping should be prevented by proper gain staging (EQ preamp),
+                // not by signal processing that degrades audio quality
                 if (left_sample > 1.0f || left_sample < -1.0f ||
                     right_sample > 1.0f || right_sample < -1.0f) {
                     current_clips++;
                     clip_count++;
                 }
 
-                // Soft clipping using tanh (reduces harmonic distortion compared to hard clipping)
-                // tanh(x) smoothly compresses values above ±1.0 instead of abruptly cutting them
-                // This is gentler on the audio and produces less audible artifacts
-                left_sample = std::tanh(left_sample);
-                right_sample = std::tanh(right_sample);
+                // Hard clipping as safety net only - should never trigger with proper gain staging
+                // NO soft clipping (tanh): it's a nonlinear function that distorts ALL samples,
+                // not just those exceeding ±1.0. For high-fidelity playback, we want pure linear
+                // signal path. If clipping occurs, fix the gain structure instead.
+                left_sample = std::clamp(left_sample, -1.0f, 1.0f);
+                right_sample = std::clamp(right_sample, -1.0f, 1.0f);
 
                 // CRITICAL FIX: Float to int32 conversion
                 // Use 2^31-1 = 2147483647 (INT32_MAX) to avoid overflow
