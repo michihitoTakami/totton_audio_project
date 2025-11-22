@@ -25,6 +25,18 @@ DEFAULT_OPRA_PATH = (
 )
 
 
+# Modern Target Correction (KB5000_7)
+# Based on Dan Clark Audio research for more natural sound reproduction.
+# This single band adjusts OPRA's Harman Target base to a modern reference.
+# Applied at runtime to comply with CC BY-SA 4.0 (no derivative data distribution).
+MODERN_TARGET_CORRECTION_BAND = {
+    "filter_type": "PK",
+    "frequency": 5366.0,
+    "gain_db": 2.8,
+    "q": 1.5,
+}
+
+
 @dataclass
 class EqBand:
     """Single EQ band in Equalizer APO format."""
@@ -172,6 +184,49 @@ def convert_opra_to_apo(eq_data: dict) -> EqProfile:
         author=eq_data.get("author", ""),
         source="OPRA",
         details=eq_data.get("details", ""),
+    )
+
+
+def apply_modern_target_correction(profile: EqProfile) -> EqProfile:
+    """
+    Apply Modern Target (KB5000_7) correction to an OPRA EQ profile.
+
+    This adds a single peaking filter that adjusts the Harman Target base
+    to a more modern reference inspired by Dan Clark Audio research.
+
+    The correction is applied at runtime to comply with CC BY-SA 4.0
+    (no derivative data distribution).
+
+    Note: Preamp is reduced by the correction gain to prevent clipping.
+
+    Args:
+        profile: Original OPRA EQ profile
+
+    Returns:
+        New EqProfile with correction band appended and preamp adjusted
+    """
+    correction_gain = MODERN_TARGET_CORRECTION_BAND["gain_db"]
+
+    correction_band = EqBand(
+        enabled=True,
+        filter_type=MODERN_TARGET_CORRECTION_BAND["filter_type"],
+        frequency=MODERN_TARGET_CORRECTION_BAND["frequency"],
+        gain_db=correction_gain,
+        q=MODERN_TARGET_CORRECTION_BAND["q"],
+    )
+
+    # Reduce preamp by correction gain to prevent clipping
+    adjusted_preamp = profile.preamp_db - correction_gain
+
+    return EqProfile(
+        name=profile.name,
+        preamp_db=adjusted_preamp,
+        bands=profile.bands + [correction_band],
+        author=profile.author,
+        source=profile.source,
+        details=profile.details + " + Modern Target (KB5000_7)"
+        if profile.details
+        else "Modern Target (KB5000_7)",
     )
 
 
