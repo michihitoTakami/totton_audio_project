@@ -368,6 +368,10 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
         return false;
     }
 
+    // TODO: Implement Soft Mute (fade-out/fade-in) to prevent pop noise during switch
+    // See: https://github.com/michihitoTakami/michy_os/issues/38
+    // Current implementation uses double-buffering but no audio fade.
+
     std::cout << "Switching rate family: "
               << (currentRateFamily_ == RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
               << " -> "

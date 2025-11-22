@@ -17,9 +17,18 @@ constexpr int BLOCK_SIZE = 4096;
 constexpr int CHANNELS = 2;
 
 // Dynamic rate configuration (updated at runtime based on input detection)
-static int g_current_input_rate = DEFAULT_INPUT_SAMPLE_RATE;
-static int g_current_output_rate = DEFAULT_OUTPUT_SAMPLE_RATE;
-static ConvolutionEngine::RateFamily g_current_rate_family = ConvolutionEngine::RateFamily::RATE_44K;
+// Using atomic for thread-safety between PipeWire callbacks and main thread
+static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
+static std::atomic<int> g_current_output_rate{DEFAULT_OUTPUT_SAMPLE_RATE};
+static std::atomic<int> g_current_rate_family_int{static_cast<int>(ConvolutionEngine::RateFamily::RATE_44K)};
+
+// Helper to get/set rate family atomically
+inline ConvolutionEngine::RateFamily g_get_rate_family() {
+    return static_cast<ConvolutionEngine::RateFamily>(g_current_rate_family_int.load(std::memory_order_acquire));
+}
+inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
+    g_current_rate_family_int.store(static_cast<int>(family), std::memory_order_release);
+}
 
 // Global state
 static std::atomic<bool> g_running{true};
@@ -106,30 +115,29 @@ static void signal_handler(int sig) {
 
 // Rate family switching helper
 // Called when input sample rate changes (e.g., from PipeWire param event or ZeroMQ)
-static bool handle_rate_change(int detected_sample_rate) {
+// TODO: Connect this to PipeWire param_changed event or ZeroMQ command handler
+// Currently this is a prepared skeleton for future dynamic rate detection.
+// See: https://github.com/michihitoTakami/michy_os/issues/38
+[[maybe_unused]] static bool handle_rate_change(int detected_sample_rate) {
     if (!g_upsampler || !g_upsampler->isDualRateEnabled()) {
         return false;  // Dual-rate not enabled
     }
 
     auto new_family = ConvolutionEngine::detectRateFamily(detected_sample_rate);
     if (new_family == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
-        std::cerr << "Warning: Unknown sample rate " << detected_sample_rate << " Hz" << std::endl;
+        // Note: Avoid std::cerr in real-time path if called from audio callback
         return false;
     }
 
-    if (new_family == g_current_rate_family) {
+    if (new_family == g_get_rate_family()) {
         return true;  // Already at correct family
     }
 
-    std::cout << "Rate family change detected: " << detected_sample_rate << " Hz" << std::endl;
-
     // Switch coefficient set (glitch-free via double buffering)
     if (g_upsampler->switchRateFamily(new_family)) {
-        g_current_rate_family = new_family;
-        g_current_input_rate = ConvolutionEngine::getBaseSampleRate(new_family);
-        g_current_output_rate = ConvolutionEngine::getOutputSampleRate(new_family);
-        std::cout << "Switched to " << (new_family == ConvolutionEngine::RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
-                  << " family (" << g_current_input_rate << " -> " << g_current_output_rate << " Hz)" << std::endl;
+        g_set_rate_family(new_family);
+        g_current_input_rate.store(ConvolutionEngine::getBaseSampleRate(new_family), std::memory_order_release);
+        g_current_output_rate.store(ConvolutionEngine::getOutputSampleRate(new_family), std::memory_order_release);
         return true;
     }
 
@@ -377,7 +385,7 @@ int main(int argc, char* argv[]) {
 
     struct spa_audio_info_raw input_info = {};
     input_info.format = SPA_AUDIO_FORMAT_F32;
-    input_info.rate = g_current_input_rate;
+    input_info.rate = g_current_input_rate.load();
     input_info.channels = CHANNELS;
     input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
     input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
@@ -421,7 +429,7 @@ int main(int argc, char* argv[]) {
 
     struct spa_audio_info_raw output_info = {};
     output_info.format = SPA_AUDIO_FORMAT_F32;
-    output_info.rate = g_current_output_rate;
+    output_info.rate = g_current_output_rate.load();
     output_info.channels = CHANNELS;
     output_info.position[0] = SPA_AUDIO_CHANNEL_FL;
     output_info.position[1] = SPA_AUDIO_CHANNEL_FR;
