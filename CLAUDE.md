@@ -14,7 +14,8 @@ This project implements GPU-accelerated ultra-high-precision audio upsampling fo
 **Key Specifications:**
 - Input: 44.1kHz/48kHz (16-32bit float)
 - Output: 705.6kHz/768kHz (16x oversampling)
-- Filter: 131,072-tap minimum phase FIR
+- Filter: 2,000,000-tap (2M) minimum phase FIR
+- Stopband attenuation: ~197dB
 - Target Hardware: NVIDIA GeForce RTX 2070 Super (8GB VRAM) or better
 - Plugin Format: LV2 for Easy Effects integration
 
@@ -24,7 +25,7 @@ The project follows a structured three-phase approach. **Work must proceed seque
 
 ### Phase 1: Algorithm Verification & Coefficient Generation (Python)
 
-**Purpose:** Generate and validate the 131k-tap minimum phase FIR filter coefficients.
+**Purpose:** Generate and validate the 2M-tap minimum phase FIR filter coefficients.
 
 **Directory Structure:**
 ```
@@ -37,16 +38,18 @@ plots/analysis/    - Validation plots (impulse, frequency response)
 - Use `scipy.signal` for filter design
 - Start with linear phase design, convert to minimum phase via homomorphic processing
 - **Critical constraint:** Minimum phase is MANDATORY to eliminate pre-ringing (pre-ringing degrades transient response)
+- **Tap count must be multiple of 16** (upsample ratio alignment)
 - Frequency specs:
   - Passband: 0-20kHz (flat response)
   - Stopband start: 22.05kHz (for 44.1kHz input)
-  - Stopband attenuation: ≤-180dB
-  - Window: Kaiser (β ≈ 18)
+  - Stopband attenuation: ≤-197dB (achieved with 2M taps)
+  - Window: Kaiser (β ≈ 55)
 
 **Validation Checklist:**
 - Impulse response shows NO pre-ringing (energy concentrated at time=0 and forward)
-- Frequency response meets -180dB stopband requirement
+- Frequency response meets -197dB stopband requirement
 - Passband ripple is minimal within audible range
+- Coefficients normalized (DC gain = 1.0) to prevent clipping
 
 **Export Formats:**
 - Binary (.bin): float32 array for direct loading
@@ -70,7 +73,7 @@ plots/analysis/    - Validation plots (impulse, frequency response)
 - Output: WAV file (705.6/768kHz)
 
 **Why Partitioned FFT:**
-With 131k taps, direct time-domain convolution is computationally prohibitive. FFT convolution transforms the problem into frequency-domain multiplication, dramatically reducing complexity from O(N×M) to O(N×log(N)).
+With 2M taps, direct time-domain convolution is computationally prohibitive. FFT convolution transforms the problem into frequency-domain multiplication, dramatically reducing complexity from O(N×M) to O(N×log(N)).
 
 **Performance Target:**
 - Real-time processing with <20% GPU utilization on RTX 2070S
@@ -105,7 +108,7 @@ This is optimized for **listening/music playback quality**, not low-latency moni
 2. **Ring Buffer Accumulation:** Aggregate to 4096-8192 samples for efficient GPU transfer
 3. **H2D Transfer:** CPU → GPU VRAM (PCIe bandwidth consideration)
 4. **Partitioned FFT Convolution (GPU):**
-   - Pre-loaded 131k-tap filter coefficients (already in GPU memory)
+   - Pre-loaded 2M-tap filter coefficients (already in GPU memory)
    - Perform FFT on input block
    - Complex multiply with filter's frequency-domain representation
    - IFFT to time domain
@@ -114,8 +117,8 @@ This is optimized for **listening/music playback quality**, not low-latency moni
 6. **Output Buffer (CPU):** Send to host application
 
 **Memory Footprint Estimate:**
-- Filter coefficients: 131k taps × 4 bytes (float32) ≈ 512KB
-- Working buffers for FFT: ~tens of MB depending on block size
+- Filter coefficients: 2M taps × 4 bytes (float32) ≈ 8MB
+- Working buffers for FFT: ~100MB depending on block size
 - Well within 8GB VRAM budget of RTX 2070S
 
 ## Key Technical Constraints
@@ -125,9 +128,10 @@ This is optimized for **listening/music playback quality**, not low-latency moni
 - Minimum phase concentrates impulse energy at t≥0, preserving transient attack
 - This is non-negotiable for high-fidelity audio reproduction
 
-**Stopband Attenuation (-180dB):**
-- Ensures aliasing components are below quantization noise floor
-- Requires large tap count + careful windowing (Kaiser β≈18)
+**Stopband Attenuation (-197dB with 2M taps):**
+- Ensures aliasing components are far below quantization noise floor
+- Requires large tap count + careful windowing (Kaiser β≈55)
+- Coefficients normalized to DC gain = 1.0 to prevent clipping
 
 **GPU Memory Management:**
 - Filter coefficients loaded once at initialization
@@ -141,13 +145,16 @@ This is optimized for **listening/music playback quality**, not low-latency moni
 # Setup environment (first time only)
 uv sync
 
-# Generate filter coefficients
+# Generate filter coefficients (2M taps by default)
 uv run python scripts/generate_filter.py
 
+# Or specify custom tap count
+uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
+
 # Output:
-# - data/coefficients/filter_131k_min_phase.bin (512 KB binary)
+# - data/coefficients/filter_44k_2m_min_phase.bin (8 MB binary)
+# - data/coefficients/filter_44k_2m_min_phase.json (metadata)
 # - data/coefficients/filter_coefficients.h (C++ header)
-# - data/coefficients/metadata.json (filter specifications)
 # - plots/analysis/*.png (validation plots)
 ```
 
@@ -194,4 +201,8 @@ git worktree remove ../gpu_os_<feature-name>
 
 See `docs/first.txt` for complete Japanese specification document.
 
-Current phase: **Phase 1** (not yet started)
+Current phase: **Phase 2** (GPU convolution engine - complete)
+
+**Achieved:**
+- Phase 1: 2M-tap minimum phase FIR filter (197dB stopband attenuation)
+- Phase 2: GPU FFT convolution engine (~28x realtime on RTX 2070S)

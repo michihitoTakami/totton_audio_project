@@ -20,6 +20,7 @@ GPU Audio Upsampler - Phase 1: Filter Coefficient Generation
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 import numpy as np
 from scipy import signal
@@ -100,7 +101,7 @@ def convert_to_minimum_phase(h_linear):
     # n_fft: FFTサイズ（時間エイリアシング防止のため、タップ数の8倍に設定）
     # ホモモルフィック処理では周波数領域で対数操作を行うため、
     # 十分なFFTサイズを確保しないと因果性が壊れプリリンギングが残留する
-    # 100万tapsの場合、8倍=8,388,608（2^23）を使用
+    # 例: 2Mタップの場合、8倍=16,777,216（2^24）を使用
     # これは非常に大きなFFTなので、処理に時間がかかる（数分～数十分）
     n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 8)))
     print(f"  警告: FFTサイズ {n_fft:,} は非常に大きいため、処理に時間がかかります（数分～数十分）")
@@ -356,6 +357,8 @@ def parse_args():
                         help="Passband end frequency (Hz). Default: 20000")
     parser.add_argument("--stopband-start", type=int, default=22050,
                         help="Stopband start frequency (Hz). Default: 22050")
+    parser.add_argument("--stopband-attenuation", type=int, default=220,
+                        help="Target stopband attenuation (dB). Default: 220")
     parser.add_argument("--kaiser-beta", type=float, default=55.0,
                         help="Kaiser window beta. Default: 55")
     parser.add_argument("--output-prefix", type=str, default=None,
@@ -394,9 +397,16 @@ def normalize_coefficients(h):
 
     Returns:
         正規化されたフィルタ係数と正規化情報
+
+    Raises:
+        ValueError: DCゲインが0に近すぎる場合
     """
     # DCゲイン（係数の総和）を計算
     dc_gain = np.sum(h)
+
+    # ゼロ除算防止
+    if abs(dc_gain) < 1e-12:
+        raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
 
     # 正規化（DCゲイン = 1.0）
     h_normalized = h / dc_gain
@@ -435,6 +445,7 @@ def main():
     SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO
     PASSBAND_END = args.passband_end
     STOPBAND_START = args.stopband_start
+    STOPBAND_ATTENUATION_DB = args.stopband_attenuation
     KAISER_BETA = args.kaiser_beta
     N_TAPS = args.taps
     OUTPUT_PREFIX = args.output_prefix
@@ -459,7 +470,6 @@ def main():
     plot_responses(h_linear, h_min_phase)
 
     # 6. メタデータ作成
-    from datetime import datetime
     metadata = {
         'generation_date': datetime.now().isoformat(),
         'n_taps': N_TAPS,
