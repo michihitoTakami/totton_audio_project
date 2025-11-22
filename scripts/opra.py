@@ -197,23 +197,30 @@ def apply_modern_target_correction(profile: EqProfile) -> EqProfile:
     The correction is applied at runtime to comply with CC BY-SA 4.0
     (no derivative data distribution).
 
+    Note: Preamp is reduced by the correction gain to prevent clipping.
+
     Args:
         profile: Original OPRA EQ profile
 
     Returns:
-        New EqProfile with correction band appended
+        New EqProfile with correction band appended and preamp adjusted
     """
+    correction_gain = MODERN_TARGET_CORRECTION_BAND["gain_db"]
+
     correction_band = EqBand(
         enabled=True,
         filter_type=MODERN_TARGET_CORRECTION_BAND["filter_type"],
         frequency=MODERN_TARGET_CORRECTION_BAND["frequency"],
-        gain_db=MODERN_TARGET_CORRECTION_BAND["gain_db"],
+        gain_db=correction_gain,
         q=MODERN_TARGET_CORRECTION_BAND["q"],
     )
 
+    # Reduce preamp by correction gain to prevent clipping
+    adjusted_preamp = profile.preamp_db - correction_gain
+
     return EqProfile(
         name=profile.name,
-        preamp_db=profile.preamp_db,
+        preamp_db=adjusted_preamp,
         bands=profile.bands + [correction_band],
         author=profile.author,
         source=profile.source,

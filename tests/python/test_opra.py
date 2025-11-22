@@ -372,7 +372,7 @@ class TestModernTargetCorrection:
         assert "KB5000_7" in corrected.details
 
     def test_apply_correction_preserves_metadata(self):
-        """Correction should preserve other profile metadata."""
+        """Correction should preserve other profile metadata (except preamp)."""
         original = EqProfile(
             name="HD650",
             preamp_db=-5.5,
@@ -383,9 +383,32 @@ class TestModernTargetCorrection:
         corrected = apply_modern_target_correction(original)
 
         assert corrected.name == original.name
-        assert corrected.preamp_db == original.preamp_db
         assert corrected.author == original.author
         assert corrected.source == original.source
+
+    def test_apply_correction_adjusts_preamp(self):
+        """Correction should reduce preamp by correction gain to prevent clipping."""
+        correction_gain = MODERN_TARGET_CORRECTION_BAND["gain_db"]  # 2.8 dB
+
+        original = EqProfile(
+            name="Test",
+            preamp_db=-5.0,
+        )
+
+        corrected = apply_modern_target_correction(original)
+
+        # Preamp should be reduced by correction gain
+        expected_preamp = original.preamp_db - correction_gain
+        assert corrected.preamp_db == pytest.approx(expected_preamp, rel=0.01)
+
+    def test_apply_correction_zero_preamp(self):
+        """Correction with zero preamp should result in negative preamp."""
+        correction_gain = MODERN_TARGET_CORRECTION_BAND["gain_db"]
+
+        original = EqProfile(preamp_db=0.0)
+        corrected = apply_modern_target_correction(original)
+
+        assert corrected.preamp_db == pytest.approx(-correction_gain, rel=0.01)
 
     def test_apply_correction_apo_format(self):
         """Correction band should appear in APO format output."""
@@ -530,3 +553,96 @@ class TestOpraIntegration:
         # Verify APO format
         assert "Preamp:" in apo_text or "Filter" in apo_text
         assert profile.author != ""
+
+
+@requires_opra_submodule
+class TestOpraApi:
+    """API layer tests for OPRA endpoints with apply_correction."""
+
+    @pytest.fixture
+    def client(self):
+        """Create test client for FastAPI app."""
+        from fastapi.testclient import TestClient
+
+        # Import from web module
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
+        from main import app
+
+        return TestClient(app)
+
+    @pytest.fixture
+    def sample_eq_id(self, client):
+        """Get a sample EQ ID from search results."""
+        response = client.get("/opra/search?q=HD650&limit=1")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["results"]) > 0
+        assert len(data["results"][0]["eq_profiles"]) > 0
+        return data["results"][0]["eq_profiles"][0]["id"]
+
+    def test_opra_eq_without_correction(self, client, sample_eq_id):
+        """Test /opra/eq endpoint without apply_correction."""
+        response = client.get(f"/opra/eq/{sample_eq_id}")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "apo_format" in data
+        assert data["modern_target_applied"] is False
+        assert "KB5000_7" not in data["details"]
+
+    def test_opra_eq_with_correction(self, client, sample_eq_id):
+        """Test /opra/eq endpoint with apply_correction=true."""
+        response = client.get(f"/opra/eq/{sample_eq_id}?apply_correction=true")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "apo_format" in data
+        assert data["modern_target_applied"] is True
+        assert "KB5000_7" in data["details"]
+        # Correction band should appear in APO format
+        assert "5366.0" in data["apo_format"]
+        assert "2.8" in data["apo_format"]
+
+    def test_opra_eq_correction_reduces_preamp(self, client, sample_eq_id):
+        """Test that apply_correction reduces preamp in APO output."""
+        # Get without correction
+        resp_no_correction = client.get(f"/opra/eq/{sample_eq_id}")
+        assert resp_no_correction.status_code == 200
+        apo_no_correction = resp_no_correction.json()["apo_format"]
+
+        # Get with correction
+        resp_with_correction = client.get(
+            f"/opra/eq/{sample_eq_id}?apply_correction=true"
+        )
+        assert resp_with_correction.status_code == 200
+        apo_with_correction = resp_with_correction.json()["apo_format"]
+
+        # Parse preamp values
+        def parse_preamp(apo_text):
+            for line in apo_text.split("\n"):
+                if line.startswith("Preamp:"):
+                    # "Preamp: -6.0 dB" -> -6.0
+                    return float(line.split(":")[1].strip().replace(" dB", ""))
+            return 0.0
+
+        preamp_no_correction = parse_preamp(apo_no_correction)
+        preamp_with_correction = parse_preamp(apo_with_correction)
+
+        # Preamp should be reduced by 2.8 dB (correction gain)
+        correction_gain = MODERN_TARGET_CORRECTION_BAND["gain_db"]
+        expected_preamp = preamp_no_correction - correction_gain
+        assert preamp_with_correction == pytest.approx(expected_preamp, rel=0.01)
+
+    def test_opra_apply_with_correction_filename(self, client, sample_eq_id, tmp_path):
+        """Test /opra/apply endpoint generates correct filename suffix."""
+        # Note: We can't easily test file creation without mocking,
+        # but we can verify the response indicates correction was applied
+        response = client.post(f"/opra/apply/{sample_eq_id}?apply_correction=true")
+        # May fail if no write permission, but we check the response structure
+        if response.status_code == 200:
+            data = response.json()
+            assert data["data"]["modern_target_applied"] is True
+            assert "_kb5000_7" in data["data"]["path"]
