@@ -89,12 +89,18 @@ NegotiatedConfig negotiate(int inputRate, const DacCapability::Capability& dacCa
                            int currentOutputRate) {
     NegotiatedConfig config;
     config.inputRate = inputRate;
-    config.inputFamily = getRateFamily(inputRate);
+    config.inputFamily = ConvolutionEngine::RateFamily::RATE_UNKNOWN;
     config.outputRate = 0;
     config.upsampleRatio = 0;
     config.isValid = false;
     config.requiresReconfiguration = false;
     config.errorMessage.clear();
+
+    // Validate input rate first (before calling getRateFamily to avoid UB with 0)
+    if (inputRate <= 0) {
+        config.errorMessage = "Invalid input rate: " + std::to_string(inputRate);
+        return config;
+    }
 
     // Validate DAC capability
     if (!dacCap.isValid) {
@@ -102,11 +108,8 @@ NegotiatedConfig negotiate(int inputRate, const DacCapability::Capability& dacCa
         return config;
     }
 
-    // Validate input rate
-    if (inputRate <= 0) {
-        config.errorMessage = "Invalid input rate: " + std::to_string(inputRate);
-        return config;
-    }
+    // Now safe to determine rate family
+    config.inputFamily = getRateFamily(inputRate);
 
     // Get the best supported output rate for this input family
     int targetOutputRate = getBestRateForFamily(config.inputFamily, dacCap);
