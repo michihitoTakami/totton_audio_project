@@ -34,13 +34,19 @@ def generate_impulse(duration, sample_rate, amplitude=1.0):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate test audio files')
-    parser.add_argument('--output-dir', type=str, default='test_data',
-                       help='Output directory for test files')
-    parser.add_argument('--sample-rate', type=int, default=44100,
-                       help='Sample rate (default: 44100 Hz)')
-    parser.add_argument('--duration', type=float, default=2.0,
-                       help='Duration in seconds (default: 2.0)')
+    parser = argparse.ArgumentParser(description="Generate test audio files")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="test_data",
+        help="Output directory for test files",
+    )
+    parser.add_argument(
+        "--sample-rate", type=int, default=44100, help="Sample rate (default: 44100 Hz)"
+    )
+    parser.add_argument(
+        "--duration", type=float, default=2.0, help="Duration in seconds (default: 2.0)"
+    )
 
     args = parser.parse_args()
 
@@ -50,7 +56,7 @@ def main():
     sample_rate = args.sample_rate
     duration = args.duration
 
-    print(f"Generating test audio files...")
+    print("Generating test audio files...")
     print(f"  Sample rate: {sample_rate} Hz")
     print(f"  Duration: {duration} seconds")
     print(f"  Output directory: {output_dir}")
@@ -95,7 +101,7 @@ def main():
 
     print()
     print("All test files generated successfully!")
-    print(f"Total files: 5")
+    print("Total files: 5")
 
 
 if __name__ == "__main__":

@@ -27,10 +27,12 @@ struct EqBand {
 // Complete EQ profile
 struct EqProfile {
     std::string name;
-    double preampDb = 0.0;      // Preamp gain (dB)
+    double preampDb = 0.0;  // Preamp gain (dB)
     std::vector<EqBand> bands;
 
-    bool isEmpty() const { return bands.empty() && preampDb == 0.0; }
+    bool isEmpty() const {
+        return bands.empty() && preampDb == 0.0;
+    }
     size_t activeBandCount() const;
 };
 

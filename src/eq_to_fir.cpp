@@ -1,4 +1,5 @@
 #include "eq_to_fir.h"
+
 #include <cmath>
 #include <iostream>
 
@@ -24,50 +25,50 @@ BiquadCoeffs calculateBiquadCoeffs(const EqBand& band, double sampleRate) {
     double a0;
 
     switch (band.type) {
-        case FilterType::PK: {
-            // Peaking EQ
-            c.b0 = 1.0 + alpha * A;
-            c.b1 = -2.0 * cosW0;
-            c.b2 = 1.0 - alpha * A;
-            a0   = 1.0 + alpha / A;
-            c.a1 = -2.0 * cosW0;
-            c.a2 = 1.0 - alpha / A;
-            break;
-        }
+    case FilterType::PK: {
+        // Peaking EQ
+        c.b0 = 1.0 + alpha * A;
+        c.b1 = -2.0 * cosW0;
+        c.b2 = 1.0 - alpha * A;
+        a0 = 1.0 + alpha / A;
+        c.a1 = -2.0 * cosW0;
+        c.a2 = 1.0 - alpha / A;
+        break;
+    }
 
-        case FilterType::LS: {
-            // Low Shelf
-            double sqrtA = std::sqrt(A);
-            double sqrtA2alpha = 2.0 * sqrtA * alpha;
-            c.b0 = A * ((A + 1.0) - (A - 1.0) * cosW0 + sqrtA2alpha);
-            c.b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosW0);
-            c.b2 = A * ((A + 1.0) - (A - 1.0) * cosW0 - sqrtA2alpha);
-            a0   = (A + 1.0) + (A - 1.0) * cosW0 + sqrtA2alpha;
-            c.a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosW0);
-            c.a2 = (A + 1.0) + (A - 1.0) * cosW0 - sqrtA2alpha;
-            break;
-        }
+    case FilterType::LS: {
+        // Low Shelf
+        double sqrtA = std::sqrt(A);
+        double sqrtA2alpha = 2.0 * sqrtA * alpha;
+        c.b0 = A * ((A + 1.0) - (A - 1.0) * cosW0 + sqrtA2alpha);
+        c.b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosW0);
+        c.b2 = A * ((A + 1.0) - (A - 1.0) * cosW0 - sqrtA2alpha);
+        a0 = (A + 1.0) + (A - 1.0) * cosW0 + sqrtA2alpha;
+        c.a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosW0);
+        c.a2 = (A + 1.0) + (A - 1.0) * cosW0 - sqrtA2alpha;
+        break;
+    }
 
-        case FilterType::HS: {
-            // High Shelf
-            double sqrtA = std::sqrt(A);
-            double sqrtA2alpha = 2.0 * sqrtA * alpha;
-            c.b0 = A * ((A + 1.0) + (A - 1.0) * cosW0 + sqrtA2alpha);
-            c.b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosW0);
-            c.b2 = A * ((A + 1.0) + (A - 1.0) * cosW0 - sqrtA2alpha);
-            a0   = (A + 1.0) - (A - 1.0) * cosW0 + sqrtA2alpha;
-            c.a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosW0);
-            c.a2 = (A + 1.0) - (A - 1.0) * cosW0 - sqrtA2alpha;
-            break;
-        }
+    case FilterType::HS: {
+        // High Shelf
+        double sqrtA = std::sqrt(A);
+        double sqrtA2alpha = 2.0 * sqrtA * alpha;
+        c.b0 = A * ((A + 1.0) + (A - 1.0) * cosW0 + sqrtA2alpha);
+        c.b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosW0);
+        c.b2 = A * ((A + 1.0) + (A - 1.0) * cosW0 - sqrtA2alpha);
+        a0 = (A + 1.0) - (A - 1.0) * cosW0 + sqrtA2alpha;
+        c.a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosW0);
+        c.a2 = (A + 1.0) - (A - 1.0) * cosW0 - sqrtA2alpha;
+        break;
+    }
 
-        case FilterType::LP:
-        case FilterType::HP:
-        default:
-            // Not implemented - return unity
-            std::cerr << "EQ: Filter type " << filterTypeName(band.type)
-                      << " not implemented, using bypass" << std::endl;
-            return c;
+    case FilterType::LP:
+    case FilterType::HP:
+    default:
+        // Not implemented - return unity
+        std::cerr << "EQ: Filter type " << filterTypeName(band.type)
+                  << " not implemented, using bypass" << std::endl;
+        return c;
     }
 
     // Normalize by a0
@@ -80,18 +81,17 @@ BiquadCoeffs calculateBiquadCoeffs(const EqBand& band, double sampleRate) {
     return c;
 }
 
-std::vector<std::complex<double>> biquadFrequencyResponse(
-    const std::vector<double>& frequencies,
-    const BiquadCoeffs& coeffs,
-    double sampleRate
-) {
+std::vector<std::complex<double>> biquadFrequencyResponse(const std::vector<double>& frequencies,
+                                                          const BiquadCoeffs& coeffs,
+                                                          double sampleRate) {
     const double pi = 3.14159265358979323846;
     std::vector<std::complex<double>> response(frequencies.size());
 
     for (size_t i = 0; i < frequencies.size(); ++i) {
         double f = frequencies[i];
         // Handle negative frequencies (for full FFT spectrum)
-        if (f < 0) f = -f;
+        if (f < 0)
+            f = -f;
 
         double w = 2.0 * pi * f / sampleRate;
         std::complex<double> z = std::exp(std::complex<double>(0, -w));  // z = e^(-jw)
@@ -107,11 +107,9 @@ std::vector<std::complex<double>> biquadFrequencyResponse(
     return response;
 }
 
-std::vector<std::complex<double>> computeEqFrequencyResponse(
-    const std::vector<double>& frequencies,
-    const EqProfile& profile,
-    double sampleRate
-) {
+std::vector<std::complex<double>> computeEqFrequencyResponse(const std::vector<double>& frequencies,
+                                                             const EqProfile& profile,
+                                                             double sampleRate) {
     size_t N = frequencies.size();
     std::vector<std::complex<double>> response(N, std::complex<double>(1.0, 0.0));
 
@@ -125,7 +123,8 @@ std::vector<std::complex<double>> computeEqFrequencyResponse(
 
     // Multiply response from each band
     for (const auto& band : profile.bands) {
-        if (!band.enabled) continue;
+        if (!band.enabled)
+            continue;
 
         BiquadCoeffs coeffs = calculateBiquadCoeffs(band, sampleRate);
         auto bandResponse = biquadFrequencyResponse(frequencies, coeffs, sampleRate);
@@ -138,7 +137,8 @@ std::vector<std::complex<double>> computeEqFrequencyResponse(
     return response;
 }
 
-std::vector<double> generateR2cFftFrequencies(size_t numBins, size_t fullFftSize, double sampleRate) {
+std::vector<double> generateR2cFftFrequencies(size_t numBins, size_t fullFftSize,
+                                              double sampleRate) {
     // For R2C FFT, we only have positive frequencies: DC to Nyquist
     // numBins = N/2 + 1 for full FFT size N
     // Frequency resolution = sampleRate / N
@@ -152,12 +152,9 @@ std::vector<double> generateR2cFftFrequencies(size_t numBins, size_t fullFftSize
     return frequencies;
 }
 
-std::vector<std::complex<double>> computeEqResponseForFft(
-    size_t filterFftSize,
-    size_t fullFftSize,
-    double outputSampleRate,
-    const EqProfile& profile
-) {
+std::vector<std::complex<double>> computeEqResponseForFft(size_t filterFftSize, size_t fullFftSize,
+                                                          double outputSampleRate,
+                                                          const EqProfile& profile) {
     // Generate frequencies for R2C FFT bins at OUTPUT sample rate
     // filterFftSize = N/2+1 (R2C output bins)
     // fullFftSize = N (for frequency resolution)
@@ -170,14 +167,11 @@ std::vector<std::complex<double>> computeEqResponseForFft(
     return computeEqFrequencyResponse(frequencies, profile, outputSampleRate);
 }
 
-std::vector<double> computeEqMagnitudeForFft(
-    size_t filterFftSize,
-    size_t fullFftSize,
-    double outputSampleRate,
-    const EqProfile& profile
-) {
+std::vector<double> computeEqMagnitudeForFft(size_t filterFftSize, size_t fullFftSize,
+                                             double outputSampleRate, const EqProfile& profile) {
     // Compute full complex response first
-    auto complexResponse = computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, profile);
+    auto complexResponse =
+        computeEqResponseForFft(filterFftSize, fullFftSize, outputSampleRate, profile);
 
     // Extract magnitude only (discard phase)
     std::vector<double> magnitude(complexResponse.size());

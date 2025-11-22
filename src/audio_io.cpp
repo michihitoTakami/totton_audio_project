@@ -1,6 +1,7 @@
 #include "audio_io.h"
-#include <iostream>
+
 #include <cstring>
+#include <iostream>
 
 namespace AudioIO {
 
@@ -55,8 +56,8 @@ bool WavReader::readAll(AudioFile& output) {
     // Read all frames
     sf_count_t framesRead = sf_readf_float(file_, output.data.data(), info_.frames);
     if (framesRead != info_.frames) {
-        std::cerr << "Error: Incomplete read. Expected " << info_.frames
-                  << " frames, read " << framesRead << std::endl;
+        std::cerr << "Error: Incomplete read. Expected " << info_.frames << " frames, read "
+                  << framesRead << std::endl;
         std::cerr << "File may be corrupted or truncated." << std::endl;
         return false;
     }
@@ -138,17 +139,14 @@ bool WavWriter::writeBlock(const float* buffer, sf_count_t frames) {
 // Utility functions
 namespace Utils {
 
-void interleavedToSeparate(const float* interleaved,
-                           float* left, float* right,
-                           size_t frames) {
+void interleavedToSeparate(const float* interleaved, float* left, float* right, size_t frames) {
     for (size_t i = 0; i < frames; ++i) {
         left[i] = interleaved[i * 2];
         right[i] = interleaved[i * 2 + 1];
     }
 }
 
-void separateToInterleaved(const float* left, const float* right,
-                           float* interleaved,
+void separateToInterleaved(const float* left, const float* right, float* interleaved,
                            size_t frames) {
     for (size_t i = 0; i < frames; ++i) {
         interleaved[i * 2] = left[i];
@@ -169,6 +167,6 @@ void stereoToMono(const float* stereo, float* mono, size_t frames) {
     }
 }
 
-} // namespace Utils
+}  // namespace Utils
 
-} // namespace AudioIO
+}  // namespace AudioIO
