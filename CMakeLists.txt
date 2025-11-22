@@ -191,13 +191,21 @@ enable_testing()
 include(GoogleTest)
 
 # CPU-only unit tests (no GPU required)
-# Tests RateFamily detection and other CPU-only functionality
+# Tests: RateFamily, EQ Parser, EQ to FIR, Config Loader
 add_executable(cpu_tests
     tests/cpp/test_rate_family.cpp
+    tests/cpp/test_eq_parser.cpp
+    tests/cpp/test_eq_to_fir.cpp
+    tests/cpp/test_config_loader.cpp
+    # Source files needed for tests (not in gpu_upsampler_core)
+    src/eq_parser.cpp
+    src/eq_to_fir.cpp
+    src/config_loader.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
     gpu_upsampler_core
+    nlohmann_json::nlohmann_json
 )
 target_include_directories(cpu_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
