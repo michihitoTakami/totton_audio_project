@@ -35,6 +35,20 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+
+  # Secret detection (prevent accidental commits of API keys, tokens, etc.)
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+
   # Pre-push: Diff-based tests
   # Only runs tests relevant to changed files
   - repo: local

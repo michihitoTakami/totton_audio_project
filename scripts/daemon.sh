@@ -55,7 +55,8 @@ kill_daemon() {
             log_info "Stopping daemon (PID: $pid from PID file)..."
             kill "$pid" 2>/dev/null || true
             # Wait for graceful shutdown
-            for i in {1..10}; do
+            # shellcheck disable=SC2034  # Loop variable intentionally unused
+            for _ in {1..10}; do
                 if ! kill -0 "$pid" 2>/dev/null; then
                     break
                 fi
@@ -74,7 +75,8 @@ kill_daemon() {
     fi
 
     # Fallback: kill any remaining processes by name (safety net)
-    local pids=$(pgrep -f "$DAEMON_NAME" 2>/dev/null || true)
+    local pids
+    pids=$(pgrep -f "$DAEMON_NAME" 2>/dev/null || true)
     if [[ -n "$pids" ]]; then
         log_warn "Found orphan processes: $pids (killing...)"
         kill $pids 2>/dev/null || true
@@ -89,7 +91,8 @@ kill_daemon() {
 # Setup PipeWire links
 setup_links() {
     log_info "Setting up PipeWire links..."
-    for i in {1..10}; do
+    # shellcheck disable=SC2034  # Loop variable intentionally unused
+    for _ in {1..10}; do
         if pw-link -i 2>/dev/null | grep -q "GPU Upsampler Input:input_FL"; then
             break
         fi
@@ -138,7 +141,8 @@ start_daemon() {
 
     # Wait for daemon to create PID file and initialize
     local pid=""
-    for i in {1..30}; do
+    # shellcheck disable=SC2034  # Loop variable intentionally unused
+    for _ in {1..30}; do
         sleep 0.5
         # Check if PID file was created by daemon
         if [[ -f "$PID_FILE" ]]; then
@@ -189,7 +193,8 @@ show_status() {
     fi
 
     # Check for orphan processes
-    local pids=$(pgrep -f "$DAEMON_NAME" 2>/dev/null || true)
+    local pids
+    pids=$(pgrep -f "$DAEMON_NAME" 2>/dev/null || true)
     if [[ -n "$pids" ]]; then
         if [[ "$running" == "false" ]]; then
             log_warn "Orphan daemon processes found: $pids (no PID file)"

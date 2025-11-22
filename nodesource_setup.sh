@@ -4,7 +4,8 @@
 log() {
   local message="$1"
   local type="$2"
-  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  local timestamp
+  timestamp=$(date '+%Y-%m-%d %H:%M:%S')
   local color
   local endcolor="\033[0m"
 
