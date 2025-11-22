@@ -5,6 +5,8 @@ FastAPI-based control interface for the GPU audio upsampler daemon.
 
 import asyncio
 import json
+import os
+import signal
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -20,6 +22,8 @@ from pydantic import BaseModel
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 EQ_PROFILES_DIR = Path(__file__).parent.parent / "data" / "EQ"
 DAEMON_SERVICE = "gpu_upsampler_alsa"  # systemd service name (if using systemd)
+DAEMON_BINARY = Path(__file__).parent.parent / "build" / "gpu_upsampler_alsa"
+PID_FILE_PATH = Path("/tmp/gpu_upsampler_alsa.pid")
 
 app = FastAPI(
     title="GPU Upsampler Control",
@@ -158,6 +162,67 @@ def check_daemon_running() -> bool:
         return result.returncode == 0
     except subprocess.TimeoutExpired:
         return False
+
+
+def get_daemon_pid() -> Optional[int]:
+    """Get daemon PID from PID file"""
+    if not PID_FILE_PATH.exists():
+        return None
+    try:
+        pid = int(PID_FILE_PATH.read_text().strip())
+        # Verify process exists
+        os.kill(pid, 0)
+        return pid
+    except (ValueError, OSError):
+        return None
+
+
+def start_daemon() -> tuple[bool, str]:
+    """Start the daemon process"""
+    if check_daemon_running():
+        return False, "Daemon is already running"
+
+    if not DAEMON_BINARY.exists():
+        return False, f"Daemon binary not found: {DAEMON_BINARY}"
+
+    try:
+        # Start daemon in background
+        subprocess.Popen(
+            [str(DAEMON_BINARY)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd=str(DAEMON_BINARY.parent.parent),
+        )
+        return True, "Daemon started"
+    except Exception as e:
+        return False, f"Failed to start daemon: {e}"
+
+
+def stop_daemon() -> tuple[bool, str]:
+    """Stop the daemon process"""
+    pid = get_daemon_pid()
+    if pid is None:
+        # Try pgrep as fallback
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "gpu_upsampler_alsa"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                pid = int(result.stdout.strip().split()[0])
+            else:
+                return False, "Daemon is not running"
+        except Exception:
+            return False, "Daemon is not running"
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True, f"Sent SIGTERM to daemon (PID {pid})"
+    except OSError as e:
+        return False, f"Failed to stop daemon: {e}"
 
 
 def check_pipewire_sink() -> bool:
@@ -322,8 +387,98 @@ async def update_settings(update: SettingsUpdate):
     )
 
 
+# ============================================================================
+# Daemon Control API Endpoints
+# ============================================================================
+
+@app.post("/daemon/start", response_model=ApiResponse)
+async def daemon_start():
+    """
+    Start the daemon process.
+    Returns error if daemon is already running.
+    """
+    success, message = start_daemon()
+    if success:
+        await asyncio.sleep(0.5)  # Wait for daemon to initialize
+        running = check_daemon_running()
+        return ApiResponse(
+            success=running,
+            message=message if running else "Daemon failed to start",
+        )
+    return ApiResponse(success=False, message=message)
+
+
+@app.post("/daemon/stop", response_model=ApiResponse)
+async def daemon_stop():
+    """
+    Stop the daemon process.
+    Sends SIGTERM for graceful shutdown.
+    """
+    success, message = stop_daemon()
+    if success:
+        await asyncio.sleep(0.5)  # Wait for daemon to stop
+        still_running = check_daemon_running()
+        return ApiResponse(
+            success=not still_running,
+            message=message if not still_running else "Daemon did not stop in time",
+        )
+    return ApiResponse(success=False, message=message)
+
+
+@app.post("/daemon/restart", response_model=ApiResponse)
+async def daemon_restart():
+    """
+    Full restart: stop daemon, then start it again.
+    Use /restart for hot reload via SIGHUP.
+    """
+    # Stop if running
+    if check_daemon_running():
+        stop_success, stop_msg = stop_daemon()
+        if stop_success:
+            # Wait for graceful shutdown
+            for _ in range(10):
+                await asyncio.sleep(0.3)
+                if not check_daemon_running():
+                    break
+            else:
+                return ApiResponse(
+                    success=False,
+                    message="Daemon did not stop in time for restart",
+                )
+
+    # Start daemon
+    start_success, start_msg = start_daemon()
+    if start_success:
+        await asyncio.sleep(0.5)
+        running = check_daemon_running()
+        return ApiResponse(
+            success=running,
+            message="Daemon restarted successfully" if running else "Daemon failed to start after stop",
+        )
+    return ApiResponse(success=False, message=start_msg)
+
+
+@app.get("/daemon/status")
+async def daemon_status():
+    """
+    Get detailed daemon status including PID and uptime info.
+    """
+    pid = get_daemon_pid()
+    running = check_daemon_running()
+    pw_connected = check_pipewire_sink() if running else False
+
+    return {
+        "running": running,
+        "pid": pid,
+        "pipewire_connected": pw_connected,
+        "pid_file": str(PID_FILE_PATH),
+        "binary_path": str(DAEMON_BINARY),
+        "binary_exists": DAEMON_BINARY.exists(),
+    }
+
+
 @app.post("/restart", response_model=ApiResponse)
-async def restart_daemon():
+async def reload_daemon():
     """
     Restart the daemon to apply new settings.
     Sends SIGHUP to trigger in-process config reload.
