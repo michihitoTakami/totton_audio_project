@@ -6,6 +6,7 @@
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <cstring>
 #include <csignal>
@@ -17,6 +18,15 @@
 #include <cstdlib>
 #include <string>
 #include <filesystem>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/file.h>
+#include <fcntl.h>
+#include <cerrno>
+#include <cstdio>
+
+// PID file path (also serves as lock file)
+constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
 // Default configuration values
 constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
@@ -48,6 +58,74 @@ static std::vector<float> g_stream_input_left;
 static std::vector<float> g_stream_input_right;
 static size_t g_stream_accumulated_left = 0;
 static size_t g_stream_accumulated_right = 0;
+
+// ========== PID File Lock (flock-based) ==========
+
+// File descriptor for the PID lock file (kept open while running)
+static int g_pid_lock_fd = -1;
+
+// Read PID from lock file (for display purposes)
+static pid_t read_pid_from_lockfile() {
+    std::ifstream pidfile(PID_FILE_PATH);
+    if (!pidfile.is_open()) return 0;
+    pid_t pid = 0;
+    pidfile >> pid;
+    return pid;
+}
+
+// Acquire exclusive lock on PID file using flock()
+// Returns true if lock acquired, false if another instance is running
+static bool acquire_pid_lock() {
+    // Open or create the lock file
+    g_pid_lock_fd = open(PID_FILE_PATH, O_RDWR | O_CREAT, 0644);
+    if (g_pid_lock_fd < 0) {
+        std::cerr << "Error: Cannot open PID file: " << PID_FILE_PATH
+                  << " (" << strerror(errno) << ")" << std::endl;
+        return false;
+    }
+
+    // Try to acquire exclusive lock (non-blocking)
+    if (flock(g_pid_lock_fd, LOCK_EX | LOCK_NB) < 0) {
+        if (errno == EWOULDBLOCK) {
+            // Another process holds the lock
+            pid_t existing_pid = read_pid_from_lockfile();
+            std::cerr << "Error: Another instance is already running";
+            if (existing_pid > 0) {
+                std::cerr << " (PID: " << existing_pid << ")";
+            }
+            std::cerr << std::endl;
+            std::cerr << "       Use './scripts/daemon.sh stop' to stop it." << std::endl;
+        } else {
+            std::cerr << "Error: Cannot lock PID file: " << strerror(errno) << std::endl;
+        }
+        close(g_pid_lock_fd);
+        g_pid_lock_fd = -1;
+        return false;
+    }
+
+    // Lock acquired - write our PID to the file
+    if (ftruncate(g_pid_lock_fd, 0) < 0) {
+        std::cerr << "Warning: Cannot truncate PID file" << std::endl;
+    }
+    dprintf(g_pid_lock_fd, "%d\n", getpid());
+    fsync(g_pid_lock_fd);  // Ensure PID is written to disk
+
+    return true;
+}
+
+// Release PID lock and remove file
+// Note: Lock is automatically released when process exits (even on crash)
+static void release_pid_lock() {
+    if (g_pid_lock_fd >= 0) {
+        flock(g_pid_lock_fd, LOCK_UN);
+        close(g_pid_lock_fd);
+        g_pid_lock_fd = -1;
+    }
+    // Remove the PID file on clean shutdown
+    unlink(PID_FILE_PATH);
+}
+
+// ========== Configuration ==========
 
 static void print_config_summary(const AppConfig& cfg) {
     int outputRate = cfg.inputSampleRate * cfg.upsampleRatio;
@@ -482,6 +560,12 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGHUP, signal_handler);
 
+    // Acquire PID file lock (prevent multiple instances)
+    if (!acquire_pid_lock()) {
+        return 1;
+    }
+    std::cout << "PID: " << getpid() << " (file: " << PID_FILE_PATH << ")" << std::endl;
+
     int exitCode = 0;
 
     do {
@@ -684,6 +768,8 @@ int main(int argc, char* argv[]) {
         }
     } while (g_reload_requested);
 
+    // Release PID lock and remove file on clean exit
+    release_pid_lock();
     std::cout << "Goodbye!" << std::endl;
     return exitCode;
 }
