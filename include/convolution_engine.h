@@ -50,6 +50,46 @@ inline int getBaseSampleRate(RateFamily family) {
     }
 }
 
+// Multi-rate configuration for a single filter
+struct MultiRateFilterConfig {
+    int inputRate;      // Input sample rate (e.g., 44100, 88200, 176400, 352800)
+    int outputRate;     // Output sample rate (705600 for 44k family, 768000 for 48k family)
+    int ratio;          // Upsample ratio (16, 8, 4, or 2)
+    RateFamily family;  // Rate family (44k or 48k)
+};
+
+// Supported multi-rate configurations (8 total: 4 per family)
+// Index mapping: 0-3 for 44k family (16x,8x,4x,2x), 4-7 for 48k family (16x,8x,4x,2x)
+constexpr int MULTI_RATE_CONFIG_COUNT = 8;
+constexpr MultiRateFilterConfig MULTI_RATE_CONFIGS[MULTI_RATE_CONFIG_COUNT] = {
+    // 44.1kHz family -> 705.6kHz output
+    {44100, 705600, 16, RateFamily::RATE_44K},
+    {88200, 705600, 8, RateFamily::RATE_44K},
+    {176400, 705600, 4, RateFamily::RATE_44K},
+    {352800, 705600, 2, RateFamily::RATE_44K},
+    // 48kHz family -> 768kHz output
+    {48000, 768000, 16, RateFamily::RATE_48K},
+    {96000, 768000, 8, RateFamily::RATE_48K},
+    {192000, 768000, 4, RateFamily::RATE_48K},
+    {384000, 768000, 2, RateFamily::RATE_48K},
+};
+
+// Find config index for given input sample rate (-1 if not found)
+inline int findMultiRateConfigIndex(int inputSampleRate) {
+    for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {
+        if (MULTI_RATE_CONFIGS[i].inputRate == inputSampleRate) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Get upsample ratio for given input sample rate (0 if not supported)
+inline int getUpsampleRatioForInputRate(int inputSampleRate) {
+    int idx = findMultiRateConfigIndex(inputSampleRate);
+    return (idx >= 0) ? MULTI_RATE_CONFIGS[idx].ratio : 0;
+}
+
 class GPUUpsampler {
    public:
     GPUUpsampler();
@@ -85,6 +125,45 @@ class GPUUpsampler {
     bool initializeDualRate(const std::string& filterCoeffPath44k,
                             const std::string& filterCoeffPath48k, int upsampleRatio,
                             int blockSize = 8192, RateFamily initialFamily = RateFamily::RATE_44K);
+
+    // Initialize with full multi-rate support (all 8 filter configurations)
+    //
+    // Parameters:
+    //   coefficientDir: Directory containing filter coefficient files
+    //                   Expected files: filter_44k_16x_*.bin, filter_44k_8x_*.bin, etc.
+    //   blockSize: FFT processing block size
+    //   initialInputRate: Initial input sample rate (default: 44100)
+    //
+    // All 8 coefficient files are loaded and pre-processed at initialization.
+    // Use switchToInputRate() to change the active filter based on input rate.
+    bool initializeMultiRate(const std::string& coefficientDir, int blockSize = 8192,
+                             int initialInputRate = 44100);
+
+    // Switch to filter appropriate for given input sample rate
+    //
+    // Parameters:
+    //   inputSampleRate: New input sample rate (e.g., 44100, 88200, 96000, etc.)
+    //
+    // Returns:
+    //   true if switch was successful
+    //   false if rate not supported or error occurred
+    //
+    // Supported rates: 44100, 88200, 176400, 352800 (44k family)
+    //                  48000, 96000, 192000, 384000 (48k family)
+    bool switchToInputRate(int inputSampleRate);
+
+    // Get list of supported input sample rates
+    static std::vector<int> getSupportedInputRates();
+
+    // Check if multi-rate mode is enabled
+    bool isMultiRateEnabled() const {
+        return multiRateEnabled_;
+    }
+
+    // Get current input sample rate (multi-rate mode)
+    int getCurrentInputRate() const {
+        return currentInputRate_;
+    }
 
     // Switch to a different rate family (glitch-free via double buffering)
     // Returns true if switch was successful, false if already at target or error
@@ -229,6 +308,15 @@ class GPUUpsampler {
     // 48kHz family coefficients
     std::vector<float> h_filterCoeffs48k_;  // Host coefficients for 48kHz family
     cufftComplex* d_filterFFT_48k_;         // Pre-computed FFT for 48kHz family
+
+    // Multi-rate support (8 configurations)
+    bool multiRateEnabled_;      // True if multi-rate mode is active
+    int currentInputRate_;       // Current input sample rate
+    int currentMultiRateIndex_;  // Index into MULTI_RATE_CONFIGS
+    std::vector<float>
+        h_filterCoeffsMulti_[MULTI_RATE_CONFIG_COUNT];  // Host coefficients for all 8 configs
+    cufftComplex*
+        d_filterFFT_Multi_[MULTI_RATE_CONFIG_COUNT];  // Pre-computed FFT for all 8 configs
 
     // Double-buffered filter FFT (ping-pong) for glitch-free EQ updates
     cufftComplex* d_filterFFT_A_;        // Filter FFT buffer A
