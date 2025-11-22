@@ -8,8 +8,7 @@ BindsTo=pipewire.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/%i/Working/gpu_os
-ExecStart=/home/%i/Working/gpu_os/build/gpu_upsampler_alsa
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/gpu_upsampler_alsa
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Restart policy

@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
 project(GPUAudioUpsampler LANGUAGES CXX CUDA)
 
+# Standard install directories (bin, lib, etc.)
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
@@ -149,5 +152,12 @@ if(NOT DEFINED SYSTEMD_USER_UNIT_DIR)
         set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
     endif()
 endif()
-install(FILES systemd/gpu-upsampler@.service
+
+# Generate service file with correct install paths
+configure_file(
+    systemd/gpu-upsampler.service.in
+    ${CMAKE_BINARY_DIR}/gpu-upsampler.service
+    @ONLY
+)
+install(FILES ${CMAKE_BINARY_DIR}/gpu-upsampler.service
         DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
