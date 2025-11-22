@@ -1101,6 +1101,11 @@ def get_embedded_html() -> str:
             <div style="font-size:12px; color:#888;" id="selectedVendor">-</div>
             <select id="opraEqSelect" style="width:100%; padding:8px; margin-top:8px; border:1px solid #16213e; border-radius:4px; background:#16213e; color:#eee;">
             </select>
+            <label style="display:flex; align-items:center; gap:8px; margin-top:12px; cursor:pointer;">
+                <input type="checkbox" id="modernTargetCheckbox" checked style="width:16px; height:16px; accent-color:#00d4ff;">
+                <span style="font-size:13px;">Modern Target (KB5000_7)</span>
+            </label>
+            <div style="font-size:10px; color:#666; margin-left:24px;">最新のターゲットカーブに補正</div>
         </div>
         <div class="btn-row">
             <button type="button" class="btn-primary" id="applyOpraBtn" disabled>Apply EQ</button>
@@ -1298,7 +1303,8 @@ def get_embedded_html() -> str:
             btn.disabled = true;
             btn.textContent = 'Applying...';
             try {
-                const res = await fetch(API + '/opra/apply/' + encodeURIComponent(eqId), { method: 'POST' });
+                const applyCorrection = document.getElementById('modernTargetCheckbox').checked;
+                const res = await fetch(API + '/opra/apply/' + encodeURIComponent(eqId) + '?apply_correction=' + applyCorrection, { method: 'POST' });
                 const data = await res.json();
                 showOpraMessage(data.message, data.success);
                 if (data.success && data.restart_required) {

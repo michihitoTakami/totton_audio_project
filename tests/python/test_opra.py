@@ -427,6 +427,76 @@ class TestModernTargetCorrection:
         assert "2.8" in apo
         assert "1.50" in apo  # Q is formatted to 2 decimal places
 
+    def test_corrected_vs_uncorrected_comprehensive_diff(self):
+        """Comprehensive comparison between corrected and uncorrected profiles.
+
+        Verifies that Modern Target correction produces all expected differences:
+        - Band count increases by 1
+        - Preamp decreases by correction gain
+        - Last band is KB5000_7 correction band
+        - APO format outputs differ appropriately
+        """
+        # Create a realistic multi-band profile
+        original = EqProfile(
+            name="HD650",
+            preamp_db=-6.5,
+            author="test",
+            details="Harman Target",
+            bands=[
+                EqBand(filter_type="LS", frequency=105.0, gain_db=4.5, q=0.71),
+                EqBand(filter_type="PK", frequency=200.0, gain_db=1.0, q=1.41),
+                EqBand(filter_type="PK", frequency=1800.0, gain_db=-2.0, q=2.0),
+                EqBand(filter_type="PK", frequency=3500.0, gain_db=-1.5, q=1.0),
+                EqBand(filter_type="HS", frequency=8000.0, gain_db=2.0, q=0.7),
+            ],
+        )
+
+        corrected = apply_modern_target_correction(original)
+        correction_gain = MODERN_TARGET_CORRECTION_BAND["gain_db"]
+
+        # 1. Band count: corrected should have exactly 1 more band
+        assert len(corrected.bands) == len(original.bands) + 1
+
+        # 2. Preamp: corrected should be reduced by correction gain (2.8 dB)
+        expected_preamp = original.preamp_db - correction_gain
+        assert corrected.preamp_db == pytest.approx(expected_preamp, rel=0.01)
+
+        # 3. Original bands preserved: first N bands should be identical
+        for i, orig_band in enumerate(original.bands):
+            corr_band = corrected.bands[i]
+            assert corr_band.filter_type == orig_band.filter_type
+            assert corr_band.frequency == orig_band.frequency
+            assert corr_band.gain_db == orig_band.gain_db
+            assert corr_band.q == orig_band.q
+
+        # 4. Last band is KB5000_7 correction band
+        kb_band = corrected.bands[-1]
+        assert kb_band.filter_type == MODERN_TARGET_CORRECTION_BAND["filter_type"]
+        assert kb_band.frequency == MODERN_TARGET_CORRECTION_BAND["frequency"]
+        assert kb_band.gain_db == MODERN_TARGET_CORRECTION_BAND["gain_db"]
+        assert kb_band.q == MODERN_TARGET_CORRECTION_BAND["q"]
+
+        # 5. APO format differences
+        apo_original = original.to_apo_format()
+        apo_corrected = corrected.to_apo_format()
+
+        # Original should NOT contain KB5000_7 band
+        assert "5366.0" not in apo_original
+
+        # Corrected should contain KB5000_7 band
+        assert "5366.0" in apo_corrected
+        assert "Gain 2.8 dB" in apo_corrected
+        assert "Q 1.50" in apo_corrected
+
+        # Different filter counts in APO format
+        orig_filter_count = apo_original.count("Filter")
+        corr_filter_count = apo_corrected.count("Filter")
+        assert corr_filter_count == orig_filter_count + 1
+
+        # Corrected should have KB5000_7 in details
+        assert "KB5000_7" in corrected.details
+        assert "KB5000_7" not in original.details
+
 
 @requires_opra_submodule
 class TestOpraDatabase:
