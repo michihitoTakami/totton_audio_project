@@ -1,6 +1,11 @@
 # Pre-commit hooks for C++/CUDA project
-# Install: uv add pre-commit --dev && uv run pre-commit install
-# Run all: uv run pre-commit run --all-files
+#
+# Install hooks:
+#   uv run pre-commit install
+#   uv run pre-commit install --hook-type pre-push
+#
+# Run all (manually):
+#   uv run pre-commit run --all-files
 
 repos:
   # clang-format for C/C++/CUDA formatting
@@ -29,3 +34,15 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # Pre-push: Diff-based tests
+  # Only runs tests relevant to changed files
+  - repo: local
+    hooks:
+      - id: diff-based-tests
+        name: Run diff-based tests
+        entry: ./scripts/run_tests.sh
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
