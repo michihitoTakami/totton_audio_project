@@ -16,8 +16,19 @@ pkg_check_modules(SNDFILE REQUIRED sndfile)
 pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
 pkg_check_modules(ALSA REQUIRED alsa)
 
+# ZeroMQ for IPC communication
+pkg_check_modules(ZMQ REQUIRED libzmq)
+
 # Fetch dependencies
 include(FetchContent)
+
+# cppzmq (C++ bindings for ZeroMQ - header-only)
+FetchContent_Declare(
+    cppzmq
+    GIT_REPOSITORY https://github.com/zeromq/cppzmq.git
+    GIT_TAG v4.10.0
+)
+set(CPPZMQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 # nlohmann_json (header-only JSON library)
 FetchContent_Declare(
@@ -35,7 +46,7 @@ FetchContent_Declare(
 # Prevent GoogleTest from overriding compiler/linker options
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(nlohmann_json googletest)
+FetchContent_MakeAvailable(nlohmann_json googletest cppzmq)
 
 # Include directories
 include_directories(
@@ -140,11 +151,29 @@ target_compile_options(test_eq PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# ZeroMQ Communication Library (CPU-only, no GPU required)
+add_library(zeromq_interface STATIC
+    src/zeromq_interface.cpp
+)
+target_link_libraries(zeromq_interface PUBLIC
+    nlohmann_json::nlohmann_json
+    ${ZMQ_LIBRARIES}
+)
+target_include_directories(zeromq_interface PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+    ${ZMQ_INCLUDE_DIRS}
+    ${cppzmq_SOURCE_DIR}
+)
+target_compile_options(zeromq_interface PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)
 install(TARGETS gpu_upsampler_daemon DESTINATION bin)
 install(TARGETS gpu_upsampler_alsa DESTINATION bin)
 install(TARGETS gpu_upsampler_core DESTINATION lib)
+install(TARGETS zeromq_interface DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
 
 # Install data files (filter coefficients and default config)
@@ -228,3 +257,13 @@ set_target_properties(gpu_tests PROPERTIES
     CUDA_ARCHITECTURES "75"
 )
 gtest_discover_tests(gpu_tests)
+
+# ZeroMQ communication tests (CPU-only)
+add_executable(zmq_tests
+    tests/cpp/test_zeromq_interface.cpp
+)
+target_link_libraries(zmq_tests
+    GTest::gtest_main
+    zeromq_interface
+)
+gtest_discover_tests(zmq_tests)
