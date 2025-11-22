@@ -496,6 +496,8 @@ bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, StatusCallback c
         impl_->subSocket = std::make_unique<zmq::socket_t>(impl_->context, zmq::socket_type::sub);
         impl_->subSocket->connect(pubEndpoint);
         impl_->subSocket->set(zmq::sockopt::subscribe, "");  // Subscribe to all messages
+        // Set receive timeout to allow periodic check of subRunning_ flag
+        impl_->subSocket->set(zmq::sockopt::rcvtimeo, 100);  // 100ms timeout
 
         subRunning_.store(true);
         subThread_ = std::thread([this, callback]() {
@@ -511,8 +513,10 @@ bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, StatusCallback c
                             callback(status);
                         }
                     }
+                    // Timeout (no message) is normal - just loop and check subRunning_
                 } catch (const zmq::error_t& e) {
-                    if (subRunning_.load()) {
+                    // EAGAIN is expected on timeout, don't log it
+                    if (subRunning_.load() && e.num() != EAGAIN) {
                         std::cerr << "ZMQ SUB error: " << e.what() << std::endl;
                     }
                 }
@@ -528,11 +532,14 @@ bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, StatusCallback c
 
 void ZMQClient::unsubscribeStatus() {
     if (subRunning_.load()) {
+        // Signal thread to stop first
         subRunning_.store(false);
-        impl_->subSocket.reset();
+        // Wait for thread to exit (it will timeout on recv and check subRunning_)
         if (subThread_.joinable()) {
             subThread_.join();
         }
+        // Now safe to reset socket after thread has exited
+        impl_->subSocket.reset();
     }
 }
 

@@ -5,16 +5,43 @@
 
 #include "zeromq_interface.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <gtest/gtest.h>
 #include <thread>
+#include <vector>
 
 using namespace ZMQComm;
+
+// Atomic counter for generating unique socket paths across tests
+static std::atomic<int> g_socketCounter{0};
 
 class ZMQInterfaceTest : public ::testing::Test {
    protected:
     void SetUp() override {}
-    void TearDown() override {}
+    void TearDown() override {
+        // Clean up any socket files created during the test
+        for (const auto& path : socketsToCleanup_) {
+            std::remove(path.c_str());
+            std::remove((path + ".pub").c_str());
+        }
+        socketsToCleanup_.clear();
+    }
+
+    // Generate a unique IPC endpoint and register for cleanup
+    std::string makeUniqueEndpoint(const std::string& baseName) {
+        int id = g_socketCounter.fetch_add(1);
+        std::string socketPath = "/tmp/zmq_test_" + baseName + "_" + std::to_string(id) + ".sock";
+        // Remove any existing socket file before use
+        std::remove(socketPath.c_str());
+        std::remove((socketPath + ".pub").c_str());
+        socketsToCleanup_.push_back(socketPath);
+        return "ipc://" + socketPath;
+    }
+
+   private:
+    std::vector<std::string> socketsToCleanup_;
 };
 
 // ============================================================
@@ -197,7 +224,7 @@ TEST_F(ZMQInterfaceTest, CommandResultDefaults) {
 // ============================================================
 
 TEST_F(ZMQInterfaceTest, ServerClientRoundTrip) {
-    const std::string endpoint = "ipc:///tmp/test_zmq_roundtrip.sock";
+    const std::string endpoint = makeUniqueEndpoint("roundtrip");
 
     // Create server
     ZMQServer server;
@@ -232,7 +259,7 @@ TEST_F(ZMQInterfaceTest, ServerClientRoundTrip) {
 }
 
 TEST_F(ZMQInterfaceTest, ServerLoadIRHandler) {
-    const std::string endpoint = "ipc:///tmp/test_zmq_load_ir.sock";
+    const std::string endpoint = makeUniqueEndpoint("load_ir");
 
     ZMQServer server;
     ASSERT_TRUE(server.initialize(endpoint));
@@ -276,7 +303,7 @@ TEST_F(ZMQInterfaceTest, ClientNotConnected) {
 }
 
 TEST_F(ZMQInterfaceTest, ServerNoHandlerRegistered) {
-    const std::string endpoint = "ipc:///tmp/test_zmq_no_handler.sock";
+    const std::string endpoint = makeUniqueEndpoint("no_handler");
 
     ZMQServer server;
     ASSERT_TRUE(server.initialize(endpoint));
