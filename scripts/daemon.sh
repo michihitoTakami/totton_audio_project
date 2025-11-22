@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GPU Upsampler Daemon Control Script
-# Usage: ./scripts/daemon.sh [start|stop|restart|status] [eq_profile|off]
+# =============================================================================
+# GPU Upsampler Daemon Control Script (PC Development Environment)
+# =============================================================================
+#
+# NOTE: This script is for LOCAL PC DEVELOPMENT ONLY.
+#       It uses PipeWire null-sink to capture audio from applications.
+#
+#       For Jetson (production), use systemd service instead:
+#       /etc/systemd/system/gpu-upsampler.service
+#
+# Usage: ./scripts/daemon.sh [start|stop|restart|status|links] [eq_profile|off]
+# =============================================================================
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BINARY="$ROOT_DIR/build/gpu_upsampler_alsa"
@@ -139,31 +149,36 @@ start_daemon() {
     rm -f "$LOG_FILE"  # Clear old log
     nohup "$BINARY" > "$LOG_FILE" 2>&1 &
 
-    # Wait for daemon to create PID file and initialize
+    # Wait for daemon to initialize (check ALSA ready in log)
     local pid=""
+    local ready=false
     # shellcheck disable=SC2034  # Loop variable intentionally unused
     for _ in {1..30}; do
         sleep 0.5
-        # Check if PID file was created by daemon
-        if [[ -f "$PID_FILE" ]]; then
-            pid=$(cat "$PID_FILE" 2>/dev/null || true)
-            if verify_daemon_pid "$pid"; then
-                # Check if ALSA is configured
-                if grep -q "ALSA: Output device configured" "$LOG_FILE" 2>/dev/null; then
-                    break
-                fi
-            fi
-        fi
         # Check for early crash (e.g., another instance running)
         if grep -q "Error: Another instance is already running" "$LOG_FILE" 2>/dev/null; then
             log_error "Another daemon instance is already running. Log:"
             tail -10 "$LOG_FILE"
             exit 1
         fi
+        # Check if ALSA is configured (daemon is ready)
+        if grep -q "ALSA: Output device configured" "$LOG_FILE" 2>/dev/null; then
+            ready=true
+            break
+        fi
     done
 
+    # Get PID (prefer PID file, fallback to pgrep)
+    if [[ -f "$PID_FILE" ]]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+    fi
+    if [[ -z "$pid" ]] || ! verify_daemon_pid "$pid"; then
+        # Fallback: get PID via pgrep
+        pid=$(pgrep -f "$DAEMON_NAME" 2>/dev/null | head -1 || true)
+    fi
+
     # Verify daemon is running
-    if ! verify_daemon_pid "$pid"; then
+    if [[ "$ready" != "true" ]] || [[ -z "$pid" ]]; then
         log_error "Daemon failed to start. Log:"
         tail -20 "$LOG_FILE"
         exit 1
