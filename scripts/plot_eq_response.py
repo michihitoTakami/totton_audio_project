@@ -14,7 +14,7 @@ import sys
 def parse_eq_file(filepath: str) -> tuple[float, list[dict]]:
     """Parse AutoEq/Equalizer APO format EQ file."""
     preamp_db = 0.0
-    bands = []
+    bands: list[dict] = []
 
     with open(filepath, "r") as f:
         for line in f:
@@ -215,7 +215,7 @@ def compare_eq_profiles(
     fig, ax = plt.subplots(figsize=(12, 6))
 
     freqs = np.logspace(np.log10(20), np.log10(20000), 1000)
-    colors = plt.cm.tab10(np.linspace(0, 1, len(eq_files)))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(eq_files)))  # type: ignore[attr-defined]
 
     for eq_file, color in zip(eq_files, colors):
         preamp_db, bands = parse_eq_file(eq_file)
@@ -254,12 +254,12 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1:
         # Plot specified file
-        eq_file = sys.argv[1]
-        output_file = output_dir / f"{Path(eq_file).stem}_response.png"
-        plot_eq_response(eq_file, str(output_file))
+        eq_file_arg = sys.argv[1]
+        output_file = output_dir / f"{Path(eq_file_arg).stem}_response.png"
+        plot_eq_response(eq_file_arg, str(output_file))
     else:
         # Plot all EQ files in data/EQ directory
-        eq_files = list(eq_dir.glob("*.txt"))
+        eq_files: list[Path] = list(eq_dir.glob("*.txt"))
 
         if not eq_files:
             print(f"No EQ files found in {eq_dir}")

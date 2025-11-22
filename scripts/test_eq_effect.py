@@ -78,7 +78,7 @@ def compute_eq_response_python(
     import re
 
     preamp_db = 0.0
-    bands = []
+    bands: list[dict] = []
 
     with open(eq_file, "r") as f:
         for line in f:
