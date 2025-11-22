@@ -131,3 +131,23 @@ install(TARGETS gpu_upsampler_daemon DESTINATION bin)
 install(TARGETS gpu_upsampler_alsa DESTINATION bin)
 install(TARGETS gpu_upsampler_core DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
+
+# Install systemd user service file
+# Default location: /usr/lib/systemd/user/ (system-wide for all users)
+# User can override with -DSYSTEMD_USER_UNIT_DIR=...
+if(NOT DEFINED SYSTEMD_USER_UNIT_DIR)
+    # Try pkg-config first
+    execute_process(
+        COMMAND pkg-config --variable=systemduserunitdir systemd
+        OUTPUT_VARIABLE SYSTEMD_USER_UNIT_DIR_PKG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(SYSTEMD_USER_UNIT_DIR_PKG)
+        set(SYSTEMD_USER_UNIT_DIR "${SYSTEMD_USER_UNIT_DIR_PKG}")
+    else()
+        set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
+    endif()
+endif()
+install(FILES systemd/gpu-upsampler@.service
+        DESTINATION "${SYSTEMD_USER_UNIT_DIR}")

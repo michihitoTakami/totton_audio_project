@@ -1,0 +1,32 @@
+[Unit]
+Description=GPU Audio Upsampler (CUDA 16x to ALSA)
+Documentation=https://github.com/michihitoTakami/michy_os
+
+# Start after PipeWire is ready (we capture from PipeWire)
+After=pipewire.service
+BindsTo=pipewire.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/%i/Working/gpu_os
+ExecStart=/home/%i/Working/gpu_os/build/gpu_upsampler_alsa
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=3
+
+# Security hardening (compatible with CUDA)
+# Note: MemoryDenyWriteExecute=yes breaks CUDA, so omitted
+LockPersonality=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+# Resource management
+Slice=session.slice
+
+[Install]
+# Start when PipeWire starts
+WantedBy=pipewire.service
