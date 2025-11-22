@@ -135,6 +135,16 @@ install(TARGETS gpu_upsampler_alsa DESTINATION bin)
 install(TARGETS gpu_upsampler_core DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
 
+# Install data files (filter coefficients and default config)
+# These are required at runtime and referenced by relative paths
+set(GPU_UPSAMPLER_DATADIR "${CMAKE_INSTALL_FULL_DATADIR}/gpu_upsampler")
+install(DIRECTORY data/coefficients
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/gpu_upsampler/data"
+        FILES_MATCHING PATTERN "*.bin" PATTERN "*.json")
+install(FILES config.json
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/gpu_upsampler"
+        OPTIONAL)  # Optional: user may not have config.json yet
+
 # Install systemd user service file
 # Default location: /usr/lib/systemd/user/ (system-wide for all users)
 # User can override with -DSYSTEMD_USER_UNIT_DIR=...
