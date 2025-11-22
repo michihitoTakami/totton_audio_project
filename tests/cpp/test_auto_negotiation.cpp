@@ -96,6 +96,20 @@ TEST_F(AutoNegotiationTest, IsSameFamily_DifferentFamily) {
     EXPECT_FALSE(isSameFamily(705600, 768000));
 }
 
+TEST_F(AutoNegotiationTest, DetectRateFamily_NonStandardRates) {
+    // 22050 is 44100/2, should be detected as 44k family (11025 divisible)
+    EXPECT_EQ(getRateFamily(22050), RateFamily::RATE_44K);
+
+    // 32000 is not in either standard family, defaults to 48k
+    EXPECT_EQ(getRateFamily(32000), RateFamily::RATE_48K);
+
+    // DSD rates (multiples of 44100)
+    EXPECT_EQ(getRateFamily(2822400), RateFamily::RATE_44K);  // DSD64
+
+    // Non-standard rate defaults to 48k
+    EXPECT_EQ(getRateFamily(12345), RateFamily::RATE_48K);
+}
+
 // ============================================================================
 // Target Rate Tests
 // ============================================================================

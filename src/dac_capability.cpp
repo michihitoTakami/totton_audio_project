@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <alsa/asoundlib.h>
-#include <iostream>
 
 namespace DacCapability {
 
