@@ -33,8 +33,10 @@ Think in English and answer in Japanese.
 ### Target Curve: KB5000_7
 最新の研究に基づくKB5000_7カーブにフィッティング
 
-### EQ Source: oratory1990 (AutoEQ)
-- oratory1990がAutoEQで公開しているヘッドホン測定データをベース
+### EQ Source: OPRA Project (CC BY-SA 4.0)
+- OPRAプロジェクト（https://github.com/opra-project/OPRA）のEQデータをベース
+- **ライセンス**: CC BY-SA 4.0（商用利用OK、帰属表示必須）
+- ⚠️ oratory1990データは商用利用禁止のため使用不可
 - 基本設定に追加: `Filter 11: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5`
 
 ## System Architecture
@@ -108,7 +110,7 @@ graph TD
 
 ### Phase 2: Control Plane & Web UI
 - [ ] Python/FastAPIバックエンド構築
-- [ ] oratory1990データの取得・パース処理
+- [ ] OPRAデータの取得・パース処理（CC BY-SA 4.0）
 - [ ] 最小位相IR生成アルゴリズム（scipy）の実装
 - [ ] Webフロントエンド実装
 
@@ -260,8 +262,8 @@ git worktree remove ../gpu_os_<feature-name>
 - **HQPlayer:** Commercial benchmark for target audio quality
 - **VkFFT:** High-performance Vulkan FFT library (GitHub: DTolm/VkFFT)
 - **CamillaDSP:** Linux FIR filter engine (CPU-based, architectural reference)
-- **oratory1990:** Headphone measurement database
-- **AutoEQ:** Headphone equalization project
+- **OPRA:** Open headphone EQ database (CC BY-SA 4.0, commercial OK)
+- **AutoEQ:** Headphone equalization project (software is MIT)
 
 ## Project Status
 

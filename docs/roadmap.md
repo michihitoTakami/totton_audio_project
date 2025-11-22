@@ -68,6 +68,16 @@ Phase 3: Hardware Integration         [                    ] 0%
   - Dynamic Fallback（XRUN時の軽量モード移行）
   - Hot-swap IR loading
 
+- [ ] **Logging & Monitoring**
+  - 構造化ロギング導入（spdlog推奨）
+  - ファイルへのログ出力
+  - メトリクス収集（GPU負荷、バッファ状態、XRUN回数）
+
+- [ ] **Error Handling Enhancement**
+  - CUDA エラーの適切なハンドリング
+  - ALSA/PipeWire エラーからの復帰
+  - グレースフルシャットダウン
+
 ---
 
 ## Multi-Rate Support (Critical Feature)
@@ -157,28 +167,46 @@ GPU Processing (2M-tap FIR, 8x upsample)
 
 システムの頭脳であるPython/FastAPIバックエンドとWeb UIの実装。
 
+### Completed (Partial)
+
+- [x] **Basic Web API** (web/main.py)
+  - REST API（/status, /settings, /restart等）
+  - 埋め込みHTML UI
+  - EQプロファイル管理
+
 ### Tasks
 
-- [ ] **Python/FastAPI Backend**
-  - REST API設計
+- [ ] **Python/FastAPI Backend Enhancement**
+  - REST API設計の改善
   - WebSocket対応（リアルタイムステータス）
-  - ZeroMQ経由のEngine制御
+  - ZeroMQ経由のEngine制御（現在はSIGHUP）
+  - 認証機能（オプション、ネットワーク公開時）
 
-- [ ] **oratory1990 Integration**
-  - AutoEQデータの取得・パース
-  - ヘッドホンデータベース構築
-  - 検索・フィルタリング機能
+- [ ] **OPRA Integration** (CC BY-SA 4.0)
+  - OPRAリポジトリからのEQデータ取得
+  - ヘッドホンデータベース構築（SQLite or JSON）
+  - ブランド・モデル検索機能
+  - データ更新機能（定期同期）
+  - ⚠️ 帰属表示必須（CC BY-SA 4.0要件）
 
 - [ ] **IR Generator**
-  - oratory1990データ + KB5000_7ターゲット合成
-  - 最小位相IR生成（scipy）
+  - OPRAデータ + KB5000_7ターゲット合成
+  - 最小位相IR生成（scipy homomorphic processing）
   - Dual Target Generation（44.1k系/48k系）
   - Filter 11追加: `ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5`
+  - 生成済みIRのキャッシュ管理
 
 - [ ] **Web Frontend**
   - ヘッドホン選択UI（シンプルなリスト/検索）
   - ステータス表示（入力レート、出力レート、GPU負荷）
   - 設定変更（ターゲットカーブ調整は将来機能）
+  - レスポンシブデザイン（スマホ対応）
+
+- [ ] **Dependencies to Add**
+  - pyzmq（ZeroMQ Python binding）
+  - aiofiles（非同期ファイルI/O）
+  - httpx（AutoEQデータ取得）
+  - websockets（リアルタイム通信）
 
 ### UX Goal
 - ヘッドホンを選ぶ → 適用ボタン → 完了
@@ -196,28 +224,39 @@ Jetson Orin Nano Superへの移植と製品化。
 
 - [ ] **Jetson Orin Nano Migration**
   - CUDA Architecture変更 (SM 7.5 → SM 8.7)
-  - NVMLオプショナル化
+  - CMakeLists.txt の CUDA_ARCHITECTURES 修正
+  - NVMLオプショナル化（Jetson非対応）
+  - パス・デバイス名のハードコード除去
   - パフォーマンス検証・チューニング
 
 - [ ] **USB Gadget Mode Setup**
   - USB Type-C Device Mode (UAC2)
+  - Linux ConfigFS設定スクリプト作成
+  - 対応サンプルレート設定（44.1k/48k/96k等）
   - PCからは「高音質USBサウンドカード」として認識
-  - Linux ConfigFS設定
 
 - [ ] **ALSA Direct Output**
   - USB DAC直接出力
   - Bit-perfect転送
   - デバイス自動検出
+  - 複数DAC対応（将来）
 
 - [ ] **System Integration**
-  - Systemdサービス化
-  - 自動起動設定
+  - systemdサービスファイル作成（.service）
+  - 自動起動設定（multi-user.target）
   - ネットワーク設定（Wi-Fi/Ethernet）
+  - ホスト名設定（magicbox.local等）
 
 - [ ] **Performance Optimization**
-  - メモリ帯域最適化
+  - メモリ帯域最適化（Unified Memory活用）
   - GPU負荷最適化
-  - 熱管理
+  - 熱管理（ファン制御、スロットリング回避）
+  - 消費電力最適化
+
+- [ ] **Installation & Deployment**
+  - インストールスクリプト作成
+  - ファームウェアアップデート機構
+  - 工場出荷時リセット機能
 
 ### Hardware Specifications
 
@@ -256,6 +295,108 @@ Jetson Orin Nano Superへの移植と製品化。
 
 - [ ] **Mobile App**
   - iOS/Android制御アプリ
+
+---
+
+## Legal & License Management
+
+製品化に向けたライセンス管理。**商用利用禁止のライブラリ/データを使用しないこと。**
+
+### EQデータソースのライセンス
+
+| ソース | ライセンス | 商用利用 | 備考 |
+|--------|-----------|----------|------|
+| **OPRA** | CC BY-SA 4.0 | ✅ OK | 帰属表示必須、派生物も同ライセンス |
+| oratory1990 | 独自 | ❌ 禁止 | ライセンス交渉必要 |
+| AutoEQ (ソフト) | MIT | ✅ OK | - |
+| AutoEQ (データ) | 元データ依存 | ⚠️ 要確認 | oratory1990データ含む場合NG |
+
+### 依存ライブラリのライセンス
+
+| ライブラリ | ライセンス | 商用利用 | 注意点 |
+|-----------|-----------|----------|--------|
+| CUDA/cuFFT | NVIDIA EULA | ✅ OK | 再配布制限あり |
+| libsndfile | LGPL-2.1 | ✅ OK | 動的リンク推奨 |
+| libpipewire | MIT | ✅ OK | - |
+| alsa-lib | LGPL-2.1 | ✅ OK | 動的リンク推奨 |
+| libsoxr | LGPL-2.1 | ✅ OK | 動的リンク推奨 |
+| nlohmann/json | MIT | ✅ OK | - |
+| scipy/numpy | BSD-3 | ✅ OK | - |
+| FastAPI | MIT | ✅ OK | - |
+| ZeroMQ | LGPL-3.0 | ✅ OK | 動的リンク推奨 |
+
+### LGPLライブラリの取り扱い
+
+LGPL（libsndfile, alsa-lib, libsoxr, ZeroMQ）は以下の条件で商用利用可能：
+- **動的リンク**（.so共有ライブラリとしてリンク）
+- ユーザーがライブラリを差し替え可能であること
+- LGPLライセンス文の同梱
+
+### 必須タスク
+
+- [ ] **ライセンス監査実施**
+  - 全依存ライブラリのライセンス確認
+  - ライセンス互換性チェック
+
+- [ ] **帰属表示ファイル作成**
+  - NOTICE.md / THIRD_PARTY_LICENSES.md
+  - OPRA帰属表示（CC BY-SA 4.0要件）
+
+- [ ] **CI/CDでのライセンスチェック**
+  - license-checker / FOSSA 等の導入検討
+
+- [ ] **禁止ライセンスの明文化**
+  - GPL（静的リンク時）
+  - 商用利用禁止ライセンス
+  - 帰属表示漏れ
+
+---
+
+## Infrastructure & Quality
+
+### CI/CD
+
+- [ ] **GitHub Actions設定**
+  - C++/CUDAビルドチェック
+  - Pythonテスト・lint
+  - ライセンスチェック
+
+### Testing
+
+- [ ] **C++ユニットテスト**
+  - Google Test導入
+  - convolution_engine テスト
+  - config_loader テスト
+
+- [ ] **Pythonテスト**
+  - pytest導入
+  - フィルタ生成テスト
+  - Web API テスト
+
+- [ ] **Integration Test**
+  - E2Eテスト（入力→出力検証）
+  - パフォーマンス回帰テスト
+
+### Documentation
+
+- [ ] **ユーザーガイド**
+  - セットアップ手順
+  - トラブルシューティング
+  - FAQ
+
+- [ ] **API ドキュメント**
+  - REST API仕様（OpenAPI/Swagger）
+  - ZeroMQ メッセージ仕様
+
+### Deployment
+
+- [ ] **インストールスクリプト**
+  - ワンコマンドセットアップ
+  - 依存関係自動インストール
+
+- [ ] **リリース自動化**
+  - バージョニング（SemVer）
+  - CHANGELOGの自動生成
 
 ---
 
