@@ -636,13 +636,52 @@ class TestOpraApi:
         expected_preamp = preamp_no_correction - correction_gain
         assert preamp_with_correction == pytest.approx(expected_preamp, rel=0.01)
 
-    def test_opra_apply_with_correction_filename(self, client, sample_eq_id, tmp_path):
-        """Test /opra/apply endpoint generates correct filename suffix."""
-        # Note: We can't easily test file creation without mocking,
-        # but we can verify the response indicates correction was applied
+    def test_opra_apply_with_correction_filename(self, tmp_path, monkeypatch):
+        """Test /opra/apply endpoint generates correct filename suffix.
+
+        Uses monkeypatch to redirect file writes to temp directory,
+        avoiding side effects on shared workspace.
+        """
+        from fastapi.testclient import TestClient
+        import sys
+        from pathlib import Path
+
+        # Setup temp directories
+        temp_eq_dir = tmp_path / "EQ"
+        temp_eq_dir.mkdir()
+        temp_config = tmp_path / "config.json"
+        temp_config.write_text("{}")
+
+        # Import and patch the web module before creating client
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
+        import main
+
+        monkeypatch.setattr(main, "EQ_PROFILES_DIR", temp_eq_dir)
+        monkeypatch.setattr(main, "CONFIG_PATH", temp_config)
+
+        client = TestClient(main.app)
+
+        # Get sample EQ ID
+        response = client.get("/opra/search?q=HD650&limit=1")
+        assert response.status_code == 200
+        data = response.json()
+        sample_eq_id = data["results"][0]["eq_profiles"][0]["id"]
+
+        # Test apply endpoint
         response = client.post(f"/opra/apply/{sample_eq_id}?apply_correction=true")
-        # May fail if no write permission, but we check the response structure
-        if response.status_code == 200:
-            data = response.json()
-            assert data["data"]["modern_target_applied"] is True
-            assert "_kb5000_7" in data["data"]["path"]
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["data"]["modern_target_applied"] is True
+        assert "_kb5000_7" in data["data"]["path"]
+
+        # Verify file was created in temp directory (not real data/EQ)
+        created_files = list(temp_eq_dir.glob("opra_*_kb5000_7.txt"))
+        assert len(created_files) == 1
+
+        # Verify config was updated in temp file
+        import json
+
+        config_data = json.loads(temp_config.read_text())
+        assert config_data.get("eqEnabled") is True
+        assert "_kb5000_7" in config_data.get("eqProfilePath", "")
