@@ -168,12 +168,43 @@ target_compile_options(zeromq_interface PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# DAC Capability Library (CPU-only, ALSA required)
+add_library(dac_capability STATIC
+    src/dac_capability.cpp
+)
+target_link_libraries(dac_capability PUBLIC
+    ${ALSA_LIBRARIES}
+)
+target_include_directories(dac_capability PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+    ${ALSA_INCLUDE_DIRS}
+)
+target_compile_options(dac_capability PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+# Auto-Negotiation Library (CPU-only)
+add_library(auto_negotiation STATIC
+    src/auto_negotiation.cpp
+)
+target_link_libraries(auto_negotiation PUBLIC
+    dac_capability
+)
+target_include_directories(auto_negotiation PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(auto_negotiation PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)
 install(TARGETS gpu_upsampler_daemon DESTINATION bin)
 install(TARGETS gpu_upsampler_alsa DESTINATION bin)
 install(TARGETS gpu_upsampler_core DESTINATION lib)
 install(TARGETS zeromq_interface DESTINATION lib)
+install(TARGETS dac_capability DESTINATION lib)
+install(TARGETS auto_negotiation DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
 
 # Install data files (filter coefficients and default config)
@@ -267,3 +298,17 @@ target_link_libraries(zmq_tests
     zeromq_interface
 )
 gtest_discover_tests(zmq_tests)
+
+# Auto-Negotiation tests (CPU-only, no ALSA hardware required)
+add_executable(auto_negotiation_tests
+    tests/cpp/test_auto_negotiation.cpp
+)
+target_link_libraries(auto_negotiation_tests
+    GTest::gtest_main
+    auto_negotiation
+    gpu_upsampler_core
+)
+target_include_directories(auto_negotiation_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(auto_negotiation_tests)
