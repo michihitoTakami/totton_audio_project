@@ -56,12 +56,98 @@ Phase 3: Hardware Integration         [                    ] 0%
   - Input Rate Detection（44.1k vs 48k系）
   - Optimal Upsampling Rate計算
 
+- [ ] **Multi-Rate Support (Critical)**
+  - 詳細は下記「Multi-Rate Support」セクション参照
+  - 44.1k系/48k系両方の係数セット生成・管理
+  - 入力レート変更時の動的係数切り替え
+
 ### Pending
 
 - [ ] **Safety Mechanisms**
   - Soft Mute（レート切り替え時クロスフェード）
   - Dynamic Fallback（XRUN時の軽量モード移行）
   - Hot-swap IR loading
+
+---
+
+## Multi-Rate Support (Critical Feature)
+
+**現状の問題**: 44.1kHz系のみ対応。48kHz系やその倍数（88.2k, 96k, 192k等）が来た時に対応できない。
+**Magic Boxとして必須**: どんな入力レートでも自動的に最適処理できないと意味がない。
+
+### 対応すべき入力レート
+
+| Rate Family | Input Rates | Output Target (16x max) |
+|-------------|-------------|-------------------------|
+| 44.1k系 | 44,100 / 88,200 / 176,400 Hz | 705,600 Hz |
+| 48k系 | 48,000 / 96,000 / 192,000 Hz | 768,000 Hz |
+
+### 必要な係数セット
+
+各Rate Family用に別々のFIR係数が必要（ストップバンド周波数が異なるため）
+
+| Family | Passband | Stopband Start | Coefficient File |
+|--------|----------|----------------|------------------|
+| 44.1k系 | 0-20kHz | 22.05kHz | `filter_44k_2m_min_phase.bin` |
+| 48k系 | 0-22kHz | 24.0kHz | `filter_48k_2m_min_phase.bin` |
+
+### 実装タスク
+
+#### 1. 係数生成 (Phase 1)
+- [ ] 48kHz系用2M-tap係数の生成
+  ```bash
+  uv run python scripts/generate_filter.py \
+    --input-rate 48000 \
+    --stopband-start 24000 \
+    --passband-end 22000 \
+    --output-prefix filter_48k_2m_min_phase
+  ```
+- [ ] 両係数セットのバリデーション・検証
+
+#### 2. 動的レート検知 (Phase 1)
+- [ ] PipeWire/ALSA入力のサンプルレート変更イベント検知
+- [ ] Rate Family判定ロジック
+  ```
+  if (rate % 44100 == 0) → 44.1k Family
+  if (rate % 48000 == 0) → 48k Family
+  ```
+
+#### 3. 係数ホットスワップ (Phase 1)
+- [ ] Rate Family変更時の係数切り替え
+- [ ] ダブルバッファリングによるグリッチレス切り替え
+- [ ] Soft Mute（切り替え時のポップノイズ防止）
+
+#### 4. リサンプリング統合 (Phase 1)
+- [ ] libsoxrによる入力レート正規化
+  - 88.2k → 44.1k → 処理 → 705.6k
+  - 96k → 48k → 処理 → 768k
+- [ ] または高レート入力を直接処理
+  - 96k × 8 = 768k（係数は48k系を使用）
+
+### データフロー例
+
+```
+入力: 96kHz
+  │
+  ▼
+Rate Detection: 48k Family (96000 % 48000 == 0)
+  │
+  ▼
+Load Coefficients: filter_48k_2m_min_phase.bin
+  │
+  ▼
+Strategy: 96k × 8 = 768k (within DAC capability)
+  │
+  ▼
+GPU Processing (2M-tap FIR, 8x upsample)
+  │
+  ▼
+出力: 768kHz
+```
+
+### 優先度
+
+**Phase 1の必須タスク**として位置づけ。これがないとMagic Boxとして機能しない。
 
 ---
 

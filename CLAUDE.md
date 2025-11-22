@@ -101,6 +101,10 @@ graph TD
 - [ ] C++ Daemon実装（PipeWire入力、ALSA出力、libsoxr統合）
 - [ ] ZeroMQ通信の実装
 - [ ] 自動調停ロジック（DACネゴシエーション）の実装
+- [ ] **Multi-Rate Support (Critical)** - 詳細は `docs/roadmap.md` 参照
+  - 48kHz系係数生成（現状44.1kHz系のみ）
+  - 動的レート検知・係数切り替え
+  - 88.2k/96k/192k等の入力対応
 
 ### Phase 2: Control Plane & Web UI
 - [ ] Python/FastAPIバックエンド構築
