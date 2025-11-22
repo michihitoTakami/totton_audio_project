@@ -6,7 +6,7 @@
   "upsampleRatio": 16,
   "blockSize": 4096,
   "gain": 16.0,
-  "filterPath": "data/coefficients/filter_1m_min_phase.bin",
+  "filterPath": "data/coefficients/filter_44k_2m_min_phase.bin",
   "eqEnabled": true,
   "eqProfilePath": "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt"
 }
