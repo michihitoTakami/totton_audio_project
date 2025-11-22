@@ -2,11 +2,12 @@
 """
 Waveform analysis script to detect discontinuities and clicks
 """
+
 import numpy as np
 import soundfile as sf
 import matplotlib.pyplot as plt
-from scipy import signal
 import sys
+
 
 def detect_clicks(audio, sr, threshold_db=-40, window_ms=1):
     """
@@ -26,7 +27,7 @@ def detect_clicks(audio, sr, threshold_db=-40, window_ms=1):
     diff = np.diff(audio)
 
     # Calculate moving average of absolute derivative
-    window_samples = int(sr * window_ms / 1000)
+    int(sr * window_ms / 1000)
     diff_abs = np.abs(diff)
 
     # Find peaks in derivative (sudden changes)
@@ -38,7 +39,7 @@ def detect_clicks(audio, sr, threshold_db=-40, window_ms=1):
         click_groups = []
         current_group = [clicks[0]]
         for i in range(1, len(clicks)):
-            if clicks[i] - clicks[i-1] < sr * 0.01:  # 10ms
+            if clicks[i] - clicks[i - 1] < sr * 0.01:  # 10ms
                 current_group.append(clicks[i])
             else:
                 click_groups.append(current_group)
@@ -57,6 +58,7 @@ def detect_clicks(audio, sr, threshold_db=-40, window_ms=1):
 
     return np.array([]), np.array([])
 
+
 def analyze_discontinuities(audio, sr):
     """
     Analyze audio for discontinuities
@@ -68,7 +70,7 @@ def analyze_discontinuities(audio, sr):
         left = audio
         right = None
 
-    print(f"\n=== Waveform Analysis ===")
+    print("\n=== Waveform Analysis ===")
     print(f"Sample rate: {sr} Hz")
     print(f"Duration: {len(left)/sr:.2f} seconds")
     print(f"Channels: {'Stereo' if right is not None else 'Mono'}")
@@ -86,7 +88,7 @@ def analyze_discontinuities(audio, sr):
         print(f"\nWARNING: DC offset detected: {dc_offset:.6f}")
 
     # Detect clicks at various thresholds
-    print(f"\n=== Click Detection ===")
+    print("\n=== Click Detection ===")
     for threshold_db in [-30, -40, -50, -60]:
         clicks, amplitudes = detect_clicks(audio, sr, threshold_db)
         if len(clicks) > 0:
@@ -98,6 +100,7 @@ def analyze_discontinuities(audio, sr):
             print(f"Threshold {threshold_db} dB: No clicks detected")
 
     return left, right
+
 
 def plot_waveform(audio, sr, output_path, start_sec=0, duration_sec=0.1):
     """
@@ -117,9 +120,9 @@ def plot_waveform(audio, sr, output_path, start_sec=0, duration_sec=0.1):
     plt.figure(figsize=(12, 6))
     plt.subplot(2, 1, 1)
     plt.plot(time * 1000, segment)
-    plt.xlabel('Time (ms)')
-    plt.ylabel('Amplitude')
-    plt.title(f'Waveform ({start_sec:.2f}s - {start_sec+duration_sec:.2f}s)')
+    plt.xlabel("Time (ms)")
+    plt.ylabel("Amplitude")
+    plt.title(f"Waveform ({start_sec:.2f}s - {start_sec+duration_sec:.2f}s)")
     plt.grid(True, alpha=0.3)
 
     # Plot derivative to show sudden changes
@@ -127,18 +130,21 @@ def plot_waveform(audio, sr, output_path, start_sec=0, duration_sec=0.1):
     diff = np.diff(segment)
     time_diff = time[:-1]
     plt.plot(time_diff * 1000, diff)
-    plt.xlabel('Time (ms)')
-    plt.ylabel('Rate of Change')
-    plt.title('First Derivative (detects clicks/discontinuities)')
+    plt.xlabel("Time (ms)")
+    plt.ylabel("Rate of Change")
+    plt.title("First Derivative (detects clicks/discontinuities)")
     plt.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     print(f"\nWaveform plot saved to: {output_path}")
 
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python analyze_waveform.py <audio_file.wav> [start_sec] [duration_sec]")
+        print(
+            "Usage: python analyze_waveform.py <audio_file.wav> [start_sec] [duration_sec]"
+        )
         sys.exit(1)
 
     input_file = sys.argv[1]
@@ -154,14 +160,15 @@ def main():
     left, right = analyze_discontinuities(audio, sr)
 
     # Plot
-    output_plot = input_file.replace('.wav', '_analysis.png')
+    output_plot = input_file.replace(".wav", "_analysis.png")
     plot_waveform(audio, sr, output_plot, start_sec, duration_sec)
 
     # Also plot a few other sections
     for i, t in enumerate([0.5, 2.0, 5.0]):
         if t < len(audio) / sr:
-            output_plot2 = input_file.replace('.wav', f'_analysis_{i+2}.png')
+            output_plot2 = input_file.replace(".wav", f"_analysis_{i+2}.png")
             plot_waveform(audio, sr, output_plot2, t, duration_sec)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

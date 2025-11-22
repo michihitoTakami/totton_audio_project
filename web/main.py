@@ -42,8 +42,10 @@ if static_dir.exists():
 # Data Models
 # ============================================================================
 
+
 class Settings(BaseModel):
     """Daemon configuration settings"""
+
     alsa_device: str = "hw:USB"
     input_sample_rate: int = 44100
     buffer_size: int = 262144
@@ -58,6 +60,7 @@ class Settings(BaseModel):
 
 class SettingsUpdate(BaseModel):
     """Partial settings update"""
+
     alsa_device: Optional[str] = None
     input_sample_rate: Optional[int] = None
     buffer_size: Optional[int] = None
@@ -72,6 +75,7 @@ class SettingsUpdate(BaseModel):
 
 class Status(BaseModel):
     """Current daemon status"""
+
     settings: Settings
     pipewire_connected: bool = False
     alsa_connected: bool = False
@@ -84,17 +88,20 @@ class Status(BaseModel):
 
 class RewireRequest(BaseModel):
     """PipeWire rewire request"""
+
     app_name: str  # e.g., "spotify", "firefox"
 
 
 class EqProfile(BaseModel):
     """Parametric EQ profile (future use)"""
+
     name: str
     bands: list[dict]  # [{freq, gain, q}, ...]
 
 
 class ApiResponse(BaseModel):
     """Standard API response"""
+
     success: bool
     message: str
     data: Optional[dict] = None
@@ -104,6 +111,7 @@ class ApiResponse(BaseModel):
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
 
 def load_config() -> Settings:
     """Load configuration from JSON file"""
@@ -120,7 +128,9 @@ def load_config() -> Settings:
                 upsample_ratio=data.get("upsampleRatio", 16),
                 block_size=data.get("blockSize", 4096),
                 gain=data.get("gain", 16.0),
-                filter_path=data.get("filterPath", "data/coefficients/filter_1m_min_phase.bin"),
+                filter_path=data.get(
+                    "filterPath", "data/coefficients/filter_1m_min_phase.bin"
+                ),
                 eq_enabled=data.get("eqEnabled", False),
                 eq_profile_path=data.get("eqProfilePath", ""),
             )
@@ -275,21 +285,21 @@ def get_alsa_devices() -> list[dict]:
         )
 
         import re
+
         # Parse: カード 3: AUDIO [SMSL USB AUDIO], デバイス 0: USB Audio [USB Audio]
         # Or:   card 3: AUDIO [SMSL USB AUDIO], device 0: USB Audio [USB Audio]
-        pattern = r'(?:カード|card)\s+(\d+):\s+(\w+)\s+\[([^\]]+)\],\s+(?:デバイス|device)\s+(\d+):\s+([^\[]+)\[([^\]]+)\]'
+        pattern = r"(?:カード|card)\s+(\d+):\s+(\w+)\s+\[([^\]]+)\],\s+(?:デバイス|device)\s+(\d+):\s+([^\[]+)\[([^\]]+)\]"
 
         for line in result.stdout.splitlines():
             match = re.search(pattern, line)
             if match:
-                card_num = match.group(1)
+                match.group(1)
                 card_id = match.group(2)
                 card_name = match.group(3).strip()
                 dev_num = match.group(4)
                 dev_desc = match.group(6).strip()
 
                 # Build hw:X,Y format
-                hw_id = f"hw:{card_id},DEV={dev_num}" if dev_num != "0" else f"hw:{card_id}"
 
                 # Build friendly name
                 if "USB" in card_name or "SMSL" in card_name:
@@ -299,11 +309,13 @@ def get_alsa_devices() -> list[dict]:
                 else:
                     friendly = f"{card_name} - {dev_desc}"
 
-                devices.append({
-                    "id": f"hw:CARD={card_id},DEV={dev_num}",
-                    "name": friendly,
-                    "card": card_id,
-                })
+                devices.append(
+                    {
+                        "id": f"hw:CARD={card_id},DEV={dev_num}",
+                        "name": friendly,
+                        "card": card_id,
+                    }
+                )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return devices
@@ -312,6 +324,7 @@ def get_alsa_devices() -> list[dict]:
 # ============================================================================
 # API Endpoints
 # ============================================================================
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -332,7 +345,11 @@ async def get_status():
     settings = load_config()
     daemon_running = check_daemon_running()
     pw_connected = check_pipewire_sink() if daemon_running else False
-    stats = load_stats() if daemon_running else {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+    stats = (
+        load_stats()
+        if daemon_running
+        else {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+    )
 
     return Status(
         settings=settings,
@@ -406,7 +423,8 @@ async def update_settings(update: SettingsUpdate):
 
     return ApiResponse(
         success=True,
-        message="Settings updated" + (" (restart required)" if restart_required else ""),
+        message="Settings updated"
+        + (" (restart required)" if restart_required else ""),
         restart_required=restart_required,
     )
 
@@ -414,6 +432,7 @@ async def update_settings(update: SettingsUpdate):
 # ============================================================================
 # Daemon Control API Endpoints
 # ============================================================================
+
 
 @app.post("/daemon/start", response_model=ApiResponse)
 async def daemon_start():
@@ -482,7 +501,9 @@ async def daemon_restart():
         running = check_daemon_running()
         return ApiResponse(
             success=running,
-            message="Daemon restarted successfully" if running else "Daemon failed to start after stop",
+            message="Daemon restarted successfully"
+            if running
+            else "Daemon failed to start after stop",
         )
     return ApiResponse(success=False, message=start_msg)
 
@@ -530,7 +551,9 @@ async def reload_daemon():
         pid = result.stdout.strip().split()[0]
         hup_result = subprocess.run(["kill", "-HUP", pid], timeout=5)
         if hup_result.returncode != 0:
-            raise HTTPException(status_code=500, detail="Failed to send SIGHUP to daemon")
+            raise HTTPException(
+                status_code=500, detail="Failed to send SIGHUP to daemon"
+            )
 
         await asyncio.sleep(0.25)
         running = check_daemon_running()
@@ -598,8 +621,9 @@ async def rewire_pipewire(request: RewireRequest):
         for out_port in output_ports[:2]:  # FL and FR
             for in_port in input_ports[:2]:
                 # Match FL to FL, FR to FR
-                if ("FL" in out_port and "FL" in in_port) or \
-                   ("FR" in out_port and "FR" in in_port):
+                if ("FL" in out_port and "FL" in in_port) or (
+                    "FR" in out_port and "FR" in in_port
+                ):
                     subprocess.run(
                         ["pw-link", out_port, in_port],
                         timeout=5,
@@ -614,12 +638,15 @@ async def rewire_pipewire(request: RewireRequest):
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="PipeWire command timed out")
     except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="pw-link not found. Is PipeWire installed?")
+        raise HTTPException(
+            status_code=500, detail="pw-link not found. Is PipeWire installed?"
+        )
 
 
 # ============================================================================
 # EQ API Endpoints
 # ============================================================================
+
 
 @app.get("/eq/profiles")
 async def list_eq_profiles():
@@ -628,11 +655,13 @@ async def list_eq_profiles():
     if EQ_PROFILES_DIR.exists():
         for f in EQ_PROFILES_DIR.iterdir():
             if f.is_file() and f.suffix == ".txt":
-                profiles.append({
-                    "name": f.stem,
-                    "filename": f.name,
-                    "path": str(f),
-                })
+                profiles.append(
+                    {
+                        "name": f.stem,
+                        "filename": f.name,
+                        "path": str(f),
+                    }
+                )
     return {"profiles": profiles}
 
 
@@ -748,6 +777,7 @@ async def list_devices():
 # Embedded HTML UI
 # ============================================================================
 
+
 def get_embedded_html() -> str:
     """Return embedded HTML UI"""
     return """
@@ -856,10 +886,6 @@ def get_embedded_html() -> str:
                 <div class="label">EQ</div>
                 <div class="value">-</div>
             </div>
-            <div class="status-item" id="clipRate">
-                <div class="label">Clipping</div>
-                <div class="value">-</div>
-            </div>
         </div>
     </div>
 
@@ -950,7 +976,6 @@ def get_embedded_html() -> str:
                 setStatus('daemonStatus', data.daemon_running ? 'Running' : 'Stopped', data.daemon_running);
                 setStatus('pwStatus', data.pipewire_connected ? 'OK' : 'N/A', data.pipewire_connected);
                 setStatus('eqStatus', data.eq_active ? 'ON' : 'OFF', data.eq_active);
-                setStatus('clipRate', data.clip_rate.toFixed(2) + '%', data.clip_rate < 0.1);
 
                 if (currentAlsaDevice !== data.settings.alsa_device) {
                     currentAlsaDevice = data.settings.alsa_device;
@@ -1118,10 +1143,305 @@ def get_embedded_html() -> str:
 """
 
 
+def get_admin_html() -> str:
+    """Return admin dashboard HTML"""
+    return """
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Upsampler - Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        h1 { color: #ff6b6b; margin-bottom: 8px; font-size: 1.4em; }
+        .subtitle { color: #666; font-size: 12px; margin-bottom: 20px; }
+        h2 { color: #888; font-size: 11px; margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 1px; }
+        .card {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        .stat-item {
+            background: #0f3460;
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        .stat-item .label { font-size: 10px; color: #666; text-transform: uppercase; }
+        .stat-item .value { font-size: 18px; font-weight: 600; margin-top: 4px; color: #00d4ff; }
+        .stat-item.warning .value { color: #ffaa00; }
+        .stat-item.error .value { color: #ff4444; }
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .status-item { text-align: center; flex: 1; }
+        .status-item .label { font-size: 10px; color: #666; text-transform: uppercase; }
+        .status-item .value { font-size: 14px; font-weight: 600; margin-top: 2px; }
+        .status-item.ok .value { color: #00ff88; }
+        .status-item.error .value { color: #ff4444; }
+        .btn-row { display: flex; gap: 10px; margin-top: 12px; }
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-success { background: #00ff88; color: #000; }
+        .btn-success:hover { background: #00cc6a; }
+        .btn-danger { background: #ff4444; color: #fff; }
+        .btn-danger:hover { background: #cc3333; }
+        .btn-warning { background: #ffaa00; color: #000; }
+        .btn-warning:hover { background: #cc8800; }
+        button:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #0f3460;
+            font-size: 13px;
+        }
+        .info-row:last-child { border-bottom: none; }
+        .info-row .label { color: #888; }
+        .info-row .value { color: #eee; font-family: monospace; }
+        .message {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            display: none;
+            font-size: 13px;
+            text-align: center;
+        }
+        .message.success { background: #00ff8840; display: block; }
+        .message.error { background: #ff444440; display: block; }
+        .back-link { color: #00d4ff; text-decoration: none; font-size: 13px; }
+        .back-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>GPU Upsampler Admin</h1>
+    <div class="subtitle"><a href="/" class="back-link">&larr; Back to User Page</a></div>
+
+    <h2>Daemon Control</h2>
+    <div class="card">
+        <div class="status-row">
+            <div class="status-item" id="daemonStatus">
+                <div class="label">Status</div>
+                <div class="value">-</div>
+            </div>
+            <div class="status-item" id="pidStatus">
+                <div class="label">PID</div>
+                <div class="value">-</div>
+            </div>
+            <div class="status-item" id="pwStatus">
+                <div class="label">PipeWire</div>
+                <div class="value">-</div>
+            </div>
+        </div>
+        <div class="btn-row">
+            <button class="btn-success" id="startBtn">Start</button>
+            <button class="btn-danger" id="stopBtn">Stop</button>
+            <button class="btn-warning" id="restartBtn">Restart</button>
+        </div>
+        <div id="controlMessage" class="message"></div>
+    </div>
+
+    <h2>Statistics</h2>
+    <div class="card">
+        <div class="stat-grid">
+            <div class="stat-item" id="clipRate">
+                <div class="label">Clip Rate</div>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-item" id="clipCount">
+                <div class="label">Clipped Samples</div>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-item" id="totalSamples">
+                <div class="label">Total Samples</div>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-item" id="eqStatus">
+                <div class="label">EQ</div>
+                <div class="value">-</div>
+            </div>
+        </div>
+    </div>
+
+    <h2>System Info</h2>
+    <div class="card">
+        <div class="info-row">
+            <span class="label">PID File</span>
+            <span class="value" id="pidFile">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Binary</span>
+            <span class="value" id="binaryPath">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">ALSA Device</span>
+            <span class="value" id="alsaDevice">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Upsample Ratio</span>
+            <span class="value" id="upsampleRatio">-</span>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+
+        async function fetchStatus() {
+            try {
+                const [statusRes, daemonRes] = await Promise.all([
+                    fetch(API + '/status'),
+                    fetch(API + '/daemon/status')
+                ]);
+                const status = await statusRes.json();
+                const daemon = await daemonRes.json();
+
+                // Daemon status
+                setStatus('daemonStatus', daemon.running ? 'Running' : 'Stopped', daemon.running);
+                document.getElementById('pidStatus').querySelector('.value').textContent = daemon.pid || '-';
+                document.getElementById('pidStatus').classList.remove('ok', 'error');
+                document.getElementById('pidStatus').classList.add(daemon.pid ? 'ok' : 'error');
+                setStatus('pwStatus', daemon.pipewire_connected ? 'OK' : 'N/A', daemon.pipewire_connected);
+
+                // Stats - clip_rate is now a ratio (0-1), multiply by 100 for percentage
+                const clipPct = (status.clip_rate * 100).toFixed(4);
+                setStat('clipRate', clipPct + '%', status.clip_rate < 0.001 ? '' : (status.clip_rate < 0.01 ? 'warning' : 'error'));
+                setStat('clipCount', formatNumber(status.clip_count), '');
+                setStat('totalSamples', formatNumber(status.total_samples), '');
+                setStat('eqStatus', status.eq_active ? 'ON' : 'OFF', status.eq_active ? '' : 'error');
+
+                // System info
+                document.getElementById('pidFile').textContent = daemon.pid_file || '-';
+                document.getElementById('binaryPath').textContent = daemon.binary_path ? daemon.binary_path.split('/').pop() : '-';
+                document.getElementById('alsaDevice').textContent = status.settings.alsa_device || '-';
+                document.getElementById('upsampleRatio').textContent = status.settings.upsample_ratio + 'x';
+
+                // Enable/disable buttons based on state
+                document.getElementById('startBtn').disabled = daemon.running;
+                document.getElementById('stopBtn').disabled = !daemon.running;
+            } catch (e) {
+                console.error('Failed to fetch status:', e);
+            }
+        }
+
+        function setStatus(id, text, ok) {
+            const el = document.getElementById(id);
+            el.querySelector('.value').textContent = text;
+            el.classList.remove('ok', 'error');
+            el.classList.add(ok ? 'ok' : 'error');
+        }
+
+        function setStat(id, value, level) {
+            const el = document.getElementById(id);
+            el.querySelector('.value').textContent = value;
+            el.classList.remove('warning', 'error');
+            if (level) el.classList.add(level);
+        }
+
+        function formatNumber(n) {
+            if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+            if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+            if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+            return String(n);
+        }
+
+        function showMessage(text, success) {
+            const el = document.getElementById('controlMessage');
+            el.textContent = text;
+            el.classList.remove('success', 'error');
+            el.classList.add(success ? 'success' : 'error');
+            setTimeout(() => el.classList.remove('success', 'error'), 4000);
+        }
+
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('startBtn');
+            btn.disabled = true;
+            try {
+                const res = await fetch(API + '/daemon/start', { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message, data.success);
+                setTimeout(fetchStatus, 1000);
+            } catch (e) {
+                showMessage('Error: ' + e.message, false);
+            }
+            btn.disabled = false;
+        });
+
+        document.getElementById('stopBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('stopBtn');
+            btn.disabled = true;
+            try {
+                const res = await fetch(API + '/daemon/stop', { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message, data.success);
+                setTimeout(fetchStatus, 1000);
+            } catch (e) {
+                showMessage('Error: ' + e.message, false);
+            }
+            btn.disabled = false;
+        });
+
+        document.getElementById('restartBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('restartBtn');
+            btn.disabled = true;
+            btn.textContent = 'Restarting...';
+            try {
+                const res = await fetch(API + '/daemon/restart', { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message, data.success);
+                setTimeout(fetchStatus, 2000);
+            } catch (e) {
+                showMessage('Error: ' + e.message, false);
+            }
+            btn.disabled = false;
+            btn.textContent = 'Restart';
+        });
+
+        // Initial load and auto-refresh
+        fetchStatus();
+        setInterval(fetchStatus, 3000);
+    </script>
+</body>
+</html>
+"""
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    """Serve the admin dashboard"""
+    return get_admin_html()
+
+
 # ============================================================================
 # Main entry point
 # ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=11881)

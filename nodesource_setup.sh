@@ -18,7 +18,7 @@ log() {
   echo -e "${color}${timestamp} - ${message}${endcolor}"
 }
 
-# Error handler function  
+# Error handler function
 handle_error() {
   local exit_code=$1
   local error_message="$2"

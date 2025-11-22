@@ -15,4 +15,4 @@ constexpr int UPSAMPLE_RATIO = 16;
 // Filter coefficients are stored in external .bin files.
 // Default binary: filter_48k_2m_min_phase.bin
 
-#endif // FILTER_COEFFICIENTS_H
+#endif  // FILTER_COEFFICIENTS_H

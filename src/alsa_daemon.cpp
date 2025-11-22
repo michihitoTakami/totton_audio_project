@@ -1,30 +1,31 @@
-#include "convolution_engine.h"
 #include "config_loader.h"
+#include "convolution_engine.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
+
+#include <algorithm>
 #include <alsa/asoundlib.h>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <condition_variable>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <mutex>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <algorithm>
-#include <cstring>
-#include <csignal>
-#include <atomic>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <chrono>
-#include <cstdlib>
 #include <string>
-#include <filesystem>
-#include <unistd.h>
-#include <sys/types.h>
 #include <sys/file.h>
-#include <fcntl.h>
-#include <cerrno>
-#include <cstdio>
+#include <sys/types.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
 
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
@@ -75,7 +76,8 @@ static int g_pid_lock_fd = -1;
 // Read PID from lock file (for display purposes)
 static pid_t read_pid_from_lockfile() {
     std::ifstream pidfile(PID_FILE_PATH);
-    if (!pidfile.is_open()) return 0;
+    if (!pidfile.is_open())
+        return 0;
     pid_t pid = 0;
     pidfile >> pid;
     return pid;
@@ -87,8 +89,8 @@ static bool acquire_pid_lock() {
     // Open or create the lock file
     g_pid_lock_fd = open(PID_FILE_PATH, O_RDWR | O_CREAT, 0644);
     if (g_pid_lock_fd < 0) {
-        std::cerr << "Error: Cannot open PID file: " << PID_FILE_PATH
-                  << " (" << strerror(errno) << ")" << std::endl;
+        std::cerr << "Error: Cannot open PID file: " << PID_FILE_PATH << " (" << strerror(errno)
+                  << ")" << std::endl;
         return false;
     }
 
@@ -143,8 +145,7 @@ static void write_stats_file() {
     size_t total = g_total_samples.load(std::memory_order_relaxed);
     double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
     auto now = std::chrono::system_clock::now();
-    auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
-        now.time_since_epoch()).count();
+    auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
 
     // Write to temp file and rename for atomic update
     std::string tmp_path = std::string(STATS_FILE_PATH) + ".tmp";
@@ -169,7 +170,8 @@ static void print_config_summary(const AppConfig& cfg) {
     std::cout << "Config:" << std::endl;
     std::cout << "  ALSA device:    " << cfg.alsaDevice << std::endl;
     std::cout << "  Input rate:     " << cfg.inputSampleRate << " Hz" << std::endl;
-    std::cout << "  Output rate:    " << outputRate << " Hz (" << (outputRate / 1000.0) << " kHz)" << std::endl;
+    std::cout << "  Output rate:    " << outputRate << " Hz (" << (outputRate / 1000.0) << " kHz)"
+              << std::endl;
     std::cout << "  Buffer size:    " << cfg.bufferSize << std::endl;
     std::cout << "  Period size:    " << cfg.periodSize << std::endl;
     std::cout << "  Upsample ratio: " << cfg.upsampleRatio << std::endl;
@@ -197,12 +199,18 @@ static void load_runtime_config() {
     bool found = loadAppConfig(CONFIG_FILE_PATH, loaded);
     g_config = loaded;
 
-    if (g_config.alsaDevice.empty()) g_config.alsaDevice = DEFAULT_ALSA_DEVICE;
-    if (g_config.filterPath.empty()) g_config.filterPath = DEFAULT_FILTER_PATH;
-    if (g_config.upsampleRatio <= 0) g_config.upsampleRatio = DEFAULT_UPSAMPLE_RATIO;
-    if (g_config.blockSize <= 0) g_config.blockSize = DEFAULT_BLOCK_SIZE;
-    if (g_config.bufferSize <= 0) g_config.bufferSize = 262144;
-    if (g_config.periodSize <= 0) g_config.periodSize = 32768;
+    if (g_config.alsaDevice.empty())
+        g_config.alsaDevice = DEFAULT_ALSA_DEVICE;
+    if (g_config.filterPath.empty())
+        g_config.filterPath = DEFAULT_FILTER_PATH;
+    if (g_config.upsampleRatio <= 0)
+        g_config.upsampleRatio = DEFAULT_UPSAMPLE_RATIO;
+    if (g_config.blockSize <= 0)
+        g_config.blockSize = DEFAULT_BLOCK_SIZE;
+    if (g_config.bufferSize <= 0)
+        g_config.bufferSize = 262144;
+    if (g_config.periodSize <= 0)
+        g_config.periodSize = 32768;
     if (g_config.inputSampleRate != 44100 && g_config.inputSampleRate != 48000) {
         g_config.inputSampleRate = DEFAULT_INPUT_SAMPLE_RATE;
     }
@@ -264,33 +272,23 @@ static void on_input_process(void* userdata) {
 
         // Process left channel
         bool left_generated = g_upsampler->processStreamBlock(
-            left.data(),
-            n_frames,
-            output_left,
-            g_upsampler->streamLeft_,
-            g_stream_input_left,
-            g_stream_accumulated_left
-        );
+            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
+            g_stream_accumulated_left);
 
         // Process right channel
         bool right_generated = g_upsampler->processStreamBlock(
-            right.data(),
-            n_frames,
-            output_right,
-            g_upsampler->streamRight_,
-            g_stream_input_right,
-            g_stream_accumulated_right
-        );
+            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
+            g_stream_accumulated_right);
 
         // Only store output if both channels generated output
         // (they should synchronize due to same input size)
         if (left_generated && right_generated) {
             // Store output for ALSA thread consumption
             std::lock_guard<std::mutex> lock(g_buffer_mutex);
-            g_output_buffer_left.insert(g_output_buffer_left.end(),
-                                       output_left.begin(), output_left.end());
-            g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                        output_right.begin(), output_right.end());
+            g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(),
+                                        output_left.end());
+            g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
+                                         output_right.end());
             g_buffer_cv.notify_one();
         }
     }
@@ -300,7 +298,7 @@ static void on_input_process(void* userdata) {
 
 // Stream state changed callback
 static void on_stream_state_changed(void* userdata, enum pw_stream_state old_state,
-                                   enum pw_stream_state state, const char* error) {
+                                    enum pw_stream_state state, const char* error) {
     (void)userdata;
     (void)old_state;
 
@@ -324,8 +322,8 @@ static snd_pcm_t* open_and_configure_pcm() {
 
     err = snd_pcm_open(&pcm_handle, g_config.alsaDevice.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
     if (err < 0) {
-        std::cerr << "ALSA: Cannot open device " << g_config.alsaDevice << ": "
-                  << snd_strerror(err) << std::endl;
+        std::cerr << "ALSA: Cannot open device " << g_config.alsaDevice << ": " << snd_strerror(err)
+                  << std::endl;
         return nullptr;
     }
 
@@ -334,7 +332,8 @@ static snd_pcm_t* open_and_configure_pcm() {
     snd_pcm_hw_params_alloca(&hw_params);
     snd_pcm_hw_params_any(pcm_handle, hw_params);
 
-    if ((err = snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0 ||
+    if ((err = snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
+            0 ||
         (err = snd_pcm_hw_params_set_format(pcm_handle, hw_params, SND_PCM_FORMAT_S32_LE)) < 0) {
         std::cerr << "ALSA: Cannot set access/format: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
@@ -372,13 +371,15 @@ static snd_pcm_t* open_and_configure_pcm() {
     }
 
     std::cout << "ALSA: Output device configured (" << rate << " Hz, 32-bit int, stereo)"
-              << " buffer " << buffer_size << " frames, period " << period_size << " frames" << std::endl;
+              << " buffer " << buffer_size << " frames, period " << period_size << " frames"
+              << std::endl;
     return pcm_handle;
 }
 
 // Check current PCM state; return false if disconnected/suspended
 static bool pcm_alive(snd_pcm_t* pcm_handle) {
-    if (!pcm_handle) return false;
+    if (!pcm_handle)
+        return false;
     snd_pcm_status_t* status;
     snd_pcm_status_alloca(&status);
     if (snd_pcm_status(pcm_handle, status) < 0) {
@@ -447,10 +448,12 @@ void alsa_output_thread() {
         // Wait for GPU processed data (3x period to ensure sufficient buffering)
         std::unique_lock<std::mutex> lock(g_buffer_mutex);
         g_buffer_cv.wait_for(lock, std::chrono::milliseconds(200), [period_size] {
-            return (g_output_buffer_left.size() - g_output_read_pos) >= (period_size * 3) || !g_running;
+            return (g_output_buffer_left.size() - g_output_read_pos) >= (period_size * 3) ||
+                   !g_running;
         });
 
-        if (!g_running) break;
+        if (!g_running)
+            break;
 
         size_t available = g_output_buffer_left.size() - g_output_read_pos;
         if (available >= period_size) {
@@ -471,8 +474,8 @@ void alsa_output_thread() {
                 // Detect and count clipping (for diagnostics only)
                 // Clipping should be prevented by proper gain staging (EQ preamp),
                 // not by signal processing that degrades audio quality
-                if (left_sample > 1.0f || left_sample < -1.0f ||
-                    right_sample > 1.0f || right_sample < -1.0f) {
+                if (left_sample > 1.0f || left_sample < -1.0f || right_sample > 1.0f ||
+                    right_sample < -1.0f) {
                     current_clips++;
                     g_clip_count.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -489,8 +492,10 @@ void alsa_output_thread() {
                 // 2^31 = 2147483648 causes undefined behavior for sample = 1.0
                 // Use lroundf() for proper rounding instead of truncation
                 constexpr float INT32_MAX_FLOAT = 2147483647.0f;
-                int32_t left_int = static_cast<int32_t>(std::lroundf(left_sample * INT32_MAX_FLOAT));
-                int32_t right_int = static_cast<int32_t>(std::lroundf(right_sample * INT32_MAX_FLOAT));
+                int32_t left_int =
+                    static_cast<int32_t>(std::lroundf(left_sample * INT32_MAX_FLOAT));
+                int32_t right_int =
+                    static_cast<int32_t>(std::lroundf(right_sample * INT32_MAX_FLOAT));
 
                 interleaved_buffer[i * 2] = left_int;
                 interleaved_buffer[i * 2 + 1] = right_int;
@@ -502,9 +507,8 @@ void alsa_output_thread() {
             size_t total = g_total_samples.load(std::memory_order_relaxed);
             size_t clips = g_clip_count.load(std::memory_order_relaxed);
             if (total % (period_size * 2 * 100) == 0 && clips > 0) {
-                std::cout << "WARNING: Clipping detected - " << clips
-                          << " samples clipped out of " << total
-                          << " (" << (100.0 * clips / total) << "%)" << std::endl;
+                std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
+                          << total << " (" << (100.0 * clips / total) << "%)" << std::endl;
             }
 
             // Write stats file every second
@@ -519,23 +523,25 @@ void alsa_output_thread() {
             // Reallocations can cause audio glitches due to memory operations
             if (g_output_read_pos > period_size * 4) {  // Clean up after 4 periods
                 g_output_buffer_left.erase(g_output_buffer_left.begin(),
-                                          g_output_buffer_left.begin() + g_output_read_pos);
+                                           g_output_buffer_left.begin() + g_output_read_pos);
                 g_output_buffer_right.erase(g_output_buffer_right.begin(),
-                                           g_output_buffer_right.begin() + g_output_read_pos);
+                                            g_output_buffer_right.begin() + g_output_read_pos);
                 g_output_read_pos = 0;
             }
 
             lock.unlock();
 
             // Write to ALSA device
-            snd_pcm_sframes_t frames_written = snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
+            snd_pcm_sframes_t frames_written =
+                snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
             if (frames_written < 0) {
                 // Try standard recovery first
                 snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
                 if (rec < 0) {
                     // Device may be gone; attempt reopen
                     std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
-                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..." << std::endl;
+                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
+                              << std::endl;
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
                     while (g_running && !pcm_handle) {
@@ -548,7 +554,8 @@ void alsa_output_thread() {
                         snd_pcm_hw_params_t* hw_params;
                         snd_pcm_hw_params_alloca(&hw_params);
                         if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
-                            snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) == 0 &&
+                            snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) ==
+                                0 &&
                             new_period != period_size) {
                             period_size = new_period;
                             interleaved_buffer.resize(period_size * CHANNELS);
@@ -570,12 +577,14 @@ void alsa_output_thread() {
             // Not enough data → write silence to keep device fed and avoid xrun
             lock.unlock();
             std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
-            snd_pcm_sframes_t frames_written = snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
+            snd_pcm_sframes_t frames_written =
+                snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
             if (frames_written < 0) {
                 snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
                 if (rec < 0) {
                     std::cerr << "ALSA: Silence write error: " << snd_strerror(frames_written)
-                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..." << std::endl;
+                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
+                              << std::endl;
                     if (pcm_handle) {
                         snd_pcm_close(pcm_handle);
                         pcm_handle = nullptr;
@@ -644,9 +653,11 @@ int main(int argc, char* argv[]) {
             size_t dotPos = basePath.rfind('.');
             if (dotPos != std::string::npos) {
                 std::string rateSpecificPath = basePath.substr(0, dotPos) + "_" +
-                    std::to_string(g_config.inputSampleRate) + basePath.substr(dotPos);
+                                               std::to_string(g_config.inputSampleRate) +
+                                               basePath.substr(dotPos);
                 if (std::filesystem::exists(rateSpecificPath)) {
-                    std::cout << "Config: Using sample-rate-specific filter: " << rateSpecificPath << std::endl;
+                    std::cout << "Config: Using sample-rate-specific filter: " << rateSpecificPath
+                              << std::endl;
                     g_config.filterPath = rateSpecificPath;
                 }
             }
@@ -661,7 +672,8 @@ int main(int argc, char* argv[]) {
         }
 
         if (!std::filesystem::exists(g_config.filterPath)) {
-            std::cerr << "Config error: Filter file not found: " << g_config.filterPath << std::endl;
+            std::cerr << "Config error: Filter file not found: " << g_config.filterPath
+                      << std::endl;
             exitCode = 1;
             break;
         }
@@ -669,7 +681,8 @@ int main(int argc, char* argv[]) {
         // Initialize GPU upsampler with configured values
         std::cout << "Initializing GPU upsampler..." << std::endl;
         g_upsampler = new ConvolutionEngine::GPUUpsampler();
-        if (!g_upsampler->initialize(g_config.filterPath, g_config.upsampleRatio, g_config.blockSize)) {
+        if (!g_upsampler->initialize(g_config.filterPath, g_config.upsampleRatio,
+                                     g_config.blockSize)) {
             std::cerr << "Failed to initialize GPU upsampler" << std::endl;
             delete g_upsampler;
             exitCode = 1;
@@ -697,8 +710,10 @@ int main(int argc, char* argv[]) {
                 // Compute EQ magnitude response and apply with minimum phase reconstruction
                 size_t filterFftSize = g_upsampler->getFilterFftSize();  // N/2+1 (R2C output)
                 size_t fullFftSize = g_upsampler->getFullFftSize();      // N (full FFT)
-                double outputSampleRate = static_cast<double>(g_config.inputSampleRate) * g_config.upsampleRatio;
-                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+                double outputSampleRate =
+                    static_cast<double>(g_config.inputSampleRate) * g_config.upsampleRatio;
+                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
+                                                                outputSampleRate, eqProfile);
 
                 if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
                     std::cout << "  EQ: Applied with minimum phase reconstruction" << std::endl;
@@ -706,7 +721,8 @@ int main(int argc, char* argv[]) {
                     std::cerr << "  EQ: Failed to apply frequency response" << std::endl;
                 }
             } else {
-                std::cerr << "  EQ: Failed to parse profile: " << g_config.eqProfilePath << std::endl;
+                std::cerr << "  EQ: Failed to parse profile: " << g_config.eqProfilePath
+                          << std::endl;
             }
         }
 
@@ -737,25 +753,18 @@ int main(int argc, char* argv[]) {
         // Create Capture stream from gpu_upsampler_sink.monitor
         std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..." << std::endl;
         data.input_stream = pw_stream_new_simple(
-            loop,
-            "GPU Upsampler Input",
-            pw_properties_new(
-                PW_KEY_MEDIA_TYPE, "Audio",
-                PW_KEY_MEDIA_CATEGORY, "Capture",
-                PW_KEY_MEDIA_ROLE, "Music",
-                PW_KEY_NODE_DESCRIPTION, "GPU Upsampler Input",
-                PW_KEY_NODE_TARGET, "gpu_upsampler_sink.monitor",
-                "audio.channels", "2",
-                "audio.position", "FL,FR",
-                nullptr
-            ),
-            &input_stream_events,
-            &data
-        );
+            loop, "GPU Upsampler Input",
+            pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
+                              PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
+                              "GPU Upsampler Input", PW_KEY_NODE_TARGET,
+                              "gpu_upsampler_sink.monitor", "audio.channels", "2", "audio.position",
+                              "FL,FR", nullptr),
+            &input_stream_events, &data);
 
         // Configure input stream audio format (32-bit float stereo)
         uint8_t input_buffer[1024];
-        struct spa_pod_builder input_builder = SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
+        struct spa_pod_builder input_builder =
+            SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
 
         struct spa_audio_info_raw input_info = {};
         input_info.format = SPA_AUDIO_FORMAT_F32;
@@ -765,27 +774,26 @@ int main(int argc, char* argv[]) {
         input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
 
         const struct spa_pod* input_params[1];
-        input_params[0] = spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
+        input_params[0] =
+            spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
 
         pw_stream_connect(
-            data.input_stream,
-            PW_DIRECTION_INPUT,
-            PW_ID_ANY,
-            static_cast<pw_stream_flags>(
-                PW_STREAM_FLAG_MAP_BUFFERS |
-                PW_STREAM_FLAG_RT_PROCESS
-            ),
-            input_params, 1
-        );
+            data.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
+            static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
+            input_params, 1);
 
         double outputRateKHz = g_config.inputSampleRate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
         std::cout << "System ready. Audio routing configured:" << std::endl;
-        std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)" << std::endl;
-        std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (" << g_config.upsampleRatio << "x upsampling)" << std::endl;
-        std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)" << std::endl;
+        std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)"
+                  << std::endl;
+        std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (" << g_config.upsampleRatio
+                  << "x upsampling)" << std::endl;
+        std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
+                  << std::endl;
         std::cout << std::endl;
-        std::cout << "Select 'GPU Upsampler (" << outputRateKHz << "kHz)' as output device in sound settings." << std::endl;
+        std::cout << "Select 'GPU Upsampler (" << outputRateKHz
+                  << "kHz)' as output device in sound settings." << std::endl;
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 

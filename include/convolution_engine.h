@@ -1,11 +1,12 @@
 #ifndef CONVOLUTION_ENGINE_H
 #define CONVOLUTION_ENGINE_H
 
-#include <vector>
-#include <string>
-#include <complex>
 #include <cuda_runtime.h>
 #include <cufft.h>
+
+#include <complex>
+#include <string>
+#include <vector>
 
 namespace ConvolutionEngine {
 
@@ -18,31 +19,39 @@ enum class RateFamily {
 
 // Detect rate family from sample rate
 inline RateFamily detectRateFamily(int sampleRate) {
-    if (sampleRate % 44100 == 0) return RateFamily::RATE_44K;
-    if (sampleRate % 48000 == 0) return RateFamily::RATE_48K;
+    if (sampleRate % 44100 == 0)
+        return RateFamily::RATE_44K;
+    if (sampleRate % 48000 == 0)
+        return RateFamily::RATE_48K;
     return RateFamily::RATE_UNKNOWN;
 }
 
 // Get output sample rate for a rate family (16x upsampling)
 inline int getOutputSampleRate(RateFamily family) {
     switch (family) {
-        case RateFamily::RATE_44K: return 705600;
-        case RateFamily::RATE_48K: return 768000;
-        default: return 0;
+    case RateFamily::RATE_44K:
+        return 705600;
+    case RateFamily::RATE_48K:
+        return 768000;
+    default:
+        return 0;
     }
 }
 
 // Get base sample rate for a rate family
 inline int getBaseSampleRate(RateFamily family) {
     switch (family) {
-        case RateFamily::RATE_44K: return 44100;
-        case RateFamily::RATE_48K: return 48000;
-        default: return 0;
+    case RateFamily::RATE_44K:
+        return 44100;
+    case RateFamily::RATE_48K:
+        return 48000;
+    default:
+        return 0;
     }
 }
 
 class GPUUpsampler {
-public:
+   public:
     GPUUpsampler();
     ~GPUUpsampler();
 
@@ -60,9 +69,7 @@ public:
     //              - Small (2048-4096): Lower latency, more CPU-GPU transfers, lower throughput
     //              - Medium (8192-16384): Balanced latency and throughput (recommended)
     //              - Large (32768+): Higher throughput, higher latency, more memory usage
-    bool initialize(const std::string& filterCoeffPath,
-                   int upsampleRatio,
-                   int blockSize = 8192);
+    bool initialize(const std::string& filterCoeffPath, int upsampleRatio, int blockSize = 8192);
 
     // Initialize with dual rate family support (44.1kHz and 48kHz)
     //
@@ -76,32 +83,29 @@ public:
     // Both coefficient files are loaded and pre-processed (FFT) at initialization.
     // Switching between families is then glitch-free using double buffering.
     bool initializeDualRate(const std::string& filterCoeffPath44k,
-                            const std::string& filterCoeffPath48k,
-                            int upsampleRatio,
-                            int blockSize = 8192,
-                            RateFamily initialFamily = RateFamily::RATE_44K);
+                            const std::string& filterCoeffPath48k, int upsampleRatio,
+                            int blockSize = 8192, RateFamily initialFamily = RateFamily::RATE_44K);
 
     // Switch to a different rate family (glitch-free via double buffering)
     // Returns true if switch was successful, false if already at target or error
     bool switchRateFamily(RateFamily targetFamily);
 
     // Get current rate family
-    RateFamily getCurrentRateFamily() const { return currentRateFamily_; }
+    RateFamily getCurrentRateFamily() const {
+        return currentRateFamily_;
+    }
 
     // Check if dual-rate mode is enabled
-    bool isDualRateEnabled() const { return dualRateEnabled_; }
+    bool isDualRateEnabled() const {
+        return dualRateEnabled_;
+    }
 
     // Process single channel audio (mono)
-    bool processChannel(const float* inputData,
-                       size_t inputFrames,
-                       std::vector<float>& outputData);
+    bool processChannel(const float* inputData, size_t inputFrames, std::vector<float>& outputData);
 
     // Process stereo audio (L/R channels separately)
-    bool processStereo(const float* leftInput,
-                      const float* rightInput,
-                      size_t inputFrames,
-                      std::vector<float>& leftOutput,
-                      std::vector<float>& rightOutput);
+    bool processStereo(const float* leftInput, const float* rightInput, size_t inputFrames,
+                       std::vector<float>& leftOutput, std::vector<float>& rightOutput);
 
     // Initialize streaming mode for real-time processing
     // This pre-allocates buffers and prepares the engine for incremental processing
@@ -113,12 +117,9 @@ public:
     // Process streaming audio block (real-time mode)
     // Accumulates input samples and processes when enough data is available
     // Returns true if output was generated, false if still accumulating
-    bool processStreamBlock(const float* inputData,
-                           size_t inputFrames,
-                           std::vector<float>& outputData,
-                           cudaStream_t stream,
-                           std::vector<float>& streamInputBuffer,
-                           size_t& streamInputAccumulated);
+    bool processStreamBlock(const float* inputData, size_t inputFrames,
+                            std::vector<float>& outputData, cudaStream_t stream,
+                            std::vector<float>& streamInputBuffer, size_t& streamInputAccumulated);
 
     // Get performance statistics
     struct Stats {
@@ -127,8 +128,12 @@ public:
         size_t framesProcessed;
     };
 
-    const Stats& getStats() const { return stats_; }
-    void resetStats() { stats_ = Stats(); }
+    const Stats& getStats() const {
+        return stats_;
+    }
+    void resetStats() {
+        stats_ = Stats();
+    }
 
     // ========== EQ Support ==========
 
@@ -145,16 +150,24 @@ public:
     void restoreOriginalFilter();
 
     // Check if EQ is currently applied
-    bool isEqApplied() const { return eqApplied_; }
+    bool isEqApplied() const {
+        return eqApplied_;
+    }
 
     // Get filter FFT size (R2C output size = N/2+1, for computing EQ response)
-    size_t getFilterFftSize() const { return filterFftSize_; }
+    size_t getFilterFftSize() const {
+        return filterFftSize_;
+    }
 
     // Get full FFT size (N, for frequency calculation)
-    size_t getFullFftSize() const { return fftSize_; }
+    size_t getFullFftSize() const {
+        return fftSize_;
+    }
 
     // Get upsample ratio
-    int getUpsampleRatio() const { return upsampleRatio_; }
+    int getUpsampleRatio() const {
+        return upsampleRatio_;
+    }
 
     // Get input sample rate for current rate family (for EQ design)
     int getInputSampleRate() const {
@@ -167,14 +180,16 @@ public:
     }
 
     // Legacy: Get default input sample rate (44.1kHz)
-    static constexpr int getDefaultInputSampleRate() { return 44100; }
+    static constexpr int getDefaultInputSampleRate() {
+        return 44100;
+    }
 
     // CUDA streams for async operations (public for daemon access)
-    cudaStream_t stream_;          // Primary stream for mono
-    cudaStream_t streamLeft_;      // Left channel for stereo parallel
-    cudaStream_t streamRight_;     // Right channel for stereo parallel
+    cudaStream_t stream_;       // Primary stream for mono
+    cudaStream_t streamLeft_;   // Left channel for stereo parallel
+    cudaStream_t streamRight_;  // Right channel for stereo parallel
 
-private:
+   private:
     // Load filter coefficients from binary file
     bool loadFilterCoefficients(const std::string& path);
 
@@ -183,16 +198,12 @@ private:
     void resizeOverlapBuffers(size_t newSize);
 
     // Perform Overlap-Save FFT convolution
-    bool overlapSaveConvolution(const float* input,
-                               size_t inputLength,
-                               std::vector<float>& output);
+    bool overlapSaveConvolution(const float* input, size_t inputLength, std::vector<float>& output);
 
     // Internal helper for processing a channel with a specific stream
-    bool processChannelWithStream(const float* inputData,
-                                   size_t inputFrames,
-                                   std::vector<float>& outputData,
-                                   cudaStream_t stream,
-                                   std::vector<float>& overlapBuffer);
+    bool processChannelWithStream(const float* inputData, size_t inputFrames,
+                                  std::vector<float>& outputData, cudaStream_t stream,
+                                  std::vector<float>& overlapBuffer);
 
     // Free all GPU resources
     void cleanup();
@@ -201,23 +212,23 @@ private:
     int upsampleRatio_;
     int blockSize_;
     int filterTaps_;
-    int fftSize_;                        // Pre-computed FFT size
+    int fftSize_;  // Pre-computed FFT size
 
     // Filter coefficients (single-rate mode)
     std::vector<float> h_filterCoeffs_;  // Host
     float* d_filterCoeffs_;              // Device
 
     // Dual-rate support
-    bool dualRateEnabled_;                    // True if dual-rate mode is active
-    RateFamily currentRateFamily_;            // Currently active rate family
+    bool dualRateEnabled_;          // True if dual-rate mode is active
+    RateFamily currentRateFamily_;  // Currently active rate family
 
     // 44.1kHz family coefficients
-    std::vector<float> h_filterCoeffs44k_;    // Host coefficients for 44.1kHz family
-    cufftComplex* d_filterFFT_44k_;           // Pre-computed FFT for 44.1kHz family
+    std::vector<float> h_filterCoeffs44k_;  // Host coefficients for 44.1kHz family
+    cufftComplex* d_filterFFT_44k_;         // Pre-computed FFT for 44.1kHz family
 
     // 48kHz family coefficients
-    std::vector<float> h_filterCoeffs48k_;    // Host coefficients for 48kHz family
-    cufftComplex* d_filterFFT_48k_;           // Pre-computed FFT for 48kHz family
+    std::vector<float> h_filterCoeffs48k_;  // Host coefficients for 48kHz family
+    cufftComplex* d_filterFFT_48k_;         // Pre-computed FFT for 48kHz family
 
     // Double-buffered filter FFT (ping-pong) for glitch-free EQ updates
     cufftComplex* d_filterFFT_A_;        // Filter FFT buffer A
@@ -228,20 +239,20 @@ private:
     bool eqApplied_;                     // True if EQ has been applied
 
     // Working buffers
-    float* d_inputBlock_;                // Device input block
-    float* d_outputBlock_;               // Device output block (upsampled)
-    cufftComplex* d_inputFFT_;           // FFT of input
-    cufftComplex* d_convResult_;         // Convolution result in frequency domain
+    float* d_inputBlock_;         // Device input block
+    float* d_outputBlock_;        // Device output block (upsampled)
+    cufftComplex* d_inputFFT_;    // FFT of input
+    cufftComplex* d_convResult_;  // Convolution result in frequency domain
 
     // cuFFT plans
     cufftHandle fftPlanForward_;
     cufftHandle fftPlanInverse_;
 
     // EQ-specific resources (persistent to avoid allocation during real-time EQ switching)
-    cufftHandle eqPlanD2Z_;               // Double-precision R2C for EQ
-    cufftHandle eqPlanZ2D_;               // Double-precision C2R for EQ
-    cufftDoubleReal* d_eqLogMag_;         // GPU buffer for log magnitude (reused)
-    cufftDoubleComplex* d_eqComplexSpec_; // GPU buffer for complex spectrum (reused)
+    cufftHandle eqPlanD2Z_;                          // Double-precision R2C for EQ
+    cufftHandle eqPlanZ2D_;                          // Double-precision C2R for EQ
+    cufftDoubleReal* d_eqLogMag_;                    // GPU buffer for log magnitude (reused)
+    cufftDoubleComplex* d_eqComplexSpec_;            // GPU buffer for complex spectrum (reused)
     std::vector<cufftComplex> h_originalFilterFft_;  // Host cache of original filter FFT
 
     // Statistics
@@ -253,21 +264,21 @@ private:
     int overlapSize_;
 
     // Streaming state
-    size_t streamValidInputPerBlock_;        // Input samples needed per block (at input rate)
-    bool streamInitialized_;                 // Whether streaming mode is initialized
-    int validOutputPerBlock_;                // Valid output samples per block (after FFT convolution)
-    int streamOverlapSize_;                  // Adjusted overlap per block for streaming alignment
+    size_t streamValidInputPerBlock_;  // Input samples needed per block (at input rate)
+    bool streamInitialized_;           // Whether streaming mode is initialized
+    int validOutputPerBlock_;          // Valid output samples per block (after FFT convolution)
+    int streamOverlapSize_;            // Adjusted overlap per block for streaming alignment
 
     // Streaming GPU buffers (pre-allocated to avoid malloc/free in callbacks)
-    float* d_streamInput_;                   // Device buffer for accumulated input
-    float* d_streamUpsampled_;               // Device buffer for upsampled input
-    float* d_streamPadded_;                  // Device buffer for [overlap | new] concatenation
-    cufftComplex* d_streamInputFFT_;         // FFT of padded input
-    float* d_streamConvResult_;              // Convolution result
+    float* d_streamInput_;            // Device buffer for accumulated input
+    float* d_streamUpsampled_;        // Device buffer for upsampled input
+    float* d_streamPadded_;           // Device buffer for [overlap | new] concatenation
+    cufftComplex* d_streamInputFFT_;  // FFT of padded input
+    float* d_streamConvResult_;       // Convolution result
 
     // Device-resident overlap buffers (eliminates H↔D transfers in real-time path)
-    float* d_overlapLeft_;                   // GPU overlap buffer for left channel
-    float* d_overlapRight_;                  // GPU overlap buffer for right channel
+    float* d_overlapLeft_;   // GPU overlap buffer for left channel
+    float* d_overlapRight_;  // GPU overlap buffer for right channel
 
     // Host pinned buffers (long-lived buffers use manual register/unregister;
     // temporary outputs use ScopedHostPin inside implementations)
@@ -292,20 +303,19 @@ private:
 
 // Utility functions
 namespace Utils {
-    // Check CUDA errors
-    void checkCudaError(cudaError_t error, const char* context);
+// Check CUDA errors
+void checkCudaError(cudaError_t error, const char* context);
 
-    // Check cuFFT errors
-    void checkCufftError(cufftResult result, const char* context);
+// Check cuFFT errors
+void checkCufftError(cufftResult result, const char* context);
 
-    // Zero-pad input signal for upsampling
-    void zeroPad(const float* input, float* output,
-                size_t inputLength, int upsampleRatio);
+// Zero-pad input signal for upsampling
+void zeroPad(const float* input, float* output, size_t inputLength, int upsampleRatio);
 
-    // Measure GPU utilization (requires nvidia-ml)
-    double getGPUUtilization();
-}
+// Measure GPU utilization (requires nvidia-ml)
+double getGPUUtilization();
+}  // namespace Utils
 
-} // namespace ConvolutionEngine
+}  // namespace ConvolutionEngine
 
-#endif // CONVOLUTION_ENGINE_H
+#endif  // CONVOLUTION_ENGINE_H
