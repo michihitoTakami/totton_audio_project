@@ -517,7 +517,11 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     // Use the maximum tap count across all filters for buffer sizing
     // This ensures FFT buffers are large enough for any filter
     filterTaps_ = maxTaps;
-    h_filterCoeffs_ = h_filterCoeffsMulti_[currentMultiRateIndex_];
+
+    // Copy initial config's coefficients and zero-pad to maxTaps to avoid OOB read in setupGPUResources
+    const auto& initialCoeffs = h_filterCoeffsMulti_[currentMultiRateIndex_];
+    h_filterCoeffs_.resize(maxTaps, 0.0f);  // Zero-pad
+    std::copy(initialCoeffs.begin(), initialCoeffs.end(), h_filterCoeffs_.begin());
     std::cout << "  Max filter taps: " << maxTaps << " (used for buffer sizing)" << std::endl;
 
     // Setup GPU resources
@@ -565,11 +569,20 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     // Set the active filter FFT to the initial configuration
     d_activeFilterFFT_ = d_filterFFT_Multi_[currentMultiRateIndex_];
 
-    // Copy to the original filter FFT for EQ restoration
+    // Copy to the original filter FFT for EQ restoration (device)
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, d_activeFilterFFT_,
                    filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy to originalFilterFFT"
+    );
+
+    // Update host cache of original filter FFT for EQ computation
+    // (overwrite the stale values from setupGPUResources)
+    h_originalFilterFft_.resize(filterFftSize_);
+    Utils::checkCudaError(
+        cudaMemcpy(h_originalFilterFft_.data(), d_activeFilterFFT_,
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+        "cudaMemcpy to h_originalFilterFft_"
     );
 
     // Also copy to the A buffer for ping-pong
@@ -631,21 +644,39 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     // Atomic swap to the new buffer
     d_activeFilterFFT_ = backBuffer;
 
-    // Update original filter FFT for EQ restoration
+    // Update original filter FFT for EQ restoration (device)
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, sourceFFT,
                    filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy update originalFilterFFT"
     );
 
-    // Update host coefficients reference
-    h_filterCoeffs_ = h_filterCoeffsMulti_[targetIndex];
+    // Update host cache of original filter FFT for EQ computation (Bug3 fix)
+    h_originalFilterFft_.resize(filterFftSize_);
+    Utils::checkCudaError(
+        cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+        "cudaMemcpy update h_originalFilterFft_"
+    );
+
+    // Update host coefficients - zero-pad to filterTaps_ to avoid OOB (Bug2 fix)
+    const auto& targetCoeffs = h_filterCoeffsMulti_[targetIndex];
+    h_filterCoeffs_.assign(filterTaps_, 0.0f);  // Clear and zero-pad
+    std::copy(targetCoeffs.begin(), targetCoeffs.end(), h_filterCoeffs_.begin());
 
     // Update state
     currentMultiRateIndex_ = targetIndex;
     currentInputRate_ = inputSampleRate;
     upsampleRatio_ = targetConfig.ratio;
     currentRateFamily_ = targetConfig.family;
+
+    // Reset streaming mode if initialized (Bug1 fix)
+    // Streaming parameters depend on upsampleRatio_, so they must be recalculated
+    if (streamInitialized_) {
+        std::cout << "  Streaming mode reset required due to rate change" << std::endl;
+        resetStreaming();
+        streamInitialized_ = false;
+    }
 
     // Clear EQ state (EQ needs to be re-applied for new rate)
     if (eqApplied_) {
