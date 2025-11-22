@@ -1,65 +1,89 @@
 # GEMINI.md
 
 ## Language
-Think in English and asnwer in Japanese.
+Think in English and answer in Japanese.
 
 ## Project Overview
 
-This is a Python project named `gpu-audio-upsampler`. Its purpose is to generate high-precision FIR filter coefficients for GPU-accelerated audio upsampling.
+**Magic Box Project - 魔法の箱**
 
-The project uses the following main technologies:
-*   **Python:** The core language for scripting and filter design.
-*   **SciPy:** For signal processing and filter design functionalities.
-*   **NumPy:** For numerical operations.
-*   **Matplotlib:** For generating plots to analyze the filter's characteristics.
+全てのヘッドホンユーザーに最高の音を届けるスタンドアロンDDC/DSPデバイス
 
-The main goal of the project is to create a 131,072-tap minimum-phase FIR filter, which is then exported for use in a C++ application.
+### Vision
+- 箱をつなぐ → 管理画面でポチポチ → 最高の音
+- ユーザーに余計なことを考えさせない
 
-## Building and Running
+### Core Features
+- **2M-tap FIR upsampling:** 2,000,000タップ最小位相FIRフィルタ（197dB stopband）
+- **Headphone EQ:** oratory1990データ + KB5000_7ターゲットカーブ
+- **Auto-negotiation:** 入力レート自動検知、DAC性能に応じた最適化
 
-### 1. Setup
+## Tech Stack
 
-The project requires Python 3.11 or higher. To install the necessary dependencies, run:
+| Layer | Technology |
+|-------|------------|
+| Control Plane | Python, FastAPI, scipy |
+| Data Plane | C++17, CUDA, cuFFT |
+| Communication | ZeroMQ |
+| Audio I/O | PipeWire, ALSA |
 
-```bash
-pip install -r requirements.txt
+## Hardware Targets
+
+| Environment | Hardware |
+|-------------|----------|
+| Development | NVIDIA RTX 2070S (8GB, SM 7.5) |
+| Production | Jetson Orin Nano Super (8GB, SM 8.7) |
+
+## Project Structure
+
 ```
-*(Note: A `requirements.txt` file does not exist, so this is a placeholder. Dependencies are listed in `pyproject.toml`)*
-
-### 2. Generating the Filter Coefficients
-
-To generate the filter coefficients, run the `generate_filter.py` script:
-
-```bash
-python scripts/generate_filter.py
-```
-
-This script will:
-*   Design a linear-phase FIR filter.
-*   Convert it to a minimum-phase filter.
-*   Run validation tests to ensure it meets the specifications.
-*   Generate analysis plots in the `plots/analysis/` directory.
-*   Export the filter coefficients to `data/coefficients/` in several formats:
-    *   `filter_131k_min_phase.bin`: A binary file with float32 coefficients.
-    *   `filter_coefficients.h`: A C++ header file.
-    *   `metadata.json`: A JSON file with metadata about the filter.
-
-### 3. Inspecting the Filter
-
-To perform a more detailed analysis of the generated impulse response, run the `inspect_impulse.py` script:
-
-```bash
-python scripts/inspect_impulse.py
+gpu_os/
+├── src/               # C++/CUDA (convolution_engine.cu, alsa_daemon.cpp)
+├── scripts/           # Python (generate_filter.py, analysis tools)
+├── data/coefficients/ # FIR filter binaries (2M-tap)
+├── web/               # FastAPI Web UI
+└── docs/              # Documentation
 ```
 
-This will generate a detailed plot of the impulse response in `plots/analysis/impulse_detail.png`.
+## Key Commands
 
-## Development Conventions
+```bash
+# Filter generation (2M taps)
+uv sync
+uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
 
-*   **Directory Structure:** The project is organized with a clear separation of concerns:
-    *   `scripts/`: Contains the Python scripts for generating and analyzing the filter.
-    *   `data/`: Stores the generated filter coefficients.
-    *   `plots/`: Contains plots generated during the analysis.
-    *   `docs/`: Includes detailed documentation and technical explanations.
-*   **Code Style:** The Python code is well-documented with comments explaining the purpose of different parts of the code.
-*   **Validation:** The project emphasizes validation and analysis, with scripts dedicated to verifying the filter's properties and generating detailed plots. The `docs/minimum_phase_analysis.md` file shows a commitment to documenting and justifying the technical decisions made.
+# Build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+
+# Run
+./scripts/daemon.sh start
+```
+
+## Development Roadmap
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Core Engine & Middleware | In Progress |
+| 2 | Control Plane & Web UI | Planned |
+| 3 | Jetson Integration | Planned |
+
+## Technical Constraints
+
+1. **Minimum Phase** - プリリンギングなし（必須）
+2. **2M taps** - 197dB stopband attenuation達成に必要
+3. **Kaiser β=55** - 最適なストップバンド特性
+4. **DC gain = 1.0** - クリッピング防止
+
+## Git Workflow
+
+**main直接コミット禁止。** Git Worktreeを使用:
+
+```bash
+git worktree add ../gpu_os_<feature> -b feature/<feature>
+```
+
+## Reference
+
+- `CLAUDE.md` - 詳細な技術仕様
+- `docs/roadmap.md` - 開発計画

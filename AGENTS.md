@@ -1,39 +1,105 @@
-# Repository Guidelines
+# Magic Box Project - AI Collaboration Guidelines
 
 ## Language
 - Think in English and output in Japanese.
 
-## Project Structure & Module Organization
-- `src/`: CLI entry (`main.cpp`), GPU core (`convolution_engine.cu`, `audio_io.cpp`), daemons (`pipewire_daemon.cpp`, `alsa_daemon.cpp`).
-- `include/`: Public headers for the C++/CUDA targets.
-- `data/coefficients/`: FIR tap binaries and metadata; keep any regenerated filters aligned with `filter_coefficients.h`.
-- `scripts/`: Python tools for filter generation/verification and waveform analysis.
-- `docs/` and `test_data/`: Setup notes, reports, and reference WAVs. Avoid rewriting large binaries unless strictly needed.
+## Project Vision
 
-## Build, Test, and Development Commands
-- Configure & build: `cmake -B build -DCMAKE_BUILD_TYPE=Release` then `cmake --build build -j$(nproc)` (builds CLIとデーモン)。
-- Run CLI: `./build/gpu_upsampler input.wav output.wav --ratio 16 --block 4096`.
-- Daemons: `./build/gpu_upsampler_alsa` (ALSA direct), `./build/gpu_upsampler_daemon` (PipeWire capture).
-- Python helpers (>=3.11): e.g., `python scripts/verify_frequency_response.py data/coefficients/filter_1m_min_phase.bin`.
+**Magic Box Project - 魔法の箱**
 
-## Coding Style & Naming Conventions
-- C++17/CUDA, 4-space indent, braces on the control line, prefer RAII and `std::vector` over raw pointers.
-- Types use `PascalCase`, functions/methods `camelCase`, constants/macros `UPPER_SNAKE`.
-- Keep GPU settings explicit (arch set to 75 in `CMakeLists.txt`); update when targeting different hardware.
-- Preserve warning flags (`-Wall -Wextra`) and log errors before returning.
+全てのヘッドホンユーザーに最高の音を届ける箱
 
-## Testing Guidelines
-- No automated unit suite yet; validate changes with the sample WAVs in `test_data/` and capture before/after stats.
-- For filter or DSP changes, run `scripts/verify_frequency_response.py` and attach plots/metrics.
-- For realtime paths, test end-to-end via `gpu_upsampler_alsa` with the PipeWire null sink (see `docs/setup_guide.md`), confirming stable streaming and correct sample rate.
+**Ultimate Simplicity:**
+1. 箱をつなぐ
+2. 管理画面でポチポチ
+3. 最高の音
 
-## Git Workflow (Worktree-based)
-- **Never commit directly to main.** Use Git Worktree for all feature development and bug fixes.
-- Create worktree: `git worktree add ../gpu_os_<name> -b feature/<name>`
-- Work in the worktree, then push and create PR via `gh pr create`.
-- Clean up after merge: `git worktree remove ../gpu_os_<name>`
+## What This Project Does
 
-## Commit & Pull Request Guidelines
-- Commit messages: short, imperative summaries similar to existing history (`Fix overlap-save blocking`, `Add PipeWire daemon logging`).
-- PRs should describe what changed, why, how to verify (commands + expected logs/plots), and any performance impact.
-- Link related issues or phase docs, note CUDA/PipeWire/ALSA requirements, and call out any new binaries or config files added to `data/` or `docs/`.
+- **GPU-accelerated audio upsampling** with 2M-tap minimum phase FIR filter (197dB stopband)
+- **Headphone EQ correction** using oratory1990 data + KB5000_7 target curve
+- **Standalone DDC/DSP device** running on Jetson Orin Nano (production) or PC (development)
+
+## Architecture Overview
+
+```
+Control Plane (Python/FastAPI)     Data Plane (C++ Audio Engine)
+├── Web UI                         ├── PipeWire/ALSA Input
+├── IR Generator (scipy)           ├── GPU FFT Convolution (CUDA)
+├── oratory1990 Integration        ├── libsoxr Resampling
+└── ZeroMQ Command Interface   <-> └── ALSA Output
+```
+
+## Development Roadmap
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Core Engine & Middleware | In Progress |
+| 2 | Control Plane & Web UI | Planned |
+| 3 | Jetson Hardware Integration | Planned |
+
+## Project Structure
+
+```
+gpu_os/
+├── src/                   # C++/CUDA source (convolution_engine.cu, alsa_daemon.cpp, etc.)
+├── include/               # C++ headers
+├── scripts/               # Python tools (filter generation, analysis)
+├── data/coefficients/     # FIR filter binaries
+├── data/EQ/               # EQ profiles
+├── docs/                  # Documentation
+├── web/                   # FastAPI Web UI
+└── build/                 # Build output
+```
+
+## Build & Run Commands
+
+```bash
+# Filter generation
+uv sync
+uv run python scripts/generate_filter.py --taps 2000000
+
+# Build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+
+# Run daemon
+./scripts/daemon.sh start
+```
+
+## Coding Standards
+
+- **C++17/CUDA**, 4-space indent, braces on control line
+- **RAII** and `std::vector` over raw pointers
+- **Naming:** `PascalCase` (types), `camelCase` (functions), `UPPER_SNAKE` (constants)
+- GPU arch: SM 7.5 (PC) or SM 8.7 (Jetson)
+
+## Git Workflow
+
+**Never commit directly to main.** Use Git Worktree:
+
+```bash
+git worktree add ../gpu_os_<feature> -b feature/<feature>
+cd ../gpu_os_<feature>
+# ... work ...
+git push -u origin feature/<feature>
+gh pr create
+```
+
+## Testing
+
+- Validate with sample WAVs in `test_data/`
+- Run `scripts/verify_frequency_response.py` for filter changes
+- Test realtime via `gpu_upsampler_alsa` with PipeWire null sink
+
+## Key Technical Constraints
+
+1. **Minimum Phase FIR** - No pre-ringing allowed
+2. **2M taps** - Required for 197dB stopband attenuation
+3. **Kaiser window** - β=55 for optimal stopband performance
+4. **DC gain = 1.0** - Normalized to prevent clipping
+
+## Reference
+
+- See `CLAUDE.md` for detailed technical specifications
+- See `docs/roadmap.md` for full development plan

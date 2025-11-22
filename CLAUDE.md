@@ -5,170 +5,236 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Most important rule about language
 Think in English and answer in Japanese.
 
-## Project Overview
+## Project Vision & Concept
 
-**GPU-Driven High-Precision Audio Oversampling Plugin**
+### Magic Box Project - 魔法の箱
 
-This project implements GPU-accelerated ultra-high-precision audio upsampling for Linux audio environments (PipeWire/Easy Effects). The goal is to achieve upsampling quality impossible with traditional DAC chip filters or CPU-based processing by leveraging GPU compute power for massive FIR filter convolution.
+**Vision:** 全てのヘッドホンユーザーに最高の音を届ける箱
 
-**Key Specifications:**
-- Input: 44.1kHz/48kHz (16-32bit float)
-- Output: 705.6kHz/768kHz (16x oversampling)
-- Filter: 2,000,000-tap (2M) minimum phase FIR
-- Stopband attenuation: ~197dB
-- Target Hardware: NVIDIA GeForce RTX 2070 Super (8GB VRAM) or better
-- Plugin Format: LV2 for Easy Effects integration
+**Ultimate Simplicity:**
+1. 箱をつなぐ
+2. 管理画面でポチポチ
+3. 最高の音
 
-## Three-Phase Development Architecture
+ユーザーに余計なことを考えさせない。ヘッドホンを選んで、ボタンを押すだけ。
 
-The project follows a structured three-phase approach. **Work must proceed sequentially - do not skip ahead to later phases.**
+### Core Concept
+- **Ultimate Filtering:** 2,000,000 (2M) タップの最小位相FIRフィルタによる究極のアップサンプリング
+- **Headphone Correction:** ヘッドホンの周波数特性をターゲットカーブに自動補正（EQはあくまで補正用途）
+- **Seamless Operation:** 入力レート自動検知、DAC性能に応じた最適アップサンプリング
+- **Simple UI:** Web上でヘッドホンを選んでポチポチするだけ
 
-### Phase 1: Algorithm Verification & Coefficient Generation (Python)
+### Future Goals
+- リバーブ機能
+- クロスフェードでのシームレスな音場切り替え
 
-**Purpose:** Generate and validate the 2M-tap minimum phase FIR filter coefficients.
+## Target Curve & EQ Source
 
-**Directory Structure:**
+### Target Curve: KB5000_7
+最新の研究に基づくKB5000_7カーブにフィッティング
+
+### EQ Source: oratory1990 (AutoEQ)
+- oratory1990がAutoEQで公開しているヘッドホン測定データをベース
+- 基本設定に追加: `Filter 11: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5`
+
+## System Architecture
+
+### Control Plane / Data Plane Separation
+
+```mermaid
+graph TD
+    WebUI[Web Browser] <-->|HTTP/WS| Controller[Python/FastAPI Controller]
+    Controller <-->|ZeroMQ IPC| Engine[C++ Audio Engine Daemon]
+
+    subgraph Data Path
+        PC[PC Audio Source] -->|USB UAC2| PipeWire[PipeWire/ALSA Input]
+        PipeWire --> Engine
+        Engine -->|Processed Stream| DAC[External USB DAC]
+    end
 ```
-scripts/           - Filter generation Python scripts
-data/coefficients/ - Generated filter coefficient files
-plots/analysis/    - Validation plots (impulse, frequency response)
-```
 
-**Key Requirements:**
-- Use `scipy.signal` for filter design
-- Start with linear phase design, convert to minimum phase via homomorphic processing
-- **Critical constraint:** Minimum phase is MANDATORY to eliminate pre-ringing (pre-ringing degrades transient response)
-- **Tap count must be multiple of 16** (upsample ratio alignment)
-- Frequency specs:
-  - Passband: 0-20kHz (flat response)
-  - Stopband start: 22.05kHz (for 44.1kHz input)
-  - Stopband attenuation: ≤-197dB (achieved with 2M taps)
-  - Window: Kaiser (β ≈ 55)
+### Control Plane (Python/FastAPI)
+システムの頭脳。ユーザー操作と数値計算を担当。
 
-**Validation Checklist:**
-- Impulse response shows NO pre-ringing (energy concentrated at time=0 and forward)
-- Frequency response meets -197dB stopband requirement
-- Passband ripple is minimal within audible range
-- Coefficients normalized (DC gain = 1.0) to prevent clipping
+- **Web UI:** React/VueベースのSPA。ヘッドホン選択、EQ設定、ステータス監視
+- **IR Generator:**
+  - `scipy` を使用し、oratory1990データとユーザーターゲットを合成
+  - 周波数特性から最小位相（Minimum Phase）IRを生成
+  - **Dual Target Generation:** 係数更新時、44.1kHz系と48kHz系の2種類のIRを事前生成・保存
+- **Orchestrator:** C++エンジンへのコマンド送信（係数ロード指示、ソフトリセット等）
 
-**Export Formats:**
-- Binary (.bin): float32 array for direct loading
-- C++ header (.h): for Phase 2 integration
-- Include metadata: tap count, sample rate, achieved specs
+### Data Plane (C++ Audio Engine)
+システムの心臓。低遅延・高負荷処理を担当。
 
-### Phase 2: GPU Convolution Engine (C++ Standalone)
+- **Input Interface:** `libpipewire` / `JACK` APIを使用し、入力サンプリングレート変更をイベントとして検知
+- **Resampler:** `libsoxr` (Very High Quality) を使用。入力レートに関わらず、ターゲットレート（DAC限界）へ変換
+- **Convolution Core (GPU):**
+  - CUDA FFT (`cuFFT`) を使用したOverlap-Save法
+  - Partitioned Convolutionにより、2Mタップ処理時のレイテンシを制御
+- **Buffering:** `moodycamel::ReaderWriterQueue` (Lock-free) によるスレッド間データ転送
+- **Output Interface:** ALSA (`alsa-lib`) 直接制御によるBit-perfect出力
 
-**Purpose:** Build and benchmark GPU-accelerated FFT convolution engine without real-time constraints.
+## Hardware Specifications
 
-**Tech Stack Decision:**
-- **Primary (recommended):** Vulkan Compute + VkFFT
-  - Rationale: Vendor-agnostic, excellent Linux compatibility, VkFFT is extremely fast
-- **Alternative:** CUDA + cuFFT
-  - Rationale: Lower implementation complexity, guaranteed RTX 2070S performance, suitable for prototyping
+### Development Environment (PC)
+| Item | Specification |
+|------|---------------|
+| GPU | NVIDIA RTX 2070 Super (8GB VRAM) or better |
+| CUDA Arch | SM 7.5 (Turing) |
+| OS | Linux (Ubuntu 22.04+) |
+| Audio | PipeWire |
 
-**Implementation Approach:**
-- Create console application (no audio I/O dependency yet)
-- Input: WAV file (44.1/48kHz)
-- Processing: GPU FFT convolution using Partitioned FFT (Overlap-Save or Overlap-Add method)
-- Output: WAV file (705.6/768kHz)
+### Production Environment (Magic Box)
+| Item | Specification |
+|------|---------------|
+| SoC | NVIDIA Jetson Orin Nano Super (8GB, 1024 CUDA Cores) |
+| CUDA Arch | SM 8.7 (Ampere) |
+| Storage | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
+| Input | USB Type-C (UAC2 Device Mode) |
+| Output | USB Type-A → External USB DAC |
+| Network | Wi-Fi / Ethernet (Web UI access) |
 
-**Why Partitioned FFT:**
-With 2M taps, direct time-domain convolution is computationally prohibitive. FFT convolution transforms the problem into frequency-domain multiplication, dramatically reducing complexity from O(N×M) to O(N×log(N)).
+## Development Roadmap
 
-**Performance Target:**
-- Real-time processing with <20% GPU utilization on RTX 2070S
-- This ensures sufficient headroom for Phase 3's real-time streaming constraints
+### Phase 1: Core Engine & Middleware (Current Focus)
+- [x] GPU Convolution Algorithm (PC実装完了、~28x realtime)
+- [ ] C++ Daemon実装（PipeWire入力、ALSA出力、libsoxr統合）
+- [ ] ZeroMQ通信の実装
+- [ ] 自動調停ロジック（DACネゴシエーション）の実装
 
-**Critical Implementation Details:**
-- Filter coefficients pre-loaded into GPU memory (one-time transfer)
-- Block size: 4096-8192 samples recommended (balances latency vs. efficiency)
-- Overlap-Save/Add handles block boundaries to prevent artifacts
+### Phase 2: Control Plane & Web UI
+- [ ] Python/FastAPIバックエンド構築
+- [ ] oratory1990データの取得・パース処理
+- [ ] 最小位相IR生成アルゴリズム（scipy）の実装
+- [ ] Webフロントエンド実装
 
-### Phase 3: LV2 Plugin Integration (Real-Time)
+### Phase 3: Hardware Integration
+- [ ] Jetson Orin Nano への移植
+- [ ] Linux (Ubuntu) のUSB Gadget Mode設定
+- [ ] Systemdサービス化と自動起動設定
+- [ ] パフォーマンスチューニング（メモリ帯域最適化）
 
-**Purpose:** Integrate Phase 2 engine into LV2 plugin framework for Easy Effects.
+## Technical Specifications
 
-**New Challenges:**
-- **Ring buffer management:** CPU-GPU async processing to prevent audio dropouts
-- **Sample rate negotiation:** Handle PipeWire's rate constraints (most plugins assume input rate = output rate)
-- **Latency reporting:** Use LV2's latency reporting feature (FFT blocking introduces ~tens of ms latency)
+### Filter Specifications
+| Parameter | Value |
+|-----------|-------|
+| Tap Count | 2,000,000 (2M) |
+| Phase Type | Minimum Phase (NO pre-ringing) |
+| Window | Kaiser (β=55) |
+| Stopband Attenuation | ~197dB |
+| Upsampling Ratio | Up to 16x |
 
-**Latency Philosophy:**
-This is optimized for **listening/music playback quality**, not low-latency monitoring. Accept 50-100ms latency as acceptable trade-off for extreme filter quality. Report latency to host for proper video sync (lip-sync) compensation.
+### Audio Processing
+| Parameter | Value |
+|-----------|-------|
+| Input Rates | 44.1kHz / 48kHz |
+| Output Rates | Up to 705.6kHz / 768kHz |
+| FFT Method | Overlap-Save |
+| Block Size | 4096-8192 samples |
 
-**PipeWire Integration Strategy:**
-- Option A: Set PipeWire system-wide to max rate (768kHz), plugin operates at fixed rate
-- Option B: Implement as dedicated upsampling Sink rather than in-chain effect
-- Requires investigation of PipeWire's rate-change capabilities during Phase 3
+### Auto-Negotiation Logic
+1. **DAC Capability Scan:** ALSA経由でDACの最大サンプリングレートを取得
+2. **Input Analysis:** 入力ストリームの系譜（44.1k vs 48k系）を判定
+3. **Strategy Decision:** `Input Rate` × N が `DAC Max Rate` 以下かつ最大となる整数倍率を算出
 
-## Algorithm Core: FFT Convolution Pipeline
-
-**Data Flow (Phase 2 & 3):**
-1. **Input Buffer (CPU):** Receive audio block from PipeWire/file
-2. **Ring Buffer Accumulation:** Aggregate to 4096-8192 samples for efficient GPU transfer
-3. **H2D Transfer:** CPU → GPU VRAM (PCIe bandwidth consideration)
-4. **Partitioned FFT Convolution (GPU):**
-   - Pre-loaded 2M-tap filter coefficients (already in GPU memory)
-   - Perform FFT on input block
-   - Complex multiply with filter's frequency-domain representation
-   - IFFT to time domain
-   - Overlap-Save/Add to handle block boundaries
-5. **D2H Transfer:** GPU → CPU processed audio
-6. **Output Buffer (CPU):** Send to host application
-
-**Memory Footprint Estimate:**
-- Filter coefficients: 2M taps × 4 bytes (float32) ≈ 8MB
-- Working buffers for FFT: ~100MB depending on block size
-- Well within 8GB VRAM budget of RTX 2070S
+### Safety Mechanisms
+- **Soft Mute:** レート切り替え時、クロスフェード（Fade-out/in）でポップノイズ防止
+- **Dynamic Fallback:** GPU負荷監視、XRUN時は自動的に軽量モードへ移行
 
 ## Key Technical Constraints
 
-**Minimum Phase Requirement:**
+### Minimum Phase Requirement
 - Linear phase filters cause pre-ringing (artifacts BEFORE transients)
 - Minimum phase concentrates impulse energy at t≥0, preserving transient attack
-- This is non-negotiable for high-fidelity audio reproduction
+- **Non-negotiable** for high-fidelity audio reproduction
 
-**Stopband Attenuation (-197dB with 2M taps):**
+### Stopband Attenuation (-197dB)
 - Ensures aliasing components are far below quantization noise floor
 - Requires large tap count + careful windowing (Kaiser β≈55)
 - Coefficients normalized to DC gain = 1.0 to prevent clipping
 
-**GPU Memory Management:**
+### GPU Memory Management
 - Filter coefficients loaded once at initialization
 - Streaming data uses ring buffers to minimize transfer overhead
-- Vulkan/CUDA device memory allocation should be persistent, not per-block
+- CUDA device memory allocation should be persistent, not per-block
 
 ## Development Commands
 
-**Phase 1 (Python - uv):**
+### Filter Generation (Python/uv)
 ```bash
-# Setup environment (first time only)
+# Setup environment
 uv sync
 
-# Generate filter coefficients (2M taps by default)
-uv run python scripts/generate_filter.py
-
-# Or specify custom tap count
+# Generate 2M-tap filter coefficients
 uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
 
 # Output:
 # - data/coefficients/filter_44k_2m_min_phase.bin (8 MB binary)
 # - data/coefficients/filter_44k_2m_min_phase.json (metadata)
-# - data/coefficients/filter_coefficients.h (C++ header)
 # - plots/analysis/*.png (validation plots)
 ```
 
-**Phase 2 (C++):**
-*TBD - Add CMake build commands, test WAV processing*
+### Build (C++/CUDA)
+```bash
+# PC Development (RTX 2070S, SM 7.5)
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 
-**Phase 3 (LV2 Plugin):**
-*TBD - Add LV2 build/install commands, Easy Effects loading instructions*
+# Jetson Orin Nano (SM 8.7) - change CUDA_ARCHITECTURES in CMakeLists.txt
+# set(CMAKE_CUDA_ARCHITECTURES 87)
+```
+
+### Run
+```bash
+# Start daemon
+./scripts/daemon.sh start
+
+# Status check
+./scripts/daemon.sh status
+
+# Restart with EQ profile
+./scripts/daemon.sh restart data/EQ/profile.txt
+```
+
+## Directory Structure
+
+```
+gpu_os/
+├── README.md              # User-facing documentation
+├── CLAUDE.md              # AI development guide (this file)
+├── AGENTS.md              # AI collaboration guidelines
+├── CMakeLists.txt         # Build configuration
+├── config.json            # Runtime configuration
+├── pyproject.toml         # Python dependencies
+│
+├── src/                   # C++/CUDA source code
+│   ├── convolution_engine.cu   # GPU core
+│   ├── alsa_daemon.cpp         # ALSA output daemon
+│   ├── pipewire_daemon.cpp     # PipeWire daemon
+│   └── ...
+│
+├── include/               # C++ headers
+├── scripts/               # Python tools & shell scripts
+├── data/
+│   ├── coefficients/      # FIR filter coefficients
+│   └── EQ/                # EQ profiles
+│
+├── docs/
+│   ├── architecture/      # System design docs
+│   ├── reports/           # Phase implementation reports
+│   ├── investigations/    # Investigation logs
+│   ├── setup/             # Setup guides
+│   └── roadmap.md         # Development roadmap
+│
+├── web/                   # Web UI (FastAPI)
+├── plots/                 # Analysis plots
+└── build/                 # Build output
+```
 
 ## Git Workflow
 
 **Always use Git Worktree for feature development and bug fixes.**
-
-Do NOT commit directly to main. Instead:
 
 ```bash
 # Create a new worktree for the feature branch
@@ -185,24 +251,23 @@ gh pr create --title "..." --body "..."
 git worktree remove ../gpu_os_<feature-name>
 ```
 
-**Rationale:**
-- Keeps main branch clean and stable
-- Enables parallel work on multiple features
-- Facilitates proper code review via PRs
-- Avoids accidental pushes to main
-
 ## Reference Projects
 
 - **HQPlayer:** Commercial benchmark for target audio quality
 - **VkFFT:** High-performance Vulkan FFT library (GitHub: DTolm/VkFFT)
 - **CamillaDSP:** Linux FIR filter engine (CPU-based, architectural reference)
+- **oratory1990:** Headphone measurement database
+- **AutoEQ:** Headphone equalization project
 
 ## Project Status
 
-See `docs/first.txt` for complete Japanese specification document.
-
-Current phase: **Phase 2** (GPU convolution engine - complete)
+Current phase: **Phase 1** (Core Engine & Middleware)
 
 **Achieved:**
-- Phase 1: 2M-tap minimum phase FIR filter (197dB stopband attenuation)
-- Phase 2: GPU FFT convolution engine (~28x realtime on RTX 2070S)
+- 2M-tap minimum phase FIR filter generation (197dB stopband attenuation)
+- GPU FFT convolution engine (~28x realtime on RTX 2070S)
+- PipeWire→GPU→ALSA daemon (working prototype)
+
+**In Progress:**
+- ZeroMQ communication layer
+- Auto-negotiation logic

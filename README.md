@@ -1,118 +1,109 @@
-# GPU Audio Upsampler
+# Magic Box Project - 魔法の箱
 
-高品位なFIRフィルタをCUDAで並列実行し、44.1kHzオーディオを最大16倍 (705.6/352.8kHz) にリアルタイム/オフラインでアップサンプリングするプロジェクトです。PipeWire経由の入力をGPUで処理し、ALSA/DACへ高サンプルレート出力するデーモンと、オフライン変換用CLIを提供します（LV2プラグイン実装は現在削除済み）。
+**全てのヘッドホンユーザーに最高の音を届ける箱**
 
-## アーキテクチャ概要
-- `src/convolution_engine.cu`: Overlap-Save方式の1Mタップ最小位相FIRをCUDA/cuFFTで実装するコア。ステレオ並列ストリーム、オーバーラップ保持付きストリーミングAPIを提供。
-- `src/alsa_daemon.cpp`: PipeWireから44.1kHz floatを受信し、GPUで16xアップサンプル後、ALSA `hw:3,0` へ705.6kHz S32_LE出力するデーモン（SMSL D400EX想定）。
-- `src/pipewire_daemon.cpp`: PipeWire→GPU→PipeWireのラウンドトリップ用デーモン。
-- `scripts/daemon.sh`: デーモン起動/停止/再起動スクリプト（PipeWireリンク自動設定、EQプロファイル指定対応）。
-- `scripts/`: フィルタ生成/解析ツール（例: `scripts/analyze_waveform.py` でクリック検出）。
-- `data/coefficients/`: 1MタップFIR係数 (`filter_1m_min_phase.bin`) とメタデータ。
-- `docs/`: 調査・セットアップ資料（`setup_guide.md`, `crackling_noise_investigation.md` など）。
+## ビジョン
 
-## フィルタとサンプルレート
-- 44.1kHz入力: `data/coefficients/filter_1m_min_phase.bin` を自動選択 (16x)。
-- 48kHz入力: `data/coefficients/filter_48k_1m_min_phase.bin` が存在すれば自動選択 (16x)。未生成の場合は明示的に `--filter` で指定するか、以下で生成:
-  ```bash
-  python scripts/generate_filter.py --input-rate 48000 --stopband-start 24000 --passband-end 21500 --output-prefix filter_48k_1m_min_phase
-  ```
-- 48kHz用のバイナリが無い場合は、警告の上で44.1kHz用フィルタにフォールバックします（生成を推奨）。
-- その他レートは非サポート。必要に応じて適合フィルタを生成してください。
+**究極のシンプルさ**:
+1. 箱をつなぐ
+2. 管理画面でポチポチ
+3. 最高の音
 
-## 設定ファイルと再読込
-- `config.json` をルートに置くと、CLIのデフォルト値と `gpu_upsampler_alsa` の起動設定（ALSAデバイス、バッファ、フィルタ、ゲインなど）に適用されます。  
-- `gpu_upsampler_alsa` は SIGHUP で設定を再読込し、内部を再初期化します。Web UI の `/restart` も SIGHUP を送ります。手動で再読込したい場合:
-  ```bash
-  pkill -HUP -f gpu_upsampler_alsa   # または PID を指定
-  ```
+ユーザーに余計なことを考えさせない。ヘッドホンを選んで、ボタンを押すだけ。
 
-### 信号フロー (ALSAデーモン)
+## 何ができるか
+
+- **究極のアップサンプリング**: 2,000,000タップ最小位相FIRフィルタ（197dB ストップバンド減衰）
+- **ヘッドホン補正EQ**: oratory1990データベースを活用し、あなたのヘッドホンをターゲットカーブ（KB5000_7）に自動補正
+- **シームレス動作**: 入力サンプルレート自動検知、DAC性能に応じた最適アップサンプリング
+
+## アーキテクチャ
+
+```mermaid
+graph TD
+    WebUI[Web Browser] <-->|HTTP/WS| Controller[Python/FastAPI Controller]
+    Controller <-->|ZeroMQ IPC| Engine[C++ Audio Engine Daemon]
+
+    subgraph Data Path
+        PC[PC Audio Source] -->|USB UAC2| PipeWire[PipeWire/ALSA Input]
+        PipeWire --> Engine
+        Engine -->|Processed Stream| DAC[External USB DAC]
+    end
 ```
-App (PipeWire) -> gpu_upsampler_sink.monitor -> GPU Upsampler (CUDA 16x) -> ALSA hw:3,0 -> USB DAC -> Analog
-```
 
-## ビルド
-CUDA ToolkitとPipeWire/ALSAヘッダを用意した上で:
+**Control Plane (Python/FastAPI)**
+- Web UI: ヘッドホン選択、EQ設定、ステータス監視
+- IR Generator: oratory1990データとユーザーターゲットからFIR係数を生成
+
+**Data Plane (C++ Audio Engine)**
+- GPU FFT Convolution (CUDA/cuFFT)
+- 低遅延リアルタイム処理
+- Overlap-Save方式による連続ストリーム処理
+
+## 動作環境
+
+### 開発環境（PC）
+
+| 項目 | 仕様 |
+|-----|-----|
+| GPU | NVIDIA RTX 2070 Super (8GB VRAM) 以上 |
+| OS | Linux (Ubuntu 22.04+) |
+| オーディオ | PipeWire |
+
+### 本番環境（Magic Box）
+
+| 項目 | 仕様 |
+|-----|-----|
+| ハードウェア | NVIDIA Jetson Orin Nano Super (8GB) |
+| ストレージ | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
+| 入力 | USB Type-C (UAC2 Device Mode) - PCからはUSBオーディオデバイスとして認識 |
+| 出力 | USB Type-A → 外部USB DAC |
+| 管理 | Wi-Fi / Ethernet 経由のWeb UI |
+
+## クイックスタート（PC開発環境）
+
 ```bash
+# 1. フィルタ係数生成
+uv sync
+uv run python scripts/generate_filter.py --taps 2000000
+
+# 2. ビルド
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-```
 
-## 実行
-- オフライン変換:
-  ```bash
-  ./build/gpu_upsampler input.wav output.wav --ratio 16 --block 4096
-  ```
-- PipeWire→ALSAリアルタイム出力:
-  ```bash
-  ./build/gpu_upsampler_alsa
-  # 別ターミナルで必要ならモニター接続
-  pw-link gpu_upsampler_sink:monitor_FL "GPU Upsampler Input:input_FL"
-  pw-link gpu_upsampler_sink:monitor_FR "GPU Upsampler Input:input_FR"
-  ```
-- PipeWireラウンドトリップ:
-  ```bash
-  ./build/gpu_upsampler_daemon
-  ```
-### 再起動後のクイック手順
-```bash
-# デーモン起動（PipeWireリンクも自動設定）
+# 3. デーモン起動
 ./scripts/daemon.sh start
 
-# 状態確認
-./scripts/daemon.sh status
-
-# 再起動
-./scripts/daemon.sh restart
-
-# EQプロファイル指定で再起動
-./scripts/daemon.sh restart data/EQ/Sample_EQ.txt
-
-# EQ無効で再起動
-./scripts/daemon.sh restart off
-
-# 停止
-./scripts/daemon.sh stop
-
-# PipeWireリンクのみ再設定
-./scripts/daemon.sh links
+# 4. サウンド設定で出力デバイスを「GPU Upsampler」に選択
 ```
-サウンド設定で出力デバイスを「GPU Upsampler (705.6kHz)」に選択。
-
-※ Easy Effects を経由する場合も同じ手順で、アプリは Easy Effects Sink に向ける。
-
-### Easy Effects を通す場合のPipeWire配線例
-- 出力経路にイコライザ等を挿入したいときは、再生側を `easyeffects_sink` に向け、Easy Effects のモニター出力を本プロジェクトのシンクへ接続します。
-  ```bash
-  # 再生アプリ → Easy Effects
-  pw-link <app>:output_FL easyeffects_sink:playback_0
-  pw-link <app>:output_FR easyeffects_sink:playback_1
-
-  # Easy Effects モニタ → GPU Upsampler
-  pw-link easyeffects_sink:monitor_0 gpu_upsampler_sink:playback_0
-  pw-link easyeffects_sink:monitor_1 gpu_upsampler_sink:playback_1
-
-  # GPU Upsampler monitor → 処理入力
-  pw-link gpu_upsampler_sink:monitor_0 "GPU Upsampler Input:input_0"
-  pw-link gpu_upsampler_sink:monitor_1 "GPU Upsampler Input:input_1"
-  ```
-  Easy Effects 内部の「出力デバイス」を `Easy Effects Sink`、「モニター」を有効化しておくと上記配線が活きます。
-
-## パラメトリックEQ
-- AutoEq/Equalizer APO形式 (`.txt`) のEQプロファイルをサポート。
-- サポートフィルタ: PK (Peaking), LS (LowShelf), HS (HighShelf)
-- EQは最小位相再構成によりFIRフィルタと統合（プリリンギングなし）
-- ダブルバッファリング（ピンポン）でグリッチなく切り替え可能
-- 設定: `config.json` の `eqEnabled`, `eqProfilePath`、または `daemon.sh restart <profile>`
 
 ## 主要仕様
-- アップサンプル比: 16x（44.1kHz→705.6kHz）/ オプションで8x。
-- FIRフィルタ: 1,000,000タップ最小位相、FFTサイズ1,048,576。
-- Overlap-Save: オーバーラップ999,999サンプル、有効出力48,577サンプル/ブロック。
-- 出力形式: S32_LE (デーモン), float32 (PipeWire内部)。
-- EQ: 最小位相再構成、GPU上でFIRと統合処理。
 
-## トラブルシュートの入口
-- プチプチ音・クリック: `docs/crackling_noise_investigation.md` を参照し、オーバーラップ保存とストリーミング設定を確認。
-- セットアップ全般: `docs/setup_guide.md` に PipeWire null sink 作成や接続手順を記載。
+| 項目 | 仕様 |
+|-----|-----|
+| FIRフィルタ | 2,000,000タップ 最小位相 |
+| ストップバンド減衰 | 197dB |
+| ウィンドウ関数 | Kaiser (β=55) |
+| アップサンプリング | 最大16x (44.1kHz→705.6kHz, 48kHz→768kHz) |
+| ターゲットカーブ | KB5000_7 |
+| EQソース | oratory1990 (AutoEQ) |
+
+## ロードマップ
+
+| Phase | 内容 | 状態 |
+|-------|-----|------|
+| 1 | Core Engine & Middleware | 🔄 GPU Convolution完了、Daemon/ZeroMQ実装中 |
+| 2 | Control Plane & Web UI | 📋 計画中 |
+| 3 | Hardware Integration (Jetson) | 📋 計画中 |
+
+詳細は [docs/roadmap.md](docs/roadmap.md) を参照。
+
+## ドキュメント
+
+- [セットアップガイド](docs/setup/pc_development.md) - PC開発環境構築
+- [アーキテクチャ概要](docs/architecture/overview.md) - システム設計詳細
+- [ロードマップ](docs/roadmap.md) - 開発計画と進捗
+
+## ライセンス
+
+TBD
