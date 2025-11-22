@@ -406,11 +406,19 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     // Atomic swap to the new buffer
     d_activeFilterFFT_ = backBuffer;
 
-    // Update original filter FFT for EQ restoration
+    // Update original filter FFT for EQ restoration (device)
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, sourceFFT,
                    filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy update originalFilterFFT"
+    );
+
+    // Update host cache of original filter FFT for EQ computation
+    h_originalFilterFft_.resize(filterFftSize_);
+    Utils::checkCudaError(
+        cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+        "cudaMemcpy update h_originalFilterFft_"
     );
 
     // Update host coefficients reference
