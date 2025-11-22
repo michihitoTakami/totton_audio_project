@@ -1086,8 +1086,6 @@ def get_embedded_html() -> str:
         const API = '';
         let currentAlsaDevice = '';
         let deviceList = [];
-        let eqProfiles = [];
-        let currentEqProfile = '';
 
         async function fetchDevices() {
             try {

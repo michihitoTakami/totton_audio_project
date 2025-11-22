@@ -1,14 +1,23 @@
 """Tests for OPRA database parser and EQ converter."""
 
+from pathlib import Path
+
 import pytest
 
 from opra import (
-    OpraDatabase,
+    DEFAULT_OPRA_PATH,
     EqBand,
     EqProfile,
+    OpraDatabase,
     convert_opra_band,
     convert_opra_to_apo,
     slope_to_q,
+)
+
+# Skip marker for tests requiring OPRA submodule
+requires_opra_submodule = pytest.mark.skipif(
+    not Path(DEFAULT_OPRA_PATH).exists(),
+    reason="OPRA submodule not initialized. Run: git submodule update --init",
 )
 
 
@@ -282,6 +291,7 @@ class TestConvertOpraToApo:
         assert len(profile.bands) == 2  # band_pass should be filtered out
 
 
+@requires_opra_submodule
 class TestOpraDatabase:
     """Tests for OpraDatabase class."""
 
@@ -382,6 +392,7 @@ class TestOpraDatabase:
         assert eq is None
 
 
+@requires_opra_submodule
 class TestOpraIntegration:
     """Integration tests for full OPRA workflow."""
 
