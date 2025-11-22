@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "serena": {
+      "command": "npx",
+      "args": ["-y", "serena"]
+    },
+    "chromedevtools": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-devtools"],
+      "env": {
+        "CHROME_REMOTE_HOST": "localhost",
+        "CHROME_REMOTE_PORT": "9222"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "env": {
+        "ROOT": "/home/michihito/Working/gpu_os",
+        "WRITABLE_ROOTS": "/home/michihito/Working/gpu_os"
+      }
+    }
+  }
+}
