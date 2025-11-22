@@ -156,6 +156,8 @@ void GPUUpsampler::resizeOverlapBuffers(size_t newSize) {
 GPUUpsampler::GPUUpsampler()
     : upsampleRatio_(1), blockSize_(8192), filterTaps_(0), fftSize_(0),
       d_filterCoeffs_(nullptr),
+      dualRateEnabled_(false), currentRateFamily_(RateFamily::RATE_44K),
+      d_filterFFT_44k_(nullptr), d_filterFFT_48k_(nullptr),
       d_filterFFT_A_(nullptr), d_filterFFT_B_(nullptr), d_activeFilterFFT_(nullptr),
       d_originalFilterFFT_(nullptr), filterFftSize_(0), eqApplied_(false),
       d_inputBlock_(nullptr), d_outputBlock_(nullptr),
@@ -200,6 +202,223 @@ bool GPUUpsampler::initialize(const std::string& filterCoeffPath,
     }
 
     std::cout << "GPU Upsampler initialized successfully!" << std::endl;
+    return true;
+}
+
+bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
+                                       const std::string& filterCoeffPath48k,
+                                       int upsampleRatio,
+                                       int blockSize,
+                                       RateFamily initialFamily) {
+    upsampleRatio_ = upsampleRatio;
+    blockSize_ = blockSize;
+    currentRateFamily_ = initialFamily;
+
+    std::cout << "Initializing GPU Upsampler (Dual-Rate Mode)..." << std::endl;
+    std::cout << "  Upsample Ratio: " << upsampleRatio_ << "x" << std::endl;
+    std::cout << "  Block Size: " << blockSize_ << " samples" << std::endl;
+    std::cout << "  Initial Rate Family: "
+              << (initialFamily == RateFamily::RATE_44K ? "44.1kHz" : "48kHz") << std::endl;
+
+    // Load 44.1kHz family coefficients
+    std::cout << "Loading 44.1kHz family coefficients..." << std::endl;
+    {
+        std::ifstream ifs(filterCoeffPath44k, std::ios::binary);
+        if (!ifs) {
+            std::cerr << "Error: Cannot open 44.1kHz coefficients: " << filterCoeffPath44k << std::endl;
+            return false;
+        }
+        ifs.seekg(0, std::ios::end);
+        size_t fileSize = ifs.tellg();
+        ifs.seekg(0, std::ios::beg);
+
+        int taps44k = fileSize / sizeof(float);
+        h_filterCoeffs44k_.resize(taps44k);
+        ifs.read(reinterpret_cast<char*>(h_filterCoeffs44k_.data()), fileSize);
+        std::cout << "  44.1kHz: " << taps44k << " taps (" << fileSize / 1024 << " KB)" << std::endl;
+    }
+
+    // Load 48kHz family coefficients
+    std::cout << "Loading 48kHz family coefficients..." << std::endl;
+    {
+        std::ifstream ifs(filterCoeffPath48k, std::ios::binary);
+        if (!ifs) {
+            std::cerr << "Error: Cannot open 48kHz coefficients: " << filterCoeffPath48k << std::endl;
+            return false;
+        }
+        ifs.seekg(0, std::ios::end);
+        size_t fileSize = ifs.tellg();
+        ifs.seekg(0, std::ios::beg);
+
+        int taps48k = fileSize / sizeof(float);
+        h_filterCoeffs48k_.resize(taps48k);
+        ifs.read(reinterpret_cast<char*>(h_filterCoeffs48k_.data()), fileSize);
+        std::cout << "  48kHz: " << taps48k << " taps (" << fileSize / 1024 << " KB)" << std::endl;
+    }
+
+    // Verify both coefficient sets have the same tap count
+    if (h_filterCoeffs44k_.size() != h_filterCoeffs48k_.size()) {
+        std::cerr << "Error: Coefficient tap counts do not match (44k: "
+                  << h_filterCoeffs44k_.size() << ", 48k: " << h_filterCoeffs48k_.size() << ")" << std::endl;
+        return false;
+    }
+
+    // Use 44k coefficients as primary for initialization
+    filterTaps_ = h_filterCoeffs44k_.size();
+    h_filterCoeffs_ = (initialFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_;
+
+    // Setup GPU resources (this will pre-compute FFT for current family)
+    if (!setupGPUResources()) {
+        return false;
+    }
+
+    // Pre-compute FFT for both coefficient sets
+    std::cout << "Pre-computing FFT for both rate families..." << std::endl;
+
+    // Allocate GPU buffers for both families
+    Utils::checkCudaError(
+        cudaMalloc(&d_filterFFT_44k_, filterFftSize_ * sizeof(cufftComplex)),
+        "cudaMalloc d_filterFFT_44k_"
+    );
+    Utils::checkCudaError(
+        cudaMalloc(&d_filterFFT_48k_, filterFftSize_ * sizeof(cufftComplex)),
+        "cudaMalloc d_filterFFT_48k_"
+    );
+
+    // Compute FFT for 44.1kHz coefficients
+    {
+        float* d_temp;
+        Utils::checkCudaError(
+            cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+            "cudaMalloc temp for 44k FFT"
+        );
+        Utils::checkCudaError(
+            cudaMemset(d_temp, 0, fftSize_ * sizeof(float)),
+            "cudaMemset temp"
+        );
+        Utils::checkCudaError(
+            cudaMemcpy(d_temp, h_filterCoeffs44k_.data(), filterTaps_ * sizeof(float), cudaMemcpyHostToDevice),
+            "cudaMemcpy 44k coeffs to device"
+        );
+        Utils::checkCufftError(
+            cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_44k_),
+            "cufftExecR2C for 44k"
+        );
+        cudaFree(d_temp);
+    }
+
+    // Compute FFT for 48kHz coefficients
+    {
+        float* d_temp;
+        Utils::checkCudaError(
+            cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+            "cudaMalloc temp for 48k FFT"
+        );
+        Utils::checkCudaError(
+            cudaMemset(d_temp, 0, fftSize_ * sizeof(float)),
+            "cudaMemset temp"
+        );
+        Utils::checkCudaError(
+            cudaMemcpy(d_temp, h_filterCoeffs48k_.data(), filterTaps_ * sizeof(float), cudaMemcpyHostToDevice),
+            "cudaMemcpy 48k coeffs to device"
+        );
+        Utils::checkCufftError(
+            cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_48k_),
+            "cufftExecR2C for 48k"
+        );
+        cudaFree(d_temp);
+    }
+
+    // Set the active filter FFT to the initial family
+    d_activeFilterFFT_ = (initialFamily == RateFamily::RATE_44K) ? d_filterFFT_44k_ : d_filterFFT_48k_;
+
+    // Copy to the original filter FFT for EQ restoration
+    Utils::checkCudaError(
+        cudaMemcpy(d_originalFilterFFT_, d_activeFilterFFT_,
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+        "cudaMemcpy to originalFilterFFT"
+    );
+
+    // Also copy to the A/B buffers for ping-pong
+    Utils::checkCudaError(
+        cudaMemcpy(d_filterFFT_A_, d_activeFilterFFT_,
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+        "cudaMemcpy to filterFFT_A"
+    );
+    d_activeFilterFFT_ = d_filterFFT_A_;
+
+    dualRateEnabled_ = true;
+    std::cout << "GPU Upsampler (Dual-Rate) initialized successfully!" << std::endl;
+    return true;
+}
+
+bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
+    if (!dualRateEnabled_) {
+        std::cerr << "Error: Dual-rate mode not enabled" << std::endl;
+        return false;
+    }
+
+    if (targetFamily == currentRateFamily_) {
+        std::cout << "Already at target rate family" << std::endl;
+        return true;
+    }
+
+    if (targetFamily == RateFamily::RATE_UNKNOWN) {
+        std::cerr << "Error: Cannot switch to unknown rate family" << std::endl;
+        return false;
+    }
+
+    // TODO: Implement Soft Mute (fade-out/fade-in) to prevent pop noise during switch
+    // See: https://github.com/michihitoTakami/michy_os/issues/38
+    // Current implementation uses double-buffering but no audio fade.
+
+    std::cout << "Switching rate family: "
+              << (currentRateFamily_ == RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
+              << " -> "
+              << (targetFamily == RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
+              << std::endl;
+
+    // Select the source FFT for the target family
+    cufftComplex* sourceFFT = (targetFamily == RateFamily::RATE_44K) ? d_filterFFT_44k_ : d_filterFFT_48k_;
+
+    // Use double-buffering for glitch-free switching
+    // Copy to the inactive buffer, then swap
+    cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
+
+    Utils::checkCudaError(
+        cudaMemcpyAsync(backBuffer, sourceFFT,
+                        filterFftSize_ * sizeof(cufftComplex),
+                        cudaMemcpyDeviceToDevice, stream_),
+        "cudaMemcpyAsync rate family switch"
+    );
+
+    // Synchronize to ensure copy is complete before switching
+    Utils::checkCudaError(
+        cudaStreamSynchronize(stream_),
+        "cudaStreamSynchronize rate family switch"
+    );
+
+    // Atomic swap to the new buffer
+    d_activeFilterFFT_ = backBuffer;
+
+    // Update original filter FFT for EQ restoration
+    Utils::checkCudaError(
+        cudaMemcpy(d_originalFilterFFT_, sourceFFT,
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+        "cudaMemcpy update originalFilterFFT"
+    );
+
+    // Update host coefficients reference
+    h_filterCoeffs_ = (targetFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_;
+
+    // Clear EQ state (EQ needs to be re-applied for new rate family)
+    if (eqApplied_) {
+        std::cout << "  Note: EQ was applied. It needs to be re-applied for the new rate family." << std::endl;
+        eqApplied_ = false;
+    }
+
+    currentRateFamily_ = targetFamily;
+    std::cout << "Rate family switch complete" << std::endl;
     return true;
 }
 
@@ -783,6 +1002,9 @@ void GPUUpsampler::cleanup() {
     unregisterHostBuffers();
 
     if (d_filterCoeffs_) cudaFree(d_filterCoeffs_);
+    // Free dual-rate filter FFT buffers
+    if (d_filterFFT_44k_) cudaFree(d_filterFFT_44k_);
+    if (d_filterFFT_48k_) cudaFree(d_filterFFT_48k_);
     // Free double-buffered filter FFT (ping-pong)
     if (d_filterFFT_A_) cudaFree(d_filterFFT_A_);
     if (d_filterFFT_B_) cudaFree(d_filterFFT_B_);
@@ -816,6 +1038,14 @@ void GPUUpsampler::cleanup() {
     if (streamRight_) cudaStreamDestroy(streamRight_);
 
     d_filterCoeffs_ = nullptr;
+    // Dual-rate cleanup
+    d_filterFFT_44k_ = nullptr;
+    d_filterFFT_48k_ = nullptr;
+    dualRateEnabled_ = false;
+    currentRateFamily_ = RateFamily::RATE_44K;
+    h_filterCoeffs44k_.clear();
+    h_filterCoeffs48k_.clear();
+    // Double-buffer cleanup
     d_filterFFT_A_ = nullptr;
     d_filterFFT_B_ = nullptr;
     d_activeFilterFFT_ = nullptr;

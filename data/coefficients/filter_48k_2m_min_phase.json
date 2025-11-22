@@ -1,0 +1,27 @@
+{
+  "generation_date": "2025-11-22T19:55:57.602624",
+  "n_taps": 2000000,
+  "sample_rate_input": 48000,
+  "sample_rate_output": 768000,
+  "upsample_ratio": 16,
+  "passband_end_hz": 22000,
+  "stopband_start_hz": 24000,
+  "target_stopband_attenuation_db": 220,
+  "kaiser_beta": 55.0,
+  "validation_results": {
+    "passband_ripple_db": 2.7185741340988583e-10,
+    "stopband_attenuation_db": 191.28519995315796,
+    "peak_position": 34,
+    "peak_threshold_samples": 20000,
+    "energy_ratio_first_to_second_half": 119791663047.48384,
+    "meets_stopband_spec": false,
+    "is_minimum_phase": true,
+    "normalization": {
+      "original_dc_gain": 1.0000002956479594,
+      "normalized_dc_gain": 1.0,
+      "max_coefficient_amplitude": 0.07843215618436346,
+      "normalization_applied": true
+    }
+  },
+  "output_basename": "filter_48k_2m_min_phase"
+}
