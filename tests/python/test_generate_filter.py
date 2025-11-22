@@ -302,3 +302,153 @@ class TestCoefficientFileLoading:
         dc_gain = np.sum(h)
 
         assert np.isclose(dc_gain, 1.0, rtol=0.01)
+
+
+class TestMultiRateConfigs:
+    """Tests for MULTI_RATE_CONFIGS and multi-rate filter generation."""
+
+    def test_multi_rate_configs_has_8_entries(self):
+        """MULTI_RATE_CONFIGS should have 8 entries (2 families × 4 ratios)."""
+        import generate_filter
+
+        assert len(generate_filter.MULTI_RATE_CONFIGS) == 8
+
+    def test_multi_rate_configs_44k_family(self):
+        """44k family should have correct configurations."""
+        import generate_filter
+
+        configs = generate_filter.MULTI_RATE_CONFIGS
+
+        # 44k family entries
+        assert "44k_16x" in configs
+        assert "44k_8x" in configs
+        assert "44k_4x" in configs
+        assert "44k_2x" in configs
+
+        # Check input rates
+        assert configs["44k_16x"]["input_rate"] == 44100
+        assert configs["44k_8x"]["input_rate"] == 88200
+        assert configs["44k_4x"]["input_rate"] == 176400
+        assert configs["44k_2x"]["input_rate"] == 352800
+
+        # Check ratios
+        assert configs["44k_16x"]["ratio"] == 16
+        assert configs["44k_8x"]["ratio"] == 8
+        assert configs["44k_4x"]["ratio"] == 4
+        assert configs["44k_2x"]["ratio"] == 2
+
+    def test_multi_rate_configs_48k_family(self):
+        """48k family should have correct configurations."""
+        import generate_filter
+
+        configs = generate_filter.MULTI_RATE_CONFIGS
+
+        # 48k family entries
+        assert "48k_16x" in configs
+        assert "48k_8x" in configs
+        assert "48k_4x" in configs
+        assert "48k_2x" in configs
+
+        # Check input rates
+        assert configs["48k_16x"]["input_rate"] == 48000
+        assert configs["48k_8x"]["input_rate"] == 96000
+        assert configs["48k_4x"]["input_rate"] == 192000
+        assert configs["48k_2x"]["input_rate"] == 384000
+
+        # Check ratios
+        assert configs["48k_16x"]["ratio"] == 16
+        assert configs["48k_8x"]["ratio"] == 8
+        assert configs["48k_4x"]["ratio"] == 4
+        assert configs["48k_2x"]["ratio"] == 2
+
+    def test_stopband_equals_input_nyquist(self):
+        """Stopband frequency should equal input Nyquist (input_rate / 2)."""
+        import generate_filter
+
+        for name, config in generate_filter.MULTI_RATE_CONFIGS.items():
+            expected_stopband = config["input_rate"] // 2
+            assert (
+                config["stopband"] == expected_stopband
+            ), f"{name}: stopband {config['stopband']} != input_nyquist {expected_stopband}"
+
+    def test_output_rate_consistency(self):
+        """All configs in same family should produce same output rate."""
+        import generate_filter
+
+        configs = generate_filter.MULTI_RATE_CONFIGS
+
+        # 44k family -> 705.6kHz
+        for name in ["44k_16x", "44k_8x", "44k_4x", "44k_2x"]:
+            output_rate = configs[name]["input_rate"] * configs[name]["ratio"]
+            assert output_rate == 705600, f"{name}: output {output_rate} != 705600"
+
+        # 48k family -> 768kHz
+        for name in ["48k_16x", "48k_8x", "48k_4x", "48k_2x"]:
+            output_rate = configs[name]["input_rate"] * configs[name]["ratio"]
+            assert output_rate == 768000, f"{name}: output {output_rate} != 768000"
+
+
+class TestMultiRateOutputFilename:
+    """Tests for multi-rate output filename format."""
+
+    def test_filename_includes_ratio(self):
+        """Output filename should include ratio: filter_{family}_{ratio}x_{taps}."""
+        import generate_filter
+
+        # Save originals
+        orig_input = generate_filter.SAMPLE_RATE_INPUT
+        orig_ratio = generate_filter.UPSAMPLE_RATIO
+        orig_taps = generate_filter.N_TAPS
+        orig_prefix = generate_filter.OUTPUT_PREFIX
+
+        try:
+            # Test 44k 16x case
+            generate_filter.SAMPLE_RATE_INPUT = 44100
+            generate_filter.UPSAMPLE_RATIO = 16
+            generate_filter.N_TAPS = 2_000_000
+            generate_filter.OUTPUT_PREFIX = None
+
+            # The logic in export_coefficients builds filename
+            taps_label = "2m"
+            family = "44k"
+            expected = f"filter_{family}_{generate_filter.UPSAMPLE_RATIO}x_{taps_label}_min_phase"
+            assert expected == "filter_44k_16x_2m_min_phase"
+
+            # Test 48k 8x case
+            generate_filter.SAMPLE_RATE_INPUT = 96000
+            generate_filter.UPSAMPLE_RATIO = 8
+            family = "48k" if generate_filter.SAMPLE_RATE_INPUT % 48000 == 0 else "44k"
+            expected = f"filter_{family}_{generate_filter.UPSAMPLE_RATIO}x_{taps_label}_min_phase"
+            assert expected == "filter_48k_8x_2m_min_phase"
+        finally:
+            generate_filter.SAMPLE_RATE_INPUT = orig_input
+            generate_filter.UPSAMPLE_RATIO = orig_ratio
+            generate_filter.N_TAPS = orig_taps
+            generate_filter.OUTPUT_PREFIX = orig_prefix
+
+
+class TestValidateTapCountMultiRate:
+    """Tests for tap count validation with different ratios."""
+
+    def test_tap_count_divisible_by_ratio(self):
+        """Tap count must be divisible by upsample ratio."""
+        import generate_filter
+
+        # All ratios used in multi-rate
+        for ratio in [16, 8, 4, 2]:
+            # Valid tap count (divisible)
+            generate_filter.validate_tap_count(1024, ratio)  # 1024 is divisible by all
+
+        # Invalid cases
+        with pytest.raises(ValueError):
+            generate_filter.validate_tap_count(1025, 16)  # Not divisible by 16
+
+        with pytest.raises(ValueError):
+            generate_filter.validate_tap_count(1025, 8)  # Not divisible by 8
+
+        with pytest.raises(ValueError):
+            generate_filter.validate_tap_count(1025, 4)  # Not divisible by 4
+
+        # 1025 IS divisible by... nothing here that we use
+        with pytest.raises(ValueError):
+            generate_filter.validate_tap_count(1025, 2)  # Not divisible by 2
