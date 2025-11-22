@@ -8,15 +8,20 @@ import json
 import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
 import shutil
 
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+# Add scripts directory to path for OPRA module
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from opra import convert_opra_to_apo, get_database as get_opra_database
 
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
@@ -774,6 +779,155 @@ async def list_devices():
 
 
 # ============================================================================
+# OPRA API Endpoints
+# ============================================================================
+
+
+@app.get("/opra/stats")
+async def opra_stats():
+    """Get OPRA database statistics"""
+    try:
+        db = get_opra_database()
+        return {
+            "vendors": db.vendor_count,
+            "products": db.product_count,
+            "eq_profiles": db.eq_profile_count,
+            "license": "CC BY-SA 4.0",
+            "attribution": "OPRA Project (https://github.com/opra-project/OPRA)",
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/opra/vendors")
+async def opra_vendors():
+    """List all vendors in OPRA database"""
+    try:
+        db = get_opra_database()
+        vendors = db.get_vendors()
+        return {"vendors": vendors, "count": len(vendors)}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/opra/search")
+async def opra_search(q: str = "", limit: int = 50):
+    """
+    Search headphones by name.
+    Returns products with embedded vendor info and EQ profiles.
+    """
+    try:
+        db = get_opra_database()
+        results = db.search(q, limit=limit)
+        return {"results": results, "count": len(results), "query": q}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/opra/products/{product_id}")
+async def opra_product(product_id: str):
+    """Get a specific product with its EQ profiles"""
+    try:
+        db = get_opra_database()
+        product = db.get_product(product_id)
+        if product is None:
+            raise HTTPException(
+                status_code=404, detail=f"Product '{product_id}' not found"
+            )
+        return product
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/opra/eq/{eq_id}")
+async def opra_eq_profile(eq_id: str):
+    """Get a specific EQ profile with APO format preview"""
+    try:
+        db = get_opra_database()
+        eq_data = db.get_eq_profile(eq_id)
+        if eq_data is None:
+            raise HTTPException(
+                status_code=404, detail=f"EQ profile '{eq_id}' not found"
+            )
+
+        # Convert to APO format
+        apo_profile = convert_opra_to_apo(eq_data)
+
+        return {
+            "id": eq_id,
+            "name": eq_data.get("name", ""),
+            "author": eq_data.get("author", ""),
+            "details": eq_data.get("details", ""),
+            "parameters": eq_data.get("parameters", {}),
+            "apo_format": apo_profile.to_apo_format(),
+            "attribution": {
+                "license": "CC BY-SA 4.0",
+                "source": "OPRA Project",
+                "author": eq_data.get("author", "unknown"),
+            },
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/opra/apply/{eq_id}", response_model=ApiResponse)
+async def opra_apply_eq(eq_id: str):
+    """
+    Apply an OPRA EQ profile.
+    Converts to APO format, saves to data/EQ, and activates.
+    """
+    try:
+        db = get_opra_database()
+        eq_data = db.get_eq_profile(eq_id)
+        if eq_data is None:
+            raise HTTPException(
+                status_code=404, detail=f"EQ profile '{eq_id}' not found"
+            )
+
+        # Convert to APO format
+        apo_profile = convert_opra_to_apo(eq_data)
+        apo_content = apo_profile.to_apo_format()
+
+        # Add attribution comment
+        author = eq_data.get("author", "unknown")
+        details = eq_data.get("details", "")
+        header = f"# OPRA: {eq_data.get('name', eq_id)}\n"
+        header += f"# Author: {author}\n"
+        header += f"# Details: {details}\n"
+        header += "# License: CC BY-SA 4.0\n"
+        header += "# Source: https://github.com/opra-project/OPRA\n\n"
+        apo_content = header + apo_content
+
+        # Save to EQ profiles directory
+        EQ_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+        # Use safe filename: replace problematic chars
+        safe_name = eq_id.replace("/", "_").replace("\\", "_")
+        profile_path = EQ_PROFILES_DIR / f"opra_{safe_name}.txt"
+        profile_path.write_text(apo_content)
+
+        # Update config to activate
+        settings = load_config()
+        settings.eq_enabled = True
+        settings.eq_profile_path = str(profile_path)
+
+        if not save_config(settings):
+            raise HTTPException(status_code=500, detail="Failed to save configuration")
+
+        return ApiResponse(
+            success=True,
+            message=f"OPRA EQ '{eq_data.get('name', eq_id)}' by {author} activated",
+            data={
+                "path": str(profile_path),
+                "author": author,
+                "attribution": "CC BY-SA 4.0 - OPRA Project",
+            },
+            restart_required=True,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+# ============================================================================
 # Embedded HTML UI
 # ============================================================================
 
@@ -904,32 +1058,34 @@ def get_embedded_html() -> str:
         <div id="settingsMessage" class="message"></div>
     </div>
 
-    <h2>Parametric EQ</h2>
+    <h2>Headphone EQ (OPRA)</h2>
     <div class="card">
         <div class="form-group">
-            <label>Profile</label>
-            <select id="eqProfile">
-                <option value="">-- None --</option>
+            <label>Search Headphones</label>
+            <input type="text" id="opraSearch" placeholder="e.g. HD650, DT770, AirPods..."
+                   style="width:100%; padding:12px; border:1px solid #0f3460; border-radius:6px; background:#0f3460; color:#eee; font-size:14px;">
+        </div>
+        <div id="opraResults" style="max-height:200px; overflow-y:auto; margin-top:8px;"></div>
+        <div id="opraSelected" style="display:none; margin-top:12px; padding:12px; background:#0f3460; border-radius:6px;">
+            <div style="font-weight:600;" id="selectedName">-</div>
+            <div style="font-size:12px; color:#888;" id="selectedVendor">-</div>
+            <select id="opraEqSelect" style="width:100%; padding:8px; margin-top:8px; border:1px solid #16213e; border-radius:4px; background:#16213e; color:#eee;">
             </select>
         </div>
         <div class="btn-row">
-            <button type="button" class="btn-primary" id="activateEqBtn">Activate</button>
-            <button type="button" class="btn-secondary" id="deactivateEqBtn">Off</button>
+            <button type="button" class="btn-primary" id="applyOpraBtn" disabled>Apply EQ</button>
+            <button type="button" class="btn-secondary" id="deactivateEqBtn">EQ Off</button>
         </div>
-        <div class="form-group" style="margin-top: 16px;">
-            <label>Import Profile (.txt)</label>
-            <input type="file" id="eqFile" accept=".txt" style="display: none;">
-            <button type="button" class="btn-secondary" id="importEqBtn" style="width: 100%;">Import File</button>
+        <div id="opraMessage" class="message"></div>
+        <div style="font-size:10px; color:#555; margin-top:12px; text-align:center;">
+            EQ data: <a href="https://github.com/opra-project/OPRA" target="_blank" style="color:#00d4ff;">OPRA Project</a> (CC BY-SA 4.0)
         </div>
-        <div id="eqMessage" class="message"></div>
     </div>
 
     <script>
         const API = '';
         let currentAlsaDevice = '';
         let deviceList = [];
-        let eqProfiles = [];
-        let currentEqProfile = '';
 
         async function fetchDevices() {
             try {
@@ -1033,66 +1189,98 @@ def get_embedded_html() -> str:
             }
         });
 
-        // EQ Functions
-        async function fetchEqProfiles() {
-            try {
-                const res = await fetch(API + '/eq/profiles');
-                const data = await res.json();
-                eqProfiles = data.profiles;
-                updateEqSelect();
-            } catch (e) {
-                console.error('Failed to fetch EQ profiles:', e);
-            }
-        }
+        // OPRA Functions
+        let selectedProduct = null;
+        let searchTimeout = null;
 
-        async function fetchActiveEq() {
-            try {
-                const res = await fetch(API + '/eq/active');
-                const data = await res.json();
-                currentEqProfile = data.active ? data.name : '';
-                updateEqSelect();
-            } catch (e) {
-                console.error('Failed to fetch active EQ:', e);
-            }
-        }
-
-        function updateEqSelect() {
-            const select = document.getElementById('eqProfile');
-            select.innerHTML = '<option value="">-- None --</option>';
-            eqProfiles.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.name;
-                opt.textContent = p.name;
-                if (p.name === currentEqProfile) opt.selected = true;
-                select.appendChild(opt);
-            });
-        }
-
-        function showEqMessage(text, success) {
-            const el = document.getElementById('eqMessage');
+        function showOpraMessage(text, success) {
+            const el = document.getElementById('opraMessage');
             el.textContent = text;
             el.classList.remove('success', 'error');
             el.classList.add(success ? 'success' : 'error');
             setTimeout(() => el.classList.remove('success', 'error'), 4000);
         }
 
-        document.getElementById('activateEqBtn').addEventListener('click', async () => {
-            const name = document.getElementById('eqProfile').value;
-            if (!name) {
-                showEqMessage('Select a profile first', false);
+        async function searchOpra(query) {
+            if (!query || query.length < 2) {
+                document.getElementById('opraResults').innerHTML = '';
                 return;
             }
             try {
-                const res = await fetch(API + '/eq/activate/' + name, { method: 'POST' });
+                const res = await fetch(API + '/opra/search?q=' + encodeURIComponent(query) + '&limit=20');
                 const data = await res.json();
-                showEqMessage(data.message, data.success);
+                renderOpraResults(data.results);
+            } catch (e) {
+                console.error('OPRA search failed:', e);
+            }
+        }
+
+        function renderOpraResults(results) {
+            const container = document.getElementById('opraResults');
+            if (!results.length) {
+                container.innerHTML = '<div style="color:#666; font-size:12px; padding:8px;">No results</div>';
+                return;
+            }
+            container.innerHTML = results.map(r => `
+                <div class="opra-item" data-id="${r.id}" style="padding:8px; cursor:pointer; border-bottom:1px solid #0f3460;">
+                    <div style="font-weight:500;">${r.vendor.name} ${r.name}</div>
+                    <div style="font-size:11px; color:#666;">${r.eq_profiles.length} EQ profile(s)</div>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            container.querySelectorAll('.opra-item').forEach(el => {
+                el.addEventListener('click', () => selectProduct(results.find(r => r.id === el.dataset.id)));
+                el.addEventListener('mouseenter', () => el.style.background = '#0f3460');
+                el.addEventListener('mouseleave', () => el.style.background = '');
+            });
+        }
+
+        function selectProduct(product) {
+            selectedProduct = product;
+            document.getElementById('opraResults').innerHTML = '';
+            document.getElementById('opraSearch').value = '';
+            document.getElementById('opraSelected').style.display = 'block';
+            document.getElementById('selectedName').textContent = product.name;
+            document.getElementById('selectedVendor').textContent = product.vendor.name;
+
+            // Populate EQ profiles
+            const select = document.getElementById('opraEqSelect');
+            select.innerHTML = product.eq_profiles.map(eq =>
+                `<option value="${eq.id}">${eq.author || 'unknown'} - ${eq.details || 'EQ'}</option>`
+            ).join('');
+
+            document.getElementById('applyOpraBtn').disabled = false;
+        }
+
+        document.getElementById('opraSearch').addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => searchOpra(e.target.value), 300);
+        });
+
+        document.getElementById('applyOpraBtn').addEventListener('click', async () => {
+            const eqId = document.getElementById('opraEqSelect').value;
+            if (!eqId) {
+                showOpraMessage('Select an EQ profile', false);
+                return;
+            }
+            const btn = document.getElementById('applyOpraBtn');
+            btn.disabled = true;
+            btn.textContent = 'Applying...';
+            try {
+                const res = await fetch(API + '/opra/apply/' + encodeURIComponent(eqId), { method: 'POST' });
+                const data = await res.json();
+                showOpraMessage(data.message, data.success);
                 if (data.success && data.restart_required) {
+                    btn.textContent = 'Restarting...';
                     await fetch(API + '/restart', { method: 'POST' });
                     setTimeout(fetchStatus, 2000);
                 }
-                fetchActiveEq();
             } catch (e) {
-                showEqMessage('Error: ' + e.message, false);
+                showOpraMessage('Error: ' + e.message, false);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Apply EQ';
             }
         });
 
@@ -1100,42 +1288,19 @@ def get_embedded_html() -> str:
             try {
                 const res = await fetch(API + '/eq/deactivate', { method: 'POST' });
                 const data = await res.json();
-                showEqMessage(data.message, data.success);
+                showOpraMessage(data.message, data.success);
                 if (data.success && data.restart_required) {
                     await fetch(API + '/restart', { method: 'POST' });
                     setTimeout(fetchStatus, 2000);
                 }
-                fetchActiveEq();
             } catch (e) {
-                showEqMessage('Error: ' + e.message, false);
+                showOpraMessage('Error: ' + e.message, false);
             }
-        });
-
-        document.getElementById('importEqBtn').addEventListener('click', () => {
-            document.getElementById('eqFile').click();
-        });
-
-        document.getElementById('eqFile').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const formData = new FormData();
-            formData.append('file', file);
-            try {
-                const res = await fetch(API + '/eq/import', { method: 'POST', body: formData });
-                const data = await res.json();
-                showEqMessage(data.message, data.success);
-                if (data.success) fetchEqProfiles();
-            } catch (e) {
-                showEqMessage('Error: ' + e.message, false);
-            }
-            e.target.value = '';
         });
 
         // Initial load
         fetchDevices();
         fetchStatus();
-        fetchEqProfiles();
-        fetchActiveEq();
         setInterval(fetchStatus, 5000);
     </script>
 </body>

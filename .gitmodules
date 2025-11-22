@@ -1,0 +1,3 @@
+[submodule "data/opra-db"]
+	path = data/opra-db
+	url = https://github.com/opra-project/OPRA.git
