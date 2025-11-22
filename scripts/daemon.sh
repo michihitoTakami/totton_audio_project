@@ -20,6 +20,30 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Verify PID belongs to our daemon (guard against PID reuse)
+# Returns 0 if valid, 1 if not our process
+verify_daemon_pid() {
+    local pid="$1"
+    [[ -z "$pid" ]] && return 1
+
+    # Check process exists
+    kill -0 "$pid" 2>/dev/null || return 1
+
+    # Verify process name via /proc/<pid>/comm
+    # Note: comm is truncated to 15 chars, so "gpu_upsampler_alsa" -> "gpu_upsampler_a"
+    local comm_file="/proc/$pid/comm"
+    if [[ -f "$comm_file" ]]; then
+        local comm
+        comm=$(cat "$comm_file" 2>/dev/null || true)
+        # Check if comm starts with "gpu_upsampler" (handles truncation)
+        if [[ "$comm" != gpu_upsampler* ]]; then
+            return 1  # PID was reused by another process
+        fi
+    fi
+
+    return 0
+}
+
 # Kill existing daemon using PID file
 kill_daemon() {
     local pid=""
@@ -27,7 +51,7 @@ kill_daemon() {
     # First, try PID file
     if [[ -f "$PID_FILE" ]]; then
         pid=$(cat "$PID_FILE" 2>/dev/null || true)
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        if verify_daemon_pid "$pid"; then
             log_info "Stopping daemon (PID: $pid from PID file)..."
             kill "$pid" 2>/dev/null || true
             # Wait for graceful shutdown
@@ -43,6 +67,8 @@ kill_daemon() {
                 kill -9 "$pid" 2>/dev/null || true
                 sleep 0.5
             fi
+        elif [[ -n "$pid" ]]; then
+            log_warn "PID file contains stale PID $pid (not our daemon)"
         fi
         rm -f "$PID_FILE"
     fi
@@ -117,7 +143,7 @@ start_daemon() {
         # Check if PID file was created by daemon
         if [[ -f "$PID_FILE" ]]; then
             pid=$(cat "$PID_FILE" 2>/dev/null || true)
-            if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            if verify_daemon_pid "$pid"; then
                 # Check if ALSA is configured
                 if grep -q "ALSA: Output device configured" "$LOG_FILE" 2>/dev/null; then
                     break
@@ -133,7 +159,7 @@ start_daemon() {
     done
 
     # Verify daemon is running
-    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    if ! verify_daemon_pid "$pid"; then
         log_error "Daemon failed to start. Log:"
         tail -20 "$LOG_FILE"
         exit 1
@@ -152,9 +178,11 @@ show_status() {
     # Check PID file
     if [[ -f "$PID_FILE" ]]; then
         pid=$(cat "$PID_FILE" 2>/dev/null || true)
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        if verify_daemon_pid "$pid"; then
             running=true
             log_info "Daemon running (PID: $pid)"
+        elif [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            log_warn "PID file contains PID $pid but it's not our daemon (PID reuse)"
         else
             log_warn "Stale PID file found (PID: $pid not running)"
         fi
