@@ -670,12 +670,41 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     upsampleRatio_ = targetConfig.ratio;
     currentRateFamily_ = targetConfig.family;
 
-    // Reset streaming mode if initialized (Bug1 fix)
+    // Free streaming buffers if initialized (Bug1 fix + memory leak fix)
     // Streaming parameters depend on upsampleRatio_, so they must be recalculated
+    // User must call initializeStreaming() again after rate switch
     if (streamInitialized_) {
-        std::cout << "  Streaming mode reset required due to rate change" << std::endl;
-        resetStreaming();
+        std::cout << "  Streaming mode invalidated - freeing buffers" << std::endl;
+        if (d_streamInput_) {
+            cudaFree(d_streamInput_);
+            d_streamInput_ = nullptr;
+        }
+        if (d_streamUpsampled_) {
+            cudaFree(d_streamUpsampled_);
+            d_streamUpsampled_ = nullptr;
+        }
+        if (d_streamPadded_) {
+            cudaFree(d_streamPadded_);
+            d_streamPadded_ = nullptr;
+        }
+        if (d_streamInputFFT_) {
+            cudaFree(d_streamInputFFT_);
+            d_streamInputFFT_ = nullptr;
+        }
+        if (d_streamConvResult_) {
+            cudaFree(d_streamConvResult_);
+            d_streamConvResult_ = nullptr;
+        }
+        if (d_overlapLeft_) {
+            cudaFree(d_overlapLeft_);
+            d_overlapLeft_ = nullptr;
+        }
+        if (d_overlapRight_) {
+            cudaFree(d_overlapRight_);
+            d_overlapRight_ = nullptr;
+        }
         streamInitialized_ = false;
+        std::cout << "  Call initializeStreaming() to resume streaming" << std::endl;
     }
 
     // Clear EQ state (EQ needs to be re-applied for new rate)
@@ -1366,6 +1395,40 @@ bool GPUUpsampler::initializeStreaming() {
     if (fftSize_ == 0 || overlapSize_ == 0) {
         std::cerr << "ERROR: GPU resources not initialized. Call initialize() first." << std::endl;
         return false;
+    }
+
+    // Free existing streaming buffers if re-initializing (prevents memory leak on rate switch)
+    if (streamInitialized_) {
+        fprintf(stderr, "[Streaming] Re-initializing: freeing existing buffers\n");
+        if (d_streamInput_) {
+            cudaFree(d_streamInput_);
+            d_streamInput_ = nullptr;
+        }
+        if (d_streamUpsampled_) {
+            cudaFree(d_streamUpsampled_);
+            d_streamUpsampled_ = nullptr;
+        }
+        if (d_streamPadded_) {
+            cudaFree(d_streamPadded_);
+            d_streamPadded_ = nullptr;
+        }
+        if (d_streamInputFFT_) {
+            cudaFree(d_streamInputFFT_);
+            d_streamInputFFT_ = nullptr;
+        }
+        if (d_streamConvResult_) {
+            cudaFree(d_streamConvResult_);
+            d_streamConvResult_ = nullptr;
+        }
+        if (d_overlapLeft_) {
+            cudaFree(d_overlapLeft_);
+            d_overlapLeft_ = nullptr;
+        }
+        if (d_overlapRight_) {
+            cudaFree(d_overlapRight_);
+            d_overlapRight_ = nullptr;
+        }
+        streamInitialized_ = false;
     }
 
     // Calculate valid output per block (samples at output rate that don't overlap)
