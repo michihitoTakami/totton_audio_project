@@ -301,3 +301,70 @@ TEST_F(AutoNegotiationTest, Negotiate_LimitedDac_48kFamily) {
     EXPECT_EQ(config.outputRate, 192000);  // Fallback to 192000
     EXPECT_EQ(config.upsampleRatio, 4);    // 48000 × 4 = 192000
 }
+
+// ============================================================================
+// Unsupported Input Rate Tests (Issue #134)
+// ============================================================================
+
+TEST_F(AutoNegotiationTest, Negotiate_UnsupportedRate_11025Hz) {
+    auto dac = createFullCapabilityDac();
+
+    // 11025Hz would require 64x upsampling to reach 705600Hz
+    // Only {2, 4, 8, 16} are valid ratios
+    auto config = negotiate(11025, dac);
+    EXPECT_FALSE(config.isValid);
+    EXPECT_FALSE(config.errorMessage.empty());
+    EXPECT_NE(config.errorMessage.find("Unsupported"), std::string::npos);
+}
+
+TEST_F(AutoNegotiationTest, Negotiate_UnsupportedRate_32000Hz) {
+    auto dac = createFullCapabilityDac();
+
+    // 32000Hz is in 48k family but would need 24x upsampling (768000/32000)
+    auto config = negotiate(32000, dac);
+    EXPECT_FALSE(config.isValid);
+    EXPECT_FALSE(config.errorMessage.empty());
+}
+
+TEST_F(AutoNegotiationTest, Negotiate_UnsupportedRate_22050Hz) {
+    auto dac = createFullCapabilityDac();
+
+    // 22050Hz is in 44k family but would need 32x upsampling (705600/22050)
+    auto config = negotiate(22050, dac);
+    EXPECT_FALSE(config.isValid);
+}
+
+// ============================================================================
+// Empty supportedRates Tests
+// ============================================================================
+
+TEST_F(AutoNegotiationTest, Negotiate_EmptySupportedRates_RejectsHighRates) {
+    // DAC where supportedRates is empty (couldn't determine actual support)
+    DacCapability::Capability dac;
+    dac.deviceName = "test:empty";
+    dac.minSampleRate = 44100;
+    dac.maxSampleRate = 768000;
+    dac.supportedRates = {};  // Empty - unknown actual support
+    dac.maxChannels = 2;
+    dac.isValid = true;
+
+    // With empty supportedRates, isRateSupported returns false
+    // So getBestRateForFamily should return 0
+    auto config = negotiate(44100, dac);
+    EXPECT_FALSE(config.isValid);
+    EXPECT_NE(config.errorMessage.find("No supported output rate"), std::string::npos);
+}
+
+TEST_F(AutoNegotiationTest, IsRateSupported_EmptySupportedRates) {
+    DacCapability::Capability dac;
+    dac.deviceName = "test:empty";
+    dac.minSampleRate = 44100;
+    dac.maxSampleRate = 768000;
+    dac.supportedRates = {};  // Empty
+    dac.isValid = true;
+
+    // Should return false for any rate when supportedRates is empty
+    EXPECT_FALSE(DacCapability::isRateSupported(dac, 44100));
+    EXPECT_FALSE(DacCapability::isRateSupported(dac, 705600));
+    EXPECT_FALSE(DacCapability::isRateSupported(dac, 768000));
+}
