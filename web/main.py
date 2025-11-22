@@ -377,12 +377,18 @@ async def websocket_stats(websocket: WebSocket):
     """
     WebSocket endpoint for real-time stats streaming.
     Sends stats.json data every second while connected.
+    When daemon is stopped, returns zero values (consistent with /status endpoint).
     """
     await websocket.accept()
     try:
         while True:
-            stats = load_stats()
-            stats["daemon_running"] = check_daemon_running()
+            daemon_running = check_daemon_running()
+            if daemon_running:
+                stats = load_stats()
+            else:
+                # Return zero values when daemon is stopped (consistent with /status)
+                stats = {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+            stats["daemon_running"] = daemon_running
             await websocket.send_json(stats)
             await asyncio.sleep(1)
     except WebSocketDisconnect:
