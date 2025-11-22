@@ -8,6 +8,7 @@ BindsTo=pipewire.service
 
 [Service]
 Type=simple
+WorkingDirectory=@CMAKE_INSTALL_FULL_DATADIR@/gpu_upsampler
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/gpu_upsampler_alsa
 ExecReload=/bin/kill -HUP $MAINPID
 
