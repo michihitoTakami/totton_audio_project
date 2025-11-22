@@ -123,12 +123,17 @@ add_executable(gpu_upsampler_alsa
     src/eq_to_fir.cpp
 )
 
-# Link against core library, PipeWire, ALSA, and JSON
+# Link against core library, PipeWire, ALSA, JSON, and ZeroMQ
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     nlohmann_json::nlohmann_json
+    ${ZMQ_LIBRARIES}
+)
+target_include_directories(gpu_upsampler_alsa PRIVATE
+    ${ZMQ_INCLUDE_DIRS}
+    ${cppzmq_SOURCE_DIR}
 )
 
 # Compiler flags for ALSA daemon
