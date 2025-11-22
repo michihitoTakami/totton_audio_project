@@ -1,7 +1,8 @@
 #include "audio_io.h"
-#include "convolution_engine.h"
 #include "config_loader.h"
+#include "convolution_engine.h"
 #include "filter_metadata.h"
+
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
@@ -14,14 +15,16 @@ void printUsage(const char* programName) {
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --filter <path>    Path to filter coefficients .bin file" << std::endl;
-    std::cout << "                     (default: data/coefficients/filter_1m_min_phase.bin)" << std::endl;
+    std::cout << "                     (default: data/coefficients/filter_1m_min_phase.bin)"
+              << std::endl;
     std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << std::endl;
     std::cout << "  --block <size>     Block size for processing (default: 8192)" << std::endl;
     std::cout << "  --help             Show this help message" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
     std::cout << "  " << programName << " input_44k.wav output_705k.wav" << std::endl;
-    std::cout << "  " << programName << " test.wav upsampled.wav --ratio 16 --block 4096" << std::endl;
+    std::cout << "  " << programName << " test.wav upsampled.wav --ratio 16 --block 4096"
+              << std::endl;
 }
 
 struct Config {
@@ -119,8 +122,8 @@ int main(int argc, char* argv[]) {
             config.filterPath = std::string(preset.path);
             if (config.upsampleRatio != preset.upsampleRatio) {
                 std::cout << "Info: Overriding upsample ratio to preset value "
-                          << preset.upsampleRatio << "x for "
-                          << inputAudio.sampleRate << " Hz input" << std::endl;
+                          << preset.upsampleRatio << "x for " << inputAudio.sampleRate
+                          << " Hz input" << std::endl;
                 config.upsampleRatio = preset.upsampleRatio;
             }
             std::cout << "Auto-selected filter: " << preset.description << std::endl;
@@ -142,8 +145,8 @@ int main(int argc, char* argv[]) {
             if (targetPreset && applyPreset(*targetPreset)) {
                 // OK
             } else if (targetPreset == &FILTER_PRESET_48K) {
-                std::cerr << "Warning: 48kHz preset filter missing: "
-                          << FILTER_PRESET_48K.path << std::endl;
+                std::cerr << "Warning: 48kHz preset filter missing: " << FILTER_PRESET_48K.path
+                          << std::endl;
                 std::cerr << "To generate: "
                           << "python scripts/generate_filter.py --input-rate 48000 "
                           << "--stopband-start 24000 --passband-end 21500 "
@@ -157,7 +160,8 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "Error: Preset filter file not found: "
                           << (targetPreset ? targetPreset->path : "") << std::endl;
-                std::cerr << "Generate it via scripts/generate_filter.py or specify with --filter." << std::endl;
+                std::cerr << "Generate it via scripts/generate_filter.py or specify with --filter."
+                          << std::endl;
                 return 1;
             }
         } else {
@@ -177,7 +181,8 @@ int main(int argc, char* argv[]) {
                           << "--stopband-start 24000 --passband-end 21500 "
                           << "--output-prefix filter_48k_1m_min_phase" << std::endl;
             } else {
-                std::cerr << "Generate it via scripts/generate_filter.py or specify with --filter." << std::endl;
+                std::cerr << "Generate it via scripts/generate_filter.py or specify with --filter."
+                          << std::endl;
             }
             return 1;
         }
@@ -198,11 +203,8 @@ int main(int argc, char* argv[]) {
         if (inputAudio.channels == 1) {
             // Mono input
             std::cout << "  Processing mono channel..." << std::endl;
-            success = upsampler.processChannel(
-                inputAudio.data.data(),
-                inputAudio.frames,
-                outputLeft
-            );
+            success =
+                upsampler.processChannel(inputAudio.data.data(), inputAudio.frames, outputLeft);
 
             // Duplicate to stereo
             outputRight = outputLeft;
@@ -214,20 +216,11 @@ int main(int argc, char* argv[]) {
             std::vector<float> inputLeft(inputAudio.frames);
             std::vector<float> inputRight(inputAudio.frames);
 
-            AudioIO::Utils::interleavedToSeparate(
-                inputAudio.data.data(),
-                inputLeft.data(),
-                inputRight.data(),
-                inputAudio.frames
-            );
+            AudioIO::Utils::interleavedToSeparate(inputAudio.data.data(), inputLeft.data(),
+                                                  inputRight.data(), inputAudio.frames);
 
-            success = upsampler.processStereo(
-                inputLeft.data(),
-                inputRight.data(),
-                inputAudio.frames,
-                outputLeft,
-                outputRight
-            );
+            success = upsampler.processStereo(inputLeft.data(), inputRight.data(),
+                                              inputAudio.frames, outputLeft, outputRight);
 
         } else {
             std::cerr << "Error: Unsupported channel count: " << inputAudio.channels << std::endl;
@@ -245,12 +238,8 @@ int main(int argc, char* argv[]) {
         size_t outputFrames = outputLeft.size();
         std::vector<float> outputInterleaved(outputFrames * 2);
 
-        AudioIO::Utils::separateToInterleaved(
-            outputLeft.data(),
-            outputRight.data(),
-            outputInterleaved.data(),
-            outputFrames
-        );
+        AudioIO::Utils::separateToInterleaved(outputLeft.data(), outputRight.data(),
+                                              outputInterleaved.data(), outputFrames);
 
         // Step 5: Write output WAV file
         std::cout << std::endl << "Step 5: Writing output file..." << std::endl;
@@ -286,10 +275,10 @@ int main(int argc, char* argv[]) {
         double processingSpeed = inputDuration / stats.totalProcessingTime;
 
         std::cout << std::fixed << std::setprecision(2);
-        std::cout << "Input:  " << inputAudio.frames << " frames @ "
-                  << inputAudio.sampleRate << " Hz (" << inputDuration << " sec)" << std::endl;
-        std::cout << "Output: " << outputFrames << " frames @ "
-                  << outputSampleRate << " Hz" << std::endl;
+        std::cout << "Input:  " << inputAudio.frames << " frames @ " << inputAudio.sampleRate
+                  << " Hz (" << inputDuration << " sec)" << std::endl;
+        std::cout << "Output: " << outputFrames << " frames @ " << outputSampleRate << " Hz"
+                  << std::endl;
         std::cout << std::endl;
         std::cout << "Performance:" << std::endl;
         std::cout << "  Processing time: " << stats.totalProcessingTime << " sec" << std::endl;

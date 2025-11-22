@@ -1,29 +1,37 @@
 #include "eq_parser.h"
-#include <fstream>
-#include <sstream>
-#include <iostream>
-#include <regex>
+
 #include <algorithm>
 #include <cctype>
+#include <fstream>
+#include <iostream>
+#include <regex>
+#include <sstream>
 
 namespace EQ {
 
 size_t EqProfile::activeBandCount() const {
     size_t count = 0;
     for (const auto& band : bands) {
-        if (band.enabled) ++count;
+        if (band.enabled)
+            ++count;
     }
     return count;
 }
 
 const char* filterTypeName(FilterType type) {
     switch (type) {
-        case FilterType::PK: return "PK";
-        case FilterType::LS: return "LS";
-        case FilterType::HS: return "HS";
-        case FilterType::LP: return "LP";
-        case FilterType::HP: return "HP";
-        default: return "??";
+    case FilterType::PK:
+        return "PK";
+    case FilterType::LS:
+        return "LS";
+    case FilterType::HS:
+        return "HS";
+    case FilterType::LP:
+        return "LP";
+    case FilterType::HP:
+        return "HP";
+    default:
+        return "??";
     }
 }
 
@@ -31,11 +39,16 @@ FilterType parseFilterType(const std::string& typeStr) {
     std::string upper = typeStr;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
 
-    if (upper == "PK" || upper == "PEAK" || upper == "PEAKING") return FilterType::PK;
-    if (upper == "LS" || upper == "LSC" || upper == "LOWSHELF") return FilterType::LS;
-    if (upper == "HS" || upper == "HSC" || upper == "HIGHSHELF") return FilterType::HS;
-    if (upper == "LP" || upper == "LPQ" || upper == "LOWPASS") return FilterType::LP;
-    if (upper == "HP" || upper == "HPQ" || upper == "HIGHPASS") return FilterType::HP;
+    if (upper == "PK" || upper == "PEAK" || upper == "PEAKING")
+        return FilterType::PK;
+    if (upper == "LS" || upper == "LSC" || upper == "LOWSHELF")
+        return FilterType::LS;
+    if (upper == "HS" || upper == "HSC" || upper == "HIGHSHELF")
+        return FilterType::HS;
+    if (upper == "LP" || upper == "LPQ" || upper == "LOWPASS")
+        return FilterType::LP;
+    if (upper == "HP" || upper == "HPQ" || upper == "HIGHPASS")
+        return FilterType::HP;
 
     return FilterType::PK;  // Default to peaking
 }
@@ -43,7 +56,8 @@ FilterType parseFilterType(const std::string& typeStr) {
 // Helper to trim whitespace
 static std::string trim(const std::string& s) {
     auto start = s.find_first_not_of(" \t\r\n");
-    if (start == std::string::npos) return "";
+    if (start == std::string::npos)
+        return "";
     auto end = s.find_last_not_of(" \t\r\n");
     return s.substr(start, end - start + 1);
 }
@@ -72,7 +86,8 @@ static double extractNumber(const std::string& s) {
         }
     }
 
-    if (num.empty() || num == "-" || num == "+") return 0.0;
+    if (num.empty() || num == "-" || num == "+")
+        return 0.0;
     return std::stod(num);
 }
 
@@ -91,8 +106,7 @@ bool parseEqString(const std::string& content, EqProfile& profile) {
     // Example: Filter 1: ON PK Fc 140.3 Hz Gain -2 dB Q 0.81
     std::regex filterRegex(
         R"(Filter\s+(\d+):\s*(ON|OFF)\s+(\w+)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+([-+]?\d+\.?\d*)\s*dB\s+Q\s+([\d.]+))",
-        std::regex::icase
-    );
+        std::regex::icase);
 
     while (std::getline(stream, line)) {
         line = trim(line);
@@ -135,8 +149,10 @@ bool parseEqFile(const std::string& filePath, EqProfile& profile) {
     // Extract profile name from filename
     size_t lastSlash = filePath.find_last_of("/\\");
     size_t lastDot = filePath.find_last_of('.');
-    if (lastSlash == std::string::npos) lastSlash = 0;
-    else lastSlash++;
+    if (lastSlash == std::string::npos)
+        lastSlash = 0;
+    else
+        lastSlash++;
 
     if (lastDot != std::string::npos && lastDot > lastSlash) {
         profile.name = filePath.substr(lastSlash, lastDot - lastSlash);
@@ -152,9 +168,8 @@ bool parseEqFile(const std::string& filePath, EqProfile& profile) {
     bool result = parseEqString(buffer.str(), profile);
 
     if (result) {
-        std::cout << "EQ Parser: Loaded '" << profile.name << "' with "
-                  << profile.activeBandCount() << " active bands, preamp "
-                  << profile.preampDb << " dB" << std::endl;
+        std::cout << "EQ Parser: Loaded '" << profile.name << "' with " << profile.activeBandCount()
+                  << " active bands, preamp " << profile.preampDb << " dB" << std::endl;
     }
 
     return result;

@@ -1,8 +1,8 @@
 #ifndef FILTER_METADATA_H
 #define FILTER_METADATA_H
 
-#include <cstddef>
 #include <array>
+#include <cstddef>
 #include <string_view>
 
 struct FilterPreset {
@@ -14,24 +14,14 @@ struct FilterPreset {
 };
 
 inline constexpr FilterPreset FILTER_PRESET_44K = {
-    44100,
-    16,
-    "data/coefficients/filter_1m_min_phase.bin",
-    "1M-tap min-phase FIR for 44.1kHz → 705.6kHz (16x)",
-    1'000'000
-};
+    44100, 16, "data/coefficients/filter_1m_min_phase.bin",
+    "1M-tap min-phase FIR for 44.1kHz → 705.6kHz (16x)", 1'000'000};
 
 inline constexpr FilterPreset FILTER_PRESET_48K = {
-    48000,
-    16,
-    "data/coefficients/filter_48k_1m_min_phase.bin",
-    "1M-tap min-phase FIR for 48kHz → 768kHz (16x)",
-    1'000'000
-};
+    48000, 16, "data/coefficients/filter_48k_1m_min_phase.bin",
+    "1M-tap min-phase FIR for 48kHz → 768kHz (16x)", 1'000'000};
 
-inline constexpr std::array<FilterPreset, 2> FILTER_PRESETS = {
-    FILTER_PRESET_44K,
-    FILTER_PRESET_48K
-};
+inline constexpr std::array<FilterPreset, 2> FILTER_PRESETS = {FILTER_PRESET_44K,
+                                                               FILTER_PRESET_48K};
 
-#endif // FILTER_METADATA_H
+#endif  // FILTER_METADATA_H

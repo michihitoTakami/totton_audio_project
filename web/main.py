@@ -42,8 +42,10 @@ if static_dir.exists():
 # Data Models
 # ============================================================================
 
+
 class Settings(BaseModel):
     """Daemon configuration settings"""
+
     alsa_device: str = "hw:USB"
     input_sample_rate: int = 44100
     buffer_size: int = 262144
@@ -58,6 +60,7 @@ class Settings(BaseModel):
 
 class SettingsUpdate(BaseModel):
     """Partial settings update"""
+
     alsa_device: Optional[str] = None
     input_sample_rate: Optional[int] = None
     buffer_size: Optional[int] = None
@@ -72,6 +75,7 @@ class SettingsUpdate(BaseModel):
 
 class Status(BaseModel):
     """Current daemon status"""
+
     settings: Settings
     pipewire_connected: bool = False
     alsa_connected: bool = False
@@ -84,17 +88,20 @@ class Status(BaseModel):
 
 class RewireRequest(BaseModel):
     """PipeWire rewire request"""
+
     app_name: str  # e.g., "spotify", "firefox"
 
 
 class EqProfile(BaseModel):
     """Parametric EQ profile (future use)"""
+
     name: str
     bands: list[dict]  # [{freq, gain, q}, ...]
 
 
 class ApiResponse(BaseModel):
     """Standard API response"""
+
     success: bool
     message: str
     data: Optional[dict] = None
@@ -104,6 +111,7 @@ class ApiResponse(BaseModel):
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
 
 def load_config() -> Settings:
     """Load configuration from JSON file"""
@@ -120,7 +128,9 @@ def load_config() -> Settings:
                 upsample_ratio=data.get("upsampleRatio", 16),
                 block_size=data.get("blockSize", 4096),
                 gain=data.get("gain", 16.0),
-                filter_path=data.get("filterPath", "data/coefficients/filter_1m_min_phase.bin"),
+                filter_path=data.get(
+                    "filterPath", "data/coefficients/filter_1m_min_phase.bin"
+                ),
                 eq_enabled=data.get("eqEnabled", False),
                 eq_profile_path=data.get("eqProfilePath", ""),
             )
@@ -275,21 +285,21 @@ def get_alsa_devices() -> list[dict]:
         )
 
         import re
+
         # Parse: カード 3: AUDIO [SMSL USB AUDIO], デバイス 0: USB Audio [USB Audio]
         # Or:   card 3: AUDIO [SMSL USB AUDIO], device 0: USB Audio [USB Audio]
-        pattern = r'(?:カード|card)\s+(\d+):\s+(\w+)\s+\[([^\]]+)\],\s+(?:デバイス|device)\s+(\d+):\s+([^\[]+)\[([^\]]+)\]'
+        pattern = r"(?:カード|card)\s+(\d+):\s+(\w+)\s+\[([^\]]+)\],\s+(?:デバイス|device)\s+(\d+):\s+([^\[]+)\[([^\]]+)\]"
 
         for line in result.stdout.splitlines():
             match = re.search(pattern, line)
             if match:
-                card_num = match.group(1)
+                match.group(1)
                 card_id = match.group(2)
                 card_name = match.group(3).strip()
                 dev_num = match.group(4)
                 dev_desc = match.group(6).strip()
 
                 # Build hw:X,Y format
-                hw_id = f"hw:{card_id},DEV={dev_num}" if dev_num != "0" else f"hw:{card_id}"
 
                 # Build friendly name
                 if "USB" in card_name or "SMSL" in card_name:
@@ -299,11 +309,13 @@ def get_alsa_devices() -> list[dict]:
                 else:
                     friendly = f"{card_name} - {dev_desc}"
 
-                devices.append({
-                    "id": f"hw:CARD={card_id},DEV={dev_num}",
-                    "name": friendly,
-                    "card": card_id,
-                })
+                devices.append(
+                    {
+                        "id": f"hw:CARD={card_id},DEV={dev_num}",
+                        "name": friendly,
+                        "card": card_id,
+                    }
+                )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return devices
@@ -312,6 +324,7 @@ def get_alsa_devices() -> list[dict]:
 # ============================================================================
 # API Endpoints
 # ============================================================================
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -332,7 +345,11 @@ async def get_status():
     settings = load_config()
     daemon_running = check_daemon_running()
     pw_connected = check_pipewire_sink() if daemon_running else False
-    stats = load_stats() if daemon_running else {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+    stats = (
+        load_stats()
+        if daemon_running
+        else {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+    )
 
     return Status(
         settings=settings,
@@ -406,7 +423,8 @@ async def update_settings(update: SettingsUpdate):
 
     return ApiResponse(
         success=True,
-        message="Settings updated" + (" (restart required)" if restart_required else ""),
+        message="Settings updated"
+        + (" (restart required)" if restart_required else ""),
         restart_required=restart_required,
     )
 
@@ -414,6 +432,7 @@ async def update_settings(update: SettingsUpdate):
 # ============================================================================
 # Daemon Control API Endpoints
 # ============================================================================
+
 
 @app.post("/daemon/start", response_model=ApiResponse)
 async def daemon_start():
@@ -482,7 +501,9 @@ async def daemon_restart():
         running = check_daemon_running()
         return ApiResponse(
             success=running,
-            message="Daemon restarted successfully" if running else "Daemon failed to start after stop",
+            message="Daemon restarted successfully"
+            if running
+            else "Daemon failed to start after stop",
         )
     return ApiResponse(success=False, message=start_msg)
 
@@ -530,7 +551,9 @@ async def reload_daemon():
         pid = result.stdout.strip().split()[0]
         hup_result = subprocess.run(["kill", "-HUP", pid], timeout=5)
         if hup_result.returncode != 0:
-            raise HTTPException(status_code=500, detail="Failed to send SIGHUP to daemon")
+            raise HTTPException(
+                status_code=500, detail="Failed to send SIGHUP to daemon"
+            )
 
         await asyncio.sleep(0.25)
         running = check_daemon_running()
@@ -598,8 +621,9 @@ async def rewire_pipewire(request: RewireRequest):
         for out_port in output_ports[:2]:  # FL and FR
             for in_port in input_ports[:2]:
                 # Match FL to FL, FR to FR
-                if ("FL" in out_port and "FL" in in_port) or \
-                   ("FR" in out_port and "FR" in in_port):
+                if ("FL" in out_port and "FL" in in_port) or (
+                    "FR" in out_port and "FR" in in_port
+                ):
                     subprocess.run(
                         ["pw-link", out_port, in_port],
                         timeout=5,
@@ -614,12 +638,15 @@ async def rewire_pipewire(request: RewireRequest):
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="PipeWire command timed out")
     except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="pw-link not found. Is PipeWire installed?")
+        raise HTTPException(
+            status_code=500, detail="pw-link not found. Is PipeWire installed?"
+        )
 
 
 # ============================================================================
 # EQ API Endpoints
 # ============================================================================
+
 
 @app.get("/eq/profiles")
 async def list_eq_profiles():
@@ -628,11 +655,13 @@ async def list_eq_profiles():
     if EQ_PROFILES_DIR.exists():
         for f in EQ_PROFILES_DIR.iterdir():
             if f.is_file() and f.suffix == ".txt":
-                profiles.append({
-                    "name": f.stem,
-                    "filename": f.name,
-                    "path": str(f),
-                })
+                profiles.append(
+                    {
+                        "name": f.stem,
+                        "filename": f.name,
+                        "path": str(f),
+                    }
+                )
     return {"profiles": profiles}
 
 
@@ -747,6 +776,7 @@ async def list_devices():
 # ============================================================================
 # Embedded HTML UI
 # ============================================================================
+
 
 def get_embedded_html() -> str:
     """Return embedded HTML UI"""
@@ -1413,4 +1443,5 @@ async def admin_page():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=11881)

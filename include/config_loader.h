@@ -21,6 +21,7 @@ struct AppConfig {
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)
 };
 
-bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig, bool verbose = true);
+bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig,
+                   bool verbose = true);
 
-#endif // CONFIG_LOADER_H
+#endif  // CONFIG_LOADER_H

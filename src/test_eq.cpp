@@ -7,11 +7,12 @@
 #include "convolution_engine.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
+
+#include <cmath>
+#include <complex>
+#include <fstream>
 #include <iostream>
 #include <vector>
-#include <cmath>
-#include <fstream>
-#include <complex>
 
 constexpr float PI = 3.14159265358979323846f;
 constexpr int SAMPLE_RATE = 44100;
@@ -90,8 +91,10 @@ int main(int argc, char* argv[]) {
     std::string filterPath = "data/coefficients/filter_1m_min_phase.bin";
     std::string eqPath = "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt";
 
-    if (argc > 1) eqPath = argv[1];
-    if (argc > 2) filterPath = argv[2];
+    if (argc > 1)
+        eqPath = argv[1];
+    if (argc > 2)
+        filterPath = argv[2];
 
     // Initialize GPU upsampler
     std::cout << "\n1. Initializing GPU upsampler..." << std::endl;
@@ -130,8 +133,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Failed to parse EQ file" << std::endl;
         return 1;
     }
-    std::cout << "   EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
-              << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
+    std::cout << "   EQ: " << eqProfile.name << " (" << eqProfile.bands.size() << " bands, preamp "
+              << eqProfile.preampDb << " dB)" << std::endl;
 
     // Compute EQ magnitude and apply with minimum phase reconstruction
     std::cout << "\n5. Applying EQ to filter (minimum phase)..." << std::endl;
@@ -139,7 +142,8 @@ int main(int argc, char* argv[]) {
     size_t fullFftSize = upsampler.getFullFftSize();      // N (full FFT)
     int upsampleRatio = upsampler.getUpsampleRatio();
     double outputSampleRate = SAMPLE_RATE * upsampleRatio;
-    auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+    auto eqMagnitude =
+        EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
     if (!upsampler.applyEqMagnitude(eqMagnitude)) {
         std::cerr << "Failed to apply EQ magnitude" << std::endl;
@@ -171,8 +175,10 @@ int main(int argc, char* argv[]) {
     auto spectrumWithEq = computeSpectrum(outputWithEq, analysisFFTSize);
 
     // Save to CSV
-    saveSpectrumCSV("test_output/spectrum_no_eq.csv", spectrumNoEq, outputSampleRate, analysisFFTSize);
-    saveSpectrumCSV("test_output/spectrum_with_eq.csv", spectrumWithEq, outputSampleRate, analysisFFTSize);
+    saveSpectrumCSV("test_output/spectrum_no_eq.csv", spectrumNoEq, outputSampleRate,
+                    analysisFFTSize);
+    saveSpectrumCSV("test_output/spectrum_with_eq.csv", spectrumWithEq, outputSampleRate,
+                    analysisFFTSize);
 
     // Compute difference
     std::cout << "\n8. Computing EQ effect (difference)..." << std::endl;
@@ -180,7 +186,8 @@ int main(int argc, char* argv[]) {
     for (size_t i = 0; i < spectrumNoEq.size(); ++i) {
         difference[i] = spectrumWithEq[i] - spectrumNoEq[i];
     }
-    saveSpectrumCSV("test_output/spectrum_difference.csv", difference, outputSampleRate, analysisFFTSize);
+    saveSpectrumCSV("test_output/spectrum_difference.csv", difference, outputSampleRate,
+                    analysisFFTSize);
 
     // Report significant differences
     std::cout << "\n========================================" << std::endl;
