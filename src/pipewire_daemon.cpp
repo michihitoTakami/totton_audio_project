@@ -1,13 +1,14 @@
 #include "convolution_engine.h"
+
+#include <algorithm>
+#include <atomic>
+#include <csignal>
+#include <cstring>
+#include <iostream>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/props.h>
-#include <iostream>
 #include <vector>
-#include <cstring>
-#include <csignal>
-#include <atomic>
-#include <algorithm>
 
 // Configuration
 constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
@@ -20,11 +21,13 @@ constexpr int CHANNELS = 2;
 // Using atomic for thread-safety between PipeWire callbacks and main thread
 static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
 static std::atomic<int> g_current_output_rate{DEFAULT_OUTPUT_SAMPLE_RATE};
-static std::atomic<int> g_current_rate_family_int{static_cast<int>(ConvolutionEngine::RateFamily::RATE_44K)};
+static std::atomic<int> g_current_rate_family_int{
+    static_cast<int>(ConvolutionEngine::RateFamily::RATE_44K)};
 
 // Helper to get/set rate family atomically
 inline ConvolutionEngine::RateFamily g_get_rate_family() {
-    return static_cast<ConvolutionEngine::RateFamily>(g_current_rate_family_int.load(std::memory_order_acquire));
+    return static_cast<ConvolutionEngine::RateFamily>(
+        g_current_rate_family_int.load(std::memory_order_acquire));
 }
 inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
     g_current_rate_family_int.store(static_cast<int>(family), std::memory_order_release);
@@ -46,9 +49,15 @@ struct AudioRingBuffer {
         head = tail = size = 0;
     }
 
-    size_t capacity() const { return buffer.size(); }
-    size_t availableToRead() const { return size; }
-    size_t availableToWrite() const { return capacity() - size; }
+    size_t capacity() const {
+        return buffer.size();
+    }
+    size_t availableToRead() const {
+        return size;
+    }
+    size_t availableToWrite() const {
+        return capacity() - size;
+    }
 
     bool write(const float* data, size_t count) {
         if (count > availableToWrite()) {
@@ -85,7 +94,8 @@ static AudioRingBuffer g_output_buffer_left;
 static AudioRingBuffer g_output_buffer_right;
 static std::vector<float> g_output_temp_left;
 static std::vector<float> g_output_temp_right;
-static constexpr size_t OUTPUT_RING_CAPACITY = DEFAULT_OUTPUT_SAMPLE_RATE * 2; // ~2 seconds per channel
+// Use 768kHz (48k family max) as base to ensure sufficient capacity for both rate families
+static constexpr size_t OUTPUT_RING_CAPACITY = 768000 * 2;  // ~2 seconds per channel at max rate
 
 // PipeWire objects
 struct Data {
@@ -136,8 +146,10 @@ static void signal_handler(int sig) {
     // Switch coefficient set (glitch-free via double buffering)
     if (g_upsampler->switchRateFamily(new_family)) {
         g_set_rate_family(new_family);
-        g_current_input_rate.store(ConvolutionEngine::getBaseSampleRate(new_family), std::memory_order_release);
-        g_current_output_rate.store(ConvolutionEngine::getOutputSampleRate(new_family), std::memory_order_release);
+        g_current_input_rate.store(ConvolutionEngine::getBaseSampleRate(new_family),
+                                   std::memory_order_release);
+        g_current_output_rate.store(ConvolutionEngine::getOutputSampleRate(new_family),
+                                    std::memory_order_release);
         return true;
     }
 
@@ -159,8 +171,10 @@ static void on_input_process(void* userdata) {
 
     if (input_samples && n_frames > 0 && data->gpu_ready) {
         // Deinterleave input (stereo interleaved → separate L/R) using scratch buffers
-        if (data->input_left.size() < n_frames) data->input_left.resize(n_frames);
-        if (data->input_right.size() < n_frames) data->input_right.resize(n_frames);
+        if (data->input_left.size() < n_frames)
+            data->input_left.resize(n_frames);
+        if (data->input_right.size() < n_frames)
+            data->input_right.resize(n_frames);
 
         for (uint32_t i = 0; i < n_frames; ++i) {
             data->input_left[i] = input_samples[i * 2];
@@ -174,27 +188,20 @@ static void on_input_process(void* userdata) {
         while (true) {
             size_t frames_to_process = first_iteration ? n_frames : 0;
             bool left_generated = g_upsampler->processStreamBlock(
-                data->input_left.data(),
-                frames_to_process,
-                data->output_left,
-                g_upsampler->streamLeft_,
-                data->stream_input_left,
-                data->stream_accum_left
-            );
+                data->input_left.data(), frames_to_process, data->output_left,
+                g_upsampler->streamLeft_, data->stream_input_left, data->stream_accum_left);
             bool right_generated = g_upsampler->processStreamBlock(
-                data->input_right.data(),
-                frames_to_process,
-                data->output_right,
-                g_upsampler->streamRight_,
-                data->stream_input_right,
-                data->stream_accum_right
-            );
+                data->input_right.data(), frames_to_process, data->output_right,
+                g_upsampler->streamRight_, data->stream_input_right, data->stream_accum_right);
 
             if (left_generated && right_generated) {
                 // Store output for consumption by output stream
-                if (!g_output_buffer_left.write(data->output_left.data(), data->output_left.size()) ||
-                    !g_output_buffer_right.write(data->output_right.data(), data->output_right.size())) {
-                std::cerr << "Warning: Output ring buffer overflow - dropping samples" << std::endl;
+                if (!g_output_buffer_left.write(data->output_left.data(),
+                                                data->output_left.size()) ||
+                    !g_output_buffer_right.write(data->output_right.data(),
+                                                 data->output_right.size())) {
+                    std::cerr << "Warning: Output ring buffer overflow - dropping samples"
+                              << std::endl;
                 }
                 // Continue loop: there might be enough accumulated input for another block.
                 first_iteration = false;
@@ -227,8 +234,10 @@ static void on_output_process(void* userdata) {
                                     g_output_buffer_right.availableToRead());
 
         if (available >= n_frames) {
-            if (g_output_temp_left.size() < n_frames) g_output_temp_left.resize(n_frames);
-            if (g_output_temp_right.size() < n_frames) g_output_temp_right.resize(n_frames);
+            if (g_output_temp_left.size() < n_frames)
+                g_output_temp_left.resize(n_frames);
+            if (g_output_temp_right.size() < n_frames)
+                g_output_temp_right.resize(n_frames);
 
             bool read_left = g_output_buffer_left.read(g_output_temp_left.data(), n_frames);
             bool read_right = g_output_buffer_right.read(g_output_temp_right.data(), n_frames);
@@ -255,7 +264,7 @@ static void on_output_process(void* userdata) {
 
 // Stream state changed callback
 static void on_stream_state_changed(void* userdata, enum pw_stream_state old_state,
-                                   enum pw_stream_state state, const char* error) {
+                                    enum pw_stream_state state, const char* error) {
     (void)userdata;
     (void)old_state;
 
@@ -315,13 +324,9 @@ int main(int argc, char* argv[]) {
     bool init_success = false;
     if (use_dual_rate) {
         std::cout << "Mode: Dual-Rate (44.1kHz + 48kHz families)" << std::endl;
-        init_success = g_upsampler->initializeDualRate(
-            filter_path_44k,
-            filter_path_48k,
-            UPSAMPLE_RATIO,
-            BLOCK_SIZE,
-            ConvolutionEngine::RateFamily::RATE_44K
-        );
+        init_success =
+            g_upsampler->initializeDualRate(filter_path_44k, filter_path_48k, UPSAMPLE_RATIO,
+                                            BLOCK_SIZE, ConvolutionEngine::RateFamily::RATE_44K);
     } else {
         std::cout << "Mode: Single-Rate (44.1kHz family only)" << std::endl;
         init_success = g_upsampler->initialize(filter_path_44k, UPSAMPLE_RATIO, BLOCK_SIZE);
@@ -332,7 +337,8 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         return 1;
     }
-    std::cout << "GPU upsampler ready (16x upsampling, " << BLOCK_SIZE << " samples/block)" << std::endl;
+    std::cout << "GPU upsampler ready (16x upsampling, " << BLOCK_SIZE << " samples/block)"
+              << std::endl;
     if (!g_upsampler->initializeStreaming()) {
         std::cerr << "Failed to initialize streaming mode" << std::endl;
         delete g_upsampler;
@@ -363,21 +369,12 @@ int main(int argc, char* argv[]) {
     // Create input stream to capture from gpu_upsampler_sink.monitor
     std::cout << "Creating input stream (capturing from gpu_upsampler_sink)..." << std::endl;
     data.input_stream = pw_stream_new_simple(
-        loop,
-        "GPU Upsampler Input",
-        pw_properties_new(
-            PW_KEY_MEDIA_TYPE, "Audio",
-            PW_KEY_MEDIA_CATEGORY, "Capture",
-            PW_KEY_MEDIA_ROLE, "Music",
-            PW_KEY_NODE_DESCRIPTION, "GPU Upsampler Input",
-            PW_KEY_NODE_TARGET, "gpu_upsampler_sink.monitor",
-            "audio.channels", "2",
-            "audio.position", "FL,FR",
-            nullptr
-        ),
-        &input_stream_events,
-        &data
-    );
+        loop, "GPU Upsampler Input",
+        pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
+                          PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
+                          "GPU Upsampler Input", PW_KEY_NODE_TARGET, "gpu_upsampler_sink.monitor",
+                          "audio.channels", "2", "audio.position", "FL,FR", nullptr),
+        &input_stream_events, &data);
 
     // Configure input stream audio format (32-bit float stereo @ 44.1kHz)
     uint8_t input_buffer[1024];
@@ -394,38 +391,25 @@ int main(int argc, char* argv[]) {
     input_params[0] = spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
 
     pw_stream_connect(
-        data.input_stream,
-        PW_DIRECTION_INPUT,
-        PW_ID_ANY,
-        static_cast<pw_stream_flags>(
-            PW_STREAM_FLAG_MAP_BUFFERS |
-            PW_STREAM_FLAG_RT_PROCESS |
-            PW_STREAM_FLAG_AUTOCONNECT
-        ),
-        input_params, 1
-    );
+        data.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
+        static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS |
+                                     PW_STREAM_FLAG_AUTOCONNECT),
+        input_params, 1);
 
     // Create output stream (705.6kHz playback to DAC)
     std::cout << "Creating output stream (705.6kHz)..." << std::endl;
     data.output_stream = pw_stream_new_simple(
-        loop,
-        "GPU Upsampler Output",
-        pw_properties_new(
-            PW_KEY_MEDIA_TYPE, "Audio",
-            PW_KEY_MEDIA_CATEGORY, "Playback",
-            PW_KEY_MEDIA_ROLE, "Music",
-            PW_KEY_NODE_TARGET, "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo",
-            "audio.channels", "2",
-            "audio.position", "FL,FR",
-            nullptr
-        ),
-        &output_stream_events,
-        &data
-    );
+        loop, "GPU Upsampler Output",
+        pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
+                          PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_TARGET,
+                          "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo", "audio.channels",
+                          "2", "audio.position", "FL,FR", nullptr),
+        &output_stream_events, &data);
 
     // Configure output stream audio format (32-bit float stereo @ 705.6kHz)
     uint8_t output_buffer[1024];
-    struct spa_pod_builder output_builder = SPA_POD_BUILDER_INIT(output_buffer, sizeof(output_buffer));
+    struct spa_pod_builder output_builder =
+        SPA_POD_BUILDER_INIT(output_buffer, sizeof(output_buffer));
 
     struct spa_audio_info_raw output_info = {};
     output_info.format = SPA_AUDIO_FORMAT_F32;
@@ -435,19 +419,14 @@ int main(int argc, char* argv[]) {
     output_info.position[1] = SPA_AUDIO_CHANNEL_FR;
 
     const struct spa_pod* output_params[1];
-    output_params[0] = spa_format_audio_raw_build(&output_builder, SPA_PARAM_EnumFormat, &output_info);
+    output_params[0] =
+        spa_format_audio_raw_build(&output_builder, SPA_PARAM_EnumFormat, &output_info);
 
     pw_stream_connect(
-        data.output_stream,
-        PW_DIRECTION_OUTPUT,
-        PW_ID_ANY,
-        static_cast<pw_stream_flags>(
-            PW_STREAM_FLAG_MAP_BUFFERS |
-            PW_STREAM_FLAG_RT_PROCESS |
-            PW_STREAM_FLAG_AUTOCONNECT
-        ),
-        output_params, 1
-    );
+        data.output_stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
+        static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS |
+                                     PW_STREAM_FLAG_AUTOCONNECT),
+        output_params, 1);
 
     std::cout << std::endl;
     std::cout << "System ready. Audio routing configured:" << std::endl;
@@ -455,7 +434,8 @@ int main(int argc, char* argv[]) {
     std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (16x upsampling)" << std::endl;
     std::cout << "  3. GPU Upsampler → SMSL DAC (705.6kHz output)" << std::endl;
     std::cout << std::endl;
-    std::cout << "Select 'GPU Upsampler (705.6kHz)' as output device in sound settings." << std::endl;
+    std::cout << "Select 'GPU Upsampler (705.6kHz)' as output device in sound settings."
+              << std::endl;
     std::cout << "Press Ctrl+C to stop." << std::endl;
     std::cout << "========================================" << std::endl;
 
