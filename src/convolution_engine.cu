@@ -464,7 +464,8 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
 
         // Search for matching file (tap count may vary)
         std::string foundPath;
-        for (int taps : {1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2000000}) {
+        for (int taps :
+             {1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2000000}) {
             std::string testPath = filename + std::to_string(taps) + "_min_phase.bin";
             std::ifstream testFile(testPath, std::ios::binary);
             if (testFile.good()) {
@@ -474,13 +475,18 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
         }
 
         if (foundPath.empty()) {
-            std::cerr << "Error: Cannot find coefficient file for " << familyStr
-                      << " " << config.ratio << "x in " << coefficientDir << std::endl;
+            std::cerr << "Error: Cannot find coefficient file for " << familyStr << " " << config.ratio
+                      << "x in " << coefficientDir << std::endl;
             return false;
         }
 
         // Load coefficients
         std::ifstream ifs(foundPath, std::ios::binary);
+        if (!ifs) {
+            std::cerr << "Error: Cannot open coefficient file: " << foundPath << std::endl;
+            return false;
+        }
+
         ifs.seekg(0, std::ios::end);
         size_t fileSize = ifs.tellg();
         ifs.seekg(0, std::ios::beg);
@@ -489,12 +495,17 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
         h_filterCoeffsMulti_[i].resize(taps);
         ifs.read(reinterpret_cast<char*>(h_filterCoeffsMulti_[i].data()), fileSize);
 
+        if (!ifs) {
+            std::cerr << "Error: Failed to read coefficient file: " << foundPath << std::endl;
+            return false;
+        }
+
         if (taps > maxTaps) {
             maxTaps = taps;
         }
 
-        std::cout << "  Loaded " << familyStr << "_" << config.ratio << "x: "
-                  << taps << " taps (" << fileSize / 1024 << " KB)" << std::endl;
+        std::cout << "  Loaded " << familyStr << "_" << config.ratio << "x: " << taps << " taps ("
+                  << fileSize / 1024 << " KB)" << std::endl;
         ++loadedCount;
     }
 
@@ -503,9 +514,11 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
         return false;
     }
 
-    // Use the initial config's coefficients as primary
-    filterTaps_ = h_filterCoeffsMulti_[currentMultiRateIndex_].size();
+    // Use the maximum tap count across all filters for buffer sizing
+    // This ensures FFT buffers are large enough for any filter
+    filterTaps_ = maxTaps;
     h_filterCoeffs_ = h_filterCoeffsMulti_[currentMultiRateIndex_];
+    std::cout << "  Max filter taps: " << maxTaps << " (used for buffer sizing)" << std::endl;
 
     // Setup GPU resources
     if (!setupGPUResources()) {
