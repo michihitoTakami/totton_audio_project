@@ -2,27 +2,32 @@
 """
 GPU Audio Upsampler - Phase 1: Filter Coefficient Generation
 
-1,000,000タップの最小位相FIRフィルタを生成し、検証する。
+最小位相FIRフィルタを生成し、検証する。
 
 仕様:
-- タップ数: 1,000,000 (1M)
+- タップ数: 2,000,000 (2M) デフォルト、コマンドラインで変更可能
 - 位相特性: 最小位相（プリリンギング排除）
 - 通過帯域: 0-20,000 Hz
 - 阻止帯域: 22,050 Hz以降
-- 阻止帯域減衰: -220 dB以下（100万タップで達成可能）
-- 窓関数: Kaiser (β ≈ 50)
+- 阻止帯域減衰: -220 dB以下
+- 窓関数: Kaiser (β ≈ 55)
 - アップサンプリング倍率: 16倍
+
+注意:
+- タップ数は16の倍数であること（アップサンプリング比率との整合性）
+- クリッピング防止のため係数は正規化される
 """
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 import numpy as np
 from scipy import signal
 import matplotlib.pyplot as plt
 
 # デフォルト定数（必要に応じてコマンドラインで上書き）
-N_TAPS = 1_000_000  # 1M taps (100万タップ)
+N_TAPS = 2_000_000  # 2M taps (200万タップ)
 SAMPLE_RATE_INPUT = 44100  # 入力サンプルレート (Hz)
 UPSAMPLE_RATIO = 16  # アップサンプリング倍率
 SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO  # 出力サンプルレート
@@ -32,7 +37,8 @@ PASSBAND_END = 20000  # 通過帯域終端 (Hz)
 STOPBAND_START = 22050  # 阻止帯域開始 (Hz) - ナイキスト周波数
 STOPBAND_ATTENUATION_DB = 220  # 阻止帯域減衰量 (dB)
 # Kaiser βパラメータ: A(dB)の減衰量に対して β ≈ 0.1102*(A-8.7)
-KAISER_BETA = 50  # Kaiser窓のβパラメータ
+# 2Mタップでは55を使用してより高い減衰を目指す
+KAISER_BETA = 55  # Kaiser窓のβパラメータ
 OUTPUT_PREFIX = None
 
 
@@ -95,7 +101,7 @@ def convert_to_minimum_phase(h_linear):
     # n_fft: FFTサイズ（時間エイリアシング防止のため、タップ数の8倍に設定）
     # ホモモルフィック処理では周波数領域で対数操作を行うため、
     # 十分なFFTサイズを確保しないと因果性が壊れプリリンギングが残留する
-    # 100万tapsの場合、8倍=8,388,608（2^23）を使用
+    # 例: 2Mタップの場合、8倍=16,777,216（2^24）を使用
     # これは非常に大きなFFTなので、処理に時間がかかる（数分～数十分）
     n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 8)))
     print(f"  警告: FFTサイズ {n_fft:,} は非常に大きいため、処理に時間がかかります（数分～数十分）")
@@ -345,17 +351,82 @@ def parse_args():
                         help="Input sample rate (Hz). Default: 44100")
     parser.add_argument("--upsample-ratio", type=int, default=16,
                         help="Upsampling ratio. Default: 16")
-    parser.add_argument("--taps", type=int, default=1_000_000,
-                        help="Number of filter taps. Default: 1000000")
+    parser.add_argument("--taps", type=int, default=2_000_000,
+                        help="Number of filter taps. Default: 2000000 (2M)")
     parser.add_argument("--passband-end", type=int, default=20000,
                         help="Passband end frequency (Hz). Default: 20000")
     parser.add_argument("--stopband-start", type=int, default=22050,
                         help="Stopband start frequency (Hz). Default: 22050")
-    parser.add_argument("--kaiser-beta", type=float, default=50.0,
-                        help="Kaiser window beta. Default: 50")
+    parser.add_argument("--stopband-attenuation", type=int, default=220,
+                        help="Target stopband attenuation (dB). Default: 220")
+    parser.add_argument("--kaiser-beta", type=float, default=55.0,
+                        help="Kaiser window beta. Default: 55")
     parser.add_argument("--output-prefix", type=str, default=None,
-                        help="Output file basename (without extension). Default: auto (e.g., filter_48k_1m_min_phase)")
+                        help="Output file basename (without extension). Default: auto (e.g., filter_44k_2m_min_phase)")
     return parser.parse_args()
+
+
+def validate_tap_count(taps, upsample_ratio):
+    """
+    タップ数がアップサンプリング比率の倍数であることを確認する。
+
+    Args:
+        taps: タップ数
+        upsample_ratio: アップサンプリング比率
+
+    Raises:
+        ValueError: タップ数が倍数でない場合
+    """
+    if taps % upsample_ratio != 0:
+        raise ValueError(
+            f"タップ数 {taps:,} はアップサンプリング比率 {upsample_ratio} の倍数である必要があります。"
+            f"\n  推奨: {(taps // upsample_ratio) * upsample_ratio:,} または "
+            f"{((taps // upsample_ratio) + 1) * upsample_ratio:,}"
+        )
+    print(f"✓ タップ数 {taps:,} は {upsample_ratio} の倍数です")
+
+
+def normalize_coefficients(h):
+    """
+    フィルタ係数を正規化してクリッピングを防止する。
+
+    DCゲインを1.0に正規化し、最大振幅をチェックする。
+
+    Args:
+        h: フィルタ係数
+
+    Returns:
+        正規化されたフィルタ係数と正規化情報
+
+    Raises:
+        ValueError: DCゲインが0に近すぎる場合
+    """
+    # DCゲイン（係数の総和）を計算
+    dc_gain = np.sum(h)
+
+    # ゼロ除算防止
+    if abs(dc_gain) < 1e-12:
+        raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
+
+    # 正規化（DCゲイン = 1.0）
+    h_normalized = h / dc_gain
+
+    # 最大振幅チェック
+    max_amplitude = np.max(np.abs(h_normalized))
+
+    info = {
+        'original_dc_gain': float(dc_gain),
+        'normalized_dc_gain': float(np.sum(h_normalized)),
+        'max_coefficient_amplitude': float(max_amplitude),
+        'normalization_applied': True
+    }
+
+    print(f"\n係数正規化:")
+    print(f"  元のDCゲイン: {dc_gain:.6f}")
+    print(f"  正規化後DCゲイン: {np.sum(h_normalized):.6f}")
+    print(f"  最大係数振幅: {max_amplitude:.6f}")
+
+    return h_normalized, info
 
 
 def main():
@@ -374,9 +445,13 @@ def main():
     SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO
     PASSBAND_END = args.passband_end
     STOPBAND_START = args.stopband_start
+    STOPBAND_ATTENUATION_DB = args.stopband_attenuation
     KAISER_BETA = args.kaiser_beta
     N_TAPS = args.taps
     OUTPUT_PREFIX = args.output_prefix
+
+    # 0. タップ数の検証（16の倍数であること）
+    validate_tap_count(N_TAPS, UPSAMPLE_RATIO)
 
     # 1. 線形位相フィルタ設計
     h_linear = design_linear_phase_filter()
@@ -384,14 +459,17 @@ def main():
     # 2. 最小位相変換
     h_min_phase = convert_to_minimum_phase(h_linear)
 
-    # 3. 仕様検証
-    validation_results = validate_specifications(h_min_phase)
+    # 3. 係数正規化（クリッピング防止）
+    h_min_phase, normalization_info = normalize_coefficients(h_min_phase)
 
-    # 4. プロット生成
+    # 4. 仕様検証
+    validation_results = validate_specifications(h_min_phase)
+    validation_results['normalization'] = normalization_info
+
+    # 5. プロット生成
     plot_responses(h_linear, h_min_phase)
 
-    # 5. メタデータ作成
-    from datetime import datetime
+    # 6. メタデータ作成
     metadata = {
         'generation_date': datetime.now().isoformat(),
         'n_taps': N_TAPS,
@@ -405,13 +483,13 @@ def main():
         'validation_results': validation_results
     }
 
-    # 6. 係数エクスポート
+    # 7. 係数エクスポート
     taps_label = f"{N_TAPS // 1_000_000}m" if N_TAPS % 1_000_000 == 0 else f"{N_TAPS}"
     base_name = OUTPUT_PREFIX or f"filter_{SAMPLE_RATE_INPUT // 1000}k_{taps_label}_min_phase"
     metadata['output_basename'] = base_name
     export_coefficients(h_min_phase, metadata)
 
-    # 7. 最終レポート
+    # 8. 最終レポート
     print("\n" + "=" * 70)
     print(f"Phase 1 完了 - {N_TAPS:,}タップフィルタ")
     print("=" * 70)
@@ -419,6 +497,7 @@ def main():
     print(f"✓ 阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
     print(f"  {'合格' if validation_results['meets_stopband_spec'] else '不合格'} (目標: {STOPBAND_ATTENUATION_DB} dB以上)")
     print(f"✓ 最小位相特性: {'確認済み' if validation_results['is_minimum_phase'] else '要確認'}")
+    print(f"✓ 係数正規化: DCゲイン={normalization_info['normalized_dc_gain']:.6f}")
     print(f"✓ 係数ファイル: data/coefficients/{base_name}.bin")
     print(f"✓ 検証プロット: plots/analysis/")
     print("=" * 70)
