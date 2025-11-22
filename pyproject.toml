@@ -21,6 +21,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "detect-secrets>=1.5.0",
+    "mypy>=1.13.0",
 ]
 
 [tool.pytest.ini_options]
@@ -38,3 +39,14 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+no_strict_optional = true
+warn_return_any = false
+warn_unused_ignores = true
+show_error_codes = true
+# Start with relaxed settings, gradually tighten
+check_untyped_defs = false
+disallow_untyped_defs = false

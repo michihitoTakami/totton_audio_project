@@ -49,6 +49,20 @@ repos:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
 
+  # Pre-push: Type checking with mypy
+  # Uses system Python to access project dependencies
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy type checker
+        entry: uv run mypy
+        language: system
+        types: [python]
+        args: [--config-file=pyproject.toml]
+        stages: [pre-push]
+        pass_filenames: false
+        files: ^(scripts|web|tests/python)/.*\.py$
+
   # Pre-push: Diff-based tests
   # Only runs tests relevant to changed files
   - repo: local
