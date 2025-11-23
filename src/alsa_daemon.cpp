@@ -81,11 +81,12 @@ static size_t g_stream_accumulated_right = 0;
 
 // Crossfeed (HRTF) processor
 static CrossfeedEngine::HRTFProcessor* g_hrtf_processor = nullptr;
-static std::atomic<bool> g_crossfeed_enabled{false};  // Atomic for thread-safe access
+static std::atomic<bool> g_crossfeed_enabled{false};  // Atomic for quick check
 static std::vector<float> g_cf_stream_input_left;
 static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
 static size_t g_cf_stream_accumulated_right = 0;
+static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -322,6 +323,7 @@ static void zeromq_listener_thread() {
             } else if (cmd == "STATS") {
                 response = "OK:" + build_stats_json();
             } else if (cmd == "CROSSFEED_ENABLE") {
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 if (g_hrtf_processor) {
                     // Reset streaming state to avoid stale data from previous session
                     g_hrtf_processor->resetStreaming();
@@ -337,12 +339,14 @@ static void zeromq_listener_thread() {
                     response = "ERR:HRTF processor not initialized";
                 }
             } else if (cmd == "CROSSFEED_DISABLE") {
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 g_crossfeed_enabled.store(false);
                 if (g_hrtf_processor) {
                     g_hrtf_processor->setEnabled(false);
                 }
                 response = "OK:Crossfeed disabled";
             } else if (cmd == "CROSSFEED_STATUS") {
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 bool enabled = g_crossfeed_enabled.load();
                 bool initialized = (g_hrtf_processor != nullptr);
                 response = "OK:{\"enabled\":" + std::string(enabled ? "true" : "false") +
@@ -441,27 +445,40 @@ static void on_input_process(void* userdata) {
         // Only store output if both channels generated output
         // (they should synchronize due to same input size)
         if (left_generated && right_generated) {
-            // Apply crossfeed (HRTF) if enabled
-            if (g_crossfeed_enabled.load() && g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                std::vector<float> cf_output_left, cf_output_right;
-                // Use default CUDA stream (0) for crossfeed processing
-                // This ensures proper synchronization without coupling to upsampler's streams
-                bool cf_generated = g_hrtf_processor->processStreamBlock(
-                    output_left.data(), output_right.data(), output_left.size(), cf_output_left,
-                    cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                    g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
+            // Quick atomic check first to avoid lock overhead when crossfeed is disabled
+            if (g_crossfeed_enabled.load()) {
+                // Apply crossfeed (HRTF) - lock protects HRTFProcessor and CF buffers
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                // Re-check under lock (double-checked locking pattern)
+                if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
+                    std::vector<float> cf_output_left, cf_output_right;
+                    // Use default CUDA stream (0) for crossfeed processing
+                    bool cf_generated = g_hrtf_processor->processStreamBlock(
+                        output_left.data(), output_right.data(), output_left.size(), cf_output_left,
+                        cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
+                        g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
 
-                if (cf_generated) {
-                    // Store crossfeed output for ALSA thread consumption
+                    if (cf_generated) {
+                        // Store crossfeed output for ALSA thread consumption
+                        std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                        g_output_buffer_left.insert(g_output_buffer_left.end(),
+                                                    cf_output_left.begin(), cf_output_left.end());
+                        g_output_buffer_right.insert(g_output_buffer_right.end(),
+                                                     cf_output_right.begin(),
+                                                     cf_output_right.end());
+                        g_buffer_cv.notify_one();
+                    }
+                    // Note: If crossfeed didn't generate output yet (accumulating),
+                    // we don't store anything this iteration
+                } else {
+                    // Crossfeed was disabled while we were waiting for lock
                     std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                    g_output_buffer_left.insert(g_output_buffer_left.end(), cf_output_left.begin(),
-                                                cf_output_left.end());
-                    g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                                 cf_output_right.begin(), cf_output_right.end());
+                    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(),
+                                                output_left.end());
+                    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
+                                                 output_right.end());
                     g_buffer_cv.notify_one();
                 }
-                // Note: If crossfeed didn't generate output yet (accumulating),
-                // we don't store anything this iteration
             } else {
                 // Bypass crossfeed - store upsampler output directly
                 std::lock_guard<std::mutex> lock(g_buffer_mutex);
