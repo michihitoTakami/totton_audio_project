@@ -80,6 +80,7 @@ add_library(gpu_upsampler_core STATIC
     src/gpu/gpu_upsampler_multi_rate.cu
     src/gpu/gpu_upsampler_streaming.cu
     src/gpu/gpu_upsampler_eq.cu
+    src/gpu/crossfeed_engine.cu
 )
 
 # CUDA architecture (RTX 2070 Super = Compute Capability 7.5)
@@ -94,6 +95,7 @@ target_link_libraries(gpu_upsampler_core PUBLIC
     CUDA::cudart
     CUDA::cufft
     ${SNDFILE_LIBRARIES}
+    nlohmann_json::nlohmann_json
 )
 
 # Conditionally link NVML if available
@@ -379,3 +381,21 @@ target_include_directories(audio_common_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(audio_common_tests)
+
+# Crossfeed Engine tests (GPU required)
+add_executable(crossfeed_tests
+    tests/gpu/test_crossfeed_engine.cu
+)
+target_link_libraries(crossfeed_tests
+    GTest::gtest_main
+    gpu_upsampler_core
+    nlohmann_json::nlohmann_json
+)
+target_include_directories(crossfeed_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+set_target_properties(crossfeed_tests PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_ARCHITECTURES "75"
+)
+gtest_discover_tests(crossfeed_tests)
