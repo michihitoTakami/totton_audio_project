@@ -90,8 +90,7 @@ class FilterConfig:
     def __post_init__(self) -> None:
         if self.stopband_start is None:
             self.stopband_start = self.input_rate // 2
-        # 線形位相の奇数タップ要件はdesign_linear_phase()内で自動調整される
-        # （偶数指定時は+1して奇数化）
+        # 線形位相はfinal_tapsで比率の倍数に調整される
 
     @property
     def output_rate(self) -> int:
@@ -103,13 +102,9 @@ class FilterConfig:
 
     @property
     def final_taps(self) -> int:
-        """最終的なタップ数（線形位相は奇数化+比率倍数パディング）"""
+        """最終的なタップ数（線形位相は比率の倍数に調整）"""
         if self.phase_type == PhaseType.LINEAR:
-            # 線形位相: 1) 奇数化 2) 比率の倍数にパディング
-            taps = self.n_taps if self.n_taps % 2 == 1 else self.n_taps + 1
-            if taps % self.upsample_ratio == 0:
-                return taps
-            return ((taps // self.upsample_ratio) + 1) * self.upsample_ratio
+            return compute_padded_taps(self.n_taps, self.upsample_ratio)
         return self.n_taps
 
     @property
@@ -134,7 +129,7 @@ class FilterDesigner:
         self.config = config
 
     def design_linear_phase(self) -> np.ndarray:
-        """線形位相FIRフィルタを設計する（常に奇数タップ）"""
+        """線形位相FIRフィルタを設計する（final_taps長で対称性維持）"""
         print("線形位相FIRフィルタ設計中...")
         print(f"  指定タップ数: {self.config.n_taps}")
         print(f"  出力サンプルレート: {self.config.output_rate} Hz")
@@ -148,13 +143,17 @@ class FilterDesigner:
         print(f"  カットオフ周波数: {cutoff_freq} Hz (正規化: {normalized_cutoff:.6f})")
         print(f"  Kaiser β: {self.config.kaiser_beta}")
 
-        # タイプI FIRフィルタ（対称）は奇数タップが必須
-        # - LINEAR位相: FilterConfig.__post_init__で奇数が保証される
-        # - MINIMUM位相: 偶数n_tapsの場合は+1して奇数の線形位相を生成後、
+        # 線形位相: final_taps（比率の倍数）で直接設計し、対称性を維持
+        # 最小位相: 偶数n_tapsの場合は+1して奇数の線形位相を生成後、
         #   convert_to_minimum_phaseでn_tapsにトリミング
-        numtaps = self.config.n_taps
-        if numtaps % 2 == 0:
-            numtaps += 1
+        if self.config.phase_type == PhaseType.LINEAR:
+            numtaps = self.config.final_taps
+        else:
+            numtaps = (
+                self.config.n_taps
+                if self.config.n_taps % 2 == 1
+                else self.config.n_taps + 1
+            )
 
         h_linear = signal.firwin(
             numtaps=numtaps,
@@ -578,41 +577,34 @@ class FilterGenerator:
             # 最小位相: 比率の倍数必須
             validate_tap_count(self.config.n_taps, self.config.upsample_ratio)
         else:
-            # 線形位相: final_tapsで奇数化+比率倍数化を計算済み
+            # 線形位相: final_tapsで比率の倍数化を事前計算
             final = self.config.final_taps
             if final != self.config.n_taps:
                 print(
                     f"タップ数 {self.config.n_taps:,}（線形位相）→ "
-                    f"{final:,} に調整（奇数化+比率 {self.config.upsample_ratio} の倍数）"
+                    f"{final:,} に調整（比率 {self.config.upsample_ratio} の倍数）"
                 )
 
         # 1. フィルタ設計
         h_final, h_linear = self.designer.design()
 
-        # 2. 線形位相のゼロパディング（比率の倍数に調整）
-        if self.config.phase_type == PhaseType.LINEAR:
-            padded_taps = compute_padded_taps(len(h_final), self.config.upsample_ratio)
-            if padded_taps > len(h_final):
-                h_final = np.pad(h_final, (0, padded_taps - len(h_final)))
-                print(f"  ゼロパディング後タップ数: {len(h_final)}")
-
-        # 3. 係数正規化
+        # 2. 係数正規化
         h_final, normalization_info = normalize_coefficients(h_final)
 
-        # 4. 仕様検証
+        # 3. 仕様検証
         validation_results = self.validator.validate(h_final)
         validation_results["normalization"] = normalization_info
 
-        # 5. プロット生成
+        # 4. プロット生成
         self.plotter.plot(h_final, h_linear, filter_name)
 
-        # 6. メタデータ作成
+        # 5. メタデータ作成
         metadata = self._create_metadata(validation_results)
 
-        # 7. 係数エクスポート
+        # 6. 係数エクスポート
         base_name = self.exporter.export(h_final, metadata, skip_header)
 
-        # 8. 最終レポート
+        # 7. 最終レポート
         self._print_report(validation_results, normalization_info, base_name)
 
         # 実タップ数はフィルタ長から取得（validation_resultsに記録済み）
