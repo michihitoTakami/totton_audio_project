@@ -237,6 +237,7 @@ target_compile_options(soft_mute PRIVATE
 
 # EQ Support Library (CPU-only, Issue #107)
 # Consolidates EQ parsing, FIR generation, and config loading
+# No GPU dependencies - can be used independently of gpu_upsampler_core
 add_library(eq_support STATIC
     src/eq_parser.cpp
     src/eq_to_fir.cpp
@@ -244,7 +245,6 @@ add_library(eq_support STATIC
 )
 target_link_libraries(eq_support PUBLIC
     nlohmann_json::nlohmann_json
-    gpu_upsampler_core
 )
 target_include_directories(eq_support PUBLIC
     ${CMAKE_SOURCE_DIR}/include
