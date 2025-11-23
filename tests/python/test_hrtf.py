@@ -187,25 +187,51 @@ class TestGeneratedHRTFFilters:
             "metadata": metadata,
         }
 
-    def test_dc_normalization_ll(self, hrtf_m_44k):
-        """Test LL channel DC gain is 1.0."""
-        dc_gain = np.sum(hrtf_m_44k["ll"])
-        assert abs(dc_gain - 1.0) < 1e-5, f"LL DC gain: {dc_gain}"
+    def test_max_dc_gain_is_one(self, hrtf_m_44k):
+        """Test maximum DC gain across all channels is 1.0."""
+        dc_gains = {
+            "LL": np.sum(hrtf_m_44k["ll"]),
+            "LR": np.sum(hrtf_m_44k["lr"]),
+            "RL": np.sum(hrtf_m_44k["rl"]),
+            "RR": np.sum(hrtf_m_44k["rr"]),
+        }
+        max_dc = max(dc_gains.values())
+        assert abs(max_dc - 1.0) < 1e-5, f"Max DC gain: {max_dc}, gains: {dc_gains}"
 
-    def test_dc_normalization_lr(self, hrtf_m_44k):
-        """Test LR channel DC gain is 1.0."""
-        dc_gain = np.sum(hrtf_m_44k["lr"])
-        assert abs(dc_gain - 1.0) < 1e-5, f"LR DC gain: {dc_gain}"
+    def test_ild_exists(self, hrtf_m_44k):
+        """
+        Test ILD (Interaural Level Difference) exists.
 
-    def test_dc_normalization_rl(self, hrtf_m_44k):
-        """Test RL channel DC gain is 1.0."""
-        dc_gain = np.sum(hrtf_m_44k["rl"])
-        assert abs(dc_gain - 1.0) < 1e-5, f"RL DC gain: {dc_gain}"
+        For ±30° sources, there should be DC gain differences between channels.
+        Note: At low frequencies (DC), ILD direction can vary due to head diffraction.
+        We verify that channels have different gains, not the direction.
+        """
+        ll_dc = np.sum(hrtf_m_44k["ll"])
+        lr_dc = np.sum(hrtf_m_44k["lr"])
+        rl_dc = np.sum(hrtf_m_44k["rl"])
+        rr_dc = np.sum(hrtf_m_44k["rr"])
 
-    def test_dc_normalization_rr(self, hrtf_m_44k):
-        """Test RR channel DC gain is 1.0."""
-        dc_gain = np.sum(hrtf_m_44k["rr"])
-        assert abs(dc_gain - 1.0) < 1e-5, f"RR DC gain: {dc_gain}"
+        # ILD should exist: channels should have different DC gains
+        dc_gains = [ll_dc, lr_dc, rl_dc, rr_dc]
+        dc_range = max(dc_gains) - min(dc_gains)
+        assert dc_range > 0.01, f"ILD too small: range={dc_range}, gains={dc_gains}"
+
+    def test_ild_symmetric(self, hrtf_m_44k):
+        """Test ILD is symmetric between left and right."""
+        ll_dc = np.sum(hrtf_m_44k["ll"])
+        lr_dc = np.sum(hrtf_m_44k["lr"])
+        rl_dc = np.sum(hrtf_m_44k["rl"])
+        rr_dc = np.sum(hrtf_m_44k["rr"])
+
+        # Ipsilateral should be similar (LL ≈ RR)
+        ipsi_ratio = ll_dc / rr_dc
+        assert 0.9 < ipsi_ratio < 1.1, f"Ipsilateral asymmetry: LL={ll_dc}, RR={rr_dc}"
+
+        # Contralateral should be similar (LR ≈ RL)
+        contra_ratio = lr_dc / rl_dc
+        assert (
+            0.9 < contra_ratio < 1.1
+        ), f"Contralateral asymmetry: LR={lr_dc}, RL={rl_dc}"
 
     def test_itd_exists(self, hrtf_m_44k):
         """
@@ -259,9 +285,10 @@ class TestGeneratedHRTFFilters:
         assert ipsi_diff < 50, f"Ipsilateral asymmetry: LL={ll_peak}, RR={rr_peak}"
         assert contra_diff < 50, f"Contralateral asymmetry: LR={lr_peak}, RL={rl_peak}"
 
-    def test_metadata_dc_normalized_flag(self, hrtf_m_44k):
-        """Test metadata contains dc_normalized: true."""
-        assert hrtf_m_44k["metadata"].get("dc_normalized") is True
+    def test_metadata_normalization(self, hrtf_m_44k):
+        """Test metadata indicates ILD-preserving normalization."""
+        assert hrtf_m_44k["metadata"].get("normalization") == "ild_preserving"
+        assert hrtf_m_44k["metadata"].get("max_dc_gain") == 1.0
 
     def test_metadata_phase_type_original(self, hrtf_m_44k):
         """Test metadata indicates phase is preserved (not minimum phase)."""
@@ -294,8 +321,8 @@ class TestAllHRTFFilters:
             ("xl", "48k"),
         ],
     )
-    def test_dc_normalization_all_filters(self, size, rate):
-        """Test DC normalization for all filter variants."""
+    def test_ild_preservation_all_filters(self, size, rate):
+        """Test ILD preservation for all filter variants."""
         bin_path = HRTF_DIR / f"hrtf_{size}_{rate}.bin"
         json_path = HRTF_DIR / f"hrtf_{size}_{rate}.json"
 
@@ -314,9 +341,20 @@ class TestAllHRTFFilters:
         rl = data[2::4][:n_taps]
         rr = data[3::4][:n_taps]
 
-        for name, channel in [("LL", ll), ("LR", lr), ("RL", rl), ("RR", rr)]:
-            dc_gain = np.sum(channel)
-            assert abs(dc_gain - 1.0) < 1e-5, f"{size}_{rate} {name} DC gain: {dc_gain}"
+        dc_gains = {
+            "LL": np.sum(ll),
+            "LR": np.sum(lr),
+            "RL": np.sum(rl),
+            "RR": np.sum(rr),
+        }
+
+        # Max DC gain should be 1.0
+        max_dc = max(dc_gains.values())
+        assert abs(max_dc - 1.0) < 1e-5, f"{size}_{rate} max DC: {max_dc}"
+
+        # ILD should exist: channels should have different DC gains
+        dc_range = max_dc - min(dc_gains.values())
+        assert dc_range > 0.01, f"{size}_{rate} ILD too small: range={dc_range}"
 
     @pytest.mark.parametrize(
         "size,rate",

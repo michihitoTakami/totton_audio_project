@@ -285,8 +285,9 @@ def generate_hrtf_filters(
     # 出力ディレクトリ作成
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 各チャンネルを処理
+    # 各チャンネルを処理（第1パス: リサンプリング・パディング）
     channels = {}
+    dc_gains = {}
     for name, hrir in [
         ("ll", hrtf.ll),
         ("lr", hrtf.lr),
@@ -303,18 +304,28 @@ def generate_hrtf_filters(
         fir = pad_hrir_to_length(resampled, n_taps)
         print(f"  FIR length: {len(fir)} taps")
 
-        # DCゲイン正規化（DC gain = 1.0）
-        # CLAUDE.md要件: "Coefficients normalized to DC gain = 1.0 to prevent clipping"
-        dc_gain = np.sum(fir)
-        if abs(dc_gain) > 1e-10:  # ゼロ除算防止
-            fir = fir / dc_gain
-            print(f"  DC gain normalized: {dc_gain:.6f} → 1.0")
-        else:
-            print(
-                f"  Warning: DC gain near zero ({dc_gain:.2e}), skipping normalization"
-            )
+        dc_gains[name] = np.sum(fir)
+        print(f"  DC gain (raw): {dc_gains[name]:.6f}")
 
-        channels[name] = fir.astype(np.float32)
+        channels[name] = fir
+
+    # ILD保持のため、全チャンネル共通スケールで正規化
+    # 最大DCゲイン（通常は同側: LL/RR）を基準に正規化
+    max_dc_gain = max(abs(g) for g in dc_gains.values())
+    print("\n=== DC Normalization (ILD-preserving) ===")
+    print(f"Max DC gain: {max_dc_gain:.6f}")
+
+    if max_dc_gain > 1e-10:
+        for name in channels:
+            channels[name] = channels[name] / max_dc_gain
+            normalized_dc = np.sum(channels[name])
+            print(f"  {name.upper()}: {dc_gains[name]:.6f} → {normalized_dc:.6f}")
+    else:
+        print("Warning: Max DC gain near zero, skipping normalization")
+
+    # float32に変換
+    for name in channels:
+        channels[name] = channels[name].astype(np.float32)
 
     # インターリーブして保存（LL, LR, RL, RR の順）
     interleaved = np.column_stack(
@@ -339,7 +350,8 @@ def generate_hrtf_filters(
         "n_channels": 4,
         "channel_order": ["LL", "LR", "RL", "RR"],
         "phase_type": "original",  # 位相保持（ITD/ILD維持）
-        "dc_normalized": True,  # 各チャンネルDCゲイン=1.0に正規化済み
+        "normalization": "ild_preserving",  # 共通スケール正規化（ILD保持）
+        "max_dc_gain": 1.0,  # 最大DCゲインチャンネル=1.0、他はILD分だけ小さい
         "source_azimuth_left": -30.0,  # Logical value (HUTUBS uses 330°)
         "source_azimuth_right": TARGET_AZIMUTH_RIGHT,
         "source_elevation": TARGET_ELEVATION,
