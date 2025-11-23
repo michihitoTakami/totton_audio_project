@@ -263,6 +263,13 @@ class GPUUpsampler {
         return 44100;
     }
 
+    // Get streaming buffer requirements (for daemon buffer allocation)
+    // Returns the number of input samples needed per processing block
+    // Use this to size input accumulation buffers (recommend 2x for safety margin)
+    size_t getStreamValidInputPerBlock() const {
+        return streamValidInputPerBlock_;
+    }
+
     // CUDA streams for async operations (public for daemon access)
     cudaStream_t stream_;       // Primary stream for mono
     cudaStream_t streamLeft_;   // Left channel for stereo parallel

@@ -1,6 +1,9 @@
 #include "gpu/cuda_utils.h"
 #include <iostream>
+
+#ifdef HAVE_NVML
 #include <nvml.h>
+#endif
 
 namespace ConvolutionEngine {
 
@@ -42,6 +45,7 @@ void checkCufftError(cufftResult result, const char* context) {
 }
 
 double getGPUUtilization() {
+#ifdef HAVE_NVML
     static bool nvmlInitialized = false;
     static nvmlDevice_t device;
 
@@ -51,7 +55,7 @@ double getGPUUtilization() {
         if (result != NVML_SUCCESS) {
             std::cerr << "Warning: Failed to initialize NVML: "
                       << nvmlErrorString(result) << std::endl;
-            return 0.0;
+            return -1.0;
         }
 
         // Get device handle for GPU 0
@@ -60,7 +64,7 @@ double getGPUUtilization() {
             std::cerr << "Warning: Failed to get NVML device handle: "
                       << nvmlErrorString(result) << std::endl;
             nvmlShutdown();
-            return 0.0;
+            return -1.0;
         }
 
         nvmlInitialized = true;
@@ -72,10 +76,14 @@ double getGPUUtilization() {
     if (result != NVML_SUCCESS) {
         std::cerr << "Warning: Failed to query GPU utilization: "
                   << nvmlErrorString(result) << std::endl;
-        return 0.0;
+        return -1.0;
     }
 
     return static_cast<double>(utilization.gpu);
+#else
+    // NVML not available - return -1 to indicate unavailable
+    return -1.0;
+#endif
 }
 
 }  // namespace Utils
