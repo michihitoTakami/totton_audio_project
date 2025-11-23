@@ -704,18 +704,21 @@ TEST_F(ConvolutionEngineTest, SwitchToInputRate) {
     EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
     EXPECT_EQ(upsampler.getUpsampleRatio(), 8);
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getOutputSampleRate(), 88200 * 8);
 
     // Switch to 48000 (16x, different family)
     EXPECT_TRUE(upsampler.switchToInputRate(48000));
     EXPECT_EQ(upsampler.getCurrentInputRate(), 48000);
     EXPECT_EQ(upsampler.getUpsampleRatio(), 16);
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getOutputSampleRate(), 48000 * 16);
 
     // Switch to 192000 (4x)
     EXPECT_TRUE(upsampler.switchToInputRate(192000));
     EXPECT_EQ(upsampler.getCurrentInputRate(), 192000);
     EXPECT_EQ(upsampler.getUpsampleRatio(), 4);
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getOutputSampleRate(), 192000 * 4);
 }
 
 TEST_F(ConvolutionEngineTest, SwitchToSameInputRate) {

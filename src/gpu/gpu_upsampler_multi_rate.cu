@@ -467,6 +467,7 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     // Update state
     currentMultiRateIndex_ = targetIndex;
     currentInputRate_ = inputSampleRate;
+    inputSampleRate_ = inputSampleRate;
     upsampleRatio_ = targetConfig.ratio;
     currentRateFamily_ = targetConfig.family;
 
