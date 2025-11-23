@@ -326,6 +326,29 @@ class TestDeleteEndpoint:
 
         assert response.status_code == 404
 
+    def test_delete_active_profile_deactivates(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Deleting active profile should deactivate EQ first."""
+        # Create and activate a profile
+        profile_file = eq_profile_dir / "active_profile.txt"
+        profile_file.write_text(valid_eq_content)
+        client.post("/eq/activate/active_profile")
+
+        # Verify it's active
+        active_response = client.get("/eq/active")
+        assert active_response.json()["active"] is True
+        assert active_response.json()["name"] == "active_profile"
+
+        # Delete the active profile
+        response = client.delete("/eq/profiles/active_profile")
+        assert response.status_code == 200
+
+        # Verify EQ is now deactivated
+        active_response = client.get("/eq/active")
+        assert active_response.json()["active"] is False
+        assert active_response.json()["name"] is None
+
 
 class TestActiveEndpoint:
     """Tests for GET /eq/active endpoint."""
