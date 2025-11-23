@@ -806,6 +806,15 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             break;
         }
+
+        // Check for early abort (signal received during GPU initialization)
+        if (!g_running) {
+            std::cout << "Startup interrupted by signal" << std::endl;
+            delete g_upsampler;
+            g_upsampler = nullptr;
+            break;
+        }
+
         std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                   << g_config.blockSize << " samples/block)" << std::endl;
 
@@ -814,6 +823,14 @@ int main(int argc, char* argv[]) {
             std::cerr << "Failed to initialize streaming mode" << std::endl;
             delete g_upsampler;
             exitCode = 1;
+            break;
+        }
+
+        // Check for early abort
+        if (!g_running) {
+            std::cout << "Startup interrupted by signal" << std::endl;
+            delete g_upsampler;
+            g_upsampler = nullptr;
             break;
         }
 
@@ -852,6 +869,14 @@ int main(int argc, char* argv[]) {
         g_stream_accumulated_right = 0;
 
         std::cout << std::endl;
+
+        // Check for early abort before starting threads
+        if (!g_running) {
+            std::cout << "Startup interrupted by signal" << std::endl;
+            delete g_upsampler;
+            g_upsampler = nullptr;
+            break;
+        }
 
         // Initialize soft mute controller with output sample rate (50ms fade duration)
         int outputSampleRate = g_config.inputSampleRate * g_config.upsampleRatio;
@@ -925,15 +950,17 @@ int main(int argc, char* argv[]) {
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
-        // Check if RELOAD was requested during startup (before main loop)
-        // or if ZeroMQ bind failed
-        if (!g_reload_requested.load() && !g_zmq_bind_failed.load()) {
+        // Check if RELOAD was requested during startup (before main loop),
+        // ZeroMQ bind failed, or signal received during initialization
+        if (g_running.load() && !g_reload_requested.load() && !g_zmq_bind_failed.load()) {
             // Run main loop (only if not already requested to reload/stop)
             g_main_loop_running = true;
             pw_main_loop_run(data.loop);
             g_main_loop_running = false;
         } else if (g_zmq_bind_failed.load()) {
             std::cerr << "Startup aborted due to ZeroMQ bind failure." << std::endl;
+        } else if (!g_running.load()) {
+            std::cout << "Startup interrupted by signal, skipping main loop." << std::endl;
         } else {
             std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
         }
