@@ -20,18 +20,23 @@
 #include <mutex>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
+#include <sstream>
 #include <string>
 #include <sys/file.h>
 #include <sys/types.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#include <zmq.hpp>
 
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
 // Stats file path (JSON format for Web API)
 constexpr const char* STATS_FILE_PATH = "/tmp/gpu_upsampler_stats.json";
+
+// ZeroMQ IPC socket path (matching Python client)
+constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock";
 
 // Default configuration values
 constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
@@ -48,6 +53,8 @@ static AppConfig g_config;
 // Global state
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_reload_requested{false};
+static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_run() is active
+static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
 
@@ -219,6 +226,94 @@ static void load_runtime_config() {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
     }
     print_config_summary(g_config);
+}
+
+// ========== ZeroMQ Command Listener ==========
+
+// Build stats JSON response for ZeroMQ STATS command
+static std::string build_stats_json() {
+    size_t clips = g_clip_count.load(std::memory_order_relaxed);
+    size_t total = g_total_samples.load(std::memory_order_relaxed);
+    double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
+
+    std::ostringstream oss;
+    oss << "{"
+        << "\"clip_count\":" << clips << ","
+        << "\"total_samples\":" << total << ","
+        << "\"clip_rate\":" << clip_rate << ","
+        << "\"eq_enabled\":" << (g_config.eqEnabled ? "true" : "false") << ","
+        << "\"input_rate\":" << g_config.inputSampleRate << ","
+        << "\"upsample_ratio\":" << g_config.upsampleRatio << "}";
+    return oss.str();
+}
+
+// ZeroMQ listener thread - handles PING, RELOAD, STATS commands from Python/FastAPI
+static void zeromq_listener_thread() {
+    try {
+        zmq::context_t context(1);
+        zmq::socket_t socket(context, zmq::socket_type::rep);
+
+        // Set timeouts for graceful shutdown
+        socket.set(zmq::sockopt::rcvtimeo, 1000);  // 1 second receive timeout
+        socket.set(zmq::sockopt::linger, 0);
+
+        // Remove stale socket file if exists (from previous crash/unclean shutdown)
+        std::string sock_path = std::string(ZEROMQ_IPC_PATH).substr(6);  // Remove "ipc://"
+        unlink(sock_path.c_str());  // Ignore error if file doesn't exist
+
+        socket.bind(ZEROMQ_IPC_PATH);
+        std::cout << "ZeroMQ: Listening on " << ZEROMQ_IPC_PATH << std::endl;
+
+        while (g_running.load()) {
+            zmq::message_t request;
+
+            // Receive with timeout (non-blocking check for shutdown)
+            auto result = socket.recv(request, zmq::recv_flags::none);
+            if (!result) {
+                // Timeout - check if we should continue
+                continue;
+            }
+
+            std::string cmd(static_cast<char*>(request.data()), request.size());
+            std::string response;
+
+            // Process command
+            if (cmd == "PING") {
+                response = "OK";
+            } else if (cmd == "RELOAD") {
+                // Request config reload (same as SIGHUP)
+                g_reload_requested = true;
+                // Only quit main loop if it's actually running
+                // If not running yet, main() will check g_reload_requested before starting
+                if (g_main_loop_running.load() && g_pw_loop) {
+                    pw_main_loop_quit(g_pw_loop);
+                }
+                response = "OK";
+            } else if (cmd == "STATS") {
+                response = "OK:" + build_stats_json();
+            } else {
+                response = "ERR:Unknown command";
+            }
+
+            // Send response
+            zmq::message_t reply(response.data(), response.size());
+            socket.send(reply, zmq::send_flags::none);
+        }
+
+        // Cleanup: unlink the IPC socket file (sock_path already defined at start)
+        unlink(sock_path.c_str());
+        std::cout << "ZeroMQ: Listener stopped" << std::endl;
+
+    } catch (const zmq::error_t& e) {
+        std::cerr << "ZeroMQ: Fatal error - " << e.what() << std::endl;
+        std::cerr << "ZeroMQ: IPC communication disabled. Daemon will stop." << std::endl;
+        g_zmq_bind_failed = true;
+        g_running = false;
+        // Quit main loop if running to trigger clean shutdown
+        if (g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        }
+    }
 }
 
 // PipeWire objects
@@ -748,6 +843,10 @@ int main(int argc, char* argv[]) {
         // Create main loop (store globally for signal handler access)
         data.loop = pw_main_loop_new(nullptr);
         g_pw_loop = data.loop;
+
+        // Start ZeroMQ listener thread AFTER g_pw_loop is set
+        // This ensures RELOAD commands can always quit the main loop
+        std::thread zmq_thread(zeromq_listener_thread);
         struct pw_loop* loop = pw_main_loop_get_loop(data.loop);
 
         // Create Capture stream from gpu_upsampler_sink.monitor
@@ -797,8 +896,18 @@ int main(int argc, char* argv[]) {
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
-        // Run main loop
-        pw_main_loop_run(data.loop);
+        // Check if RELOAD was requested during startup (before main loop)
+        // or if ZeroMQ bind failed
+        if (!g_reload_requested.load() && !g_zmq_bind_failed.load()) {
+            // Run main loop (only if not already requested to reload/stop)
+            g_main_loop_running = true;
+            pw_main_loop_run(data.loop);
+            g_main_loop_running = false;
+        } else if (g_zmq_bind_failed.load()) {
+            std::cerr << "Startup aborted due to ZeroMQ bind failure." << std::endl;
+        } else {
+            std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
+        }
 
         // Cleanup
         std::cout << "Shutting down..." << std::endl;
@@ -813,11 +922,19 @@ int main(int argc, char* argv[]) {
 
         g_running = false;
         g_buffer_cv.notify_all();
+        zmq_thread.join();
         alsa_thread.join();
 
         delete g_upsampler;
         g_upsampler = nullptr;
         pw_deinit();
+
+        // Don't reload if ZMQ bind failed - exit completely
+        if (g_zmq_bind_failed) {
+            std::cerr << "Exiting due to ZeroMQ initialization failure." << std::endl;
+            exitCode = 1;
+            break;
+        }
 
         if (g_reload_requested) {
             std::cout << "Reload requested. Restarting daemon with updated config..." << std::endl;

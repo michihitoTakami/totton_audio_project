@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import shutil
+import zmq
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
@@ -34,6 +35,121 @@ DAEMON_SERVICE = "gpu_upsampler_alsa"  # systemd service name (if using systemd)
 DAEMON_BINARY = Path(__file__).parent.parent / "build" / "gpu_upsampler_alsa"
 PID_FILE_PATH = Path("/tmp/gpu_upsampler_alsa.pid")
 STATS_FILE_PATH = Path("/tmp/gpu_upsampler_stats.json")
+ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock"
+
+
+# ============================================================================
+# ZeroMQ Client for Daemon Control
+# ============================================================================
+
+
+class DaemonClient:
+    """
+    ZeroMQ client for communicating with the C++ audio daemon.
+    Uses REQ/REP pattern over IPC socket.
+
+    Thread Safety: Each DaemonClient instance should be used by a single
+    thread/coroutine at a time. Use the context manager or create new
+    instances per request for concurrent access.
+    """
+
+    def __init__(self, endpoint: str = ZEROMQ_IPC_PATH, timeout_ms: int = 3000):
+        self.endpoint = endpoint
+        self.timeout_ms = timeout_ms
+        self._context: zmq.Context | None = None
+        self._socket: zmq.Socket | None = None
+
+    def __enter__(self):
+        """Context manager entry - creates connection."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - closes connection."""
+        self.close()
+        return False
+
+    def _ensure_connected(self) -> zmq.Socket:
+        """Ensure socket is connected, reconnect if needed."""
+        if self._socket is None:
+            self._context = zmq.Context()
+            self._socket = self._context.socket(zmq.REQ)
+            self._socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
+            self._socket.setsockopt(zmq.SNDTIMEO, self.timeout_ms)
+            self._socket.setsockopt(zmq.LINGER, 0)
+            self._socket.connect(self.endpoint)
+        return self._socket
+
+    def close(self):
+        """Close connection."""
+        if self._socket:
+            self._socket.close()
+            self._socket = None
+        if self._context:
+            self._context.term()
+            self._context = None
+
+    def send_command(self, command: str) -> tuple[bool, str]:
+        """
+        Send a command to the daemon and wait for response.
+
+        Returns:
+            (success, message) tuple
+        """
+        try:
+            socket = self._ensure_connected()
+            socket.send_string(command)
+            response = socket.recv_string()
+
+            # Parse response: "OK" or "OK:data" or "ERR:message"
+            if response.startswith("OK"):
+                if ":" in response:
+                    return True, response.split(":", 1)[1]
+                return True, "Command executed"
+            elif response.startswith("ERR"):
+                return False, response.split(":", 1)[
+                    1
+                ] if ":" in response else "Unknown error"
+            else:
+                return False, f"Unexpected response: {response}"
+
+        except zmq.Again:
+            # Timeout - daemon not responding
+            self.close()  # Reset socket for next attempt
+            return False, "Daemon not responding (timeout)"
+        except zmq.ZMQError as e:
+            self.close()
+            return False, f"ZeroMQ error: {e}"
+
+    def reload_config(self) -> tuple[bool, str]:
+        """Send RELOAD command to daemon."""
+        return self.send_command("RELOAD")
+
+    def get_stats(self) -> tuple[bool, dict | str]:
+        """Send STATS command and parse JSON response."""
+        success, response = self.send_command("STATS")
+        if success:
+            try:
+                return True, json.loads(response)
+            except json.JSONDecodeError:
+                return False, f"Invalid JSON: {response}"
+        return False, response
+
+    def ping(self) -> bool:
+        """Check if daemon is responding."""
+        success, _ = self.send_command("PING")
+        return success
+
+
+def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:
+    """
+    Factory function to create a new DaemonClient.
+
+    Use as context manager for automatic cleanup:
+        with get_daemon_client() as client:
+            client.ping()
+    """
+    return DaemonClient(timeout_ms=timeout_ms)
+
 
 app = FastAPI(
     title="GPU Upsampler Control",
@@ -552,24 +668,107 @@ async def daemon_status():
     running = check_daemon_running()
     pw_connected = check_pipewire_sink() if running else False
 
+    # Check ZeroMQ connectivity (short timeout to avoid blocking)
+    zmq_connected = False
+    if running:
+        with get_daemon_client(timeout_ms=500) as client:
+            zmq_connected = client.ping()
+
     return {
         "running": running,
         "pid": pid,
         "pipewire_connected": pw_connected,
+        "zmq_connected": zmq_connected,
         "pid_file": str(PID_FILE_PATH),
         "binary_path": str(DAEMON_BINARY),
         "binary_exists": DAEMON_BINARY.exists(),
     }
 
 
+# ============================================================================
+# ZeroMQ Control API Endpoints
+# ============================================================================
+
+
+@app.get("/daemon/zmq/ping")
+async def zmq_ping():
+    """
+    Check if daemon is responding to ZeroMQ commands.
+    """
+    if not check_daemon_running():
+        return {"connected": False, "message": "Daemon not running"}
+
+    with get_daemon_client() as client:
+        connected = client.ping()
+        return {
+            "connected": connected,
+            "endpoint": ZEROMQ_IPC_PATH,
+            "message": "Daemon responding"
+            if connected
+            else "Daemon not responding to ZeroMQ",
+        }
+
+
+@app.post("/daemon/zmq/command/{cmd}", response_model=ApiResponse)
+async def zmq_command(cmd: str):
+    """
+    Send a raw command to daemon via ZeroMQ.
+
+    Supported commands:
+    - PING: Check connectivity
+    - RELOAD: Reload configuration
+    - STATS: Get statistics (JSON response)
+    """
+    if not check_daemon_running():
+        return ApiResponse(
+            success=False,
+            message="Daemon not running",
+        )
+
+    # Validate command (whitelist for security)
+    allowed_commands = {"PING", "RELOAD", "STATS"}
+    cmd_upper = cmd.upper()
+    if cmd_upper not in allowed_commands:
+        return ApiResponse(
+            success=False,
+            message=f"Invalid command. Allowed: {', '.join(allowed_commands)}",
+        )
+
+    with get_daemon_client() as client:
+        success, response = client.send_command(cmd_upper)
+        return ApiResponse(
+            success=success,
+            message=response if isinstance(response, str) else "Command executed",
+            data={"response": response} if success else None,
+        )
+
+
 @app.post("/restart", response_model=ApiResponse)
 async def reload_daemon():
     """
-    Restart the daemon to apply new settings.
-    Sends SIGHUP to trigger in-process config reload.
+    Reload daemon configuration.
+    Uses ZeroMQ if daemon supports it, falls back to SIGHUP.
     """
+    if not check_daemon_running():
+        return ApiResponse(
+            success=False,
+            message="Daemon not running. Start it manually with ./build/gpu_upsampler_alsa",
+        )
+
+    # Try ZeroMQ first (preferred method)
+    with get_daemon_client() as client:
+        success, message = client.reload_config()
+        if success:
+            await asyncio.sleep(0.25)
+            running = check_daemon_running()
+            return ApiResponse(
+                success=True,
+                message="Config reloaded via ZeroMQ",
+                restart_required=not running,
+            )
+
+    # Fallback to SIGHUP
     try:
-        # Try to find daemon PID
         result = subprocess.run(
             ["pgrep", "-f", "gpu_upsampler_alsa"],
             capture_output=True,
@@ -580,14 +779,15 @@ async def reload_daemon():
         if result.returncode != 0:
             return ApiResponse(
                 success=False,
-                message="Daemon not running. Start it manually with ./build/gpu_upsampler_alsa",
+                message=f"ZeroMQ failed ({message}), SIGHUP fallback failed: daemon not found",
             )
 
         pid = result.stdout.strip().split()[0]
         hup_result = subprocess.run(["kill", "-HUP", pid], timeout=5)
         if hup_result.returncode != 0:
-            raise HTTPException(
-                status_code=500, detail="Failed to send SIGHUP to daemon"
+            return ApiResponse(
+                success=False,
+                message=f"ZeroMQ failed ({message}), SIGHUP also failed",
             )
 
         await asyncio.sleep(0.25)
@@ -595,7 +795,7 @@ async def reload_daemon():
 
         return ApiResponse(
             success=True,
-            message=f"Reload signal sent to daemon (PID {pid})",
+            message=f"Reload via SIGHUP (PID {pid}) - ZeroMQ unavailable",
             restart_required=not running,
         )
     except subprocess.TimeoutExpired:
