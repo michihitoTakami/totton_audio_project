@@ -17,6 +17,7 @@ Usage:
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypedDict
 
 
 # Default path to OPRA submodule database
@@ -25,11 +26,20 @@ DEFAULT_OPRA_PATH = (
 )
 
 
+class CorrectionBandDict(TypedDict):
+    """Type definition for correction band parameters."""
+
+    filter_type: str
+    frequency: float
+    gain_db: float
+    q: float
+
+
 # Modern Target Correction (KB5000_7)
 # Based on Dan Clark Audio research for more natural sound reproduction.
 # This single band adjusts OPRA's Harman Target base to a modern reference.
 # Applied at runtime to comply with CC BY-SA 4.0 (no derivative data distribution).
-MODERN_TARGET_CORRECTION_BAND = {
+MODERN_TARGET_CORRECTION_BAND: CorrectionBandDict = {
     "filter_type": "PK",
     "frequency": 5366.0,
     "gain_db": 2.8,
