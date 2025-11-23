@@ -792,18 +792,55 @@ int main(int argc, char* argv[]) {
                       << "For optimal quality, generate a 48kHz-optimized filter." << std::endl;
         }
 
-        if (!std::filesystem::exists(g_config.filterPath)) {
-            std::cerr << "Config error: Filter file not found: " << g_config.filterPath
-                      << std::endl;
-            exitCode = 1;
-            break;
-        }
-
         // Initialize GPU upsampler with configured values
         std::cout << "Initializing GPU upsampler..." << std::endl;
         g_upsampler = new ConvolutionEngine::GPUUpsampler();
-        if (!g_upsampler->initialize(g_config.filterPath, g_config.upsampleRatio,
-                                     g_config.blockSize)) {
+
+        bool initSuccess = false;
+        if (g_config.quadPhaseEnabled) {
+            // Quad-phase mode: load all 4 filter configurations
+            std::cout << "Quad-phase mode enabled" << std::endl;
+
+            // Check all 4 filter files exist
+            bool allFilesExist = true;
+            for (const auto& path : {g_config.filterPath44kMin, g_config.filterPath48kMin,
+                                     g_config.filterPath44kLinear, g_config.filterPath48kLinear}) {
+                if (!std::filesystem::exists(path)) {
+                    std::cerr << "Config error: Filter file not found: " << path << std::endl;
+                    allFilesExist = false;
+                }
+            }
+            if (!allFilesExist) {
+                delete g_upsampler;
+                exitCode = 1;
+                break;
+            }
+
+            // Determine initial rate family from inputSampleRate
+            ConvolutionEngine::RateFamily initialFamily =
+                ConvolutionEngine::detectRateFamily(g_config.inputSampleRate);
+            if (initialFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
+                initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
+            }
+
+            initSuccess = g_upsampler->initializeQuadPhase(
+                g_config.filterPath44kMin, g_config.filterPath48kMin, g_config.filterPath44kLinear,
+                g_config.filterPath48kLinear, g_config.upsampleRatio, g_config.blockSize,
+                initialFamily, g_config.phaseType);
+        } else {
+            // Standard single-filter mode (backward compatible)
+            if (!std::filesystem::exists(g_config.filterPath)) {
+                std::cerr << "Config error: Filter file not found: " << g_config.filterPath
+                          << std::endl;
+                delete g_upsampler;
+                exitCode = 1;
+                break;
+            }
+            initSuccess = g_upsampler->initialize(g_config.filterPath, g_config.upsampleRatio,
+                                                  g_config.blockSize);
+        }
+
+        if (!initSuccess) {
             std::cerr << "Failed to initialize GPU upsampler" << std::endl;
             delete g_upsampler;
             exitCode = 1;
@@ -821,13 +858,13 @@ int main(int argc, char* argv[]) {
         std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                   << g_config.blockSize << " samples/block)" << std::endl;
 
-        // Set input sample rate for correct output rate calculation
-        g_upsampler->setInputSampleRate(g_config.inputSampleRate);
+        // Set input sample rate for correct output rate calculation (non-quad-phase mode)
+        if (!g_config.quadPhaseEnabled) {
+            g_upsampler->setInputSampleRate(g_config.inputSampleRate);
+            g_upsampler->setPhaseType(g_config.phaseType);
+        }
         std::cout << "Input sample rate: " << g_config.inputSampleRate << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
-
-        // Set phase type from config
-        g_upsampler->setPhaseType(g_config.phaseType);
         std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
 
         // Log latency warning for linear phase

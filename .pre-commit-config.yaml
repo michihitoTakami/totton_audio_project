@@ -38,6 +38,7 @@ repos:
       - id: check-json
       - id: check-added-large-files
         args: ['--maxkb=1000']
+        exclude: ^data/coefficients/.*\.bin$
 
   # Python formatting (for web API and scripts)
   - repo: https://github.com/astral-sh/ruff-pre-commit

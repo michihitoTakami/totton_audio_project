@@ -56,6 +56,18 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("phaseType"))
             outConfig.phaseType = parsePhaseType(j["phaseType"].get<std::string>());
 
+        // Quad-phase mode settings
+        if (j.contains("quadPhaseEnabled"))
+            outConfig.quadPhaseEnabled = j["quadPhaseEnabled"].get<bool>();
+        if (j.contains("filterPath44kMin"))
+            outConfig.filterPath44kMin = j["filterPath44kMin"].get<std::string>();
+        if (j.contains("filterPath48kMin"))
+            outConfig.filterPath48kMin = j["filterPath48kMin"].get<std::string>();
+        if (j.contains("filterPath44kLinear"))
+            outConfig.filterPath44kLinear = j["filterPath44kLinear"].get<std::string>();
+        if (j.contains("filterPath48kLinear"))
+            outConfig.filterPath48kLinear = j["filterPath48kLinear"].get<std::string>();
+
         // EQ settings
         if (j.contains("eqEnabled"))
             outConfig.eqEnabled = j["eqEnabled"].get<bool>();

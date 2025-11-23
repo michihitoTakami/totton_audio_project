@@ -141,6 +141,37 @@ class GPUUpsampler {
     bool initializeMultiRate(const std::string& coefficientDir, int blockSize = 8192,
                              int initialInputRate = 44100);
 
+    // Initialize with quad-phase support (2 rate families × 2 phase types)
+    //
+    // Parameters:
+    //   filterCoeffPath44kMin: Path to 44.1kHz minimum phase filter coefficients
+    //   filterCoeffPath48kMin: Path to 48kHz minimum phase filter coefficients
+    //   filterCoeffPath44kLinear: Path to 44.1kHz linear phase filter coefficients
+    //   filterCoeffPath48kLinear: Path to 48kHz linear phase filter coefficients
+    //   upsampleRatio: Integer upsampling ratio (typically 16)
+    //   blockSize: FFT processing block size
+    //   initialFamily: Initial rate family to use (default: 44.1kHz)
+    //   initialPhase: Initial phase type to use (default: Minimum)
+    //
+    // All 4 coefficient files are loaded and pre-processed (FFT) at initialization.
+    // Switching between families/phases is glitch-free using pre-computed FFTs.
+    bool initializeQuadPhase(const std::string& filterCoeffPath44kMin,
+                             const std::string& filterCoeffPath48kMin,
+                             const std::string& filterCoeffPath44kLinear,
+                             const std::string& filterCoeffPath48kLinear, int upsampleRatio,
+                             int blockSize = 8192, RateFamily initialFamily = RateFamily::RATE_44K,
+                             PhaseType initialPhase = PhaseType::Minimum);
+
+    // Switch to a different phase type (glitch-free via pre-computed FFTs)
+    // Returns true if switch was successful, false if not in quad-phase mode or error
+    // Note: This only works in quad-phase mode. In other modes, use setPhaseType() instead.
+    bool switchPhaseType(PhaseType targetPhase);
+
+    // Check if quad-phase mode is enabled
+    bool isQuadPhaseEnabled() const {
+        return quadPhaseEnabled_;
+    }
+
     // Switch to filter appropriate for given input sample rate
     //
     // Parameters:
@@ -364,6 +395,15 @@ class GPUUpsampler {
     // 48kHz family coefficients
     std::vector<float> h_filterCoeffs48k_;  // Host coefficients for 48kHz family
     cufftComplex* d_filterFFT_48k_;         // Pre-computed FFT for 48kHz family
+
+    // Quad-phase support (2 rate families × 2 phase types)
+    bool quadPhaseEnabled_;  // True if quad-phase mode is active
+
+    // Linear phase coefficients (44.1kHz and 48kHz)
+    std::vector<float> h_filterCoeffs44k_linear_;  // Host coefficients for 44.1kHz linear phase
+    std::vector<float> h_filterCoeffs48k_linear_;  // Host coefficients for 48kHz linear phase
+    cufftComplex* d_filterFFT_44k_linear_;         // Pre-computed FFT for 44.1kHz linear phase
+    cufftComplex* d_filterFFT_48k_linear_;         // Pre-computed FFT for 48kHz linear phase
 
     // Multi-rate support (8 configurations)
     bool multiRateEnabled_;      // True if multi-rate mode is active

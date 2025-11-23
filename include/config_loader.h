@@ -23,6 +23,13 @@ struct AppConfig {
     int inputSampleRate = 44100;               // Input sample rate (44100 or 48000)
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 
+    // Quad-phase mode: 4 filter paths (2 rate families × 2 phase types)
+    bool quadPhaseEnabled = false;  // Enable quad-phase mode with all 4 filter FFTs preloaded
+    std::string filterPath44kMin = "data/coefficients/filter_44k_2m_min_phase.bin";
+    std::string filterPath48kMin = "data/coefficients/filter_48k_2m_min_phase.bin";
+    std::string filterPath44kLinear = "data/coefficients/filter_44k_16x_2m_linear.bin";
+    std::string filterPath48kLinear = "data/coefficients/filter_48k_16x_2m_linear.bin";
+
     // EQ settings
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)
