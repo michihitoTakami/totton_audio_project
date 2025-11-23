@@ -19,20 +19,6 @@ namespace CrossfeedEngine {
 // CUDA Kernels for Crossfeed
 // ============================================================================
 
-// Complex multiplication kernel (reuse pattern from ConvolutionEngine)
-__global__ void complexMultiplyKernel(cufftComplex* data, const cufftComplex* filter, int size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size) {
-        float a = data[idx].x;
-        float b = data[idx].y;
-        float c = filter[idx].x;
-        float d = filter[idx].y;
-        // (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
-        data[idx].x = a * c - b * d;
-        data[idx].y = a * d + b * c;
-    }
-}
-
 // Complex multiply-accumulate kernel
 // out += in * filter (accumulates into output)
 __global__ void complexMultiplyAccumulateKernel(cufftComplex* out,
@@ -73,14 +59,6 @@ __global__ void scaleKernel(float* data, int size, float scale) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         data[idx] *= scale;
-    }
-}
-
-// Add two arrays kernel
-__global__ void addArraysKernel(float* out, const float* a, const float* b, int size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size) {
-        out[idx] = a[idx] + b[idx];
     }
 }
 
