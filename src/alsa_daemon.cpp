@@ -53,6 +53,8 @@ static AppConfig g_config;
 // Global state
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_reload_requested{false};
+static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_run() is active
+static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
 
@@ -281,7 +283,9 @@ static void zeromq_listener_thread() {
             } else if (cmd == "RELOAD") {
                 // Request config reload (same as SIGHUP)
                 g_reload_requested = true;
-                if (g_pw_loop) {
+                // Only quit main loop if it's actually running
+                // If not running yet, main() will check g_reload_requested before starting
+                if (g_main_loop_running.load() && g_pw_loop) {
                     pw_main_loop_quit(g_pw_loop);
                 }
                 response = "OK";
@@ -301,7 +305,14 @@ static void zeromq_listener_thread() {
         std::cout << "ZeroMQ: Listener stopped" << std::endl;
 
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZeroMQ: Error - " << e.what() << std::endl;
+        std::cerr << "ZeroMQ: Fatal error - " << e.what() << std::endl;
+        std::cerr << "ZeroMQ: IPC communication disabled. Daemon will stop." << std::endl;
+        g_zmq_bind_failed = true;
+        g_running = false;
+        // Quit main loop if running to trigger clean shutdown
+        if (g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        }
     }
 }
 
@@ -885,8 +896,18 @@ int main(int argc, char* argv[]) {
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
-        // Run main loop
-        pw_main_loop_run(data.loop);
+        // Check if RELOAD was requested during startup (before main loop)
+        // or if ZeroMQ bind failed
+        if (!g_reload_requested.load() && !g_zmq_bind_failed.load()) {
+            // Run main loop (only if not already requested to reload/stop)
+            g_main_loop_running = true;
+            pw_main_loop_run(data.loop);
+            g_main_loop_running = false;
+        } else if (g_zmq_bind_failed.load()) {
+            std::cerr << "Startup aborted due to ZeroMQ bind failure." << std::endl;
+        } else {
+            std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
+        }
 
         // Cleanup
         std::cout << "Shutting down..." << std::endl;
@@ -907,6 +928,13 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         g_upsampler = nullptr;
         pw_deinit();
+
+        // Don't reload if ZMQ bind failed - exit completely
+        if (g_zmq_bind_failed) {
+            std::cerr << "Exiting due to ZeroMQ initialization failure." << std::endl;
+            exitCode = 1;
+            break;
+        }
 
         if (g_reload_requested) {
             std::cout << "Reload requested. Restarting daemon with updated config..." << std::endl;
