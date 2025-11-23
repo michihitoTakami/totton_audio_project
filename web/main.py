@@ -47,6 +47,10 @@ class DaemonClient:
     """
     ZeroMQ client for communicating with the C++ audio daemon.
     Uses REQ/REP pattern over IPC socket.
+
+    Thread Safety: Each DaemonClient instance should be used by a single
+    thread/coroutine at a time. Use the context manager or create new
+    instances per request for concurrent access.
     """
 
     def __init__(self, endpoint: str = ZEROMQ_IPC_PATH, timeout_ms: int = 3000):
@@ -54,6 +58,15 @@ class DaemonClient:
         self.timeout_ms = timeout_ms
         self._context: zmq.Context | None = None
         self._socket: zmq.Socket | None = None
+
+    def __enter__(self):
+        """Context manager entry - creates connection."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - closes connection."""
+        self.close()
+        return False
 
     def _ensure_connected(self) -> zmq.Socket:
         """Ensure socket is connected, reconnect if needed."""
@@ -127,8 +140,16 @@ class DaemonClient:
         return success
 
 
-# Global daemon client instance
-daemon_client = DaemonClient()
+def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:
+    """
+    Factory function to create a new DaemonClient.
+
+    Use as context manager for automatic cleanup:
+        with get_daemon_client() as client:
+            client.ping()
+    """
+    return DaemonClient(timeout_ms=timeout_ms)
+
 
 app = FastAPI(
     title="GPU Upsampler Control",
@@ -647,8 +668,11 @@ async def daemon_status():
     running = check_daemon_running()
     pw_connected = check_pipewire_sink() if running else False
 
-    # Check ZeroMQ connectivity
-    zmq_connected = daemon_client.ping() if running else False
+    # Check ZeroMQ connectivity (short timeout to avoid blocking)
+    zmq_connected = False
+    if running:
+        with get_daemon_client(timeout_ms=500) as client:
+            zmq_connected = client.ping()
 
     return {
         "running": running,
@@ -674,14 +698,15 @@ async def zmq_ping():
     if not check_daemon_running():
         return {"connected": False, "message": "Daemon not running"}
 
-    connected = daemon_client.ping()
-    return {
-        "connected": connected,
-        "endpoint": ZEROMQ_IPC_PATH,
-        "message": "Daemon responding"
-        if connected
-        else "Daemon not responding to ZeroMQ",
-    }
+    with get_daemon_client() as client:
+        connected = client.ping()
+        return {
+            "connected": connected,
+            "endpoint": ZEROMQ_IPC_PATH,
+            "message": "Daemon responding"
+            if connected
+            else "Daemon not responding to ZeroMQ",
+        }
 
 
 @app.post("/daemon/zmq/command/{cmd}", response_model=ApiResponse)
@@ -709,12 +734,13 @@ async def zmq_command(cmd: str):
             message=f"Invalid command. Allowed: {', '.join(allowed_commands)}",
         )
 
-    success, response = daemon_client.send_command(cmd_upper)
-    return ApiResponse(
-        success=success,
-        message=response if isinstance(response, str) else "Command executed",
-        data={"response": response} if success else None,
-    )
+    with get_daemon_client() as client:
+        success, response = client.send_command(cmd_upper)
+        return ApiResponse(
+            success=success,
+            message=response if isinstance(response, str) else "Command executed",
+            data={"response": response} if success else None,
+        )
 
 
 @app.post("/restart", response_model=ApiResponse)
@@ -730,15 +756,16 @@ async def reload_daemon():
         )
 
     # Try ZeroMQ first (preferred method)
-    success, message = daemon_client.reload_config()
-    if success:
-        await asyncio.sleep(0.25)
-        running = check_daemon_running()
-        return ApiResponse(
-            success=True,
-            message="Config reloaded via ZeroMQ",
-            restart_required=not running,
-        )
+    with get_daemon_client() as client:
+        success, message = client.reload_config()
+        if success:
+            await asyncio.sleep(0.25)
+            running = check_daemon_running()
+            return ApiResponse(
+                success=True,
+                message="Config reloaded via ZeroMQ",
+                restart_required=not running,
+            )
 
     # Fallback to SIGHUP
     try:

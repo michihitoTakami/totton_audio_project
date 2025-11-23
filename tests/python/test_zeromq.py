@@ -2,13 +2,36 @@
 Tests for ZeroMQ daemon communication.
 
 These tests verify the Python DaemonClient class and ZeroMQ API endpoints.
-Note: Most tests require the daemon to NOT be running, as they test fallback behavior.
+Tests that require the daemon to NOT be running are skipped when daemon is detected.
 """
 
+import subprocess
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 # Import the DaemonClient from web module
-from web.main import DaemonClient, daemon_client, ZEROMQ_IPC_PATH
+from web.main import DaemonClient, get_daemon_client, ZEROMQ_IPC_PATH
+
+
+def is_daemon_running() -> bool:
+    """Check if daemon is running (used for skip conditions)."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "gpu_upsampler_alsa"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+# Skip marker for tests that require daemon to NOT be running
+requires_daemon_not_running = pytest.mark.skipif(
+    is_daemon_running(),
+    reason="Test requires daemon to NOT be running (tests timeout/error behavior)",
+)
 
 
 class TestDaemonClient:
@@ -37,6 +60,28 @@ class TestDaemonClient:
         assert client._socket is None
         assert client._context is None
 
+    def test_context_manager_enter_exit(self):
+        """Test that context manager enters and exits correctly."""
+        with DaemonClient() as client:
+            assert isinstance(client, DaemonClient)
+        # After exit, socket should be closed
+        assert client._socket is None
+        assert client._context is None
+
+    def test_factory_function_returns_client(self):
+        """Test that get_daemon_client returns a DaemonClient instance."""
+        client = get_daemon_client()
+        assert isinstance(client, DaemonClient)
+        assert client.timeout_ms == 3000
+        client.close()
+
+    def test_factory_function_custom_timeout(self):
+        """Test that get_daemon_client respects custom timeout."""
+        client = get_daemon_client(timeout_ms=500)
+        assert client.timeout_ms == 500
+        client.close()
+
+    @requires_daemon_not_running
     def test_send_command_timeout_when_daemon_not_running(self):
         """Test that send_command returns timeout error when daemon is not running."""
         client = DaemonClient(timeout_ms=500)  # Short timeout for test
@@ -45,6 +90,7 @@ class TestDaemonClient:
         assert "timeout" in message.lower() or "not responding" in message.lower()
         client.close()
 
+    @requires_daemon_not_running
     def test_reload_config_when_daemon_not_running(self):
         """Test reload_config returns appropriate error when daemon not running."""
         client = DaemonClient(timeout_ms=500)
@@ -52,6 +98,7 @@ class TestDaemonClient:
         assert success is False
         client.close()
 
+    @requires_daemon_not_running
     def test_ping_when_daemon_not_running(self):
         """Test ping returns False when daemon not running."""
         client = DaemonClient(timeout_ms=500)
@@ -59,12 +106,22 @@ class TestDaemonClient:
         assert result is False
         client.close()
 
+    @requires_daemon_not_running
     def test_get_stats_when_daemon_not_running(self):
         """Test get_stats returns error when daemon not running."""
         client = DaemonClient(timeout_ms=500)
         success, result = client.get_stats()
         assert success is False
         client.close()
+
+    @requires_daemon_not_running
+    def test_context_manager_timeout(self):
+        """Test context manager handles timeout correctly."""
+        with get_daemon_client(timeout_ms=500) as client:
+            success, message = client.send_command("PING")
+            assert success is False
+        # Socket should be cleaned up
+        assert client._socket is None
 
 
 class TestDaemonClientMocked:
@@ -154,14 +211,25 @@ class TestDaemonClientMocked:
         assert "Invalid JSON" in result
 
 
-class TestGlobalDaemonClient:
-    """Test the global daemon_client instance."""
+class TestFactoryFunction:
+    """Test the get_daemon_client factory function."""
 
-    def test_global_client_exists(self):
-        """Test that global daemon_client is initialized."""
-        assert daemon_client is not None
-        assert isinstance(daemon_client, DaemonClient)
+    def test_factory_returns_client(self):
+        """Test that factory returns DaemonClient instance."""
+        client = get_daemon_client()
+        assert isinstance(client, DaemonClient)
+        assert client.endpoint == ZEROMQ_IPC_PATH
+        client.close()
 
-    def test_global_client_has_correct_endpoint(self):
-        """Test global client uses correct endpoint."""
-        assert daemon_client.endpoint == ZEROMQ_IPC_PATH
+    def test_factory_custom_timeout(self):
+        """Test factory with custom timeout."""
+        client = get_daemon_client(timeout_ms=1000)
+        assert client.timeout_ms == 1000
+        client.close()
+
+    def test_factory_context_manager(self):
+        """Test factory works as context manager."""
+        with get_daemon_client() as client:
+            assert isinstance(client, DaemonClient)
+        # Socket should be cleaned up after context exit
+        assert client._socket is None
