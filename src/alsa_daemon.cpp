@@ -332,15 +332,15 @@ static void signal_handler(int sig) {
     if (sig == SIGHUP) {
         std::cout << "\nReceived SIGHUP, restarting for config reload..." << std::endl;
         g_reload_requested = true;
-        g_running = false;
     } else {
         std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
-        // Start fade-out for glitch-free shutdown (safe to call from signal handler)
-        // Note: g_running is NOT set to false here - ALSA thread must continue
-        // processing to complete the fade-out. Cleanup code will set it after fade.
-        if (g_soft_mute) {
-            g_soft_mute->startFadeOut();
-        }
+    }
+
+    // Start fade-out for glitch-free shutdown/restart (safe to call from signal handler)
+    // Note: g_running is NOT set to false here - ALSA thread must continue
+    // processing to complete the fade-out. Cleanup code will set it after fade.
+    if (g_soft_mute) {
+        g_soft_mute->startFadeOut();
     }
 
     // Quit PipeWire main loop to trigger clean shutdown sequence
@@ -662,6 +662,7 @@ void alsa_output_thread() {
                             new_period != period_size) {
                             period_size = new_period;
                             interleaved_buffer.resize(period_size * CHANNELS);
+                            float_buffer.resize(period_size * CHANNELS);
                         }
                         // Drop queued buffers on successful reopen to avoid burst
                         {
