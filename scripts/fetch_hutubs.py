@@ -148,10 +148,8 @@ def load_hutubs_anthropometric_data(csv_path: Path) -> dict[str, dict]:
             head_height = parse_float(row.get(COLUMN_HEAD_HEIGHT, ""))
             head_depth = parse_float(row.get(COLUMN_HEAD_DEPTH, ""))
 
-            # Skip subjects with no valid data
-            if head_circumference is None:
-                continue
-
+            # Include all subjects, even with missing head circumference
+            # (missing data will default to size_category="M")
             anthropometric[subject_id] = {
                 "head_circumference": head_circumference,
                 "head_width": head_width,

@@ -188,6 +188,15 @@
       "sofa_file": null
     },
     {
+      "id": "pp18",
+      "head_circumference": null,
+      "head_width": null,
+      "head_height": null,
+      "head_depth": null,
+      "size_category": "M",
+      "sofa_file": null
+    },
+    {
       "id": "pp19",
       "head_circumference": 58.6,
       "head_width": 14.5614,
@@ -728,6 +737,15 @@
       "sofa_file": null
     },
     {
+      "id": "pp79",
+      "head_circumference": null,
+      "head_width": null,
+      "head_height": null,
+      "head_depth": null,
+      "size_category": "M",
+      "sofa_file": null
+    },
+    {
       "id": "pp80",
       "head_circumference": 56.4,
       "head_width": 16.0106,
@@ -832,6 +850,15 @@
       "head_width": 14.6002,
       "head_height": 19.1193,
       "head_depth": 19.8178,
+      "size_category": "M",
+      "sofa_file": null
+    },
+    {
+      "id": "pp92",
+      "head_circumference": null,
+      "head_width": null,
+      "head_height": null,
+      "head_depth": null,
       "size_category": "M",
       "sofa_file": null
     },
