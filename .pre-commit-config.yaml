@@ -37,8 +37,7 @@ repos:
       - id: check-yaml
       - id: check-json
       - id: check-added-large-files
-        args: ['--maxkb=1000']
-        exclude: ^data/coefficients/.*\.bin$
+        args: ['--maxkb=35000']  # 35MB - HRTF filters are ~32MB each
 
   # Python formatting (for web API and scripts)
   - repo: https://github.com/astral-sh/ruff-pre-commit
