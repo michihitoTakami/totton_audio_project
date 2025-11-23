@@ -26,7 +26,6 @@ class TestPhaseType:
 
         assert PhaseType.MINIMUM.value == "minimum"
         assert PhaseType.LINEAR.value == "linear"
-        assert PhaseType.MIXED.value == "mixed"
 
     def test_phase_type_from_string(self):
         """PhaseType should be constructible from string."""
@@ -34,7 +33,6 @@ class TestPhaseType:
 
         assert PhaseType("minimum") == PhaseType.MINIMUM
         assert PhaseType("linear") == PhaseType.LINEAR
-        assert PhaseType("mixed") == PhaseType.MIXED
 
 
 class TestMinimumPhaseMethod:
@@ -65,7 +63,6 @@ class TestFilterConfig:
         assert config.stopband_attenuation_db == 197
         assert config.kaiser_beta == 55.0
         assert config.phase_type == PhaseType.MINIMUM
-        assert config.mix_ratio == 0.5
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
 
     def test_output_rate_property(self):
@@ -118,25 +115,38 @@ class TestFilterConfig:
         )
         assert config.base_name == "filter_48k_8x_2m_linear"
 
-    def test_base_name_mixed_phase(self):
-        """base_name should include mix ratio for mixed phase."""
-        from generate_filter import FilterConfig, PhaseType
-
-        config = FilterConfig(
-            n_taps=2_000_000,
-            input_rate=44100,
-            upsample_ratio=16,
-            phase_type=PhaseType.MIXED,
-            mix_ratio=0.7,
-        )
-        assert config.base_name == "filter_44k_16x_2m_mixed70"
-
     def test_base_name_custom_prefix(self):
         """output_prefix should override auto-generated name."""
         from generate_filter import FilterConfig
 
         config = FilterConfig(output_prefix="custom_filter")
         assert config.base_name == "custom_filter"
+
+    def test_actual_taps_minimum_phase(self):
+        """actual_taps should equal n_taps for minimum phase."""
+        from generate_filter import FilterConfig, PhaseType
+
+        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
+        assert config.actual_taps == 2_000_000
+
+        config_odd = FilterConfig(n_taps=2_000_001, phase_type=PhaseType.MINIMUM)
+        assert config_odd.actual_taps == 2_000_001
+
+    def test_actual_taps_linear_phase_even_to_odd(self):
+        """actual_taps should be odd for linear phase (even input becomes odd)."""
+        from generate_filter import FilterConfig, PhaseType
+
+        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.LINEAR)
+        assert config.actual_taps == 2_000_001  # Even -> Odd (+1)
+        assert config.actual_taps % 2 == 1  # Must be odd
+
+    def test_actual_taps_linear_phase_odd_unchanged(self):
+        """actual_taps should stay odd for linear phase when n_taps is already odd."""
+        from generate_filter import FilterConfig, PhaseType
+
+        config = FilterConfig(n_taps=2_000_001, phase_type=PhaseType.LINEAR)
+        assert config.actual_taps == 2_000_001  # Odd unchanged
+        assert config.actual_taps % 2 == 1  # Must be odd
 
 
 class TestFilterDesigner:
@@ -218,6 +228,27 @@ class TestFilterDesigner:
         # Should return same as linear
         assert h_linear is not None
         # Linear phase with odd taps should be symmetric
+        assert np.allclose(h_final, h_final[::-1], atol=1e-10)
+
+    def test_design_linear_phase_even_taps_becomes_odd(self):
+        """design() with LINEAR and even tap count should produce odd taps."""
+        from generate_filter import FilterConfig, FilterDesigner, PhaseType
+
+        # Even tap count should become odd for linear phase
+        config = FilterConfig(
+            n_taps=1600,  # Even, divisible by 16
+            input_rate=44100,
+            upsample_ratio=16,
+            kaiser_beta=14,
+            phase_type=PhaseType.LINEAR,
+        )
+        designer = FilterDesigner(config)
+        h_final, h_linear = designer.design()
+
+        # Tap count should be odd (1601, not 1600)
+        assert len(h_final) == 1601
+        assert len(h_final) % 2 == 1
+        # Should be symmetric (Type I FIR)
         assert np.allclose(h_final, h_final[::-1], atol=1e-10)
 
 
@@ -688,16 +719,6 @@ class TestMultiRateOutputFilename:
         )
         assert config_lin.base_name == "filter_44k_16x_2m_linear"
 
-        # Mixed phase
-        config_mix = FilterConfig(
-            n_taps=2_000_000,
-            input_rate=44100,
-            upsample_ratio=16,
-            phase_type=PhaseType.MIXED,
-            mix_ratio=0.5,
-        )
-        assert config_mix.base_name == "filter_44k_16x_2m_mixed50"
-
 
 class TestValidateTapCountMultiRate:
     """Tests for tap count validation with different ratios."""
@@ -724,58 +745,6 @@ class TestValidateTapCountMultiRate:
         # 1025 IS divisible by... nothing here that we use
         with pytest.raises(ValueError):
             validate_tap_count(1025, 2)  # Not divisible by 2
-
-
-class TestMixedPhaseProperties:
-    """Tests for mixed phase filter properties."""
-
-    def test_mixed_phase_blend(self):
-        """Mixed phase should blend between linear and minimum."""
-        from generate_filter import FilterConfig, FilterDesigner, PhaseType
-
-        config = FilterConfig(
-            n_taps=1024,
-            input_rate=44100,
-            upsample_ratio=16,
-            kaiser_beta=14,
-            phase_type=PhaseType.MIXED,
-            mix_ratio=0.5,
-        )
-        designer = FilterDesigner(config)
-
-        h_mixed, h_linear = designer.design()
-
-        # Mixed phase should have non-zero coefficients
-        assert np.max(np.abs(h_mixed)) > 0
-
-        # Should have some energy distribution between min and linear
-        mid = len(h_mixed) // 2
-        energy_first = np.sum(h_mixed[:mid] ** 2)
-        energy_second = np.sum(h_mixed[mid:] ** 2)
-
-        # For mixed phase, first half should still have more energy
-        # but not as extreme as pure minimum phase
-        assert energy_first > energy_second * 0.5
-
-    def test_mix_ratio_extremes(self):
-        """mix_ratio=1.0 should be like minimum, 0.0 like linear."""
-        from generate_filter import FilterConfig, FilterDesigner, PhaseType
-
-        # mix_ratio=1.0 (pure minimum)
-        config_min = FilterConfig(
-            n_taps=1024,
-            input_rate=44100,
-            upsample_ratio=16,
-            kaiser_beta=14,
-            phase_type=PhaseType.MIXED,
-            mix_ratio=1.0,
-        )
-        designer_min = FilterDesigner(config_min)
-        h_min, _ = designer_min.design()
-
-        # Peak should be at front for mix_ratio=1.0
-        peak_min = np.argmax(np.abs(h_min))
-        assert peak_min < len(h_min) * 0.1
 
 
 class TestFilterGenerator:

@@ -2,7 +2,7 @@
 """
 GPU Audio Upsampler - Multi-Rate Filter Coefficient Generation
 
-FIRフィルタを生成し、検証する。位相タイプ（最小位相/線形位相/混合位相）を選択可能。
+FIRフィルタを生成し、検証する。位相タイプ（最小位相/線形位相）を選択可能。
 
 サポートするアップサンプリング比率:
 - 16x: 44.1kHz → 705.6kHz, 48kHz → 768kHz
@@ -11,9 +11,8 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 - 2x:  352.8kHz → 705.6kHz, 384kHz → 768kHz
 
 位相タイプ:
-- minimum: 最小位相（プリリンギング排除、周波数依存遅延）
-- linear: 線形位相（プリリンギングあり、全周波数で一定遅延）
-- mixed: 混合位相（最小位相と線形位相のブレンド）
+- minimum: 最小位相（プリリンギング排除、周波数依存遅延）【推奨】
+- linear: 線形位相（プリリンギングあり、全周波数で一定遅延、奇数タップ）
 
 仕様:
 - タップ数: 2,000,000 (2M) デフォルト
@@ -25,6 +24,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 注意:
 - タップ数はアップサンプリング比率の倍数であること
 - クリッピング防止のため係数は正規化される
+- 線形位相は対称性維持のため奇数タップとなる（偶数指定時は+1）
 """
 
 from __future__ import annotations
@@ -45,9 +45,8 @@ from scipy import signal
 class PhaseType(Enum):
     """フィルタの位相タイプ"""
 
-    MINIMUM = "minimum"  # 最小位相: プリリンギングなし、周波数依存遅延
-    LINEAR = "linear"  # 線形位相: プリリンギングあり、一定遅延
-    MIXED = "mixed"  # 混合位相: 最小位相と線形位相のブレンド
+    MINIMUM = "minimum"  # 最小位相: プリリンギングなし、周波数依存遅延【推奨】
+    LINEAR = "linear"  # 線形位相: プリリンギングあり、一定遅延（奇数タップ強制）
 
 
 class MinimumPhaseMethod(Enum):
@@ -85,7 +84,6 @@ class FilterConfig:
     stopband_attenuation_db: int = 197
     kaiser_beta: float = 55.0
     phase_type: PhaseType = PhaseType.MINIMUM
-    mix_ratio: float = 0.5  # 混合位相用（0.0=線形, 1.0=最小）
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
     output_prefix: str | None = None
 
@@ -108,13 +106,17 @@ class FilterConfig:
         return str(self.n_taps)
 
     @property
+    def actual_taps(self) -> int:
+        """実際のタップ数（線形位相は奇数に調整）"""
+        if self.phase_type == PhaseType.LINEAR and self.n_taps % 2 == 0:
+            return self.n_taps + 1
+        return self.n_taps
+
+    @property
     def base_name(self) -> str:
         if self.output_prefix:
             return self.output_prefix
-        phase_suffix = self.phase_type.value
-        if self.phase_type == PhaseType.MIXED:
-            phase_suffix = f"mixed{int(self.mix_ratio * 100)}"
-        return f"filter_{self.family}_{self.upsample_ratio}x_{self.taps_label}_{phase_suffix}"
+        return f"filter_{self.family}_{self.upsample_ratio}x_{self.taps_label}_{self.phase_type.value}"
 
 
 class FilterDesigner:
@@ -124,9 +126,9 @@ class FilterDesigner:
         self.config = config
 
     def design_linear_phase(self) -> np.ndarray:
-        """線形位相FIRフィルタを設計する"""
+        """線形位相FIRフィルタを設計する（常に奇数タップ）"""
         print("線形位相FIRフィルタ設計中...")
-        print(f"  タップ数: {self.config.n_taps}")
+        print(f"  指定タップ数: {self.config.n_taps}")
         print(f"  出力サンプルレート: {self.config.output_rate} Hz")
         print(f"  通過帯域: 0-{self.config.passband_end} Hz")
         print(f"  阻止帯域: {self.config.stopband_start}+ Hz")
@@ -138,12 +140,11 @@ class FilterDesigner:
         print(f"  カットオフ周波数: {cutoff_freq} Hz (正規化: {normalized_cutoff:.6f})")
         print(f"  Kaiser β: {self.config.kaiser_beta}")
 
-        # タイプIフィルタのため奇数タップに
-        numtaps = (
-            self.config.n_taps
-            if self.config.n_taps % 2 == 1
-            else self.config.n_taps + 1
-        )
+        # タイプI FIRフィルタは奇数タップが必須（対称性維持のため）
+        numtaps = self.config.actual_taps
+        if numtaps % 2 == 0:
+            numtaps += 1
+            print(f"  注意: 線形位相は奇数タップ必須のため {numtaps} に調整")
 
         h_linear = signal.firwin(
             numtaps=numtaps,
@@ -181,29 +182,6 @@ class FilterDesigner:
         print(f"  FFTサイズ: {n_fft}")
         return h_min_phase
 
-    def create_mixed_phase(
-        self, h_linear: np.ndarray, h_min_phase: np.ndarray
-    ) -> np.ndarray:
-        """混合位相フィルタを生成する（インパルス応答のブレンド）"""
-        print(f"\n混合位相フィルタ生成中（mix_ratio={self.config.mix_ratio:.2f}）...")
-
-        # 線形位相の中心をt=0に揃えてからブレンド
-        linear_center = len(h_linear) // 2
-        h_linear_shifted = np.zeros(self.config.n_taps)
-
-        # 線形位相の前半部分をコピー（必要な範囲のみ）
-        copy_len = min(linear_center, self.config.n_taps)
-        h_linear_shifted[:copy_len] = h_linear[linear_center : linear_center + copy_len]
-
-        # mix_ratio: 1.0 = 完全最小位相, 0.0 = 完全線形位相
-        h_mixed = (
-            self.config.mix_ratio * h_min_phase
-            + (1.0 - self.config.mix_ratio) * h_linear_shifted
-        )
-
-        print(f"  混合位相係数タップ数: {len(h_mixed)}")
-        return h_mixed
-
     def design(self) -> tuple[np.ndarray, np.ndarray | None]:
         """
         設定に基づいてフィルタを設計する
@@ -215,25 +193,12 @@ class FilterDesigner:
         h_linear = self.design_linear_phase()
 
         if self.config.phase_type == PhaseType.LINEAR:
-            # 線形位相をそのまま使用（タップ数を調整）
-            if len(h_linear) > self.config.n_taps:
-                # 中心を保持してトリム
-                center = len(h_linear) // 2
-                start = center - self.config.n_taps // 2
-                h_final = h_linear[start : start + self.config.n_taps]
-            else:
-                h_final = h_linear
-            return h_final, h_linear
+            # 線形位相をそのまま使用（奇数タップを維持、対称性を保証）
+            return h_linear, h_linear
 
         # 2. 最小位相変換
         h_min_phase = self.convert_to_minimum_phase(h_linear)
-
-        if self.config.phase_type == PhaseType.MINIMUM:
-            return h_min_phase, h_linear
-
-        # 3. 混合位相
-        h_mixed = self.create_mixed_phase(h_linear, h_min_phase)
-        return h_mixed, h_linear
+        return h_min_phase, h_linear
 
 
 class FilterValidator:
@@ -284,6 +249,7 @@ class FilterValidator:
             "is_minimum_phase": bool(is_peak_at_front and is_energy_causal),
             "is_symmetric": is_symmetric,
             "phase_type": self.config.phase_type.value,
+            "actual_taps": len(h),
         }
 
         self._print_results(results, stopband_attenuation)
@@ -297,6 +263,7 @@ class FilterValidator:
         self, results: dict[str, Any], stopband_attenuation: float
     ) -> None:
         print(f"  位相タイプ: {results['phase_type']}")
+        print(f"  実際のタップ数: {results['actual_taps']}")
         print(f"  通過帯域リップル: {results['passband_ripple_db']:.3f} dB")
         print(
             f"  阻止帯域減衰: {abs(stopband_attenuation):.1f} dB (目標: {self.config.stopband_attenuation_db} dB)"
@@ -436,8 +403,8 @@ class FilterPlotter:
         axes[0].axvline(0, color="r", linestyle="--", alpha=0.5, label="t=0")
         axes[0].legend()
 
-        # 線形位相との比較（存在する場合）
-        if h_linear is not None:
+        # 線形位相との比較（存在する場合、かつ最小位相の場合のみ）
+        if h_linear is not None and self.config.phase_type == PhaseType.MINIMUM:
             center = len(h_linear) // 2
             display_range_lin = min(2000, center)
             t_linear = np.arange(-display_range_lin, display_range_lin)
@@ -479,7 +446,7 @@ class FilterPlotter:
             alpha=0.7,
         )
 
-        if h_linear is not None:
+        if h_linear is not None and self.config.phase_type == PhaseType.MINIMUM:
             w_lin, H_lin = signal.freqz(
                 h_linear, worN=16384, fs=self.config.output_rate
             )
@@ -554,7 +521,7 @@ class FilterPlotter:
             alpha=0.7,
         )
 
-        if h_linear is not None:
+        if h_linear is not None and self.config.phase_type == PhaseType.MINIMUM:
             _, H_lin = signal.freqz(h_linear, worN=8192, fs=self.config.output_rate)
             phase_lin = np.unwrap(np.angle(H_lin))
             ax.plot(w / 1000, phase_lin, label="Linear Phase", linewidth=1, alpha=0.5)
@@ -623,6 +590,7 @@ class FilterGenerator:
         return {
             "generation_date": datetime.now().isoformat(),
             "n_taps": self.config.n_taps,
+            "actual_taps": validation_results.get("actual_taps", self.config.n_taps),
             "sample_rate_input": self.config.input_rate,
             "sample_rate_output": self.config.output_rate,
             "upsample_ratio": self.config.upsample_ratio,
@@ -631,9 +599,6 @@ class FilterGenerator:
             "target_stopband_attenuation_db": self.config.stopband_attenuation_db,
             "kaiser_beta": self.config.kaiser_beta,
             "phase_type": self.config.phase_type.value,
-            "mix_ratio": self.config.mix_ratio
-            if self.config.phase_type == PhaseType.MIXED
-            else None,
             "minimum_phase_method": self.config.minimum_phase_method.value,
             "output_basename": self.config.base_name,
             "validation_results": validation_results,
@@ -646,10 +611,11 @@ class FilterGenerator:
         base_name: str,
     ) -> None:
         print("\n" + "=" * 70)
-        print(f"Phase 1 完了 - {self.config.n_taps:,}タップフィルタ")
+        print(
+            f"完了 - {validation_results.get('actual_taps', self.config.n_taps):,}タップフィルタ"
+        )
         print("=" * 70)
         print(f"位相タイプ: {self.config.phase_type.value.title()} Phase")
-        print(f"{self.config.n_taps:,}タップFIRフィルタ生成完了")
         print(f"阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
         spec_status = "合格" if validation_results["meets_stopband_spec"] else "不合格"
         print(f"  {spec_status} (目標: {self.config.stopband_attenuation_db} dB以上)")
@@ -861,7 +827,6 @@ def generate_single_filter(
         stopband_attenuation_db=args.stopband_attenuation,
         kaiser_beta=args.kaiser_beta,
         phase_type=PhaseType(args.phase_type),
-        mix_ratio=args.mix_ratio,
         minimum_phase_method=MinimumPhaseMethod(args.minimum_phase_method),
         output_prefix=args.output_prefix,
     )
@@ -939,20 +904,21 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Generate single minimum phase filter (default)
+  # Generate single minimum phase filter (default, recommended)
   %(prog)s --input-rate 44100 --upsample-ratio 16
 
-  # Generate linear phase filter
+  # Generate linear phase filter (odd taps, symmetric)
   %(prog)s --phase-type linear
-
-  # Generate mixed phase filter (50%% minimum, 50%% linear)
-  %(prog)s --phase-type mixed --mix-ratio 0.5
 
   # Generate all 8 filter configurations
   %(prog)s --generate-all
 
-  # Generate only 44.1kHz family with linear phase
-  %(prog)s --generate-all --family 44k --phase-type linear
+  # Generate only 44.1kHz family
+  %(prog)s --generate-all --family 44k
+
+Phase Types:
+  minimum  - No pre-ringing, frequency-dependent delay (RECOMMENDED)
+  linear   - Pre-ringing present, constant delay, odd taps enforced
 """,
     )
     parser.add_argument(
@@ -1012,15 +978,9 @@ Examples:
     parser.add_argument(
         "--phase-type",
         type=str,
-        choices=["minimum", "linear", "mixed"],
+        choices=["minimum", "linear"],
         default="minimum",
-        help="Phase type: minimum (no pre-ringing), linear (symmetric), mixed (blend). Default: minimum",
-    )
-    parser.add_argument(
-        "--mix-ratio",
-        type=float,
-        default=0.5,
-        help="Mix ratio for mixed phase (0.0=linear, 1.0=minimum). Default: 0.5",
+        help="Phase type: minimum (recommended), linear. Default: minimum",
     )
     parser.add_argument(
         "--minimum-phase-method",
