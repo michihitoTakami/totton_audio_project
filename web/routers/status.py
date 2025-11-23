@@ -2,7 +2,7 @@
 
 import asyncio
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from ..models import ApiResponse, SettingsUpdate, Status
@@ -10,6 +10,7 @@ from ..services import (
     check_daemon_running,
     check_pipewire_sink,
     get_alsa_devices,
+    is_safe_profile_name,
     load_config,
     load_stats,
     save_config,
@@ -77,6 +78,13 @@ async def websocket_stats(websocket: WebSocket):
 @router.post("/settings", response_model=ApiResponse)
 async def update_settings(update: SettingsUpdate):
     """Update application settings."""
+    # Validate eq_profile if provided (prevent path traversal)
+    if update.eq_profile is not None and not is_safe_profile_name(update.eq_profile):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid EQ profile name. Use only letters, numbers, underscores, hyphens, and dots.",
+        )
+
     current = load_config()
 
     # Update only provided fields

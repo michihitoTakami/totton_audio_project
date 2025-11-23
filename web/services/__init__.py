@@ -13,6 +13,7 @@ from .daemon import (
 )
 from .daemon_client import DaemonClient, get_daemon_client
 from .eq import (
+    is_safe_profile_name,
     parse_eq_profile_content,
     read_and_validate_upload,
     sanitize_filename,
@@ -37,6 +38,7 @@ __all__ = [
     "DaemonClient",
     "get_daemon_client",
     # eq
+    "is_safe_profile_name",
     "parse_eq_profile_content",
     "read_and_validate_upload",
     "sanitize_filename",

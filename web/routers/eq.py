@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from ..constants import EQ_PROFILES_DIR
 from ..models import ApiResponse
 from ..services import (
+    is_safe_profile_name,
     load_config,
     parse_eq_profile_content,
     read_and_validate_upload,
@@ -12,6 +13,19 @@ from ..services import (
 )
 
 router = APIRouter(prefix="/eq", tags=["eq"])
+
+
+def validate_profile_name(name: str) -> None:
+    """
+    Validate profile name to prevent path traversal attacks.
+
+    Raises HTTPException 400 if name contains unsafe characters.
+    """
+    if not is_safe_profile_name(name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid profile name. Cannot start with '.' or contain '..'.",
+        )
 
 
 @router.get("/profiles")
@@ -134,6 +148,9 @@ async def import_eq_profile(file: UploadFile, overwrite: bool = False):
 @router.post("/activate/{name}", response_model=ApiResponse)
 async def activate_eq_profile(name: str):
     """Activate an EQ profile by name."""
+    # Validate profile name (prevent path traversal)
+    validate_profile_name(name)
+
     # Find profile file
     profile_path = EQ_PROFILES_DIR / f"{name}.txt"
     if not profile_path.exists():
@@ -168,6 +185,9 @@ async def deactivate_eq():
 @router.delete("/profiles/{name}", response_model=ApiResponse)
 async def delete_eq_profile(name: str):
     """Delete an EQ profile."""
+    # Validate profile name (prevent path traversal)
+    validate_profile_name(name)
+
     profile_path = EQ_PROFILES_DIR / f"{name}.txt"
     if not profile_path.exists():
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
@@ -194,6 +214,20 @@ async def get_active_eq():
         return {
             "active": False,
             "name": None,
+            "source_type": None,
+            "has_modern_target": False,
+            "opra_info": None,
+            "opra_filters": [],
+            "original_filters": [],
+        }
+
+    # Defense-in-depth: validate profile name from config
+    # This catches cases where config was tampered with or contains unsafe values
+    if not is_safe_profile_name(config.eq_profile):
+        return {
+            "active": True,
+            "name": config.eq_profile,
+            "error": "Invalid profile name in config",
             "source_type": None,
             "has_modern_target": False,
             "opra_info": None,
