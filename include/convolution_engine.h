@@ -288,14 +288,21 @@ class GPUUpsampler {
         return upsampleRatio_;
     }
 
-    // Get input sample rate for current rate family (for EQ design)
-    int getInputSampleRate() const {
-        return getBaseSampleRate(currentRateFamily_);
+    // Set input sample rate (updates rate family automatically)
+    // Call this after initialize() for single-rate mode to get correct latency calculation
+    void setInputSampleRate(int sampleRate) {
+        inputSampleRate_ = sampleRate;
+        currentRateFamily_ = detectRateFamily(sampleRate);
     }
 
-    // Get output sample rate for current rate family
+    // Get input sample rate
+    int getInputSampleRate() const {
+        return inputSampleRate_;
+    }
+
+    // Get output sample rate (input rate * upsample ratio)
     int getOutputSampleRate() const {
-        return ConvolutionEngine::getOutputSampleRate(currentRateFamily_);
+        return inputSampleRate_ * upsampleRatio_;
     }
 
     // Legacy: Get default input sample rate (44.1kHz)
@@ -339,6 +346,7 @@ class GPUUpsampler {
     int blockSize_;
     int filterTaps_;
     int fftSize_;                               // Pre-computed FFT size
+    int inputSampleRate_ = 44100;               // Input sample rate (default: 44.1kHz)
     PhaseType phaseType_ = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 
     // Filter coefficients (single-rate mode)

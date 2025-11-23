@@ -762,3 +762,194 @@ TEST_F(ConvolutionEngineTest, SwitchToInputRateWithoutMultiRateInit) {
     // switchToInputRate should fail when not in multi-rate mode
     EXPECT_FALSE(upsampler.switchToInputRate(48000));
 }
+
+// ============================================================
+// Phase Type Support Tests
+// ============================================================
+
+TEST_F(ConvolutionEngineTest, DefaultPhaseTypeIsMinimum) {
+    GPUUpsampler upsampler;
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+}
+
+TEST_F(ConvolutionEngineTest, SetPhaseType) {
+    GPUUpsampler upsampler;
+
+    upsampler.setPhaseType(PhaseType::Linear);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+
+    upsampler.setPhaseType(PhaseType::Minimum);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+}
+
+TEST_F(ConvolutionEngineTest, SetInputSampleRate44k) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    upsampler.setInputSampleRate(44100);
+    EXPECT_EQ(upsampler.getInputSampleRate(), 44100);
+    EXPECT_EQ(upsampler.getOutputSampleRate(), 705600);  // 44100 * 16
+}
+
+TEST_F(ConvolutionEngineTest, SetInputSampleRate48k) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    upsampler.setInputSampleRate(48000);
+    EXPECT_EQ(upsampler.getInputSampleRate(), 48000);
+    EXPECT_EQ(upsampler.getOutputSampleRate(), 768000);  // 48000 * 16
+}
+
+TEST_F(ConvolutionEngineTest, LatencyMinimumPhaseIsZero) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    upsampler.setPhaseType(PhaseType::Minimum);
+    EXPECT_EQ(upsampler.getLatencySamples(), 0);
+    EXPECT_DOUBLE_EQ(upsampler.getLatencySeconds(), 0.0);
+}
+
+TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    upsampler.setInputSampleRate(44100);
+    upsampler.setPhaseType(PhaseType::Linear);
+
+    // 2M taps: (2000000 - 1) / 2 = 999999.5 -> 999999 samples
+    EXPECT_EQ(upsampler.getLatencySamples(), 999999);
+
+    // 999999 / 705600 ≈ 1.417 seconds
+    double expectedLatency = 999999.0 / 705600.0;
+    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
+}
+
+TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    upsampler.setInputSampleRate(48000);  // 48k family
+    upsampler.setPhaseType(PhaseType::Linear);
+
+    // 2M taps: (2000000 - 1) / 2 = 999999 samples
+    EXPECT_EQ(upsampler.getLatencySamples(), 999999);
+
+    // 999999 / 768000 ≈ 1.302 seconds (different from 44k!)
+    double expectedLatency = 999999.0 / 768000.0;
+    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
+}
+
+TEST_F(ConvolutionEngineTest, ApplyEqLinearPhase) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    // Set to linear phase mode
+    upsampler.setPhaseType(PhaseType::Linear);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+
+    // Create flat EQ (unity magnitude)
+    size_t fftSize = upsampler.getFilterFftSize();
+    std::vector<double> eqMagnitude(fftSize, 1.0);
+
+    // Apply EQ - should use applyEqMagnitudeOnly internally
+    bool result = upsampler.applyEqMagnitude(eqMagnitude);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(upsampler.isEqApplied());
+}
+
+TEST_F(ConvolutionEngineTest, ApplyEqLinearPhaseWithBoost) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    // Set to linear phase mode
+    upsampler.setPhaseType(PhaseType::Linear);
+
+    // Create EQ with boost (should trigger auto-normalization)
+    size_t fftSize = upsampler.getFilterFftSize();
+    std::vector<double> eqMagnitude(fftSize, 2.0);  // +6dB boost
+
+    // Apply EQ - should auto-normalize
+    bool result = upsampler.applyEqMagnitude(eqMagnitude);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(upsampler.isEqApplied());
+}
+
+TEST_F(ConvolutionEngineTest, RestoreFilterAfterLinearPhaseEq) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+
+    // Set to linear phase mode and apply EQ
+    upsampler.setPhaseType(PhaseType::Linear);
+    size_t fftSize = upsampler.getFilterFftSize();
+    std::vector<double> eqMagnitude(fftSize, 0.5);  // -6dB
+    ASSERT_TRUE(upsampler.applyEqMagnitude(eqMagnitude));
+    EXPECT_TRUE(upsampler.isEqApplied());
+
+    // Restore original filter
+    upsampler.restoreOriginalFilter();
+    EXPECT_FALSE(upsampler.isEqApplied());
+}

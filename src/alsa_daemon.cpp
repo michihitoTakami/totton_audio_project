@@ -821,6 +821,11 @@ int main(int argc, char* argv[]) {
         std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                   << g_config.blockSize << " samples/block)" << std::endl;
 
+        // Set input sample rate for correct output rate calculation
+        g_upsampler->setInputSampleRate(g_config.inputSampleRate);
+        std::cout << "Input sample rate: " << g_config.inputSampleRate << " Hz -> "
+                  << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
+
         // Set phase type from config
         g_upsampler->setPhaseType(g_config.phaseType);
         std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;

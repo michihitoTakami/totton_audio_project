@@ -224,6 +224,7 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     }
 
     currentRateFamily_ = targetFamily;
+    inputSampleRate_ = getBaseSampleRate(targetFamily);
     std::cout << "Rate family switch complete" << std::endl;
     return true;
 }
