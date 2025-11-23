@@ -73,18 +73,20 @@ class Controller {
     // Calculate gain for current position in fade
     float calculateGain(size_t position, size_t total, bool fadeOut) const;
 
-    // State
-    // NOTE: state_ and currentGain_ are atomic for thread-safe reads.
-    // However, fadePosition_, fadeSamples_, fadeCurve_ are NOT atomic.
-    // Call setFadeDuration/setSampleRate/setFadeCurve only when NOT processing audio.
+    // Thread safety model:
+    // - state_, currentGain_, fadePosition_: atomic, safe for concurrent access
+    //   from control thread (startFadeOut/startFadeIn/setMuted/setPlaying) and
+    //   audio thread (process)
+    // - fadeDurationMs_, sampleRate_, fadeSamples_, fadeCurve_: NOT atomic
+    //   Call setFadeDuration/setSampleRate/setFadeCurve only when NOT processing audio.
     std::atomic<MuteState> state_{MuteState::PLAYING};
     std::atomic<float> currentGain_{1.0f};
+    std::atomic<size_t> fadePosition_{0};
 
-    // Fade parameters
+    // Fade parameters (NOT thread-safe, configure before audio processing)
     int fadeDurationMs_{50};
     int sampleRate_{44100};
-    size_t fadeSamples_{0};   // Total samples in fade
-    size_t fadePosition_{0};  // Current position in fade
+    size_t fadeSamples_{0};
     FadeCurve fadeCurve_{FadeCurve::LINEAR};
 
     // Recalculate fade samples when parameters change

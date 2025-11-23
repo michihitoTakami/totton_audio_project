@@ -11,31 +11,31 @@ Controller::Controller(int fadeDurationMs, int sampleRate)
 }
 
 void Controller::startFadeOut() {
-    MuteState current = state_.load();
+    MuteState current = state_.load(std::memory_order_acquire);
     if (current == MuteState::PLAYING || current == MuteState::FADING_IN) {
-        fadePosition_ = 0;
-        state_.store(MuteState::FADING_OUT);
+        fadePosition_.store(0, std::memory_order_relaxed);
+        state_.store(MuteState::FADING_OUT, std::memory_order_release);
     }
 }
 
 void Controller::startFadeIn() {
-    MuteState current = state_.load();
+    MuteState current = state_.load(std::memory_order_acquire);
     if (current == MuteState::MUTED || current == MuteState::FADING_OUT) {
-        fadePosition_ = 0;
-        state_.store(MuteState::FADING_IN);
+        fadePosition_.store(0, std::memory_order_relaxed);
+        state_.store(MuteState::FADING_IN, std::memory_order_release);
     }
 }
 
 void Controller::setMuted() {
-    state_.store(MuteState::MUTED);
-    currentGain_.store(0.0f);
-    fadePosition_ = 0;
+    fadePosition_.store(0, std::memory_order_relaxed);
+    state_.store(MuteState::MUTED, std::memory_order_release);
+    currentGain_.store(0.0f, std::memory_order_relaxed);
 }
 
 void Controller::setPlaying() {
-    state_.store(MuteState::PLAYING);
-    currentGain_.store(1.0f);
-    fadePosition_ = 0;
+    fadePosition_.store(0, std::memory_order_relaxed);
+    state_.store(MuteState::PLAYING, std::memory_order_release);
+    currentGain_.store(1.0f, std::memory_order_relaxed);
 }
 
 bool Controller::process(float* buffer, size_t frames) {
@@ -43,7 +43,7 @@ bool Controller::process(float* buffer, size_t frames) {
         return false;
     }
 
-    MuteState currentState = state_.load();
+    MuteState currentState = state_.load(std::memory_order_acquire);
 
     // Fast path: normal playback, no processing needed
     if (currentState == MuteState::PLAYING) {
@@ -55,7 +55,7 @@ bool Controller::process(float* buffer, size_t frames) {
         for (size_t i = 0; i < frames * 2; ++i) {
             buffer[i] = 0.0f;
         }
-        currentGain_.store(0.0f);
+        currentGain_.store(0.0f, std::memory_order_relaxed);
         return true;
     }
 
@@ -64,19 +64,20 @@ bool Controller::process(float* buffer, size_t frames) {
 
     for (size_t frame = 0; frame < frames; ++frame) {
         float gain;
+        size_t pos = fadePosition_.load(std::memory_order_relaxed);
 
-        if (fadePosition_ >= fadeSamples_) {
+        if (pos >= fadeSamples_) {
             // Fade complete
             if (isFadeOut) {
-                state_.store(MuteState::MUTED);
+                state_.store(MuteState::MUTED, std::memory_order_release);
                 gain = 0.0f;
             } else {
-                state_.store(MuteState::PLAYING);
+                state_.store(MuteState::PLAYING, std::memory_order_release);
                 gain = 1.0f;
             }
         } else {
-            gain = calculateGain(fadePosition_, fadeSamples_, isFadeOut);
-            fadePosition_++;
+            gain = calculateGain(pos, fadeSamples_, isFadeOut);
+            fadePosition_.fetch_add(1, std::memory_order_relaxed);
         }
 
         // Apply gain to both channels (stereo interleaved)
@@ -84,7 +85,7 @@ bool Controller::process(float* buffer, size_t frames) {
         buffer[sampleIndex] *= gain;
         buffer[sampleIndex + 1] *= gain;
 
-        currentGain_.store(gain);
+        currentGain_.store(gain, std::memory_order_relaxed);
     }
 
     return true;
