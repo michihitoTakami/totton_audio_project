@@ -1,6 +1,7 @@
 #include "audio_utils.h"
 #include "config_loader.h"
 #include "convolution_engine.h"
+#include "crossfeed_engine.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -77,6 +78,15 @@ static std::vector<float> g_stream_input_left;
 static std::vector<float> g_stream_input_right;
 static size_t g_stream_accumulated_left = 0;
 static size_t g_stream_accumulated_right = 0;
+
+// Crossfeed (HRTF) processor
+static CrossfeedEngine::HRTFProcessor* g_hrtf_processor = nullptr;
+static std::atomic<bool> g_crossfeed_enabled{false};  // Atomic for quick check
+static std::vector<float> g_cf_stream_input_left;
+static std::vector<float> g_cf_stream_input_right;
+static size_t g_cf_stream_accumulated_left = 0;
+static size_t g_cf_stream_accumulated_right = 0;
+static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -210,6 +220,12 @@ static void reset_runtime_state() {
     g_stream_input_right.clear();
     g_stream_accumulated_left = 0;
     g_stream_accumulated_right = 0;
+
+    // Reset crossfeed streaming buffers
+    g_cf_stream_input_left.clear();
+    g_cf_stream_input_right.clear();
+    g_cf_stream_accumulated_left = 0;
+    g_cf_stream_accumulated_right = 0;
 }
 
 static void load_runtime_config() {
@@ -306,6 +322,35 @@ static void zeromq_listener_thread() {
                 response = "OK";
             } else if (cmd == "STATS") {
                 response = "OK:" + build_stats_json();
+            } else if (cmd == "CROSSFEED_ENABLE") {
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                if (g_hrtf_processor) {
+                    // Reset streaming state to avoid stale data from previous session
+                    g_hrtf_processor->resetStreaming();
+                    g_cf_stream_input_left.clear();
+                    g_cf_stream_input_right.clear();
+                    g_cf_stream_accumulated_left = 0;
+                    g_cf_stream_accumulated_right = 0;
+
+                    g_hrtf_processor->setEnabled(true);
+                    g_crossfeed_enabled.store(true);
+                    response = "OK:Crossfeed enabled";
+                } else {
+                    response = "ERR:HRTF processor not initialized";
+                }
+            } else if (cmd == "CROSSFEED_DISABLE") {
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                g_crossfeed_enabled.store(false);
+                if (g_hrtf_processor) {
+                    g_hrtf_processor->setEnabled(false);
+                }
+                response = "OK:Crossfeed disabled";
+            } else if (cmd == "CROSSFEED_STATUS") {
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                bool enabled = g_crossfeed_enabled.load();
+                bool initialized = (g_hrtf_processor != nullptr);
+                response = "OK:{\"enabled\":" + std::string(enabled ? "true" : "false") +
+                           ",\"initialized\":" + std::string(initialized ? "true" : "false") + "}";
             } else {
                 response = "ERR:Unknown command";
             }
@@ -400,13 +445,49 @@ static void on_input_process(void* userdata) {
         // Only store output if both channels generated output
         // (they should synchronize due to same input size)
         if (left_generated && right_generated) {
-            // Store output for ALSA thread consumption
-            std::lock_guard<std::mutex> lock(g_buffer_mutex);
-            g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(),
-                                        output_left.end());
-            g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
-                                         output_right.end());
-            g_buffer_cv.notify_one();
+            // Quick atomic check first to avoid lock overhead when crossfeed is disabled
+            if (g_crossfeed_enabled.load()) {
+                // Apply crossfeed (HRTF) - lock protects HRTFProcessor and CF buffers
+                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                // Re-check under lock (double-checked locking pattern)
+                if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
+                    std::vector<float> cf_output_left, cf_output_right;
+                    // Use default CUDA stream (0) for crossfeed processing
+                    bool cf_generated = g_hrtf_processor->processStreamBlock(
+                        output_left.data(), output_right.data(), output_left.size(), cf_output_left,
+                        cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
+                        g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
+
+                    if (cf_generated) {
+                        // Store crossfeed output for ALSA thread consumption
+                        std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                        g_output_buffer_left.insert(g_output_buffer_left.end(),
+                                                    cf_output_left.begin(), cf_output_left.end());
+                        g_output_buffer_right.insert(g_output_buffer_right.end(),
+                                                     cf_output_right.begin(),
+                                                     cf_output_right.end());
+                        g_buffer_cv.notify_one();
+                    }
+                    // Note: If crossfeed didn't generate output yet (accumulating),
+                    // we don't store anything this iteration
+                } else {
+                    // Crossfeed was disabled while we were waiting for lock
+                    std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(),
+                                                output_left.end());
+                    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
+                                                 output_right.end());
+                    g_buffer_cv.notify_one();
+                }
+            } else {
+                // Bypass crossfeed - store upsampler output directly
+                std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(),
+                                            output_left.end());
+                g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
+                                             output_right.end());
+                g_buffer_cv.notify_one();
+            }
         }
     }
 
@@ -890,6 +971,61 @@ int main(int argc, char* argv[]) {
         g_stream_accumulated_left = 0;
         g_stream_accumulated_right = 0;
 
+        // Initialize HRTF processor for crossfeed (optional feature)
+        // Crossfeed is disabled by default until enabled via ZeroMQ command
+        std::string hrtfDir = "data/crossfeed/hrtf";
+        if (std::filesystem::exists(hrtfDir)) {
+            std::cout << "Initializing HRTF processor for crossfeed..." << std::endl;
+            g_hrtf_processor = new CrossfeedEngine::HRTFProcessor();
+
+            // Determine rate family based on input sample rate
+            CrossfeedEngine::RateFamily rateFamily = (g_config.inputSampleRate == 48000)
+                                                         ? CrossfeedEngine::RateFamily::RATE_48K
+                                                         : CrossfeedEngine::RateFamily::RATE_44K;
+
+            if (g_hrtf_processor->initialize(hrtfDir, g_config.blockSize,
+                                             CrossfeedEngine::HeadSize::M, rateFamily)) {
+                if (g_hrtf_processor->initializeStreaming()) {
+                    std::cout << "  HRTF processor ready (head size: M, rate family: "
+                              << (rateFamily == CrossfeedEngine::RateFamily::RATE_44K ? "44k"
+                                                                                      : "48k")
+                              << ")" << std::endl;
+
+                    // Pre-allocate crossfeed streaming buffers
+                    size_t cf_buffer_capacity = g_hrtf_processor->getStreamValidInputPerBlock() * 2;
+                    g_cf_stream_input_left.resize(cf_buffer_capacity, 0.0f);
+                    g_cf_stream_input_right.resize(cf_buffer_capacity, 0.0f);
+                    g_cf_stream_accumulated_left = 0;
+                    g_cf_stream_accumulated_right = 0;
+                    std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity << " samples"
+                              << std::endl;
+
+                    // Crossfeed is initialized but disabled by default
+                    g_crossfeed_enabled.store(false);
+                    g_hrtf_processor->setEnabled(false);
+                    std::cout << "  Crossfeed: initialized (disabled by default)" << std::endl;
+                } else {
+                    std::cerr << "  HRTF: Failed to initialize streaming mode" << std::endl;
+                    delete g_hrtf_processor;
+                    g_hrtf_processor = nullptr;
+                }
+            } else {
+                std::cerr << "  HRTF: Failed to initialize processor" << std::endl;
+                std::cerr
+                    << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
+                       "filters"
+                    << std::endl;
+                delete g_hrtf_processor;
+                g_hrtf_processor = nullptr;
+            }
+        } else {
+            std::cout << "HRTF directory not found (" << hrtfDir << "), crossfeed feature disabled"
+                      << std::endl;
+            std::cout
+                << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF filters"
+                << std::endl;
+        }
+
         std::cout << std::endl;
 
         // Check for early abort before starting threads
@@ -1020,6 +1156,9 @@ int main(int argc, char* argv[]) {
 
         delete g_soft_mute;
         g_soft_mute = nullptr;
+        delete g_hrtf_processor;
+        g_hrtf_processor = nullptr;
+        g_crossfeed_enabled.store(false);
         delete g_upsampler;
         g_upsampler = nullptr;
         pw_deinit();
