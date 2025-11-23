@@ -42,5 +42,9 @@ GAIN_MAX_DB = 30.0
 Q_MIN = 0.1
 Q_MAX = 100.0
 
-# Allowed filename pattern: alphanumeric, underscore, hyphen, dot
+# Allowed filename pattern: alphanumeric, underscore, hyphen, dot (with .txt extension)
 SAFE_FILENAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+\.txt$")
+
+# Allowed profile name pattern: alphanumeric, underscore, hyphen, dot (no extension)
+# Used for EQ profile names in config and URL parameters
+SAFE_PROFILE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+$")

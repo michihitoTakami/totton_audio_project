@@ -18,7 +18,32 @@ from ..constants import (
     Q_MAX,
     Q_MIN,
     SAFE_FILENAME_PATTERN,
+    SAFE_PROFILE_NAME_PATTERN,
 )
+
+
+def is_safe_profile_name(name: str | None) -> bool:
+    """
+    Check if profile name is safe (no path traversal risk).
+
+    Args:
+        name: Profile name to validate (can be None)
+
+    Returns:
+        True if name is safe, False otherwise
+    """
+    if not name:
+        return True  # None/empty is valid (means no profile)
+
+    # Check against safe pattern
+    if not SAFE_PROFILE_NAME_PATTERN.match(name):
+        return False
+
+    # Reject path traversal patterns
+    if ".." in name or name.startswith("."):
+        return False
+
+    return True
 
 
 def sanitize_filename(filename: str) -> str | None:

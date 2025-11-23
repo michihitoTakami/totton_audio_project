@@ -469,3 +469,55 @@ class TestSecurityFeatures:
         response = client.post("/eq/activate/my-profile_v2.0")
 
         assert response.status_code == 200
+
+
+class TestSettingsSecurityFeatures:
+    """Tests for settings endpoint security.
+
+    Validates that path traversal attacks via settings are blocked.
+    """
+
+    def test_settings_rejects_traversal_eq_profile(self, client, config_path):
+        """Settings should reject eq_profile with path traversal."""
+        response = client.post("/settings", json={"eq_profile": "../../../etc/passwd"})
+
+        assert response.status_code == 400
+        assert "invalid" in response.json()["detail"].lower()
+
+    def test_settings_rejects_dotdot_eq_profile(self, client, config_path):
+        """Settings should reject eq_profile containing '..'."""
+        response = client.post("/settings", json={"eq_profile": "valid..name"})
+
+        assert response.status_code == 400
+
+    def test_settings_rejects_hidden_eq_profile(self, client, config_path):
+        """Settings should reject eq_profile starting with '.'."""
+        response = client.post("/settings", json={"eq_profile": ".hidden"})
+
+        assert response.status_code == 400
+
+    def test_settings_accepts_valid_eq_profile(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Settings should accept valid eq_profile names."""
+        # Create the profile file
+        (eq_profile_dir / "my-valid-profile.txt").write_text(valid_eq_content)
+
+        response = client.post("/settings", json={"eq_profile": "my-valid-profile"})
+
+        assert response.status_code == 200
+
+    def test_get_active_rejects_tampered_config(self, client, config_path, tmp_path):
+        """get_active should handle tampered config with unsafe profile name."""
+        # Directly write unsafe value to config (simulating tampering)
+        # Note: config uses camelCase (eqProfile, not eq_profile)
+        config_path.write_text('{"eqProfile": "../../../etc/passwd"}')
+
+        response = client.get("/eq/active")
+
+        # Should return error, not read the file
+        assert response.status_code == 200
+        data = response.json()
+        assert data["active"] is True
+        assert "error" in data
+        assert "invalid" in data["error"].lower()

@@ -1,12 +1,11 @@
 """EQ profile management endpoints."""
 
-import re
-
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from ..constants import EQ_PROFILES_DIR
 from ..models import ApiResponse
 from ..services import (
+    is_safe_profile_name,
     load_config,
     parse_eq_profile_content,
     read_and_validate_upload,
@@ -15,9 +14,6 @@ from ..services import (
 
 router = APIRouter(prefix="/eq", tags=["eq"])
 
-# Safe profile name pattern: alphanumeric, underscore, hyphen, dot (no path separators)
-SAFE_PROFILE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
-
 
 def validate_profile_name(name: str) -> None:
     """
@@ -25,13 +21,7 @@ def validate_profile_name(name: str) -> None:
 
     Raises HTTPException 400 if name contains unsafe characters.
     """
-    if not name or not SAFE_PROFILE_NAME_PATTERN.match(name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid profile name. Use only letters, numbers, underscores, hyphens, and dots.",
-        )
-    # Extra check: reject names that could be path traversal
-    if ".." in name or name.startswith("."):
+    if not is_safe_profile_name(name):
         raise HTTPException(
             status_code=400,
             detail="Invalid profile name. Cannot start with '.' or contain '..'.",
@@ -224,6 +214,20 @@ async def get_active_eq():
         return {
             "active": False,
             "name": None,
+            "source_type": None,
+            "has_modern_target": False,
+            "opra_info": None,
+            "opra_filters": [],
+            "original_filters": [],
+        }
+
+    # Defense-in-depth: validate profile name from config
+    # This catches cases where config was tampered with or contains unsafe values
+    if not is_safe_profile_name(config.eq_profile):
+        return {
+            "active": True,
+            "name": config.eq_profile,
+            "error": "Invalid profile name in config",
             "source_type": None,
             "has_modern_target": False,
             "opra_info": None,
