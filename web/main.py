@@ -591,9 +591,20 @@ async def get_status():
     settings = load_config()
     daemon_running = check_daemon_running()
     pw_connected = check_pipewire_sink() if daemon_running else False
-    # load_stats() returns zeros for clip stats when daemon stopped,
-    # but always includes configured rates from config.json
-    stats = load_stats()
+
+    # When daemon is running, show actual clip stats from stats.json
+    # When stopped, show zeros for clip stats (rates always from config)
+    input_rate, output_rate = get_configured_rates()
+    if daemon_running:
+        stats = load_stats()
+    else:
+        stats = {
+            "clip_count": 0,
+            "total_samples": 0,
+            "clip_rate": 0.0,
+            "input_rate": input_rate,
+            "output_rate": output_rate,
+        }
 
     return Status(
         settings=settings,
@@ -620,9 +631,18 @@ async def websocket_stats(websocket: WebSocket):
     try:
         while True:
             daemon_running = check_daemon_running()
-            # load_stats() returns zeros for clip stats when daemon stopped,
-            # but always includes configured rates from config.json
-            stats = load_stats()
+            input_rate, output_rate = get_configured_rates()
+            if daemon_running:
+                stats = load_stats()
+            else:
+                # Zero clip stats when stopped, but show configured rates
+                stats = {
+                    "clip_count": 0,
+                    "total_samples": 0,
+                    "clip_rate": 0.0,
+                    "input_rate": input_rate,
+                    "output_rate": output_rate,
+                }
             stats["daemon_running"] = daemon_running
             await websocket.send_json(stats)
             await asyncio.sleep(1)
