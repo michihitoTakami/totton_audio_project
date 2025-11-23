@@ -1094,18 +1094,29 @@ async def get_active_eq():
                 "name": path.stem,
                 "path": settings.eq_profile_path,
                 "error": "Profile file not found",
+                # Include empty arrays for safe UI rendering
+                "source_type": "custom",
+                "has_modern_target": False,
+                "opra_info": None,
+                "opra_filters": [],
+                "original_filters": [],
             }
 
         # Parse the EQ profile content
         parsed = parse_eq_profile_content(path)
 
-        # Handle parse errors
+        # Handle parse errors - include empty arrays for safe UI rendering
         if "error" in parsed:
             return {
                 "active": True,
                 "name": path.stem,
                 "path": settings.eq_profile_path,
                 "error": parsed["error"],
+                "source_type": "custom",
+                "has_modern_target": False,
+                "opra_info": None,
+                "opra_filters": [],
+                "original_filters": [],
             }
 
         return {
@@ -2068,6 +2079,14 @@ def get_admin_html() -> str:
 
             nameEl.textContent = data.name || 'Unknown';
             nameEl.classList.remove('eq-inactive');
+
+            // Handle error state (file not found, parse error, etc.)
+            if (data.error) {
+                contentEl.innerHTML = '<div class="eq-inactive" style="color:#ff6b6b;">エラー: ' + escapeHtml(data.error) + '</div>';
+                copyBtn.style.display = 'none';
+                return;
+            }
+
             copyBtn.style.display = 'block';
 
             let html = '';
