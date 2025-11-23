@@ -1,33 +1,43 @@
 #!/usr/bin/env python3
 """
-HUTUBS Head Size Classification Scaffold
+HUTUBS Head Size Classification
 
-Generates SIMULATED placeholder data for head size classification.
-This is a SCAFFOLD for future HUTUBS HRTF integration.
+Reads actual HUTUBS anthropometric data and classifies 96 subjects by head circumference.
+Selects representative subjects for each size category (XS/S/M/L/XL).
 
-⚠️ WARNING: This script generates SIMULATED data, NOT actual HUTUBS measurements.
-The anthropometric values are randomly generated based on typical adult head size
-distributions and do NOT reflect real HUTUBS subject data.
+Data Source: HUTUBS - Head-related Transfer Function Database
+    https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960
 
-For actual HUTUBS data, download from:
-    https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a
-
-HUTUBS Database License: CC BY-SA 4.0
+License: CC BY-SA 4.0
 Attribution:
     HUTUBS - Head-related Transfer Function Database of the
     Technical University of Berlin
     F. Brinkmann et al., TU Berlin, 2019
+
+Usage:
+    python scripts/fetch_hutubs.py
+    python scripts/fetch_hutubs.py --output-dir data/crossfeed
 """
 
 import argparse
+import csv
 import json
+import math
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
-# Subject IDs range from pp1 to pp96 in actual HUTUBS database
-HUTUBS_SUBJECT_COUNT = 96
+
+# Default path to HUTUBS anthropometric data (from extracted ZIP)
+DEFAULT_ANTHROPOMETRIC_CSV = (
+    Path(__file__).parent.parent
+    / "data"
+    / "crossfeed"
+    / "raw"
+    / "Antrhopometric measures"
+    / "AntrhopometricMeasures.csv"
+)
 
 # Head circumference classification bins (in cm)
 # Based on typical adult head size distribution
@@ -39,30 +49,38 @@ HEAD_SIZE_BINS = {
     "XL": (59, 100),  # Extra Large: >= 59cm
 }
 
+# CIPIC anthropometric column mappings
+# x16 = head circumference (in cm)
+# x1 = head width, x2 = head height, x3 = head depth
+COLUMN_HEAD_CIRCUMFERENCE = "x16"
+COLUMN_HEAD_WIDTH = "x1"
+COLUMN_HEAD_HEIGHT = "x2"
+COLUMN_HEAD_DEPTH = "x3"
+
 
 @dataclass
 class SubjectInfo:
-    """Information about a subject (simulated)."""
+    """Information about a HUTUBS subject."""
 
     id: str  # e.g., "pp1"
-    head_circumference: Optional[float]  # in cm (SIMULATED)
-    head_width: Optional[float]  # in cm (SIMULATED)
-    head_height: Optional[float]  # in cm (SIMULATED)
-    head_depth: Optional[float]  # in cm (SIMULATED)
+    head_circumference: Optional[float]  # in cm (from x16)
+    head_width: Optional[float]  # in cm (from x1)
+    head_height: Optional[float]  # in cm (from x2)
+    head_depth: Optional[float]  # in cm (from x3)
     size_category: str  # XS/S/M/L/XL
-    sofa_file: Optional[str]  # path to SOFA file (placeholder)
+    sofa_file: Optional[str]  # path to SOFA file
 
 
 @dataclass
 class HUTUBSMetadata:
-    """Metadata structure (with simulated subject data)."""
+    """Metadata structure for HUTUBS classification results."""
 
     subjects: list[SubjectInfo]
     representative_subjects: dict[str, str]  # size -> subject_id
-    is_simulated: bool = True  # Flag indicating data is simulated
+    is_simulated: bool = False  # This uses real HUTUBS data
     license: str = "CC BY-SA 4.0"
     source: str = (
-        "https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a"
+        "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960"
     )
     attribution: str = "HUTUBS - Head-related Transfer Function Database, TU Berlin"
 
@@ -78,39 +96,68 @@ def classify_head_size(circumference: Optional[float]) -> str:
     return "M"  # Fallback
 
 
-def generate_simulated_anthropometric_data() -> dict[str, dict]:
+def parse_float(value: str) -> Optional[float]:
+    """Parse float value, returning None for NaN or empty values."""
+    if not value or value.lower() == "nan":
+        return None
+    try:
+        result = float(value)
+        if math.isnan(result):
+            return None
+        return result
+    except ValueError:
+        return None
+
+
+def load_hutubs_anthropometric_data(csv_path: Path) -> dict[str, dict]:
     """
-    Generate SIMULATED anthropometric data for placeholder subjects.
+    Load ACTUAL HUTUBS anthropometric data from CSV file.
 
-    ⚠️ WARNING: This generates SIMULATED data based on typical adult head size
-    distributions. It does NOT use actual HUTUBS measurement data.
+    This reads the official HUTUBS AntrhopometricMeasures.csv file.
+    Data is used as-is without modification (CC BY-SA 4.0 compliance).
 
-    The simulated distribution uses:
-    - Head circumference: Normal distribution, mean=56cm, std=2cm
-    - Other measurements derived from circumference using approximate ratios
+    Args:
+        csv_path: Path to AntrhopometricMeasures.csv
 
     Returns:
-        Dict mapping subject_id -> anthropometric measurements (all simulated)
+        Dict mapping subject_id (pp1, pp2, ...) -> anthropometric measurements
     """
-    import numpy as np
-
-    np.random.seed(42)  # For reproducibility
-
-    # Generate realistic head circumference distribution
-    # Adult head circumference: mean ~56cm, std ~2cm
-    head_circumferences = np.random.normal(56.0, 2.0, HUTUBS_SUBJECT_COUNT)
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"HUTUBS anthropometric data not found at {csv_path}.\n"
+            "Please download from:\n"
+            "  https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960\n"
+            "Extract 'Antrhopometric measures.zip' to data/crossfeed/raw/"
+        )
 
     anthropometric = {}
-    for i, circ in enumerate(head_circumferences, 1):
-        subject_id = f"pp{i}"
-        # Clamp to realistic range
-        circ = max(50.0, min(62.0, circ))
-        anthropometric[subject_id] = {
-            "head_circumference": round(circ, 1),
-            "head_width": round(circ * 0.27, 1),  # Approximate ratio
-            "head_height": round(circ * 0.40, 1),  # Approximate ratio
-            "head_depth": round(circ * 0.35, 1),  # Approximate ratio
-        }
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            subject_num = row.get("SubjectID", "")
+            if not subject_num:
+                continue
+
+            subject_id = f"pp{subject_num}"
+
+            # Extract measurements (use actual HUTUBS column names)
+            head_circumference = parse_float(row.get(COLUMN_HEAD_CIRCUMFERENCE, ""))
+            head_width = parse_float(row.get(COLUMN_HEAD_WIDTH, ""))
+            head_height = parse_float(row.get(COLUMN_HEAD_HEIGHT, ""))
+            head_depth = parse_float(row.get(COLUMN_HEAD_DEPTH, ""))
+
+            # Skip subjects with no valid data
+            if head_circumference is None:
+                continue
+
+            anthropometric[subject_id] = {
+                "head_circumference": head_circumference,
+                "head_width": head_width,
+                "head_height": head_height,
+                "head_depth": head_depth,
+            }
 
     return anthropometric
 
@@ -160,26 +207,26 @@ def create_output_directories(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
 
-def generate_simulated_metadata(output_dir: Path) -> HUTUBSMetadata:
+def generate_metadata(
+    output_dir: Path, csv_path: Path = DEFAULT_ANTHROPOMETRIC_CSV
+) -> HUTUBSMetadata:
     """
-    Generate SIMULATED metadata with placeholder subject data.
-
-    ⚠️ This generates SIMULATED data, not actual HUTUBS measurements.
+    Generate metadata from ACTUAL HUTUBS anthropometric data.
 
     Args:
         output_dir: Directory to store output files
+        csv_path: Path to HUTUBS AntrhopometricMeasures.csv
     """
     create_output_directories(output_dir)
 
-    # Generate simulated anthropometric data
-    anthropometric = generate_simulated_anthropometric_data()
+    # Load actual HUTUBS data
+    anthropometric = load_hutubs_anthropometric_data(csv_path)
 
     # Create subject info list
     subjects = []
-    for i in range(1, HUTUBS_SUBJECT_COUNT + 1):
-        subject_id = f"pp{i}"
-        anthro = anthropometric.get(subject_id, {})
-
+    for subject_id, anthro in sorted(
+        anthropometric.items(), key=lambda x: int(x[0][2:])
+    ):
         circumference = anthro.get("head_circumference")
         size_category = classify_head_size(circumference)
 
@@ -190,7 +237,7 @@ def generate_simulated_metadata(output_dir: Path) -> HUTUBSMetadata:
             head_height=anthro.get("head_height"),
             head_depth=anthro.get("head_depth"),
             size_category=size_category,
-            sofa_file=None,  # No actual SOFA files
+            sofa_file=None,  # SOFA files not included (too large)
         )
         subjects.append(subject)
 
@@ -200,14 +247,14 @@ def generate_simulated_metadata(output_dir: Path) -> HUTUBSMetadata:
     return HUTUBSMetadata(
         subjects=subjects,
         representative_subjects=representatives,
-        is_simulated=True,
+        is_simulated=False,  # Real HUTUBS data!
     )
 
 
 def save_metadata(metadata: HUTUBSMetadata, output_path: Path) -> None:
     """Save metadata to JSON file."""
     data = {
-        "WARNING": "This file contains SIMULATED data, NOT actual HUTUBS measurements",
+        "description": "HUTUBS head size classification using actual anthropometric data",
         "is_simulated": metadata.is_simulated,
         "license": metadata.license,
         "source": metadata.source,
@@ -226,9 +273,11 @@ def save_metadata(metadata: HUTUBSMetadata, output_path: Path) -> None:
 def print_summary(metadata: HUTUBSMetadata) -> None:
     """Print summary of the classification."""
     print("\n" + "=" * 60)
-    print("Head Size Classification Summary (SIMULATED DATA)")
+    print("HUTUBS Head Size Classification Summary")
     print("=" * 60)
-    print("\n⚠️  WARNING: All data below is SIMULATED, not from HUTUBS")
+    print(f"\nData source: {metadata.source}")
+    print(f"License: {metadata.license}")
+    print(f"Total subjects with valid data: {len(metadata.subjects)}")
 
     # Count subjects per category
     counts = {}
@@ -240,43 +289,46 @@ def print_summary(metadata: HUTUBSMetadata) -> None:
         count = counts.get(size, 0)
         rep = metadata.representative_subjects.get(size, "N/A")
         print(
-            f"  {size:2s} ({low:2.0f}-{high:2.0f}cm): {count:2d} subjects, representative: {rep}"
+            f"  {size:2s} ({low:2.0f}-{high:2.0f}cm): {count:2d} subjects, "
+            f"representative: {rep}"
         )
 
-    print("\nRepresentative subjects (simulated):")
+    print("\nRepresentative subjects (actual HUTUBS data):")
     for size, subject_id in metadata.representative_subjects.items():
         subject = next((s for s in metadata.subjects if s.id == subject_id), None)
         if subject:
             print(
-                f"  {size}: {subject_id} (head circumference: {subject.head_circumference}cm)"
+                f"  {size}: {subject_id} "
+                f"(head circumference: {subject.head_circumference}cm)"
             )
 
     print("\n" + "=" * 60)
-    print("For actual HUTUBS data, download from:")
-    print(f"  {metadata.source}")
-    print(f"\nLicense: {metadata.license}")
-    print(f"Attribution: {metadata.attribution}")
+    print("Attribution (CC BY-SA 4.0):")
+    print(f"  {metadata.attribution}")
     print("=" * 60)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate simulated head size classification data (scaffold for HUTUBS)",
+        description="Classify HUTUBS subjects by head size using actual anthropometric data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-⚠️  WARNING: This script generates SIMULATED data, NOT actual HUTUBS measurements.
+This script uses ACTUAL HUTUBS anthropometric data (CC BY-SA 4.0).
+
+Prerequisites:
+  1. Download 'Antrhopometric measures.zip' from:
+     https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960
+  2. Extract to data/crossfeed/raw/
 
 Examples:
-  # Generate simulated metadata
+  # Generate classification from HUTUBS data
   python scripts/fetch_hutubs.py
 
   # Specify output directory
   python scripts/fetch_hutubs.py --output-dir data/crossfeed
 
-For actual HUTUBS HRTF data, download from:
-  https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a
-
 License: CC BY-SA 4.0
+Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin
         """,
     )
 
@@ -287,6 +339,12 @@ License: CC BY-SA 4.0
         help="Output directory for metadata",
     )
     parser.add_argument(
+        "--csv-path",
+        type=Path,
+        default=DEFAULT_ANTHROPOMETRIC_CSV,
+        help="Path to HUTUBS AntrhopometricMeasures.csv",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress progress output",
@@ -295,23 +353,29 @@ License: CC BY-SA 4.0
     args = parser.parse_args()
 
     if not args.quiet:
-        print("HUTUBS Head Size Classification Scaffold")
-        print("⚠️  Generating SIMULATED data (not actual HUTUBS measurements)")
+        print("HUTUBS Head Size Classification")
+        print("Using actual HUTUBS anthropometric data (CC BY-SA 4.0)")
+        print(f"CSV path: {args.csv_path}")
         print(f"Output directory: {args.output_dir}")
         print()
 
-    # Generate simulated metadata
-    metadata = generate_simulated_metadata(output_dir=args.output_dir)
+    try:
+        # Generate metadata from actual HUTUBS data
+        metadata = generate_metadata(output_dir=args.output_dir, csv_path=args.csv_path)
 
-    # Save metadata
-    metadata_path = args.output_dir / "hutubs_subjects.json"
-    save_metadata(metadata, metadata_path)
+        # Save metadata
+        metadata_path = args.output_dir / "hutubs_subjects.json"
+        save_metadata(metadata, metadata_path)
 
-    # Print summary
-    if not args.quiet:
-        print_summary(metadata)
+        # Print summary
+        if not args.quiet:
+            print_summary(metadata)
 
-    return 0
+        return 0
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
