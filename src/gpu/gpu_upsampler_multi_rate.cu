@@ -177,8 +177,19 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
               << (targetFamily == RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
               << std::endl;
 
-    // Select the source FFT for the target family
-    cufftComplex* sourceFFT = (targetFamily == RateFamily::RATE_44K) ? d_filterFFT_44k_ : d_filterFFT_48k_;
+    // Select the source FFT for the target family (considering phase type in quad-phase mode)
+    cufftComplex* sourceFFT;
+    if (quadPhaseEnabled_) {
+        // Quad-phase mode: select based on both family and phase type
+        if (targetFamily == RateFamily::RATE_44K) {
+            sourceFFT = (phaseType_ == PhaseType::Minimum) ? d_filterFFT_44k_ : d_filterFFT_44k_linear_;
+        } else {
+            sourceFFT = (phaseType_ == PhaseType::Minimum) ? d_filterFFT_48k_ : d_filterFFT_48k_linear_;
+        }
+    } else {
+        // Standard dual-rate mode: minimum phase only
+        sourceFFT = (targetFamily == RateFamily::RATE_44K) ? d_filterFFT_44k_ : d_filterFFT_48k_;
+    }
 
     // Use double-buffering for glitch-free switching
     cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
@@ -214,8 +225,16 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
         "cudaMemcpy update h_originalFilterFft_"
     );
 
-    // Update host coefficients reference
-    h_filterCoeffs_ = (targetFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_;
+    // Update host coefficients reference (considering phase type in quad-phase mode)
+    if (quadPhaseEnabled_) {
+        if (targetFamily == RateFamily::RATE_44K) {
+            h_filterCoeffs_ = (phaseType_ == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_;
+        } else {
+            h_filterCoeffs_ = (phaseType_ == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_;
+        }
+    } else {
+        h_filterCoeffs_ = (targetFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_;
+    }
 
     // Clear EQ state (EQ needs to be re-applied for new rate family)
     if (eqApplied_) {
@@ -523,6 +542,236 @@ std::vector<int> GPUUpsampler::getSupportedInputRates() {
         rates.push_back(MULTI_RATE_CONFIGS[i].inputRate);
     }
     return rates;
+}
+
+bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
+                                       const std::string& filterCoeffPath48kMin,
+                                       const std::string& filterCoeffPath44kLinear,
+                                       const std::string& filterCoeffPath48kLinear,
+                                       int upsampleRatio, int blockSize,
+                                       RateFamily initialFamily, PhaseType initialPhase) {
+    upsampleRatio_ = upsampleRatio;
+    blockSize_ = blockSize;
+    currentRateFamily_ = initialFamily;
+    phaseType_ = initialPhase;
+    inputSampleRate_ = getBaseSampleRate(initialFamily);
+
+    std::cout << "Initializing GPU Upsampler (Quad-Phase Mode)..." << std::endl;
+    std::cout << "  Upsample Ratio: " << upsampleRatio_ << "x" << std::endl;
+    std::cout << "  Block Size: " << blockSize_ << " samples" << std::endl;
+    std::cout << "  Initial Rate Family: " << (initialFamily == RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
+              << std::endl;
+    std::cout << "  Initial Phase Type: " << (initialPhase == PhaseType::Minimum ? "Minimum" : "Linear")
+              << std::endl;
+
+    // Load all 4 coefficient files
+    std::cout << "Loading coefficient files..." << std::endl;
+
+    // 44.1kHz minimum phase
+    std::cout << "  44.1kHz Minimum: " << filterCoeffPath44kMin << std::endl;
+    if (!loadFilterCoefficients(filterCoeffPath44kMin)) {
+        std::cerr << "Error: Failed to load 44.1kHz minimum phase coefficients" << std::endl;
+        return false;
+    }
+    h_filterCoeffs44k_ = h_filterCoeffs_;
+    std::cout << "    " << h_filterCoeffs44k_.size() << " taps" << std::endl;
+
+    // 48kHz minimum phase
+    std::cout << "  48kHz Minimum: " << filterCoeffPath48kMin << std::endl;
+    if (!loadFilterCoefficients(filterCoeffPath48kMin)) {
+        std::cerr << "Error: Failed to load 48kHz minimum phase coefficients" << std::endl;
+        return false;
+    }
+    h_filterCoeffs48k_ = h_filterCoeffs_;
+    std::cout << "    " << h_filterCoeffs48k_.size() << " taps" << std::endl;
+
+    // 44.1kHz linear phase
+    std::cout << "  44.1kHz Linear: " << filterCoeffPath44kLinear << std::endl;
+    if (!loadFilterCoefficients(filterCoeffPath44kLinear)) {
+        std::cerr << "Error: Failed to load 44.1kHz linear phase coefficients" << std::endl;
+        return false;
+    }
+    h_filterCoeffs44k_linear_ = h_filterCoeffs_;
+    std::cout << "    " << h_filterCoeffs44k_linear_.size() << " taps" << std::endl;
+
+    // 48kHz linear phase
+    std::cout << "  48kHz Linear: " << filterCoeffPath48kLinear << std::endl;
+    if (!loadFilterCoefficients(filterCoeffPath48kLinear)) {
+        std::cerr << "Error: Failed to load 48kHz linear phase coefficients" << std::endl;
+        return false;
+    }
+    h_filterCoeffs48k_linear_ = h_filterCoeffs_;
+    std::cout << "    " << h_filterCoeffs48k_linear_.size() << " taps" << std::endl;
+
+    // Verify all 4 coefficient files have the same tap count
+    size_t taps44kMin = h_filterCoeffs44k_.size();
+    size_t taps48kMin = h_filterCoeffs48k_.size();
+    size_t taps44kLinear = h_filterCoeffs44k_linear_.size();
+    size_t taps48kLinear = h_filterCoeffs48k_linear_.size();
+
+    if (taps44kMin != taps48kMin || taps44kMin != taps44kLinear || taps44kMin != taps48kLinear) {
+        std::cerr << "Error: Coefficient tap counts do not match:" << std::endl;
+        std::cerr << "  44k min: " << taps44kMin << ", 48k min: " << taps48kMin
+                  << ", 44k linear: " << taps44kLinear << ", 48k linear: " << taps48kLinear << std::endl;
+        return false;
+    }
+
+    // Use 44k minimum as the primary coefficients for now
+    h_filterCoeffs_ = h_filterCoeffs44k_;
+
+    // Setup GPU resources (allocates FFT buffers, plans, etc.)
+    if (!setupGPUResources()) {
+        std::cerr << "Error: Failed to setup GPU resources" << std::endl;
+        return false;
+    }
+
+    // Allocate minimum phase FFT buffers (for dual-rate)
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_44k_, filterFftSize_ * sizeof(cufftComplex)),
+                          "cudaMalloc d_filterFFT_44k_");
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_48k_, filterFftSize_ * sizeof(cufftComplex)),
+                          "cudaMalloc d_filterFFT_48k_");
+
+    // Allocate linear phase FFT buffers
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_44k_linear_, filterFftSize_ * sizeof(cufftComplex)),
+                          "cudaMalloc d_filterFFT_44k_linear_");
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_48k_linear_, filterFftSize_ * sizeof(cufftComplex)),
+                          "cudaMalloc d_filterFFT_48k_linear_");
+
+    std::cout << "Pre-computing FFT for all 4 filter configurations..." << std::endl;
+
+    // Allocate temporary buffer for FFT computation
+    float* d_temp;
+    Utils::checkCudaError(cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+                          "cudaMalloc d_temp for quad-phase FFT");
+
+    // 44.1kHz minimum phase
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 44k min");
+    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs44k_.data(),
+                                     h_filterCoeffs44k_.size() * sizeof(float), cudaMemcpyHostToDevice),
+                          "cudaMemcpy filter 44k min");
+    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_44k_),
+                           "cufftExecR2C filter 44k min");
+
+    // 48kHz minimum phase
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 48k min");
+    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs48k_.data(),
+                                     h_filterCoeffs48k_.size() * sizeof(float), cudaMemcpyHostToDevice),
+                          "cudaMemcpy filter 48k min");
+    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_48k_),
+                           "cufftExecR2C filter 48k min");
+
+    // 44.1kHz linear phase
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 44k linear");
+    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs44k_linear_.data(),
+                                     h_filterCoeffs44k_linear_.size() * sizeof(float), cudaMemcpyHostToDevice),
+                          "cudaMemcpy filter 44k linear");
+    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_44k_linear_),
+                           "cufftExecR2C filter 44k linear");
+
+    // 48kHz linear phase
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 48k linear");
+    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs48k_linear_.data(),
+                                     h_filterCoeffs48k_linear_.size() * sizeof(float), cudaMemcpyHostToDevice),
+                          "cudaMemcpy filter 48k linear");
+    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_48k_linear_),
+                           "cufftExecR2C filter 48k linear");
+
+    cudaFree(d_temp);
+    cudaDeviceSynchronize();
+
+    // Set active filter based on initial family and phase type
+    cufftComplex* initialFilter;
+    if (initialFamily == RateFamily::RATE_44K) {
+        initialFilter =
+            (initialPhase == PhaseType::Minimum) ? d_filterFFT_44k_ : d_filterFFT_44k_linear_;
+        h_filterCoeffs_ = (initialPhase == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_;
+    } else {
+        initialFilter =
+            (initialPhase == PhaseType::Minimum) ? d_filterFFT_48k_ : d_filterFFT_48k_linear_;
+        h_filterCoeffs_ = (initialPhase == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_;
+    }
+
+    // Copy to original and active filter buffers
+    Utils::checkCudaError(cudaMemcpy(d_originalFilterFFT_, initialFilter,
+                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                          "cudaMemcpy to originalFilterFFT");
+
+    Utils::checkCudaError(cudaMemcpy(d_filterFFT_A_, initialFilter,
+                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                          "cudaMemcpy to filterFFT_A");
+    d_activeFilterFFT_ = d_filterFFT_A_;
+
+    // Update host cache of original filter FFT for EQ computation
+    h_originalFilterFft_.resize(filterFftSize_);
+    Utils::checkCudaError(cudaMemcpy(h_originalFilterFft_.data(), initialFilter,
+                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                          "cudaMemcpy to h_originalFilterFft_");
+
+    quadPhaseEnabled_ = true;
+    dualRateEnabled_ = true;  // Quad-phase implies dual-rate support
+    std::cout << "GPU Upsampler (Quad-Phase) initialized successfully!" << std::endl;
+    return true;
+}
+
+bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
+    if (!quadPhaseEnabled_) {
+        std::cerr << "Error: Quad-phase mode not enabled. Use setPhaseType() for non-quad-phase mode."
+                  << std::endl;
+        return false;
+    }
+
+    if (targetPhase == phaseType_) {
+        std::cout << "Already at target phase type" << std::endl;
+        return true;
+    }
+
+    std::cout << "Switching phase type: " << (phaseType_ == PhaseType::Minimum ? "Minimum" : "Linear")
+              << " -> " << (targetPhase == PhaseType::Minimum ? "Minimum" : "Linear") << std::endl;
+
+    // Select the source FFT based on current rate family and target phase
+    cufftComplex* sourceFFT;
+    if (currentRateFamily_ == RateFamily::RATE_44K) {
+        sourceFFT = (targetPhase == PhaseType::Minimum) ? d_filterFFT_44k_ : d_filterFFT_44k_linear_;
+        h_filterCoeffs_ = (targetPhase == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_;
+    } else {
+        sourceFFT = (targetPhase == PhaseType::Minimum) ? d_filterFFT_48k_ : d_filterFFT_48k_linear_;
+        h_filterCoeffs_ = (targetPhase == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_;
+    }
+
+    // Use double-buffering for glitch-free switching
+    cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
+
+    Utils::checkCudaError(cudaMemcpyAsync(backBuffer, sourceFFT,
+                                          filterFftSize_ * sizeof(cufftComplex),
+                                          cudaMemcpyDeviceToDevice, stream_),
+                          "cudaMemcpyAsync phase type switch");
+
+    // Synchronize to ensure copy is complete before switching
+    Utils::checkCudaError(cudaStreamSynchronize(stream_), "cudaStreamSynchronize phase type switch");
+
+    // Atomic swap to the new buffer
+    d_activeFilterFFT_ = backBuffer;
+
+    // Update original filter FFT for EQ restoration
+    Utils::checkCudaError(cudaMemcpy(d_originalFilterFFT_, sourceFFT,
+                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                          "cudaMemcpy update originalFilterFFT");
+
+    // Update host cache of original filter FFT for EQ computation
+    Utils::checkCudaError(cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
+                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                          "cudaMemcpy update h_originalFilterFft_");
+
+    // Clear EQ state (EQ needs to be re-applied for new phase type)
+    if (eqApplied_) {
+        std::cout << "  Note: EQ was applied. It needs to be re-applied for the new phase type."
+                  << std::endl;
+        eqApplied_ = false;
+    }
+
+    phaseType_ = targetPhase;
+    std::cout << "Phase type switch complete" << std::endl;
+    return true;
 }
 
 }  // namespace ConvolutionEngine

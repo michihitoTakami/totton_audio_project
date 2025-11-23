@@ -20,7 +20,7 @@ class TempCoeffDir {
 public:
     static constexpr int TEST_TAPS = 1024;
 
-    TempCoeffDir() : valid_(false) {
+    TempCoeffDir(bool includeLinearPhase = false) : valid_(false) {
         // Generate unique directory name using high-resolution time + random
         auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
         std::random_device rd;
@@ -41,7 +41,7 @@ public:
         std::vector<float> impulse(TEST_TAPS, 0.0f);
         impulse[0] = 1.0f;  // Unit impulse at t=0
 
-        // Generate all 8 coefficient files
+        // Generate all 8 coefficient files (minimum phase)
         const char* configs[] = {
             "44k_16x", "44k_8x", "44k_4x", "44k_2x",
             "48k_16x", "48k_8x", "48k_4x", "48k_2x"
@@ -54,6 +54,24 @@ public:
                 error_ = "Failed to write coefficient file: " + filename;
                 cleanup();
                 return;
+            }
+        }
+
+        // Generate linear phase coefficient files if requested (for quad-phase tests)
+        if (includeLinearPhase) {
+            // Linear phase uses symmetric impulse response
+            std::vector<float> linearImpulse(TEST_TAPS, 0.0f);
+            linearImpulse[TEST_TAPS / 2] = 1.0f;  // Center impulse for linear phase
+
+            const char* linearConfigs[] = {"44k_16x", "48k_16x"};
+            for (const char* config : linearConfigs) {
+                std::string filename = path_ + "/filter_" + config + "_" +
+                                       std::to_string(TEST_TAPS) + "_linear.bin";
+                if (!writeCoeffFile(filename, linearImpulse)) {
+                    error_ = "Failed to write linear coefficient file: " + filename;
+                    cleanup();
+                    return;
+                }
             }
         }
 
@@ -71,6 +89,15 @@ public:
     bool isValid() const { return valid_; }
     const std::string& path() const { return path_; }
     const std::string& error() const { return error_; }
+
+    // Helper methods for quad-phase tests
+    std::string getMinPhasePath(const std::string& rateFamily) const {
+        return path_ + "/filter_" + rateFamily + "_16x_" + std::to_string(TEST_TAPS) + "_min_phase.bin";
+    }
+
+    std::string getLinearPhasePath(const std::string& rateFamily) const {
+        return path_ + "/filter_" + rateFamily + "_16x_" + std::to_string(TEST_TAPS) + "_linear.bin";
+    }
 
 private:
     void cleanup() {
@@ -955,4 +982,235 @@ TEST_F(ConvolutionEngineTest, RestoreFilterAfterLinearPhaseEq) {
     // Restore original filter
     upsampler.restoreOriginalFilter();
     EXPECT_FALSE(upsampler.isEqApplied());
+}
+
+// ============================================================
+// Quad-Phase Support Tests
+// ============================================================
+
+TEST_F(ConvolutionEngineTest, QuadPhaseNotEnabledByDefault) {
+    GPUUpsampler upsampler;
+    EXPECT_FALSE(upsampler.isQuadPhaseEnabled());
+}
+
+TEST_F(ConvolutionEngineTest, InitializeQuadPhase) {
+    TempCoeffDir tempDir(true);  // Include linear phase files
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    bool result = upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_44K, PhaseType::Minimum);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(upsampler.isQuadPhaseEnabled());
+    EXPECT_TRUE(upsampler.isDualRateEnabled());  // Quad-phase implies dual-rate
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+}
+
+TEST_F(ConvolutionEngineTest, InitializeQuadPhaseWith48kLinear) {
+    TempCoeffDir tempDir(true);
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    bool result = upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_48K, PhaseType::Linear);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(upsampler.isQuadPhaseEnabled());
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+}
+
+TEST_F(ConvolutionEngineTest, SwitchPhaseTypeInQuadPhase) {
+    TempCoeffDir tempDir(true);
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_44K, PhaseType::Minimum));
+
+    // Initial state
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+
+    // Switch to linear phase
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Linear));
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+
+    // Switch back to minimum phase
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Minimum));
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+
+    // Switch to same phase (should still succeed)
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Minimum));
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+}
+
+TEST_F(ConvolutionEngineTest, SwitchPhaseTypeFailsWithoutQuadPhase) {
+    GPUUpsampler upsampler;
+
+    const char* coeffPath = "data/coefficients/filter_44k_2m_min_phase.bin";
+    FILE* f = fopen(coeffPath, "rb");
+    if (f == nullptr) {
+        GTEST_SKIP() << "Coefficient file not found";
+    }
+    fclose(f);
+
+    // Initialize with single-rate mode (not quad-phase)
+    ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
+    EXPECT_FALSE(upsampler.isQuadPhaseEnabled());
+
+    // switchPhaseType should fail when not in quad-phase mode
+    EXPECT_FALSE(upsampler.switchPhaseType(PhaseType::Linear));
+}
+
+TEST_F(ConvolutionEngineTest, SwitchRateFamilyInQuadPhaseMinimum) {
+    TempCoeffDir tempDir(true);
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_44K, PhaseType::Minimum));
+
+    // Initial state
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+
+    // Switch to 48k - phase type should remain minimum
+    EXPECT_TRUE(upsampler.switchRateFamily(RateFamily::RATE_48K));
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+
+    // Switch back to 44k - phase type should still remain minimum
+    EXPECT_TRUE(upsampler.switchRateFamily(RateFamily::RATE_44K));
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+}
+
+TEST_F(ConvolutionEngineTest, SwitchRateFamilyInQuadPhaseLinear) {
+    TempCoeffDir tempDir(true);
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_44K, PhaseType::Linear));
+
+    // Initial state
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+
+    // Switch to 48k - phase type should remain linear
+    EXPECT_TRUE(upsampler.switchRateFamily(RateFamily::RATE_48K));
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+}
+
+TEST_F(ConvolutionEngineTest, QuadPhaseCombinedSwitching) {
+    TempCoeffDir tempDir(true);
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_44K, PhaseType::Minimum));
+
+    // Test all 4 combinations
+    // 1. 44k Minimum (initial)
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+
+    // 2. 44k Linear
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Linear));
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+
+    // 3. 48k Linear
+    EXPECT_TRUE(upsampler.switchRateFamily(RateFamily::RATE_48K));
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+
+    // 4. 48k Minimum
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Minimum));
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+
+    // Back to 44k Minimum
+    EXPECT_TRUE(upsampler.switchRateFamily(RateFamily::RATE_44K));
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+}
+
+TEST_F(ConvolutionEngineTest, QuadPhaseProcessImpulse) {
+    TempCoeffDir tempDir(true);
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_44K, PhaseType::Minimum));
+
+    // Create simple impulse input
+    const size_t inputFrames = 8192;
+    std::vector<float> input(inputFrames, 0.0f);
+    input[0] = 1.0f;  // Impulse at t=0
+
+    std::vector<float> output;
+    bool result = upsampler.processChannel(input.data(), inputFrames, output);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(output.size(), inputFrames * 16);
+
+    // Output should have non-zero values
+    float maxAbs = 0.0f;
+    for (float v : output) {
+        maxAbs = std::max(maxAbs, std::abs(v));
+    }
+    EXPECT_GT(maxAbs, 0.0f);
+}
+
+TEST_F(ConvolutionEngineTest, QuadPhaseLatencyCalculation) {
+    TempCoeffDir tempDir(true);
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeQuadPhase(
+        tempDir.getMinPhasePath("44k"),
+        tempDir.getMinPhasePath("48k"),
+        tempDir.getLinearPhasePath("44k"),
+        tempDir.getLinearPhasePath("48k"),
+        16, 8192, RateFamily::RATE_44K, PhaseType::Minimum));
+
+    // Minimum phase should have zero latency
+    EXPECT_EQ(upsampler.getLatencySamples(), 0);
+
+    // Switch to linear phase - should have non-zero latency
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Linear));
+    // Latency = (taps - 1) / 2 = (1024 - 1) / 2 = 511
+    EXPECT_EQ(upsampler.getLatencySamples(), 511);
 }

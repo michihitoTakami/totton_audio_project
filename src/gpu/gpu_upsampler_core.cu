@@ -30,6 +30,8 @@ GPUUpsampler::GPUUpsampler()
       d_filterCoeffs_(nullptr),
       dualRateEnabled_(false), currentRateFamily_(RateFamily::RATE_44K),
       d_filterFFT_44k_(nullptr), d_filterFFT_48k_(nullptr),
+      quadPhaseEnabled_(false),
+      d_filterFFT_44k_linear_(nullptr), d_filterFFT_48k_linear_(nullptr),
       multiRateEnabled_(false), currentInputRate_(44100), currentMultiRateIndex_(0),
       d_filterFFT_A_(nullptr), d_filterFFT_B_(nullptr), d_activeFilterFFT_(nullptr),
       d_originalFilterFFT_(nullptr), filterFftSize_(0), eqApplied_(false),
@@ -648,6 +650,9 @@ void GPUUpsampler::cleanup() {
     // Free dual-rate filter FFT buffers
     if (d_filterFFT_44k_) cudaFree(d_filterFFT_44k_);
     if (d_filterFFT_48k_) cudaFree(d_filterFFT_48k_);
+    // Free quad-phase (linear phase) filter FFT buffers
+    if (d_filterFFT_44k_linear_) cudaFree(d_filterFFT_44k_linear_);
+    if (d_filterFFT_48k_linear_) cudaFree(d_filterFFT_48k_linear_);
     // Free multi-rate filter FFT buffers
     for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {
         if (d_filterFFT_Multi_[i]) cudaFree(d_filterFFT_Multi_[i]);
@@ -692,6 +697,12 @@ void GPUUpsampler::cleanup() {
     currentRateFamily_ = RateFamily::RATE_44K;
     h_filterCoeffs44k_.clear();
     h_filterCoeffs48k_.clear();
+    // Quad-phase cleanup
+    quadPhaseEnabled_ = false;
+    d_filterFFT_44k_linear_ = nullptr;
+    d_filterFFT_48k_linear_ = nullptr;
+    h_filterCoeffs44k_linear_.clear();
+    h_filterCoeffs48k_linear_.clear();
     // Multi-rate cleanup
     multiRateEnabled_ = false;
     currentInputRate_ = 44100;
