@@ -286,6 +286,17 @@ def generate_hrtf_filters(
         fir = pad_hrir_to_length(resampled, n_taps)
         print(f"  FIR length: {len(fir)} taps")
 
+        # DCゲイン正規化（DC gain = 1.0）
+        # CLAUDE.md要件: "Coefficients normalized to DC gain = 1.0 to prevent clipping"
+        dc_gain = np.sum(fir)
+        if abs(dc_gain) > 1e-10:  # ゼロ除算防止
+            fir = fir / dc_gain
+            print(f"  DC gain normalized: {dc_gain:.6f} → 1.0")
+        else:
+            print(
+                f"  Warning: DC gain near zero ({dc_gain:.2e}), skipping normalization"
+            )
+
         channels[name] = fir.astype(np.float32)
 
     # インターリーブして保存（LL, LR, RL, RR の順）
@@ -311,6 +322,7 @@ def generate_hrtf_filters(
         "n_channels": 4,
         "channel_order": ["LL", "LR", "RL", "RR"],
         "phase_type": "original",  # 位相保持（ITD/ILD維持）
+        "dc_normalized": True,  # 各チャンネルDCゲイン=1.0に正規化済み
         "source_azimuth_left": -30.0,  # Logical value (HUTUBS uses 330°)
         "source_azimuth_right": TARGET_AZIMUTH_RIGHT,
         "source_elevation": TARGET_ELEVATION,

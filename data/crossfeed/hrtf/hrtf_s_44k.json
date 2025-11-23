@@ -13,11 +13,12 @@
     "RR"
   ],
   "phase_type": "original",
+  "dc_normalized": true,
   "source_azimuth_left": -30.0,
   "source_azimuth_right": 30.0,
   "source_elevation": 0.0,
   "license": "CC BY-SA 4.0",
   "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
   "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
-  "generated_at": "2025-11-24T00:18:45.321845"
+  "generated_at": "2025-11-24T00:27:49.586948"
 }
