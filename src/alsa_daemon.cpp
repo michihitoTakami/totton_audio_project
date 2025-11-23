@@ -255,6 +255,10 @@ static void zeromq_listener_thread() {
         socket.set(zmq::sockopt::rcvtimeo, 1000);  // 1 second receive timeout
         socket.set(zmq::sockopt::linger, 0);
 
+        // Remove stale socket file if exists (from previous crash/unclean shutdown)
+        std::string sock_path = std::string(ZEROMQ_IPC_PATH).substr(6);  // Remove "ipc://"
+        unlink(sock_path.c_str());  // Ignore error if file doesn't exist
+
         socket.bind(ZEROMQ_IPC_PATH);
         std::cout << "ZeroMQ: Listening on " << ZEROMQ_IPC_PATH << std::endl;
 
@@ -292,8 +296,7 @@ static void zeromq_listener_thread() {
             socket.send(reply, zmq::send_flags::none);
         }
 
-        // Cleanup: unlink the IPC socket file
-        std::string sock_path = std::string(ZEROMQ_IPC_PATH).substr(6);  // Remove "ipc://"
+        // Cleanup: unlink the IPC socket file (sock_path already defined at start)
         unlink(sock_path.c_str());
         std::cout << "ZeroMQ: Listener stopped" << std::endl;
 
@@ -820,9 +823,6 @@ int main(int argc, char* argv[]) {
         std::cout << "Starting ALSA output thread..." << std::endl;
         std::thread alsa_thread(alsa_output_thread);
 
-        // Start ZeroMQ listener thread for Python/FastAPI communication
-        std::thread zmq_thread(zeromq_listener_thread);
-
         // Initialize PipeWire input
         pw_init(&argc, &argv);
 
@@ -832,6 +832,10 @@ int main(int argc, char* argv[]) {
         // Create main loop (store globally for signal handler access)
         data.loop = pw_main_loop_new(nullptr);
         g_pw_loop = data.loop;
+
+        // Start ZeroMQ listener thread AFTER g_pw_loop is set
+        // This ensures RELOAD commands can always quit the main loop
+        std::thread zmq_thread(zeromq_listener_thread);
         struct pw_loop* loop = pw_main_loop_get_loop(data.loop);
 
         // Create Capture stream from gpu_upsampler_sink.monitor
