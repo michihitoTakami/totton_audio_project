@@ -128,12 +128,16 @@ target_compile_options(gpu_upsampler PRIVATE
 )
 
 # PipeWire Daemon executable
-add_executable(gpu_upsampler_daemon src/pipewire_daemon.cpp)
+add_executable(gpu_upsampler_daemon
+    src/pipewire_daemon.cpp
+    src/config_loader.cpp
+)
 
 # Link against core library and PipeWire
 target_link_libraries(gpu_upsampler_daemon
     gpu_upsampler_core
     ${PIPEWIRE_LIBRARIES}
+    nlohmann_json::nlohmann_json
 )
 
 # Compiler flags for daemon

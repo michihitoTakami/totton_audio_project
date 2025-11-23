@@ -1,6 +1,8 @@
 #ifndef CONVOLUTION_ENGINE_H
 #define CONVOLUTION_ENGINE_H
 
+#include "config_loader.h"  // PhaseType enum
+
 #include <cuda_runtime.h>
 #include <cufft.h>
 
@@ -214,17 +216,55 @@ class GPUUpsampler {
         stats_ = Stats();
     }
 
+    // ========== Phase Type Support ==========
+
+    // Set the phase type for EQ processing
+    // - Minimum: EQ uses minimum phase reconstruction (no pre-ringing)
+    // - Linear: EQ applies magnitude only, preserving original filter phase
+    void setPhaseType(PhaseType type) {
+        phaseType_ = type;
+    }
+
+    // Get current phase type
+    PhaseType getPhaseType() const {
+        return phaseType_;
+    }
+
+    // Get latency in samples for current phase type
+    // - Minimum phase: 0 (causal, no pre-delay)
+    // - Linear phase: (filterTaps - 1) / 2
+    int getLatencySamples() const {
+        if (phaseType_ == PhaseType::Linear) {
+            return (filterTaps_ - 1) / 2;
+        }
+        return 0;
+    }
+
+    // Get latency in seconds for current phase type
+    double getLatencySeconds() const {
+        int outputRate = getOutputSampleRate();
+        if (outputRate <= 0)
+            return 0.0;
+        return static_cast<double>(getLatencySamples()) / outputRate;
+    }
+
     // ========== EQ Support ==========
 
-    // Apply EQ magnitude with minimum phase reconstruction
-    // eqMagnitude: EQ magnitude response |H_eq(f)| (same size as filter FFT)
-    // Process:
-    //   1. Combined magnitude = |H_original| * |H_eq|
-    //   2. Compute minimum phase via Hilbert transform (cepstrum method)
-    //   3. Store result as new filter
-    // This preserves minimum phase property (no pre-ringing)
+    // Apply EQ magnitude (dispatches to appropriate method based on phase type)
+    // - Minimum phase: full cepstrum-based minimum phase reconstruction
+    // - Linear phase: magnitude-only multiplication, preserving filter phase
     bool applyEqMagnitude(const std::vector<double>& eqMagnitude);
 
+    // Apply EQ magnitude only (for linear phase filters)
+    // Multiplies filter magnitude by EQ magnitude, preserves original phase
+    // Use this when phaseType_ == PhaseType::Linear
+    bool applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude);
+
+   private:
+    // Internal: Apply EQ with minimum phase reconstruction
+    bool applyEqMagnitudeMinPhase(const std::vector<double>& eqMagnitude);
+
+   public:
     // Restore original filter (remove EQ)
     void restoreOriginalFilter();
 
@@ -248,14 +288,21 @@ class GPUUpsampler {
         return upsampleRatio_;
     }
 
-    // Get input sample rate for current rate family (for EQ design)
-    int getInputSampleRate() const {
-        return getBaseSampleRate(currentRateFamily_);
+    // Set input sample rate (updates rate family automatically)
+    // Call this after initialize() for single-rate mode to get correct latency calculation
+    void setInputSampleRate(int sampleRate) {
+        inputSampleRate_ = sampleRate;
+        currentRateFamily_ = detectRateFamily(sampleRate);
     }
 
-    // Get output sample rate for current rate family
+    // Get input sample rate
+    int getInputSampleRate() const {
+        return inputSampleRate_;
+    }
+
+    // Get output sample rate (input rate * upsample ratio)
     int getOutputSampleRate() const {
-        return ConvolutionEngine::getOutputSampleRate(currentRateFamily_);
+        return inputSampleRate_ * upsampleRatio_;
     }
 
     // Legacy: Get default input sample rate (44.1kHz)
@@ -298,7 +345,9 @@ class GPUUpsampler {
     int upsampleRatio_;
     int blockSize_;
     int filterTaps_;
-    int fftSize_;  // Pre-computed FFT size
+    int fftSize_;                               // Pre-computed FFT size
+    int inputSampleRate_ = 44100;               // Input sample rate (default: 44.1kHz)
+    PhaseType phaseType_ = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 
     // Filter coefficients (single-rate mode)
     std::vector<float> h_filterCoeffs_;  // Host
