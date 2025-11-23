@@ -145,12 +145,16 @@ float Controller::calculateGain(size_t position, size_t total, bool fadeOut) con
     float gain;
     switch (fadeCurve_) {
     case FadeCurve::LINEAR:
-        gain = progress;
+        // Linear: gain increases linearly with progress
+        // For fade-out: start at 1.0, end at 0.0
+        // For fade-in: start at 0.0, end at 1.0
+        gain = fadeOut ? (1.0f - progress) : progress;
         break;
 
     case FadeCurve::LOGARITHMIC:
-        // Use a power curve for more natural audio fade
-        // gain = progress^2 for fade-in, sqrt(progress) for fade-out
+        // Logarithmic/power curve for more natural audio perception
+        // For fade-out: sqrt curve (faster initial drop, slower at end)
+        // For fade-in: square curve (slower start, faster at end)
         if (fadeOut) {
             gain = std::sqrt(1.0f - progress);
         } else {
@@ -159,23 +163,11 @@ float Controller::calculateGain(size_t position, size_t total, bool fadeOut) con
         break;
 
     default:
-        gain = progress;
+        gain = fadeOut ? (1.0f - progress) : progress;
         break;
     }
 
-    // For fade-out, invert the gain
-    if (fadeOut) {
-        gain = 1.0f - progress;
-        if (fadeCurve_ == FadeCurve::LOGARITHMIC) {
-            gain = std::sqrt(1.0f - progress);
-        }
-    }
-
     return std::clamp(gain, 0.0f, 1.0f);
-}
-
-void Controller::applyGain(float* sample, float gain) {
-    *sample *= gain;
 }
 
 void Controller::updateFadeSamples() {
