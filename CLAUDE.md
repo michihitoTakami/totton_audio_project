@@ -246,6 +246,8 @@ gpu_os/
 2. **Issue Number Required:** ブランチ名・PR名には必ずIssue番号を含めること
    - ブランチ名: `feature/#123-feature-name` または `fix/#456-bug-description`
    - PR名: `#123 機能の説明` または `Fix #456: バグの説明`
+3. **⚠️ PRマージ禁止:** `gh pr merge` は**絶対に**ユーザーの明示的な許可なしに実行しないこと。PRの作成までは行ってよいが、マージはユーザーがレビュー後に自分で行う。
+4. **⚠️ mainブランチ直接作業禁止:** mainブランチで直接コミット・編集しないこと。必ずworktreeでfeature/fix branchを作成して作業する。
 
 ### Git Worktree
 

@@ -862,9 +862,12 @@ int main(int argc, char* argv[]) {
         }
 
         // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
-        size_t buffer_capacity = 10000;  // Conservative estimate for buffer size
+        // Use 2x safety margin to handle timing variations
+        size_t buffer_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
         g_stream_input_left.resize(buffer_capacity, 0.0f);
         g_stream_input_right.resize(buffer_capacity, 0.0f);
+        std::cout << "Streaming buffer capacity: " << buffer_capacity
+                  << " samples (2x streamValidInputPerBlock)" << std::endl;
         g_stream_accumulated_left = 0;
         g_stream_accumulated_right = 0;
 

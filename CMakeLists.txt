@@ -22,6 +22,16 @@ pkg_check_modules(ALSA REQUIRED alsa)
 # ZeroMQ for IPC communication
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
+# NVML for GPU utilization monitoring (optional)
+# On minimal Jetson environments or some container setups, NVML may not be available
+if(TARGET CUDA::nvml)
+    set(HAVE_NVML TRUE)
+    message(STATUS "NVML found - GPU utilization monitoring enabled")
+else()
+    set(HAVE_NVML FALSE)
+    message(STATUS "NVML not found - GPU utilization monitoring disabled (stub)")
+endif()
+
 # Fetch dependencies
 include(FetchContent)
 
@@ -83,9 +93,14 @@ set_target_properties(gpu_upsampler_core PROPERTIES
 target_link_libraries(gpu_upsampler_core PUBLIC
     CUDA::cudart
     CUDA::cufft
-    CUDA::nvml
     ${SNDFILE_LIBRARIES}
 )
+
+# Conditionally link NVML if available
+if(HAVE_NVML)
+    target_link_libraries(gpu_upsampler_core PUBLIC CUDA::nvml)
+    target_compile_definitions(gpu_upsampler_core PUBLIC HAVE_NVML)
+endif()
 
 # Command-line executable
 add_executable(gpu_upsampler
