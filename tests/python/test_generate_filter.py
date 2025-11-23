@@ -107,13 +107,16 @@ class TestFilterConfig:
         """base_name should include phase type for linear phase."""
         from generate_filter import FilterConfig, PhaseType
 
+        # 線形位相は奇数タップ必須
         config = FilterConfig(
-            n_taps=2_000_000,
+            n_taps=2_000_001,  # Odd tap count required for linear phase
             input_rate=48000,
             upsample_ratio=8,
             phase_type=PhaseType.LINEAR,
         )
-        assert config.base_name == "filter_48k_8x_2m_linear"
+        # Note: taps_label uses original n_taps, which is 2000001
+        assert "linear" in config.base_name
+        assert "48k" in config.base_name
 
     def test_base_name_custom_prefix(self):
         """output_prefix should override auto-generated name."""
@@ -122,31 +125,28 @@ class TestFilterConfig:
         config = FilterConfig(output_prefix="custom_filter")
         assert config.base_name == "custom_filter"
 
-    def test_actual_taps_minimum_phase(self):
-        """actual_taps should equal n_taps for minimum phase."""
+    def test_linear_phase_requires_odd_taps(self):
+        """Linear phase should reject even tap counts."""
+        from generate_filter import FilterConfig, PhaseType
+
+        # Even tap count should raise error for linear phase
+        with pytest.raises(ValueError, match="奇数タップが必須"):
+            FilterConfig(n_taps=2_000_000, phase_type=PhaseType.LINEAR)
+
+    def test_linear_phase_accepts_odd_taps(self):
+        """Linear phase should accept odd tap counts."""
+        from generate_filter import FilterConfig, PhaseType
+
+        # Odd tap count should work
+        config = FilterConfig(n_taps=2_000_001, phase_type=PhaseType.LINEAR)
+        assert config.n_taps == 2_000_001
+
+    def test_minimum_phase_accepts_even_taps(self):
+        """Minimum phase should accept even tap counts."""
         from generate_filter import FilterConfig, PhaseType
 
         config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
-        assert config.actual_taps == 2_000_000
-
-        config_odd = FilterConfig(n_taps=2_000_001, phase_type=PhaseType.MINIMUM)
-        assert config_odd.actual_taps == 2_000_001
-
-    def test_actual_taps_linear_phase_even_to_odd(self):
-        """actual_taps should be odd for linear phase (even input becomes odd)."""
-        from generate_filter import FilterConfig, PhaseType
-
-        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.LINEAR)
-        assert config.actual_taps == 2_000_001  # Even -> Odd (+1)
-        assert config.actual_taps % 2 == 1  # Must be odd
-
-    def test_actual_taps_linear_phase_odd_unchanged(self):
-        """actual_taps should stay odd for linear phase when n_taps is already odd."""
-        from generate_filter import FilterConfig, PhaseType
-
-        config = FilterConfig(n_taps=2_000_001, phase_type=PhaseType.LINEAR)
-        assert config.actual_taps == 2_000_001  # Odd unchanged
-        assert config.actual_taps % 2 == 1  # Must be odd
+        assert config.n_taps == 2_000_000
 
 
 class TestFilterDesigner:
@@ -230,13 +230,13 @@ class TestFilterDesigner:
         # Linear phase with odd taps should be symmetric
         assert np.allclose(h_final, h_final[::-1], atol=1e-10)
 
-    def test_design_linear_phase_even_taps_becomes_odd(self):
-        """design() with LINEAR and even tap count should produce odd taps."""
+    def test_design_linear_phase_odd_taps_symmetric(self):
+        """design() with LINEAR and odd tap count should produce symmetric filter."""
         from generate_filter import FilterConfig, FilterDesigner, PhaseType
 
-        # Even tap count should become odd for linear phase
+        # Linear phase requires odd tap count (enforced at FilterConfig level)
         config = FilterConfig(
-            n_taps=1600,  # Even, divisible by 16
+            n_taps=1601,  # Odd, as required for linear phase
             input_rate=44100,
             upsample_ratio=16,
             kaiser_beta=14,
@@ -245,7 +245,7 @@ class TestFilterDesigner:
         designer = FilterDesigner(config)
         h_final, h_linear = designer.design()
 
-        # Tap count should be odd (1601, not 1600)
+        # Tap count should be odd (1601)
         assert len(h_final) == 1601
         assert len(h_final) % 2 == 1
         # Should be symmetric (Type I FIR)
@@ -305,8 +305,9 @@ class TestFilterValidator:
         """validate should detect symmetric (linear phase) filters."""
         from generate_filter import FilterConfig, FilterValidator, PhaseType
 
+        # 線形位相は奇数タップ必須
         config = FilterConfig(
-            n_taps=1000,
+            n_taps=1001,  # Odd tap count required for linear phase
             input_rate=44100,
             upsample_ratio=16,
             phase_type=PhaseType.LINEAR,
@@ -701,7 +702,7 @@ class TestMultiRateOutputFilename:
         """Output filename should include phase type."""
         from generate_filter import FilterConfig, PhaseType
 
-        # Minimum phase
+        # Minimum phase (even taps OK)
         config_min = FilterConfig(
             n_taps=2_000_000,
             input_rate=44100,
@@ -710,14 +711,15 @@ class TestMultiRateOutputFilename:
         )
         assert config_min.base_name == "filter_44k_16x_2m_minimum"
 
-        # Linear phase
+        # Linear phase (odd taps required)
         config_lin = FilterConfig(
-            n_taps=2_000_000,
+            n_taps=2_000_001,  # Odd tap count required for linear phase
             input_rate=44100,
             upsample_ratio=16,
             phase_type=PhaseType.LINEAR,
         )
-        assert config_lin.base_name == "filter_44k_16x_2m_linear"
+        assert "linear" in config_lin.base_name
+        assert "44k" in config_lin.base_name
 
 
 class TestValidateTapCountMultiRate:

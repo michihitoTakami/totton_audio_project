@@ -91,6 +91,13 @@ class FilterConfig:
         if self.stopband_start is None:
             self.stopband_start = self.input_rate // 2
 
+        # 線形位相は奇数タップ必須（Type I FIR対称性のため）
+        if self.phase_type == PhaseType.LINEAR and self.n_taps % 2 == 0:
+            raise ValueError(
+                f"線形位相フィルタは奇数タップが必須です（指定: {self.n_taps}）。"
+                f"\n  推奨: {self.n_taps - 1} または {self.n_taps + 1}"
+            )
+
     @property
     def output_rate(self) -> int:
         return self.input_rate * self.upsample_ratio
@@ -104,13 +111,6 @@ class FilterConfig:
         if self.n_taps % 1_000_000 == 0:
             return f"{self.n_taps // 1_000_000}m"
         return str(self.n_taps)
-
-    @property
-    def actual_taps(self) -> int:
-        """実際のタップ数（線形位相は奇数に調整）"""
-        if self.phase_type == PhaseType.LINEAR and self.n_taps % 2 == 0:
-            return self.n_taps + 1
-        return self.n_taps
 
     @property
     def base_name(self) -> str:
@@ -140,11 +140,11 @@ class FilterDesigner:
         print(f"  カットオフ周波数: {cutoff_freq} Hz (正規化: {normalized_cutoff:.6f})")
         print(f"  Kaiser β: {self.config.kaiser_beta}")
 
-        # タイプI FIRフィルタは奇数タップが必須（対称性維持のため）
-        numtaps = self.config.actual_taps
+        # タイプI FIRフィルタは奇数タップが必須（FilterConfig.__post_init__で検証済み）
+        numtaps = self.config.n_taps
+        # 最小位相用の偶数タップの場合、firwinは奇数に調整して対称フィルタを生成
         if numtaps % 2 == 0:
             numtaps += 1
-            print(f"  注意: 線形位相は奇数タップ必須のため {numtaps} に調整")
 
         h_linear = signal.firwin(
             numtaps=numtaps,
@@ -557,10 +557,16 @@ class FilterGenerator:
 
     def generate(
         self, filter_name: str | None = None, skip_header: bool = False
-    ) -> str:
-        """フィルタを生成する"""
+    ) -> tuple[str, int]:
+        """フィルタを生成する
+
+        Returns:
+            tuple: (base_name, actual_taps) - ファイル名のベースと実タップ数
+        """
         # 0. タップ数の検証
-        validate_tap_count(self.config.n_taps, self.config.upsample_ratio)
+        validate_tap_count(
+            self.config.n_taps, self.config.upsample_ratio, self.config.phase_type
+        )
 
         # 1. フィルタ設計
         h_final, h_linear = self.designer.design()
@@ -584,13 +590,15 @@ class FilterGenerator:
         # 7. 最終レポート
         self._print_report(validation_results, normalization_info, base_name)
 
-        return base_name
+        # 実タップ数はフィルタ長から取得（validation_resultsに記録済み）
+        actual_taps = validation_results["actual_taps"]
+
+        return base_name, actual_taps
 
     def _create_metadata(self, validation_results: dict[str, Any]) -> dict[str, Any]:
         return {
             "generation_date": datetime.now().isoformat(),
             "n_taps": self.config.n_taps,
-            "actual_taps": validation_results.get("actual_taps", self.config.n_taps),
             "sample_rate_input": self.config.input_rate,
             "sample_rate_output": self.config.output_rate,
             "upsample_ratio": self.config.upsample_ratio,
@@ -611,9 +619,7 @@ class FilterGenerator:
         base_name: str,
     ) -> None:
         print("\n" + "=" * 70)
-        print(
-            f"完了 - {validation_results.get('actual_taps', self.config.n_taps):,}タップフィルタ"
-        )
+        print(f"完了 - {self.config.n_taps:,}タップフィルタ")
         print("=" * 70)
         print(f"位相タイプ: {self.config.phase_type.value.title()} Phase")
         print(f"阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
@@ -641,8 +647,19 @@ KAISER_BETA = 55
 OUTPUT_PREFIX = None
 
 
-def validate_tap_count(taps: int, upsample_ratio: int) -> None:
-    """タップ数がアップサンプリング比率の倍数であることを確認する"""
+def validate_tap_count(
+    taps: int, upsample_ratio: int, phase_type: PhaseType = PhaseType.MINIMUM
+) -> None:
+    """タップ数がアップサンプリング比率の倍数であることを確認する
+
+    線形位相は奇数タップ必須のため、偶数の比率（16, 8, 4, 2）では
+    倍数にできない。そのため線形位相ではこのチェックをスキップする。
+    """
+    if phase_type == PhaseType.LINEAR:
+        # 線形位相: 奇数タップは偶数比率で割り切れないためスキップ
+        print(f"タップ数 {taps:,}（線形位相、比率チェックスキップ）")
+        return
+
     if taps % upsample_ratio != 0:
         raise ValueError(
             f"タップ数 {taps:,} はアップサンプリング比率 {upsample_ratio} の倍数である必要があります。"
@@ -752,11 +769,15 @@ def export_coefficients(
 
 
 def generate_multi_rate_header(
-    filter_infos: list[tuple[str, str, dict[str, Any]]],
+    filter_infos: list[tuple[str, str, int, dict[str, Any]]],
     output_dir: str = "data/coefficients",
-    taps: int = 2_000_000,
 ) -> None:
-    """全フィルタ情報をまとめたC++ヘッダファイルを生成する"""
+    """全フィルタ情報をまとめたC++ヘッダファイルを生成する
+
+    Args:
+        filter_infos: [(name, base_name, actual_taps, cfg), ...] のリスト
+        output_dir: 出力ディレクトリ
+    """
     output_path = Path(output_dir)
     header_path = output_path / "filter_coefficients.h"
 
@@ -768,21 +789,23 @@ def generate_multi_rate_header(
         f.write("#define FILTER_COEFFICIENTS_H\n\n")
         f.write("#include <cstddef>\n")
         f.write("#include <cstdint>\n\n")
-        f.write(f"constexpr size_t FILTER_TAPS = {taps};\n\n")
         f.write("// Multi-rate filter configurations\n")
         f.write("struct FilterConfig {\n")
         f.write("    const char* name;\n")
         f.write("    const char* filename;\n")
+        f.write(
+            "    size_t taps;        // Actual tap count (matches .bin file length)\n"
+        )
         f.write("    int32_t input_rate;\n")
         f.write("    int32_t output_rate;\n")
         f.write("    int32_t ratio;\n")
         f.write("};\n\n")
         f.write(f"constexpr size_t FILTER_COUNT = {len(filter_infos)};\n\n")
         f.write("constexpr FilterConfig FILTER_CONFIGS[FILTER_COUNT] = {\n")
-        for name, base_name, cfg in filter_infos:
+        for name, base_name, actual_taps, cfg in filter_infos:
             output_rate = cfg["input_rate"] * cfg["ratio"]
             f.write(
-                f'    {{"{name}", "{base_name}.bin", '
+                f'    {{"{name}", "{base_name}.bin", {actual_taps}, '
                 f'{cfg["input_rate"]}, {output_rate}, {cfg["ratio"]}}},\n'
             )
         f.write("};\n\n")
@@ -798,8 +821,12 @@ def generate_multi_rate_header(
 
 def generate_single_filter(
     args: argparse.Namespace, filter_name: str | None = None, skip_header: bool = False
-) -> str:
-    """単一フィルタを生成する"""
+) -> tuple[str, int]:
+    """単一フィルタを生成する
+
+    Returns:
+        tuple: (base_name, actual_taps) - ファイル名のベースと実タップ数
+    """
     global SAMPLE_RATE_INPUT, UPSAMPLE_RATIO, SAMPLE_RATE_OUTPUT
     global PASSBAND_END, STOPBAND_START, STOPBAND_ATTENUATION_DB, KAISER_BETA
     global N_TAPS, OUTPUT_PREFIX
@@ -875,17 +902,17 @@ def generate_all_filters(args: argparse.Namespace) -> None:
         filter_args.output_prefix = None
 
         try:
-            base_name = generate_single_filter(
+            base_name, actual_taps = generate_single_filter(
                 filter_args, filter_name=name, skip_header=True
             )
             results.append((name, "Success"))
-            filter_infos.append((name, base_name, cfg))
+            filter_infos.append((name, base_name, actual_taps, cfg))
         except Exception as e:
             results.append((name, f"Failed: {e}"))
             print(f"ERROR: {e}")
 
     if filter_infos:
-        generate_multi_rate_header(filter_infos, taps=args.taps)
+        generate_multi_rate_header(filter_infos)
 
     print("\n" + "=" * 70)
     print("GENERATION SUMMARY")
