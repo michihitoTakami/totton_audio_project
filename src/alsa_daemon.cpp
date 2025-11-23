@@ -287,6 +287,10 @@ static void zeromq_listener_thread() {
             } else if (cmd == "RELOAD") {
                 // Request config reload (same as SIGHUP)
                 g_reload_requested = true;
+                // Start fade-out for glitch-free reload
+                if (g_soft_mute) {
+                    g_soft_mute->startFadeOut();
+                }
                 // Only quit main loop if it's actually running
                 // If not running yet, main() will check g_reload_requested before starting
                 if (g_main_loop_running.load() && g_pw_loop) {
@@ -337,15 +341,18 @@ static void signal_handler(int sig) {
     }
 
     // Start fade-out for glitch-free shutdown/restart (safe to call from signal handler)
-    // Note: g_running is NOT set to false here - ALSA thread must continue
-    // processing to complete the fade-out. Cleanup code will set it after fade.
     if (g_soft_mute) {
         g_soft_mute->startFadeOut();
     }
 
-    // Quit PipeWire main loop to trigger clean shutdown sequence
-    if (g_pw_loop) {
+    // If main loop is running, quit it to trigger clean shutdown sequence
+    // If not yet running (during startup/initialization), set g_running = false
+    // to allow immediate abort
+    if (g_main_loop_running.load() && g_pw_loop) {
         pw_main_loop_quit(g_pw_loop);
+    } else {
+        // Startup phase - allow immediate abort
+        g_running = false;
     }
 }
 
