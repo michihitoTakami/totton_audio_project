@@ -471,23 +471,42 @@ def check_pipewire_sink() -> bool:
         return False
 
 
+def get_configured_rates() -> tuple[int, int]:
+    """Get input/output rates from config.json.
+
+    Returns:
+        Tuple of (input_rate, output_rate) in Hz.
+    """
+    try:
+        config = load_config()
+        input_rate = config.input_sample_rate
+        upsample_ratio = config.upsample_ratio
+        output_rate = input_rate * upsample_ratio if input_rate > 0 else 0
+        return input_rate, output_rate
+    except Exception:
+        return 0, 0
+
+
 def load_stats() -> dict:
-    """Load statistics from daemon stats file"""
+    """Load statistics from daemon stats file.
+
+    Rate information is not included in stats.json (written by C++ daemon),
+    so we get it from config.json values.
+    """
+    input_rate, output_rate = get_configured_rates()
     default_stats = {
         "clip_count": 0,
         "total_samples": 0,
         "clip_rate": 0.0,
-        "input_rate": 0,
-        "output_rate": 0,
+        "input_rate": input_rate,
+        "output_rate": output_rate,
     }
     if not STATS_FILE_PATH.exists():
         return default_stats
     try:
         with open(STATS_FILE_PATH) as f:
             data = json.load(f)
-        input_rate = data.get("input_rate", 0)
-        upsample_ratio = data.get("upsample_ratio", 1)
-        output_rate = input_rate * upsample_ratio if input_rate > 0 else 0
+
         return {
             "clip_count": data.get("clip_count", 0),
             "total_samples": data.get("total_samples", 0),
@@ -572,17 +591,9 @@ async def get_status():
     settings = load_config()
     daemon_running = check_daemon_running()
     pw_connected = check_pipewire_sink() if daemon_running else False
-    stats = (
-        load_stats()
-        if daemon_running
-        else {
-            "clip_count": 0,
-            "total_samples": 0,
-            "clip_rate": 0.0,
-            "input_rate": 0,
-            "output_rate": 0,
-        }
-    )
+    # load_stats() returns zeros for clip stats when daemon stopped,
+    # but always includes configured rates from config.json
+    stats = load_stats()
 
     return Status(
         settings=settings,
@@ -603,23 +614,15 @@ async def websocket_stats(websocket: WebSocket):
     """
     WebSocket endpoint for real-time stats streaming.
     Sends stats.json data every second while connected.
-    When daemon is stopped, returns zero values (consistent with /status endpoint).
+    When daemon is stopped, returns zero values for clip stats but configured rates.
     """
     await websocket.accept()
     try:
         while True:
             daemon_running = check_daemon_running()
-            if daemon_running:
-                stats = load_stats()
-            else:
-                # Return zero values when daemon is stopped (consistent with /status)
-                stats = {
-                    "clip_count": 0,
-                    "total_samples": 0,
-                    "clip_rate": 0.0,
-                    "input_rate": 0,
-                    "output_rate": 0,
-                }
+            # load_stats() returns zeros for clip stats when daemon stopped,
+            # but always includes configured rates from config.json
+            stats = load_stats()
             stats["daemon_running"] = daemon_running
             await websocket.send_json(stats)
             await asyncio.sleep(1)
