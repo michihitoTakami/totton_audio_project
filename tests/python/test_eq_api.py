@@ -379,26 +379,77 @@ class TestActiveEndpoint:
 
 
 class TestSecurityFeatures:
-    """Tests for security features."""
+    """Tests for security features.
 
-    def test_path_traversal_in_activate(self, client, eq_profile_dir, config_path):
-        """Path traversal in activate should be prevented."""
+    Security is enforced at multiple layers:
+    1. FastAPI routing: Paths with slashes (even URL-encoded) don't match {name} parameter
+    2. validate_profile_name(): Rejects '..' sequences and names starting with '.'
+    3. sanitize_filename(): Rejects unsafe characters in uploaded filenames
+    """
+
+    def test_path_traversal_with_slashes_blocked_by_routing(
+        self, client, eq_profile_dir, config_path
+    ):
+        """Path traversal with slashes is blocked at routing layer (404)."""
+        # FastAPI routing treats slashes as path separators, so these don't reach our handler
         response = client.post("/eq/activate/../../../etc/passwd")
+        assert response.status_code == 404  # Route not found
 
-        # Should return 404 (file not found in safe directory)
-        assert response.status_code == 404
-
-    def test_path_traversal_in_delete(self, client, eq_profile_dir, config_path):
-        """Path traversal in delete should be prevented."""
         response = client.delete("/eq/profiles/../../../etc/passwd")
+        assert response.status_code == 404  # Route not found
 
-        # Should return 404
-        assert response.status_code == 404
+    def test_dotdot_in_profile_name_rejected(self, client, eq_profile_dir, config_path):
+        """Profile name containing '..' should be rejected at validation layer."""
+        response = client.post("/eq/activate/valid..name")
+
+        assert response.status_code == 400
+        assert ".." in response.json()["detail"]
+
+    def test_dotdot_in_delete_rejected(self, client, eq_profile_dir, config_path):
+        """Delete with '..' in name should be rejected."""
+        response = client.delete("/eq/profiles/valid..name")
+
+        assert response.status_code == 400
+        assert ".." in response.json()["detail"]
+
+    def test_hidden_file_profile_name_rejected(
+        self, client, eq_profile_dir, config_path
+    ):
+        """Profile name starting with '.' should be rejected."""
+        response = client.post("/eq/activate/.hidden")
+
+        assert response.status_code == 400
+        assert "." in response.json()["detail"]
+
+    def test_hidden_file_delete_rejected(self, client, eq_profile_dir, config_path):
+        """Delete profile starting with '.' should be rejected."""
+        response = client.delete("/eq/profiles/.hidden")
+
+        assert response.status_code == 400
+
+    def test_traversal_does_not_access_outside_files(
+        self, client, valid_eq_content, eq_profile_dir, config_path, tmp_path
+    ):
+        """Even if a file exists outside EQ dir, traversal patterns are rejected."""
+        # Create a file outside EQ directory
+        outside_file = tmp_path / "target.txt"
+        outside_file.write_text(valid_eq_content)
+
+        # Try various traversal patterns - all should be rejected before file access
+        # Pattern with '..' (no slashes) - reaches handler, rejected by validation
+        response = client.post("/eq/activate/..target")
+        assert response.status_code == 400
+
+        response = client.delete("/eq/profiles/..target")
+        assert response.status_code == 400
+
+        # File should still exist (not accessed or deleted)
+        assert outside_file.exists()
 
     def test_special_characters_in_filename(
         self, client, valid_eq_content, eq_profile_dir, config_path
     ):
-        """Special characters in filename should be rejected."""
+        """Special characters in uploaded filename should be rejected."""
         files = {"file": ("test;rm -rf /.txt", io.BytesIO(valid_eq_content.encode()))}
         response = client.post("/eq/validate", files=files)
 
@@ -407,3 +458,14 @@ class TestSecurityFeatures:
             response.status_code == 400
             or response.json()["filename"] != "test;rm -rf /.txt"
         )
+
+    def test_valid_profile_name_allowed(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Valid profile names with safe characters should be allowed."""
+        # Create profile with valid name
+        (eq_profile_dir / "my-profile_v2.0.txt").write_text(valid_eq_content)
+
+        response = client.post("/eq/activate/my-profile_v2.0")
+
+        assert response.status_code == 200

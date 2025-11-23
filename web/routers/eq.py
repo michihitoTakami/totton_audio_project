@@ -1,5 +1,7 @@
 """EQ profile management endpoints."""
 
+import re
+
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from ..constants import EQ_PROFILES_DIR
@@ -12,6 +14,28 @@ from ..services import (
 )
 
 router = APIRouter(prefix="/eq", tags=["eq"])
+
+# Safe profile name pattern: alphanumeric, underscore, hyphen, dot (no path separators)
+SAFE_PROFILE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
+
+def validate_profile_name(name: str) -> None:
+    """
+    Validate profile name to prevent path traversal attacks.
+
+    Raises HTTPException 400 if name contains unsafe characters.
+    """
+    if not name or not SAFE_PROFILE_NAME_PATTERN.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid profile name. Use only letters, numbers, underscores, hyphens, and dots.",
+        )
+    # Extra check: reject names that could be path traversal
+    if ".." in name or name.startswith("."):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid profile name. Cannot start with '.' or contain '..'.",
+        )
 
 
 @router.get("/profiles")
@@ -134,6 +158,9 @@ async def import_eq_profile(file: UploadFile, overwrite: bool = False):
 @router.post("/activate/{name}", response_model=ApiResponse)
 async def activate_eq_profile(name: str):
     """Activate an EQ profile by name."""
+    # Validate profile name (prevent path traversal)
+    validate_profile_name(name)
+
     # Find profile file
     profile_path = EQ_PROFILES_DIR / f"{name}.txt"
     if not profile_path.exists():
@@ -168,6 +195,9 @@ async def deactivate_eq():
 @router.delete("/profiles/{name}", response_model=ApiResponse)
 async def delete_eq_profile(name: str):
     """Delete an EQ profile."""
+    # Validate profile name (prevent path traversal)
+    validate_profile_name(name)
+
     profile_path = EQ_PROFILES_DIR / f"{name}.txt"
     if not profile_path.exists():
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
