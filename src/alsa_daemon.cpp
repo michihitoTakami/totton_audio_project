@@ -821,6 +821,17 @@ int main(int argc, char* argv[]) {
         std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                   << g_config.blockSize << " samples/block)" << std::endl;
 
+        // Set phase type from config
+        g_upsampler->setPhaseType(g_config.phaseType);
+        std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
+
+        // Log latency warning for linear phase
+        if (g_config.phaseType == PhaseType::Linear) {
+            double latencySec = g_upsampler->getLatencySeconds();
+            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
+                      << g_upsampler->getLatencySamples() << " samples)" << std::endl;
+        }
+
         // Initialize streaming mode to preserve overlap buffers across PipeWire callbacks
         if (!g_upsampler->initializeStreaming()) {
             std::cerr << "Failed to initialize streaming mode" << std::endl;
@@ -854,7 +865,7 @@ int main(int argc, char* argv[]) {
                                                                 outputSampleRate, eqProfile);
 
                 if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                    std::cout << "  EQ: Applied with minimum phase reconstruction" << std::endl;
+                    // Log message depends on phase type (already logged by applyEqMagnitude)
                 } else {
                     std::cerr << "  EQ: Failed to apply frequency response" << std::endl;
                 }

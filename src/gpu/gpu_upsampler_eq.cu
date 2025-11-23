@@ -38,12 +38,91 @@ void GPUUpsampler::restoreOriginalFilter() {
     }
 }
 
-// Apply EQ magnitude with minimum phase reconstruction.
+// Apply EQ magnitude (dispatches based on phase type)
+// - Minimum phase: full cepstrum-based minimum phase reconstruction
+// - Linear phase: magnitude-only multiplication, preserving filter phase
+bool GPUUpsampler::applyEqMagnitude(const std::vector<double>& eqMagnitude) {
+    // Dispatch based on phase type
+    if (phaseType_ == PhaseType::Linear) {
+        return applyEqMagnitudeOnly(eqMagnitude);
+    }
+    // Fall through to minimum phase reconstruction
+    return applyEqMagnitudeMinPhase(eqMagnitude);
+}
+
+// Apply EQ magnitude only (for linear phase filters)
+// Multiplies filter magnitude by EQ magnitude, preserves original phase
+bool GPUUpsampler::applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude) {
+    if (!d_filterFFT_A_ || !d_filterFFT_B_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
+        std::cerr << "EQ: Filter not initialized" << std::endl;
+        return false;
+    }
+
+    if (eqMagnitude.size() != filterFftSize_) {
+        std::cerr << "EQ: Magnitude size mismatch: expected " << filterFftSize_
+                  << ", got " << eqMagnitude.size() << std::endl;
+        return false;
+    }
+
+    // Auto-normalization: prevent clipping by normalizing if max boost > 0dB
+    std::vector<double> normalizedMagnitude = eqMagnitude;
+    double maxMag = *std::max_element(eqMagnitude.begin(), eqMagnitude.end());
+    double normalizationFactor = 1.0;
+
+    if (maxMag > 1.0) {
+        normalizationFactor = 1.0 / maxMag;
+        for (size_t i = 0; i < normalizedMagnitude.size(); ++i) {
+            normalizedMagnitude[i] *= normalizationFactor;
+        }
+        double normDb = 20.0 * std::log10(normalizationFactor);
+        std::cout << "EQ: Auto-normalization applied: " << normDb << " dB "
+                  << "(max boost was +" << 20.0 * std::log10(maxMag) << " dB)" << std::endl;
+    }
+
+    try {
+        size_t halfN = filterFftSize_;  // N/2 + 1
+
+        // For linear phase: multiply magnitude, preserve phase
+        // H_new = |H_original| * |H_eq| * exp(j * arg(H_original))
+        //       = H_original * |H_eq|  (since |H| * exp(j*arg(H)) = H)
+        std::vector<cufftComplex> newFilter(halfN);
+        for (size_t i = 0; i < halfN; ++i) {
+            float scale = static_cast<float>(normalizedMagnitude[i]);
+            newFilter[i].x = h_originalFilterFft_[i].x * scale;
+            newFilter[i].y = h_originalFilterFft_[i].y * scale;
+        }
+
+        // Ping-pong: write to back buffer, then swap
+        cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
+                                    ? d_filterFFT_B_ : d_filterFFT_A_;
+
+        Utils::checkCudaError(
+            cudaMemcpy(backBuffer, newFilter.data(),
+                      halfN * sizeof(cufftComplex), cudaMemcpyHostToDevice),
+            "cudaMemcpy EQ filter to back buffer"
+        );
+
+        // Synchronize to ensure copy is complete before swapping
+        Utils::checkCudaError(cudaDeviceSynchronize(), "EQ cudaDeviceSynchronize");
+
+        // Atomic swap
+        d_activeFilterFFT_ = backBuffer;
+
+        eqApplied_ = true;
+        std::cout << "EQ: Applied with magnitude-only (linear phase preserved, ping-pong)" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "EQ: Failed to apply magnitude-only: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// Apply EQ magnitude with minimum phase reconstruction (internal implementation)
 // IMPORTANT: This function assumes the original filter is MINIMUM PHASE.
 // If the original filter were linear phase, the group delay characteristics would change
 // because we reconstruct minimum phase from combined magnitude |H_filter| × |H_eq|.
-// This is intentional for this project (see CLAUDE.md - minimum phase is mandatory).
-bool GPUUpsampler::applyEqMagnitude(const std::vector<double>& eqMagnitude) {
+bool GPUUpsampler::applyEqMagnitudeMinPhase(const std::vector<double>& eqMagnitude) {
     if (!d_filterFFT_A_ || !d_filterFFT_B_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
         std::cerr << "EQ: Filter not initialized" << std::endl;
         return false;

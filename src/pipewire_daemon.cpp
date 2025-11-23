@@ -1,5 +1,6 @@
 #include "audio_ring_buffer.h"
 #include "audio_utils.h"
+#include "config_loader.h"
 #include "convolution_engine.h"
 #include "daemon_constants.h"
 
@@ -283,6 +284,23 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "GPU upsampler ready (16x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)"
               << std::endl;
+
+    // Load config and set phase type
+    AppConfig appConfig;
+    if (loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false)) {
+        g_upsampler->setPhaseType(appConfig.phaseType);
+        std::cout << "Phase type: " << phaseTypeToString(appConfig.phaseType) << std::endl;
+
+        // Log latency warning for linear phase
+        if (appConfig.phaseType == PhaseType::Linear) {
+            double latencySec = g_upsampler->getLatencySeconds();
+            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
+                      << g_upsampler->getLatencySamples() << " samples)" << std::endl;
+        }
+    } else {
+        std::cout << "Phase type: minimum (default)" << std::endl;
+    }
+
     if (!g_upsampler->initializeStreaming()) {
         std::cerr << "Failed to initialize streaming mode" << std::endl;
         delete g_upsampler;
