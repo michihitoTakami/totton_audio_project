@@ -16,6 +16,16 @@ repos:
         types_or: [c, c++]
         files: \.(c|cpp|h|hpp|cu|cuh)$
 
+  # clang-tidy for C/C++ static analysis (pre-push only - heavy)
+  - repo: https://github.com/pocc/pre-commit-hooks
+    rev: v1.3.5
+    hooks:
+      - id: clang-tidy
+        args: [-p=build]
+        files: \.(c|cpp|h|hpp)$
+        exclude: ^build/
+        stages: [pre-push]
+
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
