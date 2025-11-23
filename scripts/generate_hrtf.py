@@ -315,13 +315,16 @@ def generate_hrtf_filters(
     print("\n=== DC Normalization (ILD-preserving) ===")
     print(f"Max DC gain: {max_dc_gain:.6f}")
 
-    if max_dc_gain > 1e-10:
-        for name in channels:
-            channels[name] = channels[name] / max_dc_gain
-            normalized_dc = np.sum(channels[name])
-            print(f"  {name.upper()}: {dc_gains[name]:.6f} → {normalized_dc:.6f}")
-    else:
-        print("Warning: Max DC gain near zero, skipping normalization")
+    if max_dc_gain <= 1e-10:
+        raise ValueError(
+            f"Invalid HRTF data: max DC gain ({max_dc_gain:.2e}) is near zero. "
+            "This indicates corrupted or invalid SOFA data."
+        )
+
+    for name in channels:
+        channels[name] = channels[name] / max_dc_gain
+        normalized_dc = np.sum(channels[name])
+        print(f"  {name.upper()}: {dc_gains[name]:.6f} → {normalized_dc:.6f}")
 
     # float32に変換
     for name in channels:
