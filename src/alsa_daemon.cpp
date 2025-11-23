@@ -412,11 +412,12 @@ static void on_input_process(void* userdata) {
             // Apply crossfeed (HRTF) if enabled
             if (g_crossfeed_enabled && g_hrtf_processor && g_hrtf_processor->isEnabled()) {
                 std::vector<float> cf_output_left, cf_output_right;
+                // Use default CUDA stream (0) for crossfeed processing
+                // This ensures proper synchronization without coupling to upsampler's streams
                 bool cf_generated = g_hrtf_processor->processStreamBlock(
                     output_left.data(), output_right.data(), output_left.size(), cf_output_left,
-                    cf_output_right, g_upsampler->streamLeft_, g_cf_stream_input_left,
-                    g_cf_stream_input_right, g_cf_stream_accumulated_left,
-                    g_cf_stream_accumulated_right);
+                    cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
+                    g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
 
                 if (cf_generated) {
                     // Store crossfeed output for ALSA thread consumption
