@@ -1,13 +1,12 @@
 """Tests for EQ profile parsing functionality in web/main.py."""
 
+import sys
 from pathlib import Path
 
+# Add project root to path so we can import web as a package
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Import from web module (conftest.py adds project root to path)
-import sys
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
-from main import parse_eq_profile_content
+from web.services.eq import parse_eq_profile_content  # noqa: E402
 
 
 class TestParseEqProfileContent:

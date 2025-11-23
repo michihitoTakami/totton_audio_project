@@ -6,12 +6,18 @@ Tests that require the daemon to NOT be running are skipped when daemon is detec
 """
 
 import subprocess
-from unittest.mock import patch, MagicMock
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Add project root to path so we can import web as a package
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 # Import the DaemonClient from web module
-from web.main import DaemonClient, get_daemon_client, ZEROMQ_IPC_PATH
+from web.constants import ZEROMQ_IPC_PATH  # noqa: E402
+from web.services.daemon_client import DaemonClient, get_daemon_client  # noqa: E402
 
 
 def is_daemon_running() -> bool:

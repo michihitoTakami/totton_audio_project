@@ -3,11 +3,11 @@
 import sys
 from pathlib import Path
 
-# Add web directory to path
+# Add project root to path so we can import web as a package
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "web"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from main import (  # noqa: E402
+from web.constants import (  # noqa: E402
     FREQ_MAX_HZ,
     FREQ_MIN_HZ,
     GAIN_MAX_DB,
@@ -18,6 +18,8 @@ from main import (  # noqa: E402
     PREAMP_MIN_DB,
     Q_MAX,
     Q_MIN,
+)
+from web.services.eq import (  # noqa: E402
     sanitize_filename,
     validate_eq_profile_content,
 )
