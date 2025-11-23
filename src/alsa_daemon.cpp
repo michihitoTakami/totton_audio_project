@@ -1,5 +1,7 @@
+#include "audio_utils.h"
 #include "config_loader.h"
 #include "convolution_engine.h"
+#include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
 #include "soft_mute.h"
@@ -39,11 +41,8 @@ constexpr const char* STATS_FILE_PATH = "/tmp/gpu_upsampler_stats.json";
 // ZeroMQ IPC socket path (matching Python client)
 constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock";
 
-// Default configuration values
-constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
-constexpr int DEFAULT_UPSAMPLE_RATIO = 16;
-constexpr int DEFAULT_BLOCK_SIZE = 4096;
-constexpr int CHANNELS = 2;
+// Default configuration values (using common constants)
+using namespace DaemonConstants;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
 constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_1m_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
@@ -374,10 +373,7 @@ static void on_input_process(void* userdata) {
         std::vector<float> left(n_frames);
         std::vector<float> right(n_frames);
 
-        for (uint32_t i = 0; i < n_frames; ++i) {
-            left[i] = input_samples[i * 2];
-            right[i] = input_samples[i * 2 + 1];
-        }
+        AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
 
         // Process through GPU upsampler using streaming API
         // This preserves overlap buffer across calls
@@ -574,10 +570,9 @@ void alsa_output_thread() {
         if (available >= period_size) {
             // Step 1: Interleave L/R channels into float buffer with gain applied
             const float gain = g_config.gain;
-            for (size_t i = 0; i < period_size; ++i) {
-                float_buffer[i * 2] = g_output_buffer_left[g_output_read_pos + i] * gain;
-                float_buffer[i * 2 + 1] = g_output_buffer_right[g_output_read_pos + i] * gain;
-            }
+            AudioUtils::interleaveStereoWithGain(g_output_buffer_left.data() + g_output_read_pos,
+                                                 g_output_buffer_right.data() + g_output_read_pos,
+                                                 float_buffer.data(), period_size, gain);
 
             // Step 2: Apply soft mute for glitch-free shutdown/transitions
             if (g_soft_mute) {
