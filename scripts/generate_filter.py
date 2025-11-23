@@ -12,7 +12,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 
 位相タイプ:
 - minimum: 最小位相（プリリンギング排除、周波数依存遅延）【推奨】
-- linear: 線形位相（プリリンギングあり、全周波数で一定遅延、奇数タップ必須）
+- linear: 線形位相（プリリンギングあり、全周波数で一定遅延）
 
 仕様:
 - タップ数: 2,000,000 (2M) デフォルト
@@ -23,7 +23,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 
 注意:
 - 最小位相: タップ数はアップサンプリング比率の倍数であること
-- 線形位相: 偶数指定時は+1して奇数化、さらに比率の倍数になるようゼロパディング
+- 線形位相: タップ数は比率の倍数に自動調整される
 - クリッピング防止のため係数は正規化される
 """
 
@@ -46,7 +46,7 @@ class PhaseType(Enum):
     """フィルタの位相タイプ"""
 
     MINIMUM = "minimum"  # 最小位相: プリリンギングなし、周波数依存遅延【推奨】
-    LINEAR = "linear"  # 線形位相: プリリンギングあり、一定遅延（奇数タップ強制）
+    LINEAR = "linear"  # 線形位相: プリリンギングあり、一定遅延
 
 
 class MinimumPhaseMethod(Enum):
@@ -202,7 +202,7 @@ class FilterDesigner:
         h_linear = self.design_linear_phase()
 
         if self.config.phase_type == PhaseType.LINEAR:
-            # 線形位相をそのまま使用（奇数タップを維持、対称性を保証）
+            # 線形位相をそのまま使用（対称性を保証）
             return h_linear, h_linear
 
         # 2. 最小位相変換
@@ -687,10 +687,10 @@ def validate_tap_count(taps: int, upsample_ratio: int) -> None:
 
 
 def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
-    """比率の倍数になる最小のタップ数を計算する（ゼロパディング用）
+    """比率の倍数になる最小のタップ数を計算する
 
-    線形位相フィルタは奇数タップ必須だが、GPUポリフェーズ分割のため
-    比率の倍数が必要。末尾にゼロパディングして倍数に調整する。
+    GPUポリフェーズ分割のため、タップ数は比率の倍数が必要。
+    線形位相フィルタは設計時にこの値を使用する。
 
     Returns:
         int: 比率の倍数になる最小のタップ数 (>= n_taps)
@@ -965,7 +965,7 @@ Examples:
   # Generate single minimum phase filter (default, recommended)
   %(prog)s --input-rate 44100 --upsample-ratio 16
 
-  # Generate linear phase filter (odd taps, symmetric)
+  # Generate linear phase filter (symmetric)
   %(prog)s --phase-type linear
 
   # Generate all 8 filter configurations
@@ -976,7 +976,7 @@ Examples:
 
 Phase Types:
   minimum  - No pre-ringing, frequency-dependent delay (RECOMMENDED)
-  linear   - Pre-ringing present, constant delay, odd taps enforced
+  linear   - Pre-ringing present, constant delay, symmetric
 """,
     )
     parser.add_argument(
@@ -1007,7 +1007,7 @@ Phase Types:
         "--taps",
         type=int,
         default=2_000_000,
-        help="Number of filter taps. Default: 2000000 (2M). Linear phase requires odd.",
+        help="Number of filter taps. Default: 2000000 (2M). Auto-adjusted to ratio multiple.",
     )
     parser.add_argument(
         "--passband-end",
