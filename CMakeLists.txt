@@ -61,9 +61,15 @@ include_directories(
 )
 
 # Core library (static) - Phase 2 GPU upsampling engine
+# Split into multiple files for maintainability (Issue #104)
 add_library(gpu_upsampler_core STATIC
     src/audio_io.cpp
-    src/convolution_engine.cu
+    src/gpu/convolution_kernels.cu
+    src/gpu/cuda_utils.cu
+    src/gpu/gpu_upsampler_core.cu
+    src/gpu/gpu_upsampler_multi_rate.cu
+    src/gpu/gpu_upsampler_streaming.cu
+    src/gpu/gpu_upsampler_eq.cu
 )
 
 # CUDA architecture (RTX 2070 Super = Compute Capability 7.5)
