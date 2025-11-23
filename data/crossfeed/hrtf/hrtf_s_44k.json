@@ -1,0 +1,25 @@
+{
+  "description": "HRTF FIR filter for head size S (phase-preserving)",
+  "size_category": "S",
+  "subject_id": "pp6",
+  "sample_rate": 705600,
+  "rate_family": "44k",
+  "n_taps": 2000000,
+  "n_channels": 4,
+  "channel_order": [
+    "LL",
+    "LR",
+    "RL",
+    "RR"
+  ],
+  "phase_type": "original",
+  "normalization": "ild_preserving",
+  "max_dc_gain": 1.0,
+  "source_azimuth_left": -30.0,
+  "source_azimuth_right": 30.0,
+  "source_elevation": 0.0,
+  "license": "CC BY-SA 4.0",
+  "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
+  "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
+  "generated_at": "2025-11-24T00:56:32.719650"
+}
