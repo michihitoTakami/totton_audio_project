@@ -1,4 +1,6 @@
 {
+  "WARNING": "This file contains SIMULATED data, NOT actual HUTUBS measurements",
+  "is_simulated": true,
   "license": "CC BY-SA 4.0",
   "source": "https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a",
   "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",

@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-HUTUBS SOFA Data Fetcher and Head Size Classifier
+HUTUBS Head Size Classification Scaffold
 
-Downloads HRTF data from the HUTUBS database (TU Berlin) and classifies
-subjects by head circumference into 5 groups (XS/S/M/L/XL).
+Generates SIMULATED placeholder data for head size classification.
+This is a SCAFFOLD for future HUTUBS HRTF integration.
 
-HUTUBS Database: https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a
-License: CC BY-SA 4.0
+⚠️ WARNING: This script generates SIMULATED data, NOT actual HUTUBS measurements.
+The anthropometric values are randomly generated based on typical adult head size
+distributions and do NOT reflect real HUTUBS subject data.
 
+For actual HUTUBS data, download from:
+    https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a
+
+HUTUBS Database License: CC BY-SA 4.0
 Attribution:
     HUTUBS - Head-related Transfer Function Database of the
     Technical University of Berlin
@@ -21,12 +26,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
-# HUTUBS database URLs
-HUTUBS_BASE_URL = "https://depositonce.tu-berlin.de/bitstreams"
-# Subject IDs range from pp1 to pp96 (not all may be available)
+# Subject IDs range from pp1 to pp96 in actual HUTUBS database
 HUTUBS_SUBJECT_COUNT = 96
 
-# Head circumference classification (in cm)
+# Head circumference classification bins (in cm)
+# Based on typical adult head size distribution
 HEAD_SIZE_BINS = {
     "XS": (0, 53),  # Extra Small: < 53cm
     "S": (53, 55),  # Small: 53-55cm
@@ -38,23 +42,24 @@ HEAD_SIZE_BINS = {
 
 @dataclass
 class SubjectInfo:
-    """Information about a HUTUBS subject."""
+    """Information about a subject (simulated)."""
 
     id: str  # e.g., "pp1"
-    head_circumference: Optional[float]  # in cm
-    head_width: Optional[float]  # in cm
-    head_height: Optional[float]  # in cm
-    head_depth: Optional[float]  # in cm
+    head_circumference: Optional[float]  # in cm (SIMULATED)
+    head_width: Optional[float]  # in cm (SIMULATED)
+    head_height: Optional[float]  # in cm (SIMULATED)
+    head_depth: Optional[float]  # in cm (SIMULATED)
     size_category: str  # XS/S/M/L/XL
-    sofa_file: Optional[str]  # path to SOFA file
+    sofa_file: Optional[str]  # path to SOFA file (placeholder)
 
 
 @dataclass
 class HUTUBSMetadata:
-    """Complete HUTUBS metadata."""
+    """Metadata structure (with simulated subject data)."""
 
     subjects: list[SubjectInfo]
     representative_subjects: dict[str, str]  # size -> subject_id
+    is_simulated: bool = True  # Flag indicating data is simulated
     license: str = "CC BY-SA 4.0"
     source: str = (
         "https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a"
@@ -75,19 +80,18 @@ def classify_head_size(circumference: Optional[float]) -> str:
 
 def generate_simulated_anthropometric_data() -> dict[str, dict]:
     """
-    Generate SIMULATED anthropometric data for HUTUBS subjects.
+    Generate SIMULATED anthropometric data for placeholder subjects.
 
-    WARNING: This generates SIMULATED data based on typical adult head size
+    ⚠️ WARNING: This generates SIMULATED data based on typical adult head size
     distributions. It does NOT use actual HUTUBS measurement data.
-
-    In a production implementation, this should be replaced with actual
-    anthropometric data parsed from HUTUBS SOFA files or documentation.
 
     The simulated distribution uses:
     - Head circumference: Normal distribution, mean=56cm, std=2cm
     - Other measurements derived from circumference using approximate ratios
-    """
 
+    Returns:
+        Dict mapping subject_id -> anthropometric measurements (all simulated)
+    """
     import numpy as np
 
     np.random.seed(42)  # For reproducibility
@@ -153,23 +157,21 @@ def find_representative_subjects(subjects: list[SubjectInfo]) -> dict[str, str]:
 
 def create_output_directories(output_dir: Path) -> None:
     """Create necessary output directories."""
-    (output_dir / "raw").mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
 
-def generate_hutubs_metadata(
-    output_dir: Path, skip_download: bool = False
-) -> HUTUBSMetadata:
+def generate_simulated_metadata(output_dir: Path) -> HUTUBSMetadata:
     """
-    Generate HUTUBS metadata with subject classification.
+    Generate SIMULATED metadata with placeholder subject data.
+
+    ⚠️ This generates SIMULATED data, not actual HUTUBS measurements.
 
     Args:
         output_dir: Directory to store output files
-        skip_download: If True, only generate metadata without downloading SOFA files
     """
     create_output_directories(output_dir)
 
     # Generate simulated anthropometric data
-    # WARNING: This is SIMULATED data, not actual HUTUBS measurements
     anthropometric = generate_simulated_anthropometric_data()
 
     # Create subject info list
@@ -181,10 +183,6 @@ def generate_hutubs_metadata(
         circumference = anthro.get("head_circumference")
         size_category = classify_head_size(circumference)
 
-        sofa_file = (
-            f"raw/{subject_id}_HRIRs_measured.sofa" if not skip_download else None
-        )
-
         subject = SubjectInfo(
             id=subject_id,
             head_circumference=circumference,
@@ -192,7 +190,7 @@ def generate_hutubs_metadata(
             head_height=anthro.get("head_height"),
             head_depth=anthro.get("head_depth"),
             size_category=size_category,
-            sofa_file=sofa_file,
+            sofa_file=None,  # No actual SOFA files
         )
         subjects.append(subject)
 
@@ -202,12 +200,15 @@ def generate_hutubs_metadata(
     return HUTUBSMetadata(
         subjects=subjects,
         representative_subjects=representatives,
+        is_simulated=True,
     )
 
 
 def save_metadata(metadata: HUTUBSMetadata, output_path: Path) -> None:
     """Save metadata to JSON file."""
     data = {
+        "WARNING": "This file contains SIMULATED data, NOT actual HUTUBS measurements",
+        "is_simulated": metadata.is_simulated,
         "license": metadata.license,
         "source": metadata.source,
         "attribution": metadata.attribution,
@@ -225,8 +226,9 @@ def save_metadata(metadata: HUTUBSMetadata, output_path: Path) -> None:
 def print_summary(metadata: HUTUBSMetadata) -> None:
     """Print summary of the classification."""
     print("\n" + "=" * 60)
-    print("HUTUBS Subject Classification Summary")
+    print("Head Size Classification Summary (SIMULATED DATA)")
     print("=" * 60)
+    print("\n⚠️  WARNING: All data below is SIMULATED, not from HUTUBS")
 
     # Count subjects per category
     counts = {}
@@ -241,7 +243,7 @@ def print_summary(metadata: HUTUBSMetadata) -> None:
             f"  {size:2s} ({low:2.0f}-{high:2.0f}cm): {count:2d} subjects, representative: {rep}"
         )
 
-    print("\nRepresentative subjects for HRTF generation:")
+    print("\nRepresentative subjects (simulated):")
     for size, subject_id in metadata.representative_subjects.items():
         subject = next((s for s in metadata.subjects if s.id == subject_id), None)
         if subject:
@@ -250,26 +252,31 @@ def print_summary(metadata: HUTUBSMetadata) -> None:
             )
 
     print("\n" + "=" * 60)
-    print(f"License: {metadata.license}")
+    print("For actual HUTUBS data, download from:")
+    print(f"  {metadata.source}")
+    print(f"\nLicense: {metadata.license}")
     print(f"Attribution: {metadata.attribution}")
     print("=" * 60)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch HUTUBS SOFA data and classify subjects by head size",
+        description="Generate simulated head size classification data (scaffold for HUTUBS)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Generate metadata only (no download)
-  python scripts/fetch_hutubs.py --metadata-only
+⚠️  WARNING: This script generates SIMULATED data, NOT actual HUTUBS measurements.
 
-  # Generate metadata and prepare for download
+Examples:
+  # Generate simulated metadata
+  python scripts/fetch_hutubs.py
+
+  # Specify output directory
   python scripts/fetch_hutubs.py --output-dir data/crossfeed
 
-License:
-  HUTUBS data is licensed under CC BY-SA 4.0
-  https://creativecommons.org/licenses/by-sa/4.0/
+For actual HUTUBS HRTF data, download from:
+  https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a
+
+License: CC BY-SA 4.0
         """,
     )
 
@@ -277,12 +284,7 @@ License:
         "--output-dir",
         type=Path,
         default=Path("data/crossfeed"),
-        help="Output directory for SOFA files and metadata",
-    )
-    parser.add_argument(
-        "--metadata-only",
-        action="store_true",
-        help="Only generate metadata without downloading SOFA files",
+        help="Output directory for metadata",
     )
     parser.add_argument(
         "--quiet",
@@ -293,15 +295,13 @@ License:
     args = parser.parse_args()
 
     if not args.quiet:
-        print("HUTUBS SOFA Data Fetcher")
+        print("HUTUBS Head Size Classification Scaffold")
+        print("⚠️  Generating SIMULATED data (not actual HUTUBS measurements)")
         print(f"Output directory: {args.output_dir}")
         print()
 
-    # Generate metadata
-    metadata = generate_hutubs_metadata(
-        output_dir=args.output_dir,
-        skip_download=args.metadata_only,
-    )
+    # Generate simulated metadata
+    metadata = generate_simulated_metadata(output_dir=args.output_dir)
 
     # Save metadata
     metadata_path = args.output_dir / "hutubs_subjects.json"
@@ -310,14 +310,6 @@ License:
     # Print summary
     if not args.quiet:
         print_summary(metadata)
-
-    if args.metadata_only:
-        print("\nNote: SOFA files were not downloaded (--metadata-only)")
-        print("To download actual SOFA files, run without --metadata-only")
-        print("\nFor actual SOFA data, download from:")
-        print(
-            "  https://depositonce.tu-berlin.de/items/b92e5c75-3b68-4461-8a41-aecc6bcaed5a"
-        )
 
     return 0
 
