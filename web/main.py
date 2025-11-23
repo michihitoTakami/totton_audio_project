@@ -238,6 +238,78 @@ class ApiResponse(BaseModel):
 # ============================================================================
 
 
+def parse_eq_profile_content(file_path: Path) -> dict:
+    """
+    Parse EQ profile file and return structured content.
+
+    Distinguishes between:
+    - OPRA profiles (with # OPRA: header)
+    - Custom profiles (user uploaded)
+
+    For OPRA profiles with Modern Target correction, separates
+    OPRA filters from original additions.
+    """
+    if not file_path.exists():
+        return {"error": "File not found"}
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except IOError as e:
+        return {"error": f"Failed to read file: {e}"}
+
+    lines = content.strip().split("\n")
+
+    # Detect profile type
+    is_opra = any(line.startswith("# OPRA:") for line in lines)
+    has_modern_target = any("Modern Target" in line for line in lines)
+
+    # Parse header info for OPRA profiles
+    opra_info = {}
+    if is_opra:
+        for line in lines:
+            if line.startswith("# OPRA:"):
+                opra_info["product"] = line.replace("# OPRA:", "").strip()
+            elif line.startswith("# Author:"):
+                opra_info["author"] = line.replace("# Author:", "").strip()
+            elif line.startswith("# License:"):
+                opra_info["license"] = line.replace("# License:", "").strip()
+            elif line.startswith("# Source:"):
+                opra_info["source"] = line.replace("# Source:", "").strip()
+            elif line.startswith("# Details:"):
+                opra_info["details"] = line.replace("# Details:", "").strip()
+
+    # Extract filter lines (Preamp and Filter N:)
+    filter_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("Preamp:") or stripped.startswith("Filter "):
+            filter_lines.append(stripped)
+
+    # For OPRA with Modern Target, separate original addition
+    # The KB5000_7 correction adds: Filter N: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5
+    opra_filters = []
+    original_filters = []
+
+    if is_opra and has_modern_target:
+        for line in filter_lines:
+            # Check if this is the KB5000_7 correction filter
+            if "Fc 5366" in line and "Gain 2.8" in line and "Q 1.5" in line:
+                original_filters.append(line)
+            else:
+                opra_filters.append(line)
+    else:
+        opra_filters = filter_lines
+
+    return {
+        "source_type": "opra" if is_opra else "custom",
+        "has_modern_target": has_modern_target,
+        "opra_info": opra_info if is_opra else None,
+        "opra_filters": opra_filters,
+        "original_filters": original_filters,
+        "raw_content": content,
+    }
+
+
 def load_config() -> Settings:
     """Load configuration from JSON file"""
     if CONFIG_PATH.exists():
@@ -989,14 +1061,37 @@ async def delete_eq_profile(name: str):
 
 @app.get("/eq/active")
 async def get_active_eq():
-    """Get currently active EQ profile info"""
+    """
+    Get currently active EQ profile info with parsed content.
+
+    Returns structured data including:
+    - Profile metadata (name, path, source type)
+    - OPRA info (author, license) if applicable
+    - Separated filter sections (OPRA filters vs original additions)
+    """
     settings = load_config()
     if settings.eq_enabled and settings.eq_profile_path:
         path = Path(settings.eq_profile_path)
+        if not path.exists():
+            return {
+                "active": True,
+                "name": path.stem,
+                "path": settings.eq_profile_path,
+                "error": "Profile file not found",
+            }
+
+        # Parse the EQ profile content
+        parsed = parse_eq_profile_content(path)
+
         return {
             "active": True,
-            "name": path.stem if path.exists() else None,
+            "name": path.stem,
             "path": settings.eq_profile_path,
+            "source_type": parsed.get("source_type", "custom"),
+            "has_modern_target": parsed.get("has_modern_target", False),
+            "opra_info": parsed.get("opra_info"),
+            "opra_filters": parsed.get("opra_filters", []),
+            "original_filters": parsed.get("original_filters", []),
         }
     return {"active": False, "name": None, "path": None}
 
@@ -1664,6 +1759,53 @@ def get_admin_html() -> str:
         .message.error { background: #ff444440; display: block; }
         .back-link { color: #00d4ff; text-decoration: none; font-size: 13px; }
         .back-link:hover { text-decoration: underline; }
+        .eq-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .eq-profile-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #00d4ff;
+        }
+        .eq-inactive { color: #666; }
+        .copy-btn {
+            background: #0f3460;
+            border: none;
+            color: #00d4ff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .copy-btn:hover { background: #1a4b7c; }
+        .copy-btn.copied { background: #00ff88; color: #000; }
+        .eq-section-label {
+            font-size: 10px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 12px 0 6px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .eq-section-label:first-of-type { margin-top: 0; }
+        .eq-filters {
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+            color: #ccc;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .eq-attribution {
+            font-size: 10px;
+            color: #666;
+            margin-top: 8px;
+        }
+        .eq-attribution a { color: #00d4ff; }
     </style>
 </head>
 <body>
@@ -1733,6 +1875,17 @@ def get_admin_html() -> str:
         <div class="info-row">
             <span class="label">Upsample Ratio</span>
             <span class="value" id="upsampleRatio">-</span>
+        </div>
+    </div>
+
+    <h2>適用中EQプロファイル</h2>
+    <div class="card" id="eqProfileCard">
+        <div class="eq-section-header">
+            <span class="eq-profile-name" id="eqProfileName">-</span>
+            <button class="copy-btn" id="copyEqBtn" style="display:none;">Copy</button>
+        </div>
+        <div id="eqContent">
+            <div class="eq-inactive">EQ無効</div>
         </div>
     </div>
 
@@ -1861,6 +2014,108 @@ def get_admin_html() -> str:
             setTimeout(() => el.classList.remove('success', 'error'), 4000);
         }
 
+        // EQ Profile display
+        let currentEqData = null;
+
+        async function fetchEqProfile() {
+            try {
+                const res = await fetch(API + '/eq/active');
+                const data = await res.json();
+                currentEqData = data;
+                renderEqProfile(data);
+            } catch (e) {
+                console.error('Failed to fetch EQ profile:', e);
+            }
+        }
+
+        function renderEqProfile(data) {
+            const nameEl = document.getElementById('eqProfileName');
+            const contentEl = document.getElementById('eqContent');
+            const copyBtn = document.getElementById('copyEqBtn');
+
+            if (!data.active) {
+                nameEl.textContent = '-';
+                nameEl.classList.add('eq-inactive');
+                contentEl.innerHTML = '<div class="eq-inactive">EQ無効</div>';
+                copyBtn.style.display = 'none';
+                return;
+            }
+
+            nameEl.textContent = data.name || 'Unknown';
+            nameEl.classList.remove('eq-inactive');
+            copyBtn.style.display = 'block';
+
+            let html = '';
+
+            if (data.source_type === 'opra') {
+                // OPRA section
+                html += '<div class="eq-section-label">OPRA (CC BY-SA 4.0)</div>';
+                if (data.opra_info) {
+                    if (data.opra_info.author) {
+                        html += `<div style="font-size:11px;color:#888;margin-bottom:8px;">Author: ${data.opra_info.author}</div>`;
+                    }
+                }
+                html += '<div class="eq-filters">' + escapeHtml(data.opra_filters.join('\\n')) + '</div>';
+
+                // Attribution
+                html += '<div class="eq-attribution">Source: <a href="https://github.com/opra-project/OPRA" target="_blank">OPRA Project</a></div>';
+
+                // Original additions section
+                if (data.original_filters && data.original_filters.length > 0) {
+                    html += '<div class="eq-section-label">オリジナル追加</div>';
+                    html += '<div class="eq-filters">' + escapeHtml(data.original_filters.join('\\n')) + '</div>';
+                }
+            } else {
+                // Custom profile
+                html += '<div class="eq-section-label">カスタムプロファイル</div>';
+                html += '<div class="eq-filters">' + escapeHtml(data.opra_filters.join('\\n')) + '</div>';
+            }
+
+            contentEl.innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function getEqTextForCopy() {
+            if (!currentEqData || !currentEqData.active) return '';
+            let lines = [];
+            if (currentEqData.source_type === 'opra' && currentEqData.opra_info) {
+                lines.push('# OPRA: ' + (currentEqData.opra_info.product || currentEqData.name));
+                if (currentEqData.opra_info.author) lines.push('# Author: ' + currentEqData.opra_info.author);
+                lines.push('# License: CC BY-SA 4.0');
+                lines.push('# Source: https://github.com/opra-project/OPRA');
+                lines.push('');
+            }
+            lines = lines.concat(currentEqData.opra_filters);
+            if (currentEqData.original_filters && currentEqData.original_filters.length > 0) {
+                lines.push('');
+                lines.push('# オリジナル追加');
+                lines = lines.concat(currentEqData.original_filters);
+            }
+            return lines.join('\\n');
+        }
+
+        document.getElementById('copyEqBtn').addEventListener('click', async () => {
+            const text = getEqTextForCopy();
+            if (!text) return;
+            try {
+                await navigator.clipboard.writeText(text);
+                const btn = document.getElementById('copyEqBtn');
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }, 2000);
+            } catch (e) {
+                console.error('Failed to copy:', e);
+            }
+        });
+
         document.getElementById('startBtn').addEventListener('click', async () => {
             const btn = document.getElementById('startBtn');
             btn.disabled = true;
@@ -1907,8 +2162,11 @@ def get_admin_html() -> str:
 
         // Initial load and auto-refresh
         fetchStatus();
+        fetchEqProfile();
         // Full status refresh every 5 seconds (for daemon info, settings, etc.)
         setInterval(fetchStatus, 5000);
+        // EQ profile refresh every 10 seconds (less frequent, doesn't change often)
+        setInterval(fetchEqProfile, 10000);
         // Connect WebSocket for real-time stats (1 second updates)
         connectWebSocket();
     </script>
