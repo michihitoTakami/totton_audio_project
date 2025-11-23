@@ -70,10 +70,9 @@ repos:
         entry: uv run mypy
         language: system
         types: [python]
-        args: [--config-file=pyproject.toml]
+        args: [--config-file=pyproject.toml, scripts, web, tests/python]
         stages: [pre-push]
         pass_filenames: false
-        files: ^(scripts|web|tests/python)/.*\.py$
 
   # Pre-push: Diff-based tests
   # Only runs tests relevant to changed files

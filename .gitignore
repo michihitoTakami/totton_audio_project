@@ -68,3 +68,7 @@ Thumbs.db
 *.log
 
 worktrees/
+
+# HUTUBS SOFA data (large binary files, CC BY-SA 4.0)
+# Only metadata JSON is committed
+data/crossfeed/raw/
