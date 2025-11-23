@@ -125,13 +125,16 @@ class TestFilterConfig:
         config = FilterConfig(output_prefix="custom_filter")
         assert config.base_name == "custom_filter"
 
-    def test_linear_phase_requires_odd_taps(self):
-        """Linear phase should reject even tap counts."""
+    def test_linear_phase_accepts_even_taps(self):
+        """Linear phase should accept even tap counts (auto-adjusted to odd)."""
         from generate_filter import FilterConfig, PhaseType
 
-        # Even tap count should raise error for linear phase
-        with pytest.raises(ValueError, match="奇数タップが必須"):
-            FilterConfig(n_taps=2_000_000, phase_type=PhaseType.LINEAR)
+        # Even tap count should be accepted (final_taps will adjust)
+        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.LINEAR)
+        assert config.n_taps == 2_000_000
+        # final_taps should be odd + padded to ratio multiple
+        assert config.final_taps % 2 == 0  # Odd + padding = even for ratio 16
+        assert config.final_taps % config.upsample_ratio == 0
 
     def test_linear_phase_accepts_odd_taps(self):
         """Linear phase should accept odd tap counts."""
@@ -234,9 +237,8 @@ class TestFilterDesigner:
         """design() with LINEAR and odd tap count should produce symmetric filter."""
         from generate_filter import FilterConfig, FilterDesigner, PhaseType
 
-        # Linear phase requires odd tap count (enforced at FilterConfig level)
         config = FilterConfig(
-            n_taps=1601,  # Odd, as required for linear phase
+            n_taps=1601,  # Odd
             input_rate=44100,
             upsample_ratio=16,
             kaiser_beta=14,
@@ -246,6 +248,27 @@ class TestFilterDesigner:
         h_final, h_linear = designer.design()
 
         # Tap count should be odd (1601)
+        assert len(h_final) == 1601
+        assert len(h_final) % 2 == 1
+        # Should be symmetric (Type I FIR)
+        assert np.allclose(h_final, h_final[::-1], atol=1e-10)
+
+    def test_design_linear_phase_even_taps_adjusted(self):
+        """design() with LINEAR and even tap count should auto-adjust to odd."""
+        from generate_filter import FilterConfig, FilterDesigner, PhaseType
+
+        # Even tap count - should be adjusted to 1601 internally
+        config = FilterConfig(
+            n_taps=1600,
+            input_rate=44100,
+            upsample_ratio=16,
+            kaiser_beta=14,
+            phase_type=PhaseType.LINEAR,
+        )
+        designer = FilterDesigner(config)
+        h_final, h_linear = designer.design()
+
+        # Tap count should be odd (1601 = 1600 + 1)
         assert len(h_final) == 1601
         assert len(h_final) % 2 == 1
         # Should be symmetric (Type I FIR)
@@ -778,14 +801,27 @@ class TestLinearPhasePadding:
         config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
         assert config.final_taps == 2_000_000
 
-    def test_final_taps_linear_phase_padded(self):
-        """final_taps should be padded to ratio multiple for linear phase."""
+    def test_final_taps_linear_phase_odd_padded(self):
+        """final_taps should be padded to ratio multiple for linear phase (odd input)."""
         from generate_filter import FilterConfig, PhaseType
 
-        # 2,000,001 is odd (valid for linear), but not divisible by 16
+        # 2,000,001 is odd, but not divisible by 16
         # Should be padded to 2,000,016
         config = FilterConfig(
             n_taps=2_000_001,
+            upsample_ratio=16,
+            phase_type=PhaseType.LINEAR,
+        )
+        assert config.final_taps == 2_000_016
+        assert config.final_taps % 16 == 0
+
+    def test_final_taps_linear_phase_even_adjusted(self):
+        """final_taps should adjust even to odd, then pad for linear phase."""
+        from generate_filter import FilterConfig, PhaseType
+
+        # 2,000,000 is even -> 2,000,001 (odd) -> 2,000,016 (padded to 16 multiple)
+        config = FilterConfig(
+            n_taps=2_000_000,
             upsample_ratio=16,
             phase_type=PhaseType.LINEAR,
         )

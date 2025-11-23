@@ -23,7 +23,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 
 注意:
 - 最小位相: タップ数はアップサンプリング比率の倍数であること
-- 線形位相: 奇数タップ必須（偶数指定はエラー）、比率の倍数になるようゼロパディング
+- 線形位相: 偶数指定時は+1して奇数化、さらに比率の倍数になるようゼロパディング
 - クリッピング防止のため係数は正規化される
 """
 
@@ -90,13 +90,8 @@ class FilterConfig:
     def __post_init__(self) -> None:
         if self.stopband_start is None:
             self.stopband_start = self.input_rate // 2
-
-        # 線形位相は奇数タップ必須（Type I FIR対称性のため）
-        if self.phase_type == PhaseType.LINEAR and self.n_taps % 2 == 0:
-            raise ValueError(
-                f"線形位相フィルタは奇数タップが必須です（指定: {self.n_taps}）。"
-                f"\n  推奨: {self.n_taps - 1} または {self.n_taps + 1}"
-            )
+        # 線形位相の奇数タップ要件はdesign_linear_phase()内で自動調整される
+        # （偶数指定時は+1して奇数化）
 
     @property
     def output_rate(self) -> int:
@@ -108,12 +103,13 @@ class FilterConfig:
 
     @property
     def final_taps(self) -> int:
-        """最終的なタップ数（線形位相はゼロパディングで比率の倍数に調整）"""
+        """最終的なタップ数（線形位相は奇数化+比率倍数パディング）"""
         if self.phase_type == PhaseType.LINEAR:
-            # 線形位相: 奇数タップを比率の倍数にパディング
-            if self.n_taps % self.upsample_ratio == 0:
-                return self.n_taps
-            return ((self.n_taps // self.upsample_ratio) + 1) * self.upsample_ratio
+            # 線形位相: 1) 奇数化 2) 比率の倍数にパディング
+            taps = self.n_taps if self.n_taps % 2 == 1 else self.n_taps + 1
+            if taps % self.upsample_ratio == 0:
+                return taps
+            return ((taps // self.upsample_ratio) + 1) * self.upsample_ratio
         return self.n_taps
 
     @property
@@ -582,14 +578,12 @@ class FilterGenerator:
             # 最小位相: 比率の倍数必須
             validate_tap_count(self.config.n_taps, self.config.upsample_ratio)
         else:
-            # 線形位相: 奇数必須は__post_init__で検証済み、ゼロパディングで倍数化
-            padded_taps = compute_padded_taps(
-                self.config.n_taps, self.config.upsample_ratio
-            )
-            if padded_taps != self.config.n_taps:
+            # 線形位相: final_tapsで奇数化+比率倍数化を計算済み
+            final = self.config.final_taps
+            if final != self.config.n_taps:
                 print(
                     f"タップ数 {self.config.n_taps:,}（線形位相）→ "
-                    f"{padded_taps:,} にゼロパディング（比率 {self.config.upsample_ratio} の倍数）"
+                    f"{final:,} に調整（奇数化+比率 {self.config.upsample_ratio} の倍数）"
                 )
 
         # 1. フィルタ設計
