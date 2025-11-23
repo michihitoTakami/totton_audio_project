@@ -367,3 +367,15 @@ target_include_directories(soft_mute_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(soft_mute_tests)
+
+# Audio common utilities tests (AudioRingBuffer, AudioUtils)
+add_executable(audio_common_tests
+    tests/cpp/test_audio_common.cpp
+)
+target_link_libraries(audio_common_tests
+    GTest::gtest_main
+)
+target_include_directories(audio_common_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(audio_common_tests)

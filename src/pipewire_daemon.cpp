@@ -1,4 +1,7 @@
+#include "audio_ring_buffer.h"
+#include "audio_utils.h"
 #include "convolution_engine.h"
+#include "daemon_constants.h"
 
 #include <algorithm>
 #include <atomic>
@@ -10,12 +13,8 @@
 #include <spa/param/props.h>
 #include <vector>
 
-// Configuration
-constexpr int DEFAULT_INPUT_SAMPLE_RATE = 44100;
-constexpr int DEFAULT_OUTPUT_SAMPLE_RATE = 705600;  // 16x upsampling
-constexpr int UPSAMPLE_RATIO = 16;
-constexpr int BLOCK_SIZE = 4096;
-constexpr int CHANNELS = 2;
+// Configuration (using common constants from daemon_constants.h)
+using namespace DaemonConstants;
 
 // Dynamic rate configuration (updated at runtime based on input detection)
 // Using atomic for thread-safety between PipeWire callbacks and main thread
@@ -37,59 +36,7 @@ inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
 static std::atomic<bool> g_running{true};
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 
-// Simple lock-free ring buffer (single producer/consumer) for audio samples
-struct AudioRingBuffer {
-    std::vector<float> buffer;
-    size_t head = 0;  // read position
-    size_t tail = 0;  // write position
-    size_t size = 0;  // samples stored
-
-    void init(size_t capacity) {
-        buffer.assign(capacity, 0.0f);
-        head = tail = size = 0;
-    }
-
-    size_t capacity() const {
-        return buffer.size();
-    }
-    size_t availableToRead() const {
-        return size;
-    }
-    size_t availableToWrite() const {
-        return capacity() - size;
-    }
-
-    bool write(const float* data, size_t count) {
-        if (count > availableToWrite()) {
-            return false;
-        }
-        size_t first = std::min(count, capacity() - tail);
-        std::memcpy(buffer.data() + tail, data, first * sizeof(float));
-        size_t remaining = count - first;
-        if (remaining > 0) {
-            std::memcpy(buffer.data(), data + first, remaining * sizeof(float));
-        }
-        tail = (tail + count) % capacity();
-        size += count;
-        return true;
-    }
-
-    bool read(float* dst, size_t count) {
-        if (count > size) {
-            return false;
-        }
-        size_t first = std::min(count, capacity() - head);
-        std::memcpy(dst, buffer.data() + head, first * sizeof(float));
-        size_t remaining = count - first;
-        if (remaining > 0) {
-            std::memcpy(dst + first, buffer.data(), remaining * sizeof(float));
-        }
-        head = (head + count) % capacity();
-        size -= count;
-        return true;
-    }
-};
-
+// Output ring buffers (using common AudioRingBuffer class)
 static AudioRingBuffer g_output_buffer_left;
 static AudioRingBuffer g_output_buffer_right;
 static std::vector<float> g_output_temp_left;
@@ -176,10 +123,8 @@ static void on_input_process(void* userdata) {
         if (data->input_right.size() < n_frames)
             data->input_right.resize(n_frames);
 
-        for (uint32_t i = 0; i < n_frames; ++i) {
-            data->input_left[i] = input_samples[i * 2];
-            data->input_right[i] = input_samples[i * 2 + 1];
-        }
+        AudioUtils::deinterleaveStereo(input_samples, data->input_left.data(),
+                                       data->input_right.data(), n_frames);
 
         // Process through GPU upsampler using streaming API (pre-allocated buffers)
         // PipeWire may deliver larger chunks than the streaming block size; add once, then
@@ -244,10 +189,8 @@ static void on_output_process(void* userdata) {
 
             if (read_left && read_right) {
                 // Interleave output (separate L/R → stereo interleaved)
-                for (uint32_t i = 0; i < n_frames; ++i) {
-                    output_samples[i * 2] = g_output_temp_left[i];
-                    output_samples[i * 2 + 1] = g_output_temp_right[i];
-                }
+                AudioUtils::interleaveStereo(g_output_temp_left.data(), g_output_temp_right.data(),
+                                             output_samples, n_frames);
             } else {
                 std::memset(output_samples, 0, n_frames * CHANNELS * sizeof(float));
             }
@@ -324,12 +267,13 @@ int main(int argc, char* argv[]) {
     bool init_success = false;
     if (use_dual_rate) {
         std::cout << "Mode: Dual-Rate (44.1kHz + 48kHz families)" << std::endl;
-        init_success =
-            g_upsampler->initializeDualRate(filter_path_44k, filter_path_48k, UPSAMPLE_RATIO,
-                                            BLOCK_SIZE, ConvolutionEngine::RateFamily::RATE_44K);
+        init_success = g_upsampler->initializeDualRate(filter_path_44k, filter_path_48k,
+                                                       DEFAULT_UPSAMPLE_RATIO, DEFAULT_BLOCK_SIZE,
+                                                       ConvolutionEngine::RateFamily::RATE_44K);
     } else {
         std::cout << "Mode: Single-Rate (44.1kHz family only)" << std::endl;
-        init_success = g_upsampler->initialize(filter_path_44k, UPSAMPLE_RATIO, BLOCK_SIZE);
+        init_success =
+            g_upsampler->initialize(filter_path_44k, DEFAULT_UPSAMPLE_RATIO, DEFAULT_BLOCK_SIZE);
     }
 
     if (!init_success) {
@@ -337,7 +281,7 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         return 1;
     }
-    std::cout << "GPU upsampler ready (16x upsampling, " << BLOCK_SIZE << " samples/block)"
+    std::cout << "GPU upsampler ready (16x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)"
               << std::endl;
     if (!g_upsampler->initializeStreaming()) {
         std::cerr << "Failed to initialize streaming mode" << std::endl;
