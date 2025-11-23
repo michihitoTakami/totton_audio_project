@@ -2,6 +2,7 @@
 #include "convolution_engine.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
+#include "soft_mute.h"
 
 #include <algorithm>
 #include <alsa/asoundlib.h>
@@ -61,6 +62,9 @@ static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
 // Statistics (atomic for thread-safe access from stats writer)
 static std::atomic<size_t> g_clip_count{0};
 static std::atomic<size_t> g_total_samples{0};
+
+// Soft Mute controller for glitch-free shutdown (50ms fade at output sample rate)
+static SoftMute::Controller* g_soft_mute = nullptr;
 
 // Audio buffer for thread communication
 static std::mutex g_buffer_mutex;
@@ -283,6 +287,10 @@ static void zeromq_listener_thread() {
             } else if (cmd == "RELOAD") {
                 // Request config reload (same as SIGHUP)
                 g_reload_requested = true;
+                // Start fade-out for glitch-free reload
+                if (g_soft_mute) {
+                    g_soft_mute->startFadeOut();
+                }
                 // Only quit main loop if it's actually running
                 // If not running yet, main() will check g_reload_requested before starting
                 if (g_main_loop_running.load() && g_pw_loop) {
@@ -331,10 +339,20 @@ static void signal_handler(int sig) {
     } else {
         std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
     }
-    g_running = false;
-    // Quit PipeWire main loop to trigger clean shutdown
-    if (g_pw_loop) {
+
+    // Start fade-out for glitch-free shutdown/restart (safe to call from signal handler)
+    if (g_soft_mute) {
+        g_soft_mute->startFadeOut();
+    }
+
+    // If main loop is running, quit it to trigger clean shutdown sequence
+    // If not yet running (during startup/initialization), set g_running = false
+    // to allow immediate abort
+    if (g_main_loop_running.load() && g_pw_loop) {
         pw_main_loop_quit(g_pw_loop);
+    } else {
+        // Startup phase - allow immediate abort
+        g_running = false;
     }
 }
 
@@ -491,6 +509,7 @@ static bool pcm_alive(snd_pcm_t* pcm_handle) {
 void alsa_output_thread() {
     snd_pcm_t* pcm_handle = open_and_configure_pcm();
     std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
+    std::vector<float> float_buffer(32768 * CHANNELS);          // for soft mute processing
     snd_pcm_uframes_t period_size = 32768;
     if (!pcm_handle) {
         // Retry loop until device appears or shutdown
@@ -510,6 +529,7 @@ void alsa_output_thread() {
             detected_period > 0) {
             period_size = detected_period;
             interleaved_buffer.resize(period_size * CHANNELS);
+            float_buffer.resize(period_size * CHANNELS);
         }
     }
 
@@ -552,48 +572,43 @@ void alsa_output_thread() {
 
         size_t available = g_output_buffer_left.size() - g_output_read_pos;
         if (available >= period_size) {
-            // Interleave L/R channels and convert float→int32
-            // Apply configured gain (compensates for energy distribution in upsampled signal)
+            // Step 1: Interleave L/R channels into float buffer with gain applied
             const float gain = g_config.gain;
+            for (size_t i = 0; i < period_size; ++i) {
+                float_buffer[i * 2] = g_output_buffer_left[g_output_read_pos + i] * gain;
+                float_buffer[i * 2 + 1] = g_output_buffer_right[g_output_read_pos + i] * gain;
+            }
 
-            // Statistics for debugging (uses global atomics)
+            // Step 2: Apply soft mute for glitch-free shutdown/transitions
+            if (g_soft_mute) {
+                g_soft_mute->process(float_buffer.data(), period_size);
+            }
+
+            // Step 3: Clipping detection, clamping, and float→int32 conversion
             static auto last_stats_write = std::chrono::steady_clock::now();
             size_t current_clips = 0;
 
             for (size_t i = 0; i < period_size; ++i) {
-                // Convert float [-1.0, 1.0] to int32 [-2147483648, 2147483647]
-                // Apply gain to compensate for energy distribution in upsampled signal
-                float left_sample = g_output_buffer_left[g_output_read_pos + i] * gain;
-                float right_sample = g_output_buffer_right[g_output_read_pos + i] * gain;
+                float left_sample = float_buffer[i * 2];
+                float right_sample = float_buffer[i * 2 + 1];
 
                 // Detect and count clipping (for diagnostics only)
-                // Clipping should be prevented by proper gain staging (EQ preamp),
-                // not by signal processing that degrades audio quality
                 if (left_sample > 1.0f || left_sample < -1.0f || right_sample > 1.0f ||
                     right_sample < -1.0f) {
                     current_clips++;
                     g_clip_count.fetch_add(1, std::memory_order_relaxed);
                 }
 
-                // Hard clipping as safety net only - should never trigger with proper gain staging
-                // NO soft clipping (tanh): it's a nonlinear function that distorts ALL samples,
-                // not just those exceeding ±1.0. For high-fidelity playback, we want pure linear
-                // signal path. If clipping occurs, fix the gain structure instead.
+                // Hard clipping as safety net only
                 left_sample = std::clamp(left_sample, -1.0f, 1.0f);
                 right_sample = std::clamp(right_sample, -1.0f, 1.0f);
 
-                // CRITICAL FIX: Float to int32 conversion
-                // Use 2^31-1 = 2147483647 (INT32_MAX) to avoid overflow
-                // 2^31 = 2147483648 causes undefined behavior for sample = 1.0
-                // Use lroundf() for proper rounding instead of truncation
+                // Float to int32 conversion
                 constexpr float INT32_MAX_FLOAT = 2147483647.0f;
-                int32_t left_int =
+                interleaved_buffer[i * 2] =
                     static_cast<int32_t>(std::lroundf(left_sample * INT32_MAX_FLOAT));
-                int32_t right_int =
+                interleaved_buffer[i * 2 + 1] =
                     static_cast<int32_t>(std::lroundf(right_sample * INT32_MAX_FLOAT));
-
-                interleaved_buffer[i * 2] = left_int;
-                interleaved_buffer[i * 2 + 1] = right_int;
             }
 
             g_total_samples.fetch_add(period_size * 2, std::memory_order_relaxed);
@@ -654,6 +669,7 @@ void alsa_output_thread() {
                             new_period != period_size) {
                             period_size = new_period;
                             interleaved_buffer.resize(period_size * CHANNELS);
+                            float_buffer.resize(period_size * CHANNELS);
                         }
                         // Drop queued buffers on successful reopen to avoid burst
                         {
@@ -671,6 +687,13 @@ void alsa_output_thread() {
         } else {
             // Not enough data → write silence to keep device fed and avoid xrun
             lock.unlock();
+
+            // Apply soft mute even to silence (to advance fade position during shutdown)
+            if (g_soft_mute && g_soft_mute->isTransitioning()) {
+                std::fill(float_buffer.begin(), float_buffer.end(), 0.0f);
+                g_soft_mute->process(float_buffer.data(), period_size);
+            }
+
             std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
             snd_pcm_sframes_t frames_written =
                 snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
@@ -783,6 +806,15 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             break;
         }
+
+        // Check for early abort (signal received during GPU initialization)
+        if (!g_running) {
+            std::cout << "Startup interrupted by signal" << std::endl;
+            delete g_upsampler;
+            g_upsampler = nullptr;
+            break;
+        }
+
         std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                   << g_config.blockSize << " samples/block)" << std::endl;
 
@@ -791,6 +823,14 @@ int main(int argc, char* argv[]) {
             std::cerr << "Failed to initialize streaming mode" << std::endl;
             delete g_upsampler;
             exitCode = 1;
+            break;
+        }
+
+        // Check for early abort
+        if (!g_running) {
+            std::cout << "Startup interrupted by signal" << std::endl;
+            delete g_upsampler;
+            g_upsampler = nullptr;
             break;
         }
 
@@ -829,6 +869,20 @@ int main(int argc, char* argv[]) {
         g_stream_accumulated_right = 0;
 
         std::cout << std::endl;
+
+        // Check for early abort before starting threads
+        if (!g_running) {
+            std::cout << "Startup interrupted by signal" << std::endl;
+            delete g_upsampler;
+            g_upsampler = nullptr;
+            break;
+        }
+
+        // Initialize soft mute controller with output sample rate (50ms fade duration)
+        int outputSampleRate = g_config.inputSampleRate * g_config.upsampleRatio;
+        g_soft_mute = new SoftMute::Controller(50, outputSampleRate);
+        std::cout << "Soft mute initialized (50ms fade at " << outputSampleRate << "Hz)"
+                  << std::endl;
 
         // Start ALSA output thread
         std::cout << "Starting ALSA output thread..." << std::endl;
@@ -896,21 +950,38 @@ int main(int argc, char* argv[]) {
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
-        // Check if RELOAD was requested during startup (before main loop)
-        // or if ZeroMQ bind failed
-        if (!g_reload_requested.load() && !g_zmq_bind_failed.load()) {
+        // Check if RELOAD was requested during startup (before main loop),
+        // ZeroMQ bind failed, or signal received during initialization
+        if (g_running.load() && !g_reload_requested.load() && !g_zmq_bind_failed.load()) {
             // Run main loop (only if not already requested to reload/stop)
             g_main_loop_running = true;
             pw_main_loop_run(data.loop);
             g_main_loop_running = false;
         } else if (g_zmq_bind_failed.load()) {
             std::cerr << "Startup aborted due to ZeroMQ bind failure." << std::endl;
+        } else if (!g_running.load()) {
+            std::cout << "Startup interrupted by signal, skipping main loop." << std::endl;
         } else {
             std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
         }
 
         // Cleanup
         std::cout << "Shutting down..." << std::endl;
+
+        // Wait for soft mute fade-out to complete (with 100ms timeout)
+        // This ensures glitch-free audio shutdown
+        if (g_soft_mute && g_soft_mute->isTransitioning()) {
+            std::cout << "Waiting for fade-out to complete..." << std::endl;
+            auto fade_start = std::chrono::steady_clock::now();
+            while (g_soft_mute->isTransitioning()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (std::chrono::steady_clock::now() - fade_start >
+                    std::chrono::milliseconds(100)) {
+                    std::cout << "Fade-out timeout, forcing shutdown" << std::endl;
+                    break;
+                }
+            }
+        }
 
         if (data.input_stream) {
             pw_stream_destroy(data.input_stream);
@@ -925,6 +996,8 @@ int main(int argc, char* argv[]) {
         zmq_thread.join();
         alsa_thread.join();
 
+        delete g_soft_mute;
+        g_soft_mute = nullptr;
         delete g_upsampler;
         g_upsampler = nullptr;
         pw_deinit();

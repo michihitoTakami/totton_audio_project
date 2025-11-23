@@ -126,9 +126,10 @@ add_executable(gpu_upsampler_alsa
     src/eq_to_fir.cpp
 )
 
-# Link against core library, PipeWire, ALSA, JSON, and ZeroMQ
+# Link against core library, PipeWire, ALSA, JSON, ZeroMQ, and SoftMute
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
+    soft_mute
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     nlohmann_json::nlohmann_json
