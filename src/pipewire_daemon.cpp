@@ -355,10 +355,13 @@ int main(int argc, char* argv[]) {
     Data data = {};
     data.gpu_ready = true;
 
-    // Pre-allocate streaming input buffers (tolerant capacity; avoids reallocation in callbacks)
-    constexpr size_t STREAM_INPUT_BUFFER_CAPACITY = 12000;
-    data.stream_input_left.resize(STREAM_INPUT_BUFFER_CAPACITY, 0.0f);
-    data.stream_input_right.resize(STREAM_INPUT_BUFFER_CAPACITY, 0.0f);
+    // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
+    // Use 2x safety margin to handle timing variations
+    size_t buffer_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+    data.stream_input_left.resize(buffer_capacity, 0.0f);
+    data.stream_input_right.resize(buffer_capacity, 0.0f);
+    std::cout << "Streaming buffer capacity: " << buffer_capacity
+              << " samples (2x streamValidInputPerBlock)" << std::endl;
     data.stream_accum_left = 0;
     data.stream_accum_right = 0;
 
