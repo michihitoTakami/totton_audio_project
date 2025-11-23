@@ -35,12 +35,6 @@ TEST_F(AudioRingBufferTest, Init_StartsEmpty) {
     EXPECT_EQ(buffer_.availableToWrite(), 1024);
 }
 
-TEST_F(AudioRingBufferTest, Init_ZeroCapacity_HandledSafely) {
-    // Should not crash or cause division by zero
-    buffer_.init(0);
-    EXPECT_GE(buffer_.capacity(), 1);  // Fallback to at least 1
-}
-
 TEST_F(AudioRingBufferTest, Write_UpdatesAvailable) {
     buffer_.init(1024);
     std::vector<float> data(100, 1.0f);

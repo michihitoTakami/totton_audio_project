@@ -28,9 +28,6 @@ class AudioRingBuffer {
 
     void init(size_t capacity) {
         assert(capacity > 0 && "AudioRingBuffer capacity must be > 0");
-        if (capacity == 0) {
-            capacity = 1;  // Fallback to prevent division by zero
-        }
         buffer_.assign(capacity, 0.0f);
         head_.store(0, std::memory_order_relaxed);
         tail_.store(0, std::memory_order_relaxed);
