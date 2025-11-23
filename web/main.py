@@ -490,8 +490,8 @@ def get_configured_rates() -> tuple[int, int]:
 def load_stats() -> dict:
     """Load statistics from daemon stats file.
 
-    Rate information is not included in stats.json (written by C++ daemon),
-    so we get it from config.json values.
+    When daemon is running, stats.json contains actual running rates.
+    Falls back to config.json values if rate info not available.
     """
     input_rate, output_rate = get_configured_rates()
     default_stats = {
@@ -507,12 +507,16 @@ def load_stats() -> dict:
         with open(STATS_FILE_PATH) as f:
             data = json.load(f)
 
+        # Use actual rates from daemon if available, fallback to config
+        actual_input_rate = data.get("input_rate", input_rate)
+        actual_output_rate = data.get("output_rate", output_rate)
+
         return {
             "clip_count": data.get("clip_count", 0),
             "total_samples": data.get("total_samples", 0),
             "clip_rate": data.get("clip_rate", 0.0),
-            "input_rate": input_rate,
-            "output_rate": output_rate,
+            "input_rate": actual_input_rate,
+            "output_rate": actual_output_rate,
         }
     except (json.JSONDecodeError, IOError):
         return default_stats

@@ -158,6 +158,11 @@ static void write_stats_file() {
     auto now = std::chrono::system_clock::now();
     auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
 
+    // Calculate actual output rate from running config
+    int input_rate = g_config.inputSampleRate;
+    int upsample_ratio = g_config.upsampleRatio;
+    int output_rate = input_rate * upsample_ratio;
+
     // Write to temp file and rename for atomic update
     std::string tmp_path = std::string(STATS_FILE_PATH) + ".tmp";
     std::ofstream ofs(tmp_path);
@@ -166,6 +171,9 @@ static void write_stats_file() {
             << "  \"clip_count\": " << clips << ",\n"
             << "  \"total_samples\": " << total << ",\n"
             << "  \"clip_rate\": " << clip_rate << ",\n"
+            << "  \"input_rate\": " << input_rate << ",\n"
+            << "  \"output_rate\": " << output_rate << ",\n"
+            << "  \"upsample_ratio\": " << upsample_ratio << ",\n"
             << "  \"last_updated\": " << epoch << "\n"
             << "}\n";
         ofs.close();
