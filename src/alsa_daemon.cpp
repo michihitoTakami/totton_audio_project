@@ -219,6 +219,12 @@ static void reset_runtime_state() {
     g_stream_input_right.clear();
     g_stream_accumulated_left = 0;
     g_stream_accumulated_right = 0;
+
+    // Reset crossfeed streaming buffers
+    g_cf_stream_input_left.clear();
+    g_cf_stream_input_right.clear();
+    g_cf_stream_accumulated_left = 0;
+    g_cf_stream_accumulated_right = 0;
 }
 
 static void load_runtime_config() {
@@ -315,6 +321,26 @@ static void zeromq_listener_thread() {
                 response = "OK";
             } else if (cmd == "STATS") {
                 response = "OK:" + build_stats_json();
+            } else if (cmd == "CROSSFEED_ENABLE") {
+                if (g_hrtf_processor) {
+                    g_crossfeed_enabled = true;
+                    g_hrtf_processor->setEnabled(true);
+                    response = "OK:Crossfeed enabled";
+                } else {
+                    response = "ERR:HRTF processor not initialized";
+                }
+            } else if (cmd == "CROSSFEED_DISABLE") {
+                g_crossfeed_enabled = false;
+                if (g_hrtf_processor) {
+                    g_hrtf_processor->setEnabled(false);
+                }
+                response = "OK:Crossfeed disabled";
+            } else if (cmd == "CROSSFEED_STATUS") {
+                std::string status = g_crossfeed_enabled ? "enabled" : "disabled";
+                std::string initialized = g_hrtf_processor ? "true" : "false";
+                response =
+                    "OK:{\"enabled\":" + std::string(g_crossfeed_enabled ? "true" : "false") +
+                    ",\"initialized\":" + initialized + "}";
             } else {
                 response = "ERR:Unknown command";
             }
@@ -946,12 +972,19 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 std::cerr << "  HRTF: Failed to initialize processor" << std::endl;
+                std::cerr
+                    << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
+                       "filters"
+                    << std::endl;
                 delete g_hrtf_processor;
                 g_hrtf_processor = nullptr;
             }
         } else {
             std::cout << "HRTF directory not found (" << hrtfDir << "), crossfeed feature disabled"
                       << std::endl;
+            std::cout
+                << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF filters"
+                << std::endl;
         }
 
         std::cout << std::endl;
