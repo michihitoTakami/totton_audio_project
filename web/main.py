@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import shutil
 import zmq
@@ -23,6 +23,7 @@ from pydantic import BaseModel
 # Add scripts directory to path for OPRA module
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from opra import (
+    MODERN_TARGET_CORRECTION_BAND,
     apply_modern_target_correction,
     convert_opra_to_apo,
     get_database as get_opra_database,
@@ -238,7 +239,7 @@ class ApiResponse(BaseModel):
 # ============================================================================
 
 
-def parse_eq_profile_content(file_path: Path) -> dict:
+def parse_eq_profile_content(file_path: Path) -> dict[str, Any]:
     """
     Parse EQ profile file and return structured content.
 
@@ -248,6 +249,16 @@ def parse_eq_profile_content(file_path: Path) -> dict:
 
     For OPRA profiles with Modern Target correction, separates
     OPRA filters from original additions.
+
+    Returns:
+        dict with keys:
+        - source_type: "opra" | "custom"
+        - has_modern_target: bool
+        - opra_info: dict | None (author, license, source for OPRA)
+        - opra_filters: list[str]
+        - original_filters: list[str]
+        - raw_content: str
+        - error: str (only if error occurred)
     """
     if not file_path.exists():
         return {"error": "File not found"}
@@ -286,14 +297,19 @@ def parse_eq_profile_content(file_path: Path) -> dict:
             filter_lines.append(stripped)
 
     # For OPRA with Modern Target, separate original addition
-    # The KB5000_7 correction adds: Filter N: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5
+    # Uses MODERN_TARGET_CORRECTION_BAND from opra.py for consistency
     opra_filters = []
     original_filters = []
 
     if is_opra and has_modern_target:
+        # Build detection patterns from the canonical source
+        fc_pattern = f"Fc {int(MODERN_TARGET_CORRECTION_BAND['frequency'])}"
+        gain_pattern = f"Gain {MODERN_TARGET_CORRECTION_BAND['gain_db']}"
+        q_pattern = f"Q {MODERN_TARGET_CORRECTION_BAND['q']}"
+
         for line in filter_lines:
             # Check if this is the KB5000_7 correction filter
-            if "Fc 5366" in line and "Gain 2.8" in line and "Q 1.5" in line:
+            if fc_pattern in line and gain_pattern in line and q_pattern in line:
                 original_filters.append(line)
             else:
                 opra_filters.append(line)
@@ -1082,6 +1098,15 @@ async def get_active_eq():
 
         # Parse the EQ profile content
         parsed = parse_eq_profile_content(path)
+
+        # Handle parse errors
+        if "error" in parsed:
+            return {
+                "active": True,
+                "name": path.stem,
+                "path": settings.eq_profile_path,
+                "error": parsed["error"],
+            }
 
         return {
             "active": True,
@@ -2052,10 +2077,10 @@ def get_admin_html() -> str:
                 html += '<div class="eq-section-label">OPRA (CC BY-SA 4.0)</div>';
                 if (data.opra_info) {
                     if (data.opra_info.author) {
-                        html += `<div style="font-size:11px;color:#888;margin-bottom:8px;">Author: ${data.opra_info.author}</div>`;
+                        html += `<div style="font-size:11px;color:#888;margin-bottom:8px;">Author: ${escapeHtml(data.opra_info.author)}</div>`;
                     }
                 }
-                html += '<div class="eq-filters">' + escapeHtml(data.opra_filters.join('\\n')) + '</div>';
+                html += '<div class="eq-filters">' + renderFilters(data.opra_filters) + '</div>';
 
                 // Attribution
                 html += '<div class="eq-attribution">Source: <a href="https://github.com/opra-project/OPRA" target="_blank">OPRA Project</a></div>';
@@ -2063,12 +2088,12 @@ def get_admin_html() -> str:
                 // Original additions section
                 if (data.original_filters && data.original_filters.length > 0) {
                     html += '<div class="eq-section-label">オリジナル追加</div>';
-                    html += '<div class="eq-filters">' + escapeHtml(data.original_filters.join('\\n')) + '</div>';
+                    html += '<div class="eq-filters">' + renderFilters(data.original_filters) + '</div>';
                 }
             } else {
                 // Custom profile
                 html += '<div class="eq-section-label">カスタムプロファイル</div>';
-                html += '<div class="eq-filters">' + escapeHtml(data.opra_filters.join('\\n')) + '</div>';
+                html += '<div class="eq-filters">' + renderFilters(data.opra_filters) + '</div>';
             }
 
             contentEl.innerHTML = html;
@@ -2078,6 +2103,11 @@ def get_admin_html() -> str:
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function renderFilters(filters) {
+            // Escape each filter line and join with <br> for proper display
+            return filters.map(f => escapeHtml(f)).join('<br>');
         }
 
         function getEqTextForCopy() {
@@ -2096,7 +2126,7 @@ def get_admin_html() -> str:
                 lines.push('# オリジナル追加');
                 lines = lines.concat(currentEqData.original_filters);
             }
-            return lines.join('\\n');
+            return lines.join(String.fromCharCode(10));
         }
 
         document.getElementById('copyEqBtn').addEventListener('click', async () => {
