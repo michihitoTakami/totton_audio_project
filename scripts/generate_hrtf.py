@@ -89,6 +89,21 @@ class HRTFChannels:
     sample_rate: int
 
 
+def angular_distance(az1: float, az2: float) -> float:
+    """
+    方位角間の最短角度距離を計算（360°周期を考慮）。
+
+    Args:
+        az1: 方位角1 (度、0-360)
+        az2: 方位角2 (度、0-360)
+
+    Returns:
+        最短角度距離 (度、0-180)
+    """
+    diff = abs(az1 - az2)
+    return min(diff, 360.0 - diff)
+
+
 def find_nearest_position(
     positions: np.ndarray, target_azimuth: float, target_elevation: float
 ) -> int:
@@ -97,17 +112,19 @@ def find_nearest_position(
 
     Args:
         positions: 測定位置配列 (N, 3) - [azimuth, elevation, distance]
-        target_azimuth: 目標方位角 (度)
+        target_azimuth: 目標方位角 (度、0-360)
         target_elevation: 目標仰角 (度)
 
     Returns:
         最近傍位置のインデックス
     """
-    # 方位角と仰角の差を計算（度単位）
-    azimuth_diff = np.abs(positions[:, 0] - target_azimuth)
+    # 方位角差を360°周期で計算
+    azimuth_diff = np.array(
+        [angular_distance(az, target_azimuth) for az in positions[:, 0]]
+    )
     elevation_diff = np.abs(positions[:, 1] - target_elevation)
 
-    # 角度距離（簡易計算）
+    # 角度距離（球面上の近似距離）
     distance = np.sqrt(azimuth_diff**2 + elevation_diff**2)
 
     return int(np.argmin(distance))

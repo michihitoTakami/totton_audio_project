@@ -19,7 +19,11 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from generate_hrtf import pad_hrir_to_length, find_nearest_position  # noqa: E402
+from generate_hrtf import (  # noqa: E402
+    angular_distance,
+    find_nearest_position,
+    pad_hrir_to_length,
+)
 
 # Test data paths
 HRTF_DIR = REPO_ROOT / "data" / "crossfeed" / "hrtf"
@@ -64,6 +68,31 @@ class TestPadHrirToLength:
         assert result.dtype == np.float64
 
 
+class TestAngularDistance:
+    """Unit tests for angular_distance function (360° wraparound)."""
+
+    def test_simple_distance(self):
+        """Test simple angular distance."""
+        assert angular_distance(0.0, 30.0) == 30.0
+        assert angular_distance(30.0, 0.0) == 30.0
+
+    def test_wraparound_short_path(self):
+        """Test 360° wraparound takes shorter path."""
+        # 330° to 10° should be 40°, not 320°
+        assert angular_distance(330.0, 10.0) == 40.0
+        assert angular_distance(10.0, 330.0) == 40.0
+
+    def test_wraparound_at_180(self):
+        """Test distance at 180° boundary."""
+        assert angular_distance(0.0, 180.0) == 180.0
+        assert angular_distance(90.0, 270.0) == 180.0
+
+    def test_same_angle(self):
+        """Test same angle returns 0."""
+        assert angular_distance(45.0, 45.0) == 0.0
+        assert angular_distance(330.0, 330.0) == 0.0
+
+
 class TestFindNearestPosition:
     """Unit tests for find_nearest_position function."""
 
@@ -102,6 +131,29 @@ class TestFindNearestPosition:
         )
         idx = find_nearest_position(positions, 330.0, 0.0)
         assert idx == 2
+
+    def test_wraparound_finds_nearest(self):
+        """Test 360° wraparound: target 330° should find 330°, not 10°."""
+        positions = np.array(
+            [
+                [10.0, 0.0, 1.0],  # 40° away from 330° (via wraparound)
+                [30.0, 0.0, 1.0],  # 60° away from 330° (via wraparound)
+                [330.0, 0.0, 1.0],  # 0° away (exact match)
+            ]
+        )
+        idx = find_nearest_position(positions, 330.0, 0.0)
+        assert idx == 2, "Should find exact match at 330°"
+
+    def test_wraparound_prefers_closer(self):
+        """Test that wraparound prefers closer angle across 0°."""
+        positions = np.array(
+            [
+                [350.0, 0.0, 1.0],  # 20° away from 10° (via wraparound)
+                [100.0, 0.0, 1.0],  # 90° away from 10°
+            ]
+        )
+        idx = find_nearest_position(positions, 10.0, 0.0)
+        assert idx == 0, "Should find 350° as closer to 10° than 100°"
 
 
 class TestGeneratedHRTFFilters:
