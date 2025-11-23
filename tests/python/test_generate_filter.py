@@ -107,14 +107,12 @@ class TestFilterConfig:
         """base_name should include phase type for linear phase."""
         from generate_filter import FilterConfig, PhaseType
 
-        # 線形位相は奇数タップ必須
         config = FilterConfig(
-            n_taps=2_000_001,  # Odd tap count required for linear phase
+            n_taps=2_000_001,
             input_rate=48000,
             upsample_ratio=8,
             phase_type=PhaseType.LINEAR,
         )
-        # Note: taps_label uses original n_taps, which is 2000001
         assert "linear" in config.base_name
         assert "48k" in config.base_name
 
@@ -126,14 +124,11 @@ class TestFilterConfig:
         assert config.base_name == "custom_filter"
 
     def test_linear_phase_accepts_even_taps(self):
-        """Linear phase should accept even tap counts (auto-adjusted to odd)."""
+        """Linear phase should accept even tap counts (padded to ratio multiple if needed)."""
         from generate_filter import FilterConfig, PhaseType
 
-        # Even tap count should be accepted (final_taps will adjust)
         config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.LINEAR)
         assert config.n_taps == 2_000_000
-        # final_taps should be odd + padded to ratio multiple
-        assert config.final_taps % 2 == 0  # Odd + padding = even for ratio 16
         assert config.final_taps % config.upsample_ratio == 0
 
     def test_linear_phase_accepts_odd_taps(self):
@@ -234,11 +229,11 @@ class TestFilterDesigner:
         assert np.allclose(h_final, h_final[::-1], atol=1e-10)
 
     def test_design_linear_phase_odd_taps_symmetric(self):
-        """design() with LINEAR and odd tap count should produce symmetric filter."""
+        """design() with LINEAR should use final_taps and stay symmetric."""
         from generate_filter import FilterConfig, FilterDesigner, PhaseType
 
         config = FilterConfig(
-            n_taps=1601,  # Odd
+            n_taps=1601,  # Not divisible by 16
             input_rate=44100,
             upsample_ratio=16,
             kaiser_beta=14,
@@ -247,17 +242,14 @@ class TestFilterDesigner:
         designer = FilterDesigner(config)
         h_final, h_linear = designer.design()
 
-        # Tap count should be odd (1601)
-        assert len(h_final) == 1601
-        assert len(h_final) % 2 == 1
-        # Should be symmetric (Type I FIR)
+        # Tap count should match final_taps (padded to 1616) and be symmetric
+        assert len(h_final) == config.final_taps
         assert np.allclose(h_final, h_final[::-1], atol=1e-10)
 
-    def test_design_linear_phase_even_taps_adjusted(self):
-        """design() with LINEAR and even tap count should auto-adjust to odd."""
+    def test_design_linear_phase_even_taps_padded_multiple(self):
+        """design() with LINEAR should pad to ratio multiple and keep symmetry."""
         from generate_filter import FilterConfig, FilterDesigner, PhaseType
 
-        # Even tap count - should be adjusted to 1601 internally
         config = FilterConfig(
             n_taps=1600,
             input_rate=44100,
@@ -268,10 +260,8 @@ class TestFilterDesigner:
         designer = FilterDesigner(config)
         h_final, h_linear = designer.design()
 
-        # Tap count should be odd (1601 = 1600 + 1)
-        assert len(h_final) == 1601
-        assert len(h_final) % 2 == 1
-        # Should be symmetric (Type I FIR)
+        # Tap count should match final_taps (1600) and remain symmetric
+        assert len(h_final) == config.final_taps
         assert np.allclose(h_final, h_final[::-1], atol=1e-10)
 
 
@@ -815,17 +805,17 @@ class TestLinearPhasePadding:
         assert config.final_taps == 2_000_016
         assert config.final_taps % 16 == 0
 
-    def test_final_taps_linear_phase_even_adjusted(self):
-        """final_taps should adjust even to odd, then pad for linear phase."""
+    def test_final_taps_linear_phase_even_keeps_multiple(self):
+        """final_taps should keep even n_taps if already ratio multiple."""
         from generate_filter import FilterConfig, PhaseType
 
-        # 2,000,000 is even -> 2,000,001 (odd) -> 2,000,016 (padded to 16 multiple)
+        # 2,000,000 is already divisible by 16; keep as-is
         config = FilterConfig(
             n_taps=2_000_000,
             upsample_ratio=16,
             phase_type=PhaseType.LINEAR,
         )
-        assert config.final_taps == 2_000_016
+        assert config.final_taps == 2_000_000
         assert config.final_taps % 16 == 0
 
     def test_final_taps_linear_phase_already_divisible(self):
