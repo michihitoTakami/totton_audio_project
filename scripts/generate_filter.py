@@ -12,7 +12,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 
 位相タイプ:
 - minimum: 最小位相（プリリンギング排除、周波数依存遅延）【推奨】
-- linear: 線形位相（プリリンギングあり、全周波数で一定遅延、奇数タップ）
+- linear: 線形位相（プリリンギングあり、全周波数で一定遅延、奇数タップ必須）
 
 仕様:
 - タップ数: 2,000,000 (2M) デフォルト
@@ -22,9 +22,9 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 - 窓関数: Kaiser (β ≈ 55)
 
 注意:
-- タップ数はアップサンプリング比率の倍数であること
+- 最小位相: タップ数はアップサンプリング比率の倍数であること
+- 線形位相: 奇数タップ必須（偶数指定はエラー）、比率倍数チェックはスキップ
 - クリッピング防止のため係数は正規化される
-- 線形位相は対称性維持のため奇数タップとなる（偶数指定時は+1）
 """
 
 from __future__ import annotations
@@ -140,9 +140,11 @@ class FilterDesigner:
         print(f"  カットオフ周波数: {cutoff_freq} Hz (正規化: {normalized_cutoff:.6f})")
         print(f"  Kaiser β: {self.config.kaiser_beta}")
 
-        # タイプI FIRフィルタは奇数タップが必須（FilterConfig.__post_init__で検証済み）
+        # タイプI FIRフィルタ（対称）は奇数タップが必須
+        # - LINEAR位相: FilterConfig.__post_init__で奇数が保証される
+        # - MINIMUM位相: 偶数n_tapsの場合は+1して奇数の線形位相を生成後、
+        #   convert_to_minimum_phaseでn_tapsにトリミング
         numtaps = self.config.n_taps
-        # 最小位相用の偶数タップの場合、firwinは奇数に調整して対称フィルタを生成
         if numtaps % 2 == 0:
             numtaps += 1
 
@@ -976,7 +978,7 @@ Phase Types:
         "--taps",
         type=int,
         default=2_000_000,
-        help="Number of filter taps. Default: 2000000 (2M)",
+        help="Number of filter taps. Default: 2000000 (2M). Linear phase requires odd.",
     )
     parser.add_argument(
         "--passband-end",
