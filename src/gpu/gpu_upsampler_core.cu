@@ -697,6 +697,12 @@ void GPUUpsampler::cleanup() {
     currentRateFamily_ = RateFamily::RATE_44K;
     h_filterCoeffs44k_.clear();
     h_filterCoeffs48k_.clear();
+    // Quad-phase cleanup
+    quadPhaseEnabled_ = false;
+    d_filterFFT_44k_linear_ = nullptr;
+    d_filterFFT_48k_linear_ = nullptr;
+    h_filterCoeffs44k_linear_.clear();
+    h_filterCoeffs48k_linear_.clear();
     // Multi-rate cleanup
     multiRateEnabled_ = false;
     currentInputRate_ = 44100;
