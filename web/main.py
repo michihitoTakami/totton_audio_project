@@ -6,15 +6,14 @@ FastAPI-based control interface for the GPU audio upsampler daemon.
 import asyncio
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
 
-import shutil
 import zmq
-
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,12 +21,31 @@ from pydantic import BaseModel
 
 # Add scripts directory to path for OPRA module
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-from opra import (
+from opra import (  # noqa: E402
     MODERN_TARGET_CORRECTION_BAND,
     apply_modern_target_correction,
     convert_opra_to_apo,
     get_database as get_opra_database,
 )
+
+# ============================================================================
+# EQ Profile Upload Constants & Validation
+# ============================================================================
+
+# Security limits
+MAX_EQ_FILE_SIZE = 1 * 1024 * 1024  # 1MB
+MAX_EQ_FILTERS = 100
+PREAMP_MIN_DB = -100.0
+PREAMP_MAX_DB = 20.0
+FREQ_MIN_HZ = 20.0
+FREQ_MAX_HZ = 24000.0
+GAIN_MIN_DB = -30.0
+GAIN_MAX_DB = 30.0
+Q_MIN = 0.1
+Q_MAX = 100.0
+
+# Allowed filename pattern: alphanumeric, underscore, hyphen, dot
+SAFE_FILENAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+\.txt$")
 
 # Configuration
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
@@ -326,6 +344,212 @@ def parse_eq_profile_content(file_path: Path) -> dict[str, Any]:
         "original_filters": original_filters,
         "raw_content": content,
     }
+
+
+def sanitize_filename(filename: str) -> str | None:
+    """
+    Sanitize filename for security.
+
+    Returns sanitized filename if valid, None if invalid.
+    Prevents path traversal attacks and ensures safe characters.
+    """
+    if not filename:
+        return None
+
+    # Normalize path separators (handle Windows paths on Unix)
+    # Replace backslashes with forward slashes before extracting basename
+    normalized = filename.replace("\\", "/")
+
+    # Remove any path components (prevent path traversal)
+    # Use split to handle both Unix and Windows-style paths
+    basename = normalized.split("/")[-1]
+
+    # Check against safe pattern
+    if not SAFE_FILENAME_PATTERN.match(basename):
+        return None
+
+    # Additional check: no double dots (extra protection)
+    if ".." in basename:
+        return None
+
+    return basename
+
+
+def validate_eq_profile_content(content: str) -> dict[str, Any]:
+    """
+    Validate EQ profile content for correctness and safety.
+
+    Returns:
+        dict with keys:
+        - valid: bool
+        - errors: list[str] (validation errors)
+        - warnings: list[str] (non-fatal issues)
+        - preamp_db: float | None
+        - filter_count: int
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    preamp_db: float | None = None
+    filter_count = 0
+
+    if not content or not content.strip():
+        return {
+            "valid": False,
+            "errors": ["Empty file"],
+            "warnings": [],
+            "preamp_db": None,
+            "filter_count": 0,
+        }
+
+    lines = content.strip().split("\n")
+
+    # Check for Preamp line
+    preamp_found = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("Preamp:"):
+            preamp_found = True
+            # Parse preamp value
+            preamp_match = re.search(
+                r"Preamp:\s*([-+]?\d+\.?\d*)\s*[dD][bB]?", stripped
+            )
+            if preamp_match:
+                try:
+                    preamp_db = float(preamp_match.group(1))
+                    if preamp_db < PREAMP_MIN_DB or preamp_db > PREAMP_MAX_DB:
+                        errors.append(
+                            f"Preamp {preamp_db}dB out of range "
+                            f"({PREAMP_MIN_DB}dB to {PREAMP_MAX_DB}dB)"
+                        )
+                except ValueError:
+                    errors.append(f"Invalid Preamp value: {stripped}")
+            else:
+                warnings.append(f"Could not parse Preamp value: {stripped}")
+            break
+
+    if not preamp_found:
+        errors.append("Missing 'Preamp:' line")
+
+    # Parse and validate filter lines
+    filter_pattern = re.compile(
+        r"Filter\s+(\d+):\s+ON\s+(\w+)\s+Fc\s+([\d.]+)\s*Hz?\s+"
+        r"Gain\s+([-+]?\d+\.?\d*)\s*dB\s+Q\s+([\d.]+)",
+        re.IGNORECASE,
+    )
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip comments and empty lines
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        # Skip Preamp line (already processed)
+        if stripped.startswith("Preamp:"):
+            continue
+
+        # Check if it's a Filter line
+        if stripped.startswith("Filter "):
+            filter_count += 1
+            match = filter_pattern.match(stripped)
+            if match:
+                filter_num = int(match.group(1))
+                filter_type = match.group(2).upper()
+                freq = float(match.group(3))
+                gain = float(match.group(4))
+                q = float(match.group(5))
+
+                # Validate filter type
+                valid_types = {"PK", "LS", "HS", "LP", "HP", "LSC", "HSC", "LSQ", "HSQ"}
+                if filter_type not in valid_types:
+                    warnings.append(
+                        f"Filter {filter_num}: Unknown type '{filter_type}'"
+                    )
+
+                # Validate frequency
+                if freq < FREQ_MIN_HZ or freq > FREQ_MAX_HZ:
+                    errors.append(
+                        f"Filter {filter_num}: Frequency {freq}Hz out of range "
+                        f"({FREQ_MIN_HZ}Hz to {FREQ_MAX_HZ}Hz)"
+                    )
+
+                # Validate gain
+                if gain < GAIN_MIN_DB or gain > GAIN_MAX_DB:
+                    errors.append(
+                        f"Filter {filter_num}: Gain {gain}dB out of range "
+                        f"({GAIN_MIN_DB}dB to {GAIN_MAX_DB}dB)"
+                    )
+
+                # Validate Q
+                if q < Q_MIN or q > Q_MAX:
+                    errors.append(
+                        f"Filter {filter_num}: Q {q} out of range ({Q_MIN} to {Q_MAX})"
+                    )
+            else:
+                # Truncate long lines for readability
+                display_line = stripped[:50] + "..." if len(stripped) > 50 else stripped
+                warnings.append(f"Could not parse filter line: {display_line}")
+
+    # Check filter count limit
+    if filter_count > MAX_EQ_FILTERS:
+        errors.append(
+            f"Too many filters ({filter_count}). Maximum allowed: {MAX_EQ_FILTERS}"
+        )
+
+    if filter_count == 0 and preamp_found:
+        warnings.append("No filter lines found (only Preamp)")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "preamp_db": preamp_db,
+        "filter_count": filter_count,
+    }
+
+
+async def read_and_validate_upload(file: UploadFile) -> tuple[str, str, dict]:
+    """
+    Common validation logic for EQ profile upload.
+
+    Args:
+        file: FastAPI UploadFile object
+
+    Returns:
+        Tuple of (content, safe_filename, validation_result)
+
+    Raises:
+        HTTPException on validation failure
+    """
+    # Check file extension
+    if not file.filename or not file.filename.endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Only .txt files are supported")
+
+    # Sanitize filename (security: prevent path traversal)
+    safe_filename = sanitize_filename(file.filename)
+    if not safe_filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid filename. Use only letters, numbers, underscores, hyphens, and dots.",
+        )
+
+    # Read file content with size limit
+    try:
+        content_bytes = await file.read()
+        if len(content_bytes) > MAX_EQ_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size: {MAX_EQ_FILE_SIZE // (1024 * 1024)}MB",
+            )
+        content = content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text")
+
+    # Validate content
+    validation = validate_eq_profile_content(content)
+    validation["size_bytes"] = len(content_bytes)
+
+    return content, safe_filename, validation
 
 
 def load_config() -> Settings:
@@ -1028,38 +1252,116 @@ async def rewire_pipewire(request: RewireRequest):
 
 @app.get("/eq/profiles")
 async def list_eq_profiles():
-    """List available EQ profiles in data/EQ directory"""
+    """
+    List available EQ profiles in data/EQ directory.
+    Returns extended info including file size and profile type.
+    """
     profiles = []
     if EQ_PROFILES_DIR.exists():
         for f in EQ_PROFILES_DIR.iterdir():
             if f.is_file() and f.suffix == ".txt":
+                # Determine profile type by checking content
+                profile_type = "custom"
+                filter_count = 0
+                try:
+                    content = f.read_text(encoding="utf-8")
+                    if "# OPRA:" in content:
+                        profile_type = "opra"
+                    # Count filter lines
+                    filter_count = sum(
+                        1
+                        for line in content.split("\n")
+                        if line.strip().startswith("Filter ")
+                    )
+                except IOError:
+                    pass
+
+                stat = f.stat()
                 profiles.append(
                     {
                         "name": f.stem,
                         "filename": f.name,
                         "path": str(f),
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                        "type": profile_type,
+                        "filter_count": filter_count,
                     }
                 )
+    # Sort by modified time (newest first)
+    profiles.sort(key=lambda x: x["modified"], reverse=True)
     return {"profiles": profiles}
 
 
+@app.post("/eq/validate")
+async def validate_eq_profile(file: UploadFile):
+    """
+    Validate an EQ profile file before importing.
+    Checks format, parameter ranges, and security constraints.
+    Does not save the file.
+    """
+    _, safe_filename, validation = await read_and_validate_upload(file)
+
+    # Check if file already exists
+    dest_path = EQ_PROFILES_DIR / safe_filename
+    file_exists = dest_path.exists()
+
+    return {
+        "valid": validation["valid"],
+        "errors": validation["errors"],
+        "warnings": validation["warnings"],
+        "preamp_db": validation["preamp_db"],
+        "filter_count": validation["filter_count"],
+        "filename": safe_filename,
+        "file_exists": file_exists,
+        "size_bytes": validation["size_bytes"],
+    }
+
+
 @app.post("/eq/import", response_model=ApiResponse)
-async def import_eq_profile(file: UploadFile):
-    """Import an EQ profile file (AutoEq/Equalizer APO format)"""
-    if not file.filename or not file.filename.endswith(".txt"):
-        raise HTTPException(status_code=400, detail="Only .txt files are supported")
+async def import_eq_profile(file: UploadFile, overwrite: bool = False):
+    """
+    Import an EQ profile file (AutoEq/Equalizer APO format).
+
+    Security features:
+    - File size limit (1MB)
+    - Filename sanitization (path traversal prevention)
+    - Content validation (format, parameter ranges)
+    - Overwrite protection (requires explicit flag)
+    """
+    content, safe_filename, validation = await read_and_validate_upload(file)
+
+    # Reject invalid content
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid EQ profile: {'; '.join(validation['errors'])}",
+        )
 
     # Ensure EQ profiles directory exists
     EQ_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
-    dest_path = EQ_PROFILES_DIR / file.filename
+    # Check for existing file
+    dest_path = EQ_PROFILES_DIR / safe_filename
+    if dest_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Profile '{safe_filename}' already exists. Set overwrite=true to replace.",
+        )
+
+    # Save file
     try:
-        with open(dest_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        dest_path.write_text(content, encoding="utf-8")
         return ApiResponse(
             success=True,
-            message=f"Profile '{file.filename}' imported successfully",
-            data={"path": str(dest_path)},
+            message=f"Profile '{safe_filename}' imported successfully",
+            data={
+                "path": str(dest_path),
+                "filename": safe_filename,
+                "filter_count": validation["filter_count"],
+                "preamp_db": validation["preamp_db"],
+                "warnings": validation["warnings"],
+            },
         )
     except IOError as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
@@ -1897,6 +2199,68 @@ def get_admin_html() -> str:
             margin-top: 8px;
         }
         .eq-attribution a { color: #00d4ff; }
+        /* Custom EQ Upload styles */
+        .upload-zone {
+            border: 2px dashed #0f3460;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s;
+            cursor: pointer;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #00d4ff;
+            background: #0f346020;
+        }
+        .upload-zone input[type="file"] { display: none; }
+        .upload-zone .icon { font-size: 32px; margin-bottom: 8px; }
+        .upload-zone .text { font-size: 13px; color: #888; }
+        .upload-zone .text strong { color: #00d4ff; }
+        .upload-info {
+            margin-top: 12px;
+            padding: 10px;
+            background: #0f3460;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        .upload-info.error { background: #ff444440; }
+        .upload-info.warning { background: #ffaa0040; }
+        .upload-info .filename { font-weight: 600; color: #00d4ff; }
+        .upload-info .details { color: #888; margin-top: 4px; }
+        .upload-info .errors { color: #ff6b6b; margin-top: 6px; }
+        .upload-info .warnings { color: #ffaa00; margin-top: 4px; }
+        .profile-list { margin-top: 12px; }
+        .profile-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: #0f3460;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        .profile-item:last-child { margin-bottom: 0; }
+        .profile-item .info { flex: 1; }
+        .profile-item .name { font-weight: 500; font-size: 13px; }
+        .profile-item .meta { font-size: 11px; color: #666; margin-top: 2px; }
+        .profile-item .type-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 9px;
+            text-transform: uppercase;
+            margin-left: 6px;
+        }
+        .profile-item .type-badge.opra { background: #00d4ff30; color: #00d4ff; }
+        .profile-item .type-badge.custom { background: #ffaa0030; color: #ffaa00; }
+        .profile-item .actions { display: flex; gap: 6px; }
+        .profile-item .actions button {
+            flex: none;
+            padding: 6px 10px;
+            font-size: 11px;
+        }
+        .btn-small { padding: 6px 12px !important; font-size: 12px !important; }
+        .empty-state { color: #666; font-size: 13px; text-align: center; padding: 20px; }
     </style>
 </head>
 <body>
@@ -1991,6 +2355,31 @@ def get_admin_html() -> str:
         </div>
         <div id="eqContent">
             <div class="eq-inactive">EQ無効</div>
+        </div>
+    </div>
+
+    <h2>カスタムEQアップロード</h2>
+    <div class="card">
+        <div class="upload-zone" id="uploadZone">
+            <input type="file" id="eqFileInput" accept=".txt">
+            <div class="icon">📁</div>
+            <div class="text">
+                <strong>ファイルを選択</strong> または ドラッグ&ドロップ<br>
+                <span style="font-size:11px;">Equalizer APO形式 (.txt), 最大1MB</span>
+            </div>
+        </div>
+        <div id="uploadInfo" style="display:none;"></div>
+        <div class="btn-row" id="uploadActions" style="display:none;">
+            <button class="btn-success btn-small" id="uploadBtn" disabled>アップロード</button>
+            <button class="btn-secondary btn-small" id="cancelUploadBtn">キャンセル</button>
+        </div>
+        <div id="uploadMessage" class="message"></div>
+    </div>
+
+    <h2>保存済みEQプロファイル</h2>
+    <div class="card">
+        <div id="profileList" class="profile-list">
+            <div class="empty-state">読み込み中...</div>
         </div>
     </div>
 
@@ -2292,13 +2681,266 @@ def get_admin_html() -> str:
             btn.textContent = 'Restart';
         });
 
+        // ============================================================
+        // Custom EQ Upload
+        // ============================================================
+        let pendingFile = null;
+        let validationResult = null;
+
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('eqFileInput');
+        const uploadInfo = document.getElementById('uploadInfo');
+        const uploadActions = document.getElementById('uploadActions');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const cancelUploadBtn = document.getElementById('cancelUploadBtn');
+
+        uploadZone.addEventListener('click', () => fileInput.click());
+
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleFileSelect(files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFileSelect(e.target.files[0]);
+        });
+
+        async function handleFileSelect(file) {
+            pendingFile = file;
+            validationResult = null;
+
+            // Show loading state
+            uploadInfo.style.display = 'block';
+            uploadInfo.className = 'upload-info';
+            uploadInfo.innerHTML = '<div class="filename">' + escapeHtml(file.name) + '</div><div class="details">検証中...</div>';
+            uploadActions.style.display = 'none';
+
+            // Validate via API
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch(API + '/eq/validate', { method: 'POST', body: formData });
+                if (res.ok) {
+                    validationResult = await res.json();
+                    renderValidationResult(validationResult, file.name);
+                } else {
+                    const err = await res.json();
+                    showUploadError(err.detail || 'Validation failed');
+                }
+            } catch (e) {
+                showUploadError('検証エラー: ' + e.message);
+            }
+        }
+
+        function renderValidationResult(result, filename) {
+            let html = '<div class="filename">' + escapeHtml(result.filename || filename) + '</div>';
+            html += '<div class="details">';
+            html += 'フィルター数: ' + result.filter_count;
+            if (result.preamp_db !== null) html += ' / Preamp: ' + result.preamp_db + 'dB';
+            html += ' / サイズ: ' + formatBytes(result.size_bytes);
+            html += '</div>';
+
+            if (result.errors && result.errors.length > 0) {
+                html += '<div class="errors">エラー: ' + result.errors.map(escapeHtml).join(', ') + '</div>';
+            }
+            if (result.warnings && result.warnings.length > 0) {
+                html += '<div class="warnings">警告: ' + result.warnings.map(escapeHtml).join(', ') + '</div>';
+            }
+            if (result.file_exists) {
+                html += '<div class="warnings">⚠️ 同名のファイルが既に存在します（上書きされます）</div>';
+            }
+
+            uploadInfo.innerHTML = html;
+            uploadInfo.className = 'upload-info' + (result.errors?.length ? ' error' : (result.warnings?.length ? ' warning' : ''));
+
+            uploadActions.style.display = 'flex';
+            uploadBtn.disabled = !result.valid;
+            uploadBtn.textContent = result.file_exists ? '上書きアップロード' : 'アップロード';
+        }
+
+        function showUploadError(msg) {
+            uploadInfo.className = 'upload-info error';
+            uploadInfo.innerHTML = '<div class="errors">' + escapeHtml(msg) + '</div>';
+            uploadActions.style.display = 'flex';
+            uploadBtn.disabled = true;
+        }
+
+        function showUploadMessage(text, success) {
+            const el = document.getElementById('uploadMessage');
+            el.textContent = text;
+            el.classList.remove('success', 'error');
+            el.classList.add(success ? 'success' : 'error');
+            setTimeout(() => el.classList.remove('success', 'error'), 4000);
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        cancelUploadBtn.addEventListener('click', () => {
+            pendingFile = null;
+            validationResult = null;
+            uploadInfo.style.display = 'none';
+            uploadActions.style.display = 'none';
+            fileInput.value = '';
+        });
+
+        uploadBtn.addEventListener('click', async () => {
+            if (!pendingFile || !validationResult || !validationResult.valid) return;
+
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'アップロード中...';
+
+            const formData = new FormData();
+            formData.append('file', pendingFile);
+
+            const overwrite = validationResult.file_exists ? '?overwrite=true' : '';
+
+            try {
+                const res = await fetch(API + '/eq/import' + overwrite, { method: 'POST', body: formData });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    showUploadMessage(data.message, true);
+                    // Reset upload UI
+                    pendingFile = null;
+                    validationResult = null;
+                    uploadInfo.style.display = 'none';
+                    uploadActions.style.display = 'none';
+                    fileInput.value = '';
+                    // Refresh profile list
+                    fetchProfiles();
+                } else {
+                    showUploadMessage(data.detail || data.message || 'Upload failed', false);
+                }
+            } catch (e) {
+                showUploadMessage('アップロードエラー: ' + e.message, false);
+            }
+            uploadBtn.disabled = false;
+            uploadBtn.textContent = 'アップロード';
+        });
+
+        // ============================================================
+        // Profile List
+        // ============================================================
+        async function fetchProfiles() {
+            try {
+                const res = await fetch(API + '/eq/profiles');
+                const data = await res.json();
+                renderProfiles(data.profiles);
+            } catch (e) {
+                console.error('Failed to fetch profiles:', e);
+                document.getElementById('profileList').innerHTML = '<div class="empty-state">読み込みエラー</div>';
+            }
+        }
+
+        function renderProfiles(profiles) {
+            const container = document.getElementById('profileList');
+            if (!profiles || profiles.length === 0) {
+                container.innerHTML = '<div class="empty-state">保存済みプロファイルがありません</div>';
+                return;
+            }
+
+            container.innerHTML = profiles.map(p => {
+                const typeBadge = p.type === 'opra'
+                    ? '<span class="type-badge opra">OPRA</span>'
+                    : '<span class="type-badge custom">Custom</span>';
+                const meta = p.filter_count + ' filters / ' + formatBytes(p.size);
+                return `
+                    <div class="profile-item" data-name="${escapeHtml(p.name)}">
+                        <div class="info">
+                            <div class="name">${escapeHtml(p.name)}${typeBadge}</div>
+                            <div class="meta">${meta}</div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn-success btn-small apply-btn">適用</button>
+                            <button class="btn-danger btn-small delete-btn">削除</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Add event listeners
+            container.querySelectorAll('.apply-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const name = e.target.closest('.profile-item').dataset.name;
+                    await applyProfile(name, e.target);
+                });
+            });
+
+            container.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const name = e.target.closest('.profile-item').dataset.name;
+                    if (confirm('プロファイル "' + name + '" を削除しますか？')) {
+                        await deleteProfile(name, e.target);
+                    }
+                });
+            });
+        }
+
+        async function applyProfile(name, btn) {
+            btn.disabled = true;
+            btn.textContent = '適用中...';
+            try {
+                const res = await fetch(API + '/eq/activate/' + encodeURIComponent(name), { method: 'POST' });
+                const data = await res.json();
+                showUploadMessage(data.message, data.success);
+                if (data.success && data.restart_required) {
+                    btn.textContent = '再起動中...';
+                    await fetch(API + '/restart', { method: 'POST' });
+                    setTimeout(() => {
+                        fetchStatus();
+                        fetchEqProfile();
+                    }, 2000);
+                }
+            } catch (e) {
+                showUploadMessage('適用エラー: ' + e.message, false);
+            }
+            btn.disabled = false;
+            btn.textContent = '適用';
+        }
+
+        async function deleteProfile(name, btn) {
+            btn.disabled = true;
+            btn.textContent = '削除中...';
+            try {
+                const res = await fetch(API + '/eq/profiles/' + encodeURIComponent(name), { method: 'DELETE' });
+                const data = await res.json();
+                showUploadMessage(data.message, data.success);
+                if (data.success) {
+                    fetchProfiles();
+                    fetchEqProfile();
+                }
+            } catch (e) {
+                showUploadMessage('削除エラー: ' + e.message, false);
+            }
+            btn.disabled = false;
+            btn.textContent = '削除';
+        }
+
         // Initial load and auto-refresh
         fetchStatus();
         fetchEqProfile();
+        fetchProfiles();
         // Full status refresh every 5 seconds (for daemon info, settings, etc.)
         setInterval(fetchStatus, 5000);
         // EQ profile refresh every 10 seconds (less frequent, doesn't change often)
         setInterval(fetchEqProfile, 10000);
+        // Profile list refresh every 30 seconds
+        setInterval(fetchProfiles, 30000);
         // Connect WebSocket for real-time stats (1 second updates)
         connectWebSocket();
     </script>
