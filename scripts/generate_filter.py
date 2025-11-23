@@ -23,7 +23,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 
 注意:
 - 最小位相: タップ数はアップサンプリング比率の倍数であること
-- 線形位相: 奇数タップ必須（偶数指定はエラー）、比率倍数チェックはスキップ
+- 線形位相: 奇数タップ必須（偶数指定はエラー）、比率の倍数になるようゼロパディング
 - クリッピング防止のため係数は正規化される
 """
 
@@ -107,10 +107,22 @@ class FilterConfig:
         return "44k" if self.input_rate % 44100 == 0 else "48k"
 
     @property
+    def final_taps(self) -> int:
+        """最終的なタップ数（線形位相はゼロパディングで比率の倍数に調整）"""
+        if self.phase_type == PhaseType.LINEAR:
+            # 線形位相: 奇数タップを比率の倍数にパディング
+            if self.n_taps % self.upsample_ratio == 0:
+                return self.n_taps
+            return ((self.n_taps // self.upsample_ratio) + 1) * self.upsample_ratio
+        return self.n_taps
+
+    @property
     def taps_label(self) -> str:
-        if self.n_taps % 1_000_000 == 0:
-            return f"{self.n_taps // 1_000_000}m"
-        return str(self.n_taps)
+        """ファイル名用のタップ数ラベル（パディング後の実タップ数を使用）"""
+        taps = self.final_taps
+        if taps % 1_000_000 == 0:
+            return f"{taps // 1_000_000}m"
+        return str(taps)
 
     @property
     def base_name(self) -> str:
@@ -566,30 +578,47 @@ class FilterGenerator:
             tuple: (base_name, actual_taps) - ファイル名のベースと実タップ数
         """
         # 0. タップ数の検証
-        validate_tap_count(
-            self.config.n_taps, self.config.upsample_ratio, self.config.phase_type
-        )
+        if self.config.phase_type == PhaseType.MINIMUM:
+            # 最小位相: 比率の倍数必須
+            validate_tap_count(self.config.n_taps, self.config.upsample_ratio)
+        else:
+            # 線形位相: 奇数必須は__post_init__で検証済み、ゼロパディングで倍数化
+            padded_taps = compute_padded_taps(
+                self.config.n_taps, self.config.upsample_ratio
+            )
+            if padded_taps != self.config.n_taps:
+                print(
+                    f"タップ数 {self.config.n_taps:,}（線形位相）→ "
+                    f"{padded_taps:,} にゼロパディング（比率 {self.config.upsample_ratio} の倍数）"
+                )
 
         # 1. フィルタ設計
         h_final, h_linear = self.designer.design()
 
-        # 2. 係数正規化
+        # 2. 線形位相のゼロパディング（比率の倍数に調整）
+        if self.config.phase_type == PhaseType.LINEAR:
+            padded_taps = compute_padded_taps(len(h_final), self.config.upsample_ratio)
+            if padded_taps > len(h_final):
+                h_final = np.pad(h_final, (0, padded_taps - len(h_final)))
+                print(f"  ゼロパディング後タップ数: {len(h_final)}")
+
+        # 3. 係数正規化
         h_final, normalization_info = normalize_coefficients(h_final)
 
-        # 3. 仕様検証
+        # 4. 仕様検証
         validation_results = self.validator.validate(h_final)
         validation_results["normalization"] = normalization_info
 
-        # 4. プロット生成
+        # 5. プロット生成
         self.plotter.plot(h_final, h_linear, filter_name)
 
-        # 5. メタデータ作成
+        # 6. メタデータ作成
         metadata = self._create_metadata(validation_results)
 
-        # 6. 係数エクスポート
+        # 7. 係数エクスポート
         base_name = self.exporter.export(h_final, metadata, skip_header)
 
-        # 7. 最終レポート
+        # 8. 最終レポート
         self._print_report(validation_results, normalization_info, base_name)
 
         # 実タップ数はフィルタ長から取得（validation_resultsに記録済み）
@@ -600,7 +629,10 @@ class FilterGenerator:
     def _create_metadata(self, validation_results: dict[str, Any]) -> dict[str, Any]:
         return {
             "generation_date": datetime.now().isoformat(),
-            "n_taps": self.config.n_taps,
+            "n_taps_specified": self.config.n_taps,
+            "n_taps_actual": validation_results.get(
+                "actual_taps", self.config.final_taps
+            ),
             "sample_rate_input": self.config.input_rate,
             "sample_rate_output": self.config.output_rate,
             "upsample_ratio": self.config.upsample_ratio,
@@ -620,15 +652,23 @@ class FilterGenerator:
         normalization_info: dict[str, Any],
         base_name: str,
     ) -> None:
+        actual_taps = validation_results.get("actual_taps", self.config.final_taps)
         print("\n" + "=" * 70)
-        print(f"完了 - {self.config.n_taps:,}タップフィルタ")
+        if actual_taps != self.config.n_taps:
+            print(
+                f"完了 - {self.config.n_taps:,}→{actual_taps:,}タップフィルタ（パディング）"
+            )
+        else:
+            print(f"完了 - {actual_taps:,}タップフィルタ")
         print("=" * 70)
         print(f"位相タイプ: {self.config.phase_type.value.title()} Phase")
         print(f"阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
         spec_status = "合格" if validation_results["meets_stopband_spec"] else "不合格"
         print(f"  {spec_status} (目標: {self.config.stopband_attenuation_db} dB以上)")
         print(f"係数正規化: DCゲイン={normalization_info['normalized_dc_gain']:.6f}")
-        print(f"係数ファイル: data/coefficients/{base_name}.bin")
+        print(
+            f"係数ファイル: data/coefficients/{base_name}.bin ({actual_taps:,} coeffs)"
+        )
         print("検証プロット: plots/analysis/")
         print("=" * 70)
 
@@ -649,19 +689,8 @@ KAISER_BETA = 55
 OUTPUT_PREFIX = None
 
 
-def validate_tap_count(
-    taps: int, upsample_ratio: int, phase_type: PhaseType = PhaseType.MINIMUM
-) -> None:
-    """タップ数がアップサンプリング比率の倍数であることを確認する
-
-    線形位相は奇数タップ必須のため、偶数の比率（16, 8, 4, 2）では
-    倍数にできない。そのため線形位相ではこのチェックをスキップする。
-    """
-    if phase_type == PhaseType.LINEAR:
-        # 線形位相: 奇数タップは偶数比率で割り切れないためスキップ
-        print(f"タップ数 {taps:,}（線形位相、比率チェックスキップ）")
-        return
-
+def validate_tap_count(taps: int, upsample_ratio: int) -> None:
+    """タップ数がアップサンプリング比率の倍数であることを確認する"""
     if taps % upsample_ratio != 0:
         raise ValueError(
             f"タップ数 {taps:,} はアップサンプリング比率 {upsample_ratio} の倍数である必要があります。"
@@ -669,6 +698,20 @@ def validate_tap_count(
             f"{((taps // upsample_ratio) + 1) * upsample_ratio:,}"
         )
     print(f"タップ数 {taps:,} は {upsample_ratio} の倍数です")
+
+
+def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
+    """比率の倍数になる最小のタップ数を計算する（ゼロパディング用）
+
+    線形位相フィルタは奇数タップ必須だが、GPUポリフェーズ分割のため
+    比率の倍数が必要。末尾にゼロパディングして倍数に調整する。
+
+    Returns:
+        int: 比率の倍数になる最小のタップ数 (>= n_taps)
+    """
+    if n_taps % upsample_ratio == 0:
+        return n_taps
+    return ((n_taps // upsample_ratio) + 1) * upsample_ratio
 
 
 def normalize_coefficients(h: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:

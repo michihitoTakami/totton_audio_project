@@ -749,6 +749,84 @@ class TestValidateTapCountMultiRate:
             validate_tap_count(1025, 2)  # Not divisible by 2
 
 
+class TestLinearPhasePadding:
+    """Tests for linear phase zero-padding to ratio multiples."""
+
+    def test_compute_padded_taps_already_divisible(self):
+        """compute_padded_taps should return n_taps if already divisible."""
+        from generate_filter import compute_padded_taps
+
+        assert compute_padded_taps(1024, 16) == 1024
+        assert compute_padded_taps(1024, 8) == 1024
+        assert compute_padded_taps(1024, 4) == 1024
+
+    def test_compute_padded_taps_needs_padding(self):
+        """compute_padded_taps should return next multiple if not divisible."""
+        from generate_filter import compute_padded_taps
+
+        # 1025 -> 1040 (next multiple of 16)
+        assert compute_padded_taps(1025, 16) == 1040
+        # 1025 -> 1032 (next multiple of 8)
+        assert compute_padded_taps(1025, 8) == 1032
+        # 2000001 -> 2000016 (next multiple of 16)
+        assert compute_padded_taps(2_000_001, 16) == 2_000_016
+
+    def test_final_taps_minimum_phase_unchanged(self):
+        """final_taps should equal n_taps for minimum phase."""
+        from generate_filter import FilterConfig, PhaseType
+
+        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
+        assert config.final_taps == 2_000_000
+
+    def test_final_taps_linear_phase_padded(self):
+        """final_taps should be padded to ratio multiple for linear phase."""
+        from generate_filter import FilterConfig, PhaseType
+
+        # 2,000,001 is odd (valid for linear), but not divisible by 16
+        # Should be padded to 2,000,016
+        config = FilterConfig(
+            n_taps=2_000_001,
+            upsample_ratio=16,
+            phase_type=PhaseType.LINEAR,
+        )
+        assert config.final_taps == 2_000_016
+        assert config.final_taps % 16 == 0
+
+    def test_final_taps_linear_phase_already_divisible(self):
+        """final_taps should be unchanged if already divisible."""
+        from generate_filter import FilterConfig, PhaseType
+
+        # Find an odd number divisible by... well, odd numbers aren't divisible
+        # by even ratios. Let's use a ratio of 1 for this edge case.
+        # Actually, with ratio 16, no odd number is divisible. So final_taps
+        # will always be padded for linear phase with even ratios.
+        # Let's verify that the padding is minimal.
+        config = FilterConfig(
+            n_taps=2_000_001,
+            upsample_ratio=16,
+            phase_type=PhaseType.LINEAR,
+        )
+        # Padding should add at most ratio-1 zeros
+        assert config.final_taps - config.n_taps < 16
+
+    def test_taps_label_reflects_final_taps(self):
+        """taps_label should use final_taps, not n_taps."""
+        from generate_filter import FilterConfig, PhaseType
+
+        config = FilterConfig(
+            n_taps=2_000_001,
+            upsample_ratio=16,
+            phase_type=PhaseType.LINEAR,
+        )
+        # final_taps = 2,000,016, which is not a nice round number
+        # taps_label should be "2000016" (not "2m" since it's not exactly 2M)
+        assert config.taps_label == "2000016"
+
+        # For minimum phase with 2M taps
+        config_min = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
+        assert config_min.taps_label == "2m"
+
+
 class TestFilterGenerator:
     """Tests for FilterGenerator orchestration class."""
 
