@@ -107,13 +107,12 @@ endif()
 # Command-line executable
 add_executable(gpu_upsampler
     src/main.cpp
-    src/config_loader.cpp
 )
 
-# Link against core library
+# Link against core library and eq_support
 target_link_libraries(gpu_upsampler
     gpu_upsampler_core
-    nlohmann_json::nlohmann_json
+    eq_support
 )
 
 # Compiler flags for core library
@@ -148,18 +147,15 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
-    src/config_loader.cpp
-    src/eq_parser.cpp
-    src/eq_to_fir.cpp
 )
 
-# Link against core library, PipeWire, ALSA, JSON, ZeroMQ, and SoftMute
+# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, and SoftMute
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
+    eq_support
     soft_mute
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
-    nlohmann_json::nlohmann_json
     ${ZMQ_LIBRARIES}
 )
 target_include_directories(gpu_upsampler_alsa PRIVATE
@@ -175,12 +171,11 @@ target_compile_options(gpu_upsampler_alsa PRIVATE
 # EQ Test executable
 add_executable(test_eq
     src/test_eq.cpp
-    src/eq_parser.cpp
-    src/eq_to_fir.cpp
 )
 
 target_link_libraries(test_eq
     gpu_upsampler_core
+    eq_support
 )
 
 target_compile_options(test_eq PRIVATE
@@ -244,6 +239,24 @@ target_compile_options(soft_mute PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# EQ Support Library (CPU-only, Issue #107)
+# Consolidates EQ parsing, FIR generation, and config loading
+# No GPU dependencies - can be used independently of gpu_upsampler_core
+add_library(eq_support STATIC
+    src/eq_parser.cpp
+    src/eq_to_fir.cpp
+    src/config_loader.cpp
+)
+target_link_libraries(eq_support PUBLIC
+    nlohmann_json::nlohmann_json
+)
+target_include_directories(eq_support PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(eq_support PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)
 install(TARGETS gpu_upsampler_daemon DESTINATION bin)
@@ -253,6 +266,7 @@ install(TARGETS zeromq_interface DESTINATION lib)
 install(TARGETS dac_capability DESTINATION lib)
 install(TARGETS auto_negotiation DESTINATION lib)
 install(TARGETS soft_mute DESTINATION lib)
+install(TARGETS eq_support DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
 
 # Install data files (filter coefficients and default config)
@@ -305,15 +319,11 @@ add_executable(cpu_tests
     tests/cpp/test_eq_parser.cpp
     tests/cpp/test_eq_to_fir.cpp
     tests/cpp/test_config_loader.cpp
-    # Source files needed for tests (not in gpu_upsampler_core)
-    src/eq_parser.cpp
-    src/eq_to_fir.cpp
-    src/config_loader.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
     gpu_upsampler_core
-    nlohmann_json::nlohmann_json
+    eq_support
 )
 target_include_directories(cpu_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
