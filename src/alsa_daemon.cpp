@@ -81,7 +81,7 @@ static size_t g_stream_accumulated_right = 0;
 
 // Crossfeed (HRTF) processor
 static CrossfeedEngine::HRTFProcessor* g_hrtf_processor = nullptr;
-static bool g_crossfeed_enabled = false;
+static std::atomic<bool> g_crossfeed_enabled{false};  // Atomic for thread-safe access
 static std::vector<float> g_cf_stream_input_left;
 static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
@@ -323,24 +323,30 @@ static void zeromq_listener_thread() {
                 response = "OK:" + build_stats_json();
             } else if (cmd == "CROSSFEED_ENABLE") {
                 if (g_hrtf_processor) {
-                    g_crossfeed_enabled = true;
+                    // Reset streaming state to avoid stale data from previous session
+                    g_hrtf_processor->resetStreaming();
+                    g_cf_stream_input_left.clear();
+                    g_cf_stream_input_right.clear();
+                    g_cf_stream_accumulated_left = 0;
+                    g_cf_stream_accumulated_right = 0;
+
                     g_hrtf_processor->setEnabled(true);
+                    g_crossfeed_enabled.store(true);
                     response = "OK:Crossfeed enabled";
                 } else {
                     response = "ERR:HRTF processor not initialized";
                 }
             } else if (cmd == "CROSSFEED_DISABLE") {
-                g_crossfeed_enabled = false;
+                g_crossfeed_enabled.store(false);
                 if (g_hrtf_processor) {
                     g_hrtf_processor->setEnabled(false);
                 }
                 response = "OK:Crossfeed disabled";
             } else if (cmd == "CROSSFEED_STATUS") {
-                std::string status = g_crossfeed_enabled ? "enabled" : "disabled";
-                std::string initialized = g_hrtf_processor ? "true" : "false";
-                response =
-                    "OK:{\"enabled\":" + std::string(g_crossfeed_enabled ? "true" : "false") +
-                    ",\"initialized\":" + initialized + "}";
+                bool enabled = g_crossfeed_enabled.load();
+                bool initialized = (g_hrtf_processor != nullptr);
+                response = "OK:{\"enabled\":" + std::string(enabled ? "true" : "false") +
+                           ",\"initialized\":" + std::string(initialized ? "true" : "false") + "}";
             } else {
                 response = "ERR:Unknown command";
             }
@@ -436,7 +442,7 @@ static void on_input_process(void* userdata) {
         // (they should synchronize due to same input size)
         if (left_generated && right_generated) {
             // Apply crossfeed (HRTF) if enabled
-            if (g_crossfeed_enabled && g_hrtf_processor && g_hrtf_processor->isEnabled()) {
+            if (g_crossfeed_enabled.load() && g_hrtf_processor && g_hrtf_processor->isEnabled()) {
                 std::vector<float> cf_output_left, cf_output_right;
                 // Use default CUDA stream (0) for crossfeed processing
                 // This ensures proper synchronization without coupling to upsampler's streams
@@ -962,7 +968,7 @@ int main(int argc, char* argv[]) {
                               << std::endl;
 
                     // Crossfeed is initialized but disabled by default
-                    g_crossfeed_enabled = false;
+                    g_crossfeed_enabled.store(false);
                     g_hrtf_processor->setEnabled(false);
                     std::cout << "  Crossfeed: initialized (disabled by default)" << std::endl;
                 } else {
@@ -1119,7 +1125,7 @@ int main(int argc, char* argv[]) {
         g_soft_mute = nullptr;
         delete g_hrtf_processor;
         g_hrtf_processor = nullptr;
-        g_crossfeed_enabled = false;
+        g_crossfeed_enabled.store(false);
         delete g_upsampler;
         g_upsampler = nullptr;
         pw_deinit();

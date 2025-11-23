@@ -70,8 +70,5 @@ Thumbs.db
 worktrees/
 
 # HUTUBS SOFA data (large binary files, CC BY-SA 4.0)
-# Only metadata JSON is committed
+# SOFA files must be downloaded separately and placed in this directory
 data/crossfeed/raw/
-
-# Generated HRTF filters (32MB each, regenerate from SOFA)
-data/crossfeed/hrtf/*.bin
