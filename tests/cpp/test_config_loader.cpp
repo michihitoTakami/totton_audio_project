@@ -161,6 +161,7 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultValues) {
     EXPECT_FLOAT_EQ(config.gain, 16.0f);
     EXPECT_EQ(config.filterPath, "data/coefficients/filter_1m_min_phase.bin");
     EXPECT_EQ(config.inputSampleRate, 44100);
+    EXPECT_EQ(config.phaseType, PhaseType::Minimum);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");
 }
@@ -171,4 +172,65 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultValues) {
 
 TEST_F(ConfigLoaderTest, DefaultConfigFileConstant) {
     EXPECT_STREQ(DEFAULT_CONFIG_FILE, "config.json");
+}
+
+// ============================================================
+// PhaseType tests
+// ============================================================
+
+TEST_F(ConfigLoaderTest, ParsePhaseTypeMinimum) {
+    EXPECT_EQ(parsePhaseType("minimum"), PhaseType::Minimum);
+}
+
+TEST_F(ConfigLoaderTest, ParsePhaseTypeLinear) {
+    EXPECT_EQ(parsePhaseType("linear"), PhaseType::Linear);
+}
+
+TEST_F(ConfigLoaderTest, ParsePhaseTypeInvalidDefaultsToMinimum) {
+    EXPECT_EQ(parsePhaseType("invalid"), PhaseType::Minimum);
+    EXPECT_EQ(parsePhaseType(""), PhaseType::Minimum);
+    EXPECT_EQ(parsePhaseType("MINIMUM"), PhaseType::Minimum);  // case sensitive
+}
+
+TEST_F(ConfigLoaderTest, PhaseTypeToStringMinimum) {
+    EXPECT_STREQ(phaseTypeToString(PhaseType::Minimum), "minimum");
+}
+
+TEST_F(ConfigLoaderTest, PhaseTypeToStringLinear) {
+    EXPECT_STREQ(phaseTypeToString(PhaseType::Linear), "linear");
+}
+
+TEST_F(ConfigLoaderTest, AppConfigDefaultPhaseType) {
+    AppConfig config;
+    EXPECT_EQ(config.phaseType, PhaseType::Minimum);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithPhaseTypeMinimum) {
+    writeConfig(R"({"phaseType": "minimum"})");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(config.phaseType, PhaseType::Minimum);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithPhaseTypeLinear) {
+    writeConfig(R"({"phaseType": "linear"})");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(config.phaseType, PhaseType::Linear);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithInvalidPhaseTypeDefaultsToMinimum) {
+    writeConfig(R"({"phaseType": "invalid"})");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(config.phaseType, PhaseType::Minimum);
 }

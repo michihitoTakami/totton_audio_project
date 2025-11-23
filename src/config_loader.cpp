@@ -4,6 +4,24 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 
+PhaseType parsePhaseType(const std::string& str) {
+    if (str == "linear") {
+        return PhaseType::Linear;
+    }
+    // Default to Minimum for "minimum" or any invalid value
+    return PhaseType::Minimum;
+}
+
+const char* phaseTypeToString(PhaseType type) {
+    switch (type) {
+    case PhaseType::Linear:
+        return "linear";
+    case PhaseType::Minimum:
+    default:
+        return "minimum";
+    }
+}
+
 bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig, bool verbose) {
     outConfig = AppConfig{};
 
@@ -35,6 +53,8 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             outConfig.filterPath = j["filterPath"].get<std::string>();
         if (j.contains("inputSampleRate"))
             outConfig.inputSampleRate = j["inputSampleRate"].get<int>();
+        if (j.contains("phaseType"))
+            outConfig.phaseType = parsePhaseType(j["phaseType"].get<std::string>());
 
         // EQ settings
         if (j.contains("eqEnabled"))
