@@ -603,6 +603,19 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     h_filterCoeffs48k_linear_ = h_filterCoeffs_;
     std::cout << "    " << h_filterCoeffs48k_linear_.size() << " taps" << std::endl;
 
+    // Verify all 4 coefficient files have the same tap count
+    size_t taps44kMin = h_filterCoeffs44k_.size();
+    size_t taps48kMin = h_filterCoeffs48k_.size();
+    size_t taps44kLinear = h_filterCoeffs44k_linear_.size();
+    size_t taps48kLinear = h_filterCoeffs48k_linear_.size();
+
+    if (taps44kMin != taps48kMin || taps44kMin != taps44kLinear || taps44kMin != taps48kLinear) {
+        std::cerr << "Error: Coefficient tap counts do not match:" << std::endl;
+        std::cerr << "  44k min: " << taps44kMin << ", 48k min: " << taps48kMin
+                  << ", 44k linear: " << taps44kLinear << ", 48k linear: " << taps48kLinear << std::endl;
+        return false;
+    }
+
     // Use 44k minimum as the primary coefficients for now
     h_filterCoeffs_ = h_filterCoeffs44k_;
 
