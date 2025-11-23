@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-HRTF Linear-Phase FIR Filter Generation
+HRTF FIR Filter Generation (Phase-Preserving)
 
 SOFAファイルから±30°（正三角形配置）のHRIRを抽出し、
-2M-tap線形位相FIRフィルタを生成する。
+2M-tap FIRフィルタを生成する。
+
+クロスフィード用途では位相情報（ITD/ILD）が空間定位に必須のため、
+元のHRIRの位相をそのまま保持する。
 
 タスク:
 - ±30°, elevation 0° のHRIR抽出
 - 4チャンネル構成: LL, LR, RL, RR
 - 705.6kHz / 768kHz へリサンプリング
-- 2M-tap線形位相FIRへ変換
+- 2M-tapへゼロパディング（位相保持）
 
 Data Source: HUTUBS - Head-related Transfer Function Database
     https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960
@@ -205,65 +208,31 @@ def resample_hrir(hrir: np.ndarray, orig_rate: int, target_rate: int) -> np.ndar
     return resampled
 
 
-def convert_to_linear_phase_fir(
-    hrir: np.ndarray, target_length: int, sample_rate: int
-) -> np.ndarray:
+def pad_hrir_to_length(hrir: np.ndarray, target_length: int) -> np.ndarray:
     """
-    HRIRを線形位相FIRフィルタに変換。
+    HRIRをターゲット長にゼロパディング。
 
-    線形位相フィルタは対称性を持ち、位相歪みがない。
-    クロスフィード用途では位置感再現のためプリリンギングが許容される。
+    HRTFクロスフィードでは位相情報（ITD/ILD）が空間定位に必須のため、
+    元のHRIRの位相をそのまま保持する。変換は行わない。
 
     Args:
-        hrir: 入力HRIR
+        hrir: 入力HRIR（リサンプリング済み）
         target_length: ターゲットタップ数
-        sample_rate: サンプルレート
 
     Returns:
-        線形位相FIRフィルタ係数
+        ゼロパディングされたHRIR
     """
-    # HRIRの長さ
     hrir_len = len(hrir)
 
-    # FFTサイズ（2のべき乗に丸める）
-    fft_size = 2 ** int(np.ceil(np.log2(max(hrir_len, target_length) * 2)))
+    if hrir_len >= target_length:
+        # 長すぎる場合は先頭から切り出し（通常ありえない）
+        return hrir[:target_length]
 
-    # HRIRの周波数応答を取得
-    H = np.fft.fft(hrir, fft_size)
+    # 末尾にゼロパディング（因果的フィルタを維持）
+    padded = np.zeros(target_length, dtype=hrir.dtype)
+    padded[:hrir_len] = hrir
 
-    # 振幅スペクトル
-    magnitude = np.abs(H)
-
-    # 線形位相（ゼロ位相）を適用
-    # 対称なインパルス応答を生成するため、位相をゼロに
-    H_linear = magnitude
-
-    # IFFTで時間領域に戻す
-    h_linear = np.fft.ifft(H_linear).real
-
-    # 対称化（線形位相フィルタは対称）
-    # 中心をシフトして対称にする
-    h_linear = np.fft.fftshift(h_linear)
-
-    # ターゲット長にトリミング/パディング
-    if len(h_linear) > target_length:
-        # 中心から切り出し
-        center = len(h_linear) // 2
-        start = center - target_length // 2
-        h_linear = h_linear[start : start + target_length]
-    else:
-        # ゼロパディング
-        pad_total = target_length - len(h_linear)
-        pad_left = pad_total // 2
-        pad_right = pad_total - pad_left
-        h_linear = np.pad(h_linear, (pad_left, pad_right))
-
-    # 正規化（DCゲイン = 1.0）
-    dc_gain = np.sum(h_linear)
-    if abs(dc_gain) > 1e-10:
-        h_linear = h_linear / dc_gain
-
-    return h_linear
+    return padded
 
 
 def generate_hrtf_filters(
@@ -313,8 +282,8 @@ def generate_hrtf_filters(
         resampled = resample_hrir(hrir, hrtf.sample_rate, output_rate)
         print(f"  Resampled length: {len(resampled)} samples")
 
-        # 線形位相FIRに変換
-        fir = convert_to_linear_phase_fir(resampled, n_taps, output_rate)
+        # ゼロパディングでターゲット長に拡張（位相保持）
+        fir = pad_hrir_to_length(resampled, n_taps)
         print(f"  FIR length: {len(fir)} taps")
 
         channels[name] = fir.astype(np.float32)
@@ -333,7 +302,7 @@ def generate_hrtf_filters(
 
     # メタデータ
     metadata = {
-        "description": f"HRTF linear-phase FIR filter for head size {size}",
+        "description": f"HRTF FIR filter for head size {size} (phase-preserving)",
         "size_category": size,
         "subject_id": REPRESENTATIVE_SUBJECTS[size],
         "sample_rate": output_rate,
@@ -341,7 +310,7 @@ def generate_hrtf_filters(
         "n_taps": n_taps,
         "n_channels": 4,
         "channel_order": ["LL", "LR", "RL", "RR"],
-        "phase_type": "linear",
+        "phase_type": "original",  # 位相保持（ITD/ILD維持）
         "source_azimuth_left": -30.0,  # Logical value (HUTUBS uses 330°)
         "source_azimuth_right": TARGET_AZIMUTH_RIGHT,
         "source_elevation": TARGET_ELEVATION,
@@ -362,7 +331,7 @@ def generate_hrtf_filters(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate HRTF linear-phase FIR filters from SOFA files",
+        description="Generate HRTF FIR filters from SOFA files (phase-preserving)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -414,12 +383,6 @@ Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin
         default=DEFAULT_OUTPUT_DIR,
         help="Output directory for generated filters",
     )
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress progress output",
-    )
-
     args = parser.parse_args()
 
     if not HAS_SOFA:
@@ -437,7 +400,7 @@ Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin
 
     rates = [args.rate] if args.rate else list(RATE_CONFIGS.keys())
 
-    print("HRTF Linear-Phase FIR Filter Generation")
+    print("HRTF FIR Filter Generation (Phase-Preserving)")
     print(f"SOFA directory: {args.sofa_dir}")
     print(f"Output directory: {args.output_dir}")
     print(f"Sizes: {sizes}")

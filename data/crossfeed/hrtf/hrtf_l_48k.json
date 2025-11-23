@@ -1,5 +1,5 @@
 {
-  "description": "HRTF linear-phase FIR filter for head size L",
+  "description": "HRTF FIR filter for head size L (phase-preserving)",
   "size_category": "L",
   "subject_id": "pp32",
   "sample_rate": 768000,
@@ -12,12 +12,12 @@
     "RL",
     "RR"
   ],
-  "phase_type": "linear",
+  "phase_type": "original",
   "source_azimuth_left": -30.0,
   "source_azimuth_right": 30.0,
   "source_elevation": 0.0,
   "license": "CC BY-SA 4.0",
   "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
   "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
-  "generated_at": "2025-11-23T23:41:00.519634"
+  "generated_at": "2025-11-24T00:18:45.810614"
 }
