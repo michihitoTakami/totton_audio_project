@@ -210,6 +210,8 @@ class Status(BaseModel):
     clip_rate: float = 0.0
     daemon_running: bool = False
     eq_active: bool = False
+    input_rate: int = 0
+    output_rate: int = 0
 
 
 class RewireRequest(BaseModel):
@@ -469,20 +471,55 @@ def check_pipewire_sink() -> bool:
         return False
 
 
+def get_configured_rates() -> tuple[int, int]:
+    """Get input/output rates from config.json.
+
+    Returns:
+        Tuple of (input_rate, output_rate) in Hz.
+    """
+    try:
+        config = load_config()
+        input_rate = config.input_sample_rate
+        upsample_ratio = config.upsample_ratio
+        output_rate = input_rate * upsample_ratio if input_rate > 0 else 0
+        return input_rate, output_rate
+    except Exception:
+        return 0, 0
+
+
 def load_stats() -> dict:
-    """Load statistics from daemon stats file"""
+    """Load statistics from daemon stats file.
+
+    When daemon is running, stats.json contains actual running rates.
+    Falls back to config.json values if rate info not available.
+    """
+    input_rate, output_rate = get_configured_rates()
+    default_stats = {
+        "clip_count": 0,
+        "total_samples": 0,
+        "clip_rate": 0.0,
+        "input_rate": input_rate,
+        "output_rate": output_rate,
+    }
     if not STATS_FILE_PATH.exists():
-        return {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+        return default_stats
     try:
         with open(STATS_FILE_PATH) as f:
             data = json.load(f)
+
+        # Use actual rates from daemon if available, fallback to config
+        actual_input_rate = data.get("input_rate", input_rate)
+        actual_output_rate = data.get("output_rate", output_rate)
+
         return {
             "clip_count": data.get("clip_count", 0),
             "total_samples": data.get("total_samples", 0),
             "clip_rate": data.get("clip_rate", 0.0),
+            "input_rate": actual_input_rate,
+            "output_rate": actual_output_rate,
         }
     except (json.JSONDecodeError, IOError):
-        return {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+        return default_stats
 
 
 def get_alsa_devices() -> list[dict]:
@@ -553,16 +590,25 @@ async def root():
 async def get_status():
     """
     Get current daemon status and settings.
-    Returns configuration, connection state, and clipping statistics.
+    Returns configuration, connection state, clipping statistics, and sample rates.
     """
     settings = load_config()
     daemon_running = check_daemon_running()
     pw_connected = check_pipewire_sink() if daemon_running else False
-    stats = (
-        load_stats()
-        if daemon_running
-        else {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
-    )
+
+    # When daemon is running, show actual clip stats from stats.json
+    # When stopped, show zeros for clip stats (rates always from config)
+    input_rate, output_rate = get_configured_rates()
+    if daemon_running:
+        stats = load_stats()
+    else:
+        stats = {
+            "clip_count": 0,
+            "total_samples": 0,
+            "clip_rate": 0.0,
+            "input_rate": input_rate,
+            "output_rate": output_rate,
+        }
 
     return Status(
         settings=settings,
@@ -573,6 +619,8 @@ async def get_status():
         clip_rate=stats["clip_rate"],
         daemon_running=daemon_running,
         eq_active=settings.eq_enabled and bool(settings.eq_profile_path),
+        input_rate=stats["input_rate"],
+        output_rate=stats["output_rate"],
     )
 
 
@@ -581,17 +629,24 @@ async def websocket_stats(websocket: WebSocket):
     """
     WebSocket endpoint for real-time stats streaming.
     Sends stats.json data every second while connected.
-    When daemon is stopped, returns zero values (consistent with /status endpoint).
+    When daemon is stopped, returns zero values for clip stats but configured rates.
     """
     await websocket.accept()
     try:
         while True:
             daemon_running = check_daemon_running()
+            input_rate, output_rate = get_configured_rates()
             if daemon_running:
                 stats = load_stats()
             else:
-                # Return zero values when daemon is stopped (consistent with /status)
-                stats = {"clip_count": 0, "total_samples": 0, "clip_rate": 0.0}
+                # Zero clip stats when stopped, but show configured rates
+                stats = {
+                    "clip_count": 0,
+                    "total_samples": 0,
+                    "clip_rate": 0.0,
+                    "input_rate": input_rate,
+                    "output_rate": output_rate,
+                }
             stats["daemon_running"] = daemon_running
             await websocket.send_json(stats)
             await asyncio.sleep(1)
@@ -1894,6 +1949,20 @@ def get_admin_html() -> str:
         </div>
     </div>
 
+    <h2>Sampling Rate</h2>
+    <div class="card">
+        <div class="stat-grid">
+            <div class="stat-item" id="inputRate">
+                <div class="label">Input</div>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-item" id="outputRate">
+                <div class="label">Output</div>
+                <div class="value">-</div>
+            </div>
+        </div>
+    </div>
+
     <h2>System Info</h2>
     <div class="card">
         <div class="info-row">
@@ -1977,6 +2046,10 @@ def get_admin_html() -> str:
             setStat('clipCount', formatNumber(stats.clip_count), '');
             setStat('totalSamples', formatNumber(stats.total_samples), '');
 
+            // Sample rates
+            setStat('inputRate', formatSampleRate(stats.input_rate || 0), '');
+            setStat('outputRate', formatSampleRate(stats.output_rate || 0), '');
+
             // Daemon running status from WebSocket
             const daemonRunning = stats.daemon_running;
             setStatus('daemonStatus', daemonRunning ? 'Running' : 'Stopped', daemonRunning);
@@ -2006,6 +2079,10 @@ def get_admin_html() -> str:
                 setStat('clipCount', formatNumber(status.clip_count), '');
                 setStat('totalSamples', formatNumber(status.total_samples), '');
                 setStat('eqStatus', status.eq_active ? 'ON' : 'OFF', status.eq_active ? '' : 'error');
+
+                // Sample rates
+                setStat('inputRate', formatSampleRate(status.input_rate || 0), '');
+                setStat('outputRate', formatSampleRate(status.output_rate || 0), '');
 
                 // System info
                 document.getElementById('pidFile').textContent = daemon.pid_file || '-';
@@ -2040,6 +2117,12 @@ def get_admin_html() -> str:
             if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
             if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
             return String(n);
+        }
+
+        function formatSampleRate(hz) {
+            if (hz <= 0) return '-';
+            if (hz >= 1000) return (hz / 1000).toFixed(1) + ' kHz';
+            return hz + ' Hz';
         }
 
         function showMessage(text, success) {
