@@ -88,8 +88,8 @@ cmake --build build -j$(nproc)
 ### Workflow
 
 ```bash
-git worktree add ../gpu_os_#123-feature -b feature/#123-feature
-cd ../gpu_os_#123-feature
+git worktree add worktrees/#123-feature -b feature/#123-feature
+cd worktrees/#123-feature
 # ... work ...
 git push -u origin feature/#123-feature
 gh pr create --title "#123 機能の説明" --body "..."
