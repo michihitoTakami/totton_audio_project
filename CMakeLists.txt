@@ -205,6 +205,17 @@ target_compile_options(auto_negotiation PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# Soft Mute Library (CPU-only, for glitch-free audio transitions)
+add_library(soft_mute STATIC
+    src/soft_mute.cpp
+)
+target_include_directories(soft_mute PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(soft_mute PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)
 install(TARGETS gpu_upsampler_daemon DESTINATION bin)
@@ -213,6 +224,7 @@ install(TARGETS gpu_upsampler_core DESTINATION lib)
 install(TARGETS zeromq_interface DESTINATION lib)
 install(TARGETS dac_capability DESTINATION lib)
 install(TARGETS auto_negotiation DESTINATION lib)
+install(TARGETS soft_mute DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
 
 # Install data files (filter coefficients and default config)
@@ -320,3 +332,16 @@ target_include_directories(auto_negotiation_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(auto_negotiation_tests)
+
+# Soft Mute tests (CPU-only)
+add_executable(soft_mute_tests
+    tests/cpp/test_soft_mute.cpp
+)
+target_link_libraries(soft_mute_tests
+    GTest::gtest_main
+    soft_mute
+)
+target_include_directories(soft_mute_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(soft_mute_tests)
