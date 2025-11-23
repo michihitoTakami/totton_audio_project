@@ -17,12 +17,14 @@ repos:
         files: \.(c|cpp|h|hpp|cu|cuh)$
 
   # clang-tidy for C/C++ static analysis (pre-push only - heavy)
+  # Note: Only .cpp files targeted (headers analyzed transitively)
+  # CUDA projects have incompatible compile flags for clang-tidy
   - repo: https://github.com/pocc/pre-commit-hooks
     rev: v1.3.5
     hooks:
       - id: clang-tidy
         args: [-p=build]
-        files: \.(c|cpp|h|hpp)$
+        files: \.(c|cpp)$
         exclude: ^build/
         stages: [pre-push]
 
