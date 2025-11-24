@@ -1057,23 +1057,24 @@ void alsa_output_thread() {
 }
 
 int main(int argc, char* argv[]) {
-    // Initialize logging system from config file
+    // Acquire PID file lock FIRST (prevent multiple instances)
+    // Note: Logging is initialized AFTER lock to avoid file conflicts
+    if (!acquire_pid_lock()) {
+        return 1;
+    }
+
+    // Initialize logging system from config file (after PID lock acquired)
     gpu_upsampler::logging::initializeFromConfig(CONFIG_FILE_PATH);
 
     LOG_INFO("========================================");
     LOG_INFO("  GPU Audio Upsampler - ALSA Direct Output");
     LOG_INFO("========================================");
+    LOG_INFO("PID: {} (file: {})", getpid(), PID_FILE_PATH);
 
     // Install signal handlers (SIGHUP for restart, SIGINT/SIGTERM for shutdown)
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGHUP, signal_handler);
-
-    // Acquire PID file lock (prevent multiple instances)
-    if (!acquire_pid_lock()) {
-        return 1;
-    }
-    LOG_INFO("PID: {} (file: {})", getpid(), PID_FILE_PATH);
 
     int exitCode = 0;
 

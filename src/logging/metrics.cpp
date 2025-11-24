@@ -54,6 +54,12 @@ nvmlDevice_t g_nvmlDevice = nullptr;
 std::mutex g_nvmlMutex;
 #endif
 
+// GPU metrics cache (to avoid slow NVML calls)
+GpuMetrics g_gpuMetricsCache;
+std::mutex g_gpuMetricsCacheMutex;
+std::chrono::steady_clock::time_point g_lastGpuMetricsUpdate;
+constexpr std::chrono::milliseconds GPU_METRICS_CACHE_DURATION{1000};  // 1 second cache
+
 }  // namespace
 
 // ============================================================
@@ -65,10 +71,21 @@ AudioStats& getAudioStats() {
 }
 
 GpuMetrics getGpuMetrics() {
+    auto now = std::chrono::steady_clock::now();
+
+    // Fast path: return cached metrics if still fresh
+    {
+        std::lock_guard<std::mutex> lock(g_gpuMetricsCacheMutex);
+        if (now - g_lastGpuMetricsUpdate < GPU_METRICS_CACHE_DURATION) {
+            return g_gpuMetricsCache;
+        }
+    }
+
+    // Slow path: update metrics from NVML
     GpuMetrics metrics;
 
 #ifdef HAVE_NVML
-    std::lock_guard<std::mutex> lock(g_nvmlMutex);
+    std::lock_guard<std::mutex> nvmlLock(g_nvmlMutex);
 
     if (!g_nvmlInitialized) {
         initializeNvml();
@@ -99,6 +116,13 @@ GpuMetrics getGpuMetrics() {
 #else
     metrics.available = false;
 #endif
+
+    // Update cache
+    {
+        std::lock_guard<std::mutex> lock(g_gpuMetricsCacheMutex);
+        g_gpuMetricsCache = metrics;
+        g_lastGpuMetricsUpdate = now;
+    }
 
     return metrics;
 }
@@ -164,17 +188,18 @@ void recordSamples(uint64_t count) {
 
 void recordXrun() {
     g_audioStats.xrunCount.fetch_add(1, std::memory_order_relaxed);
-    LOG_WARN("XRUN detected (total: {})", g_audioStats.xrunCount.load());
+    // Note: Logging removed to avoid I/O in audio thread
+    // Use metrics snapshot to monitor XRUN count
 }
 
 void recordBufferUnderflow() {
     g_audioStats.bufferUnderflows.fetch_add(1, std::memory_order_relaxed);
-    LOG_DEBUG("Buffer underflow (total: {})", g_audioStats.bufferUnderflows.load());
+    // Note: Logging removed to avoid I/O in audio thread
 }
 
 void recordBufferOverflow() {
     g_audioStats.bufferOverflows.fetch_add(1, std::memory_order_relaxed);
-    LOG_DEBUG("Buffer overflow (total: {})", g_audioStats.bufferOverflows.load());
+    // Note: Logging removed to avoid I/O in audio thread
 }
 
 void updateBufferLevels(size_t inputFill, size_t inputCap, size_t outputFill, size_t outputCap) {

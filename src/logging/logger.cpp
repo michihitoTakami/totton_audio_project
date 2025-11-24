@@ -23,7 +23,7 @@ namespace {
 // Global logger instance
 std::shared_ptr<spdlog::logger> g_logger;
 std::mutex g_init_mutex;
-bool g_initialized = false;
+std::atomic<bool> g_initialized{false};
 
 // Convert our LogLevel to spdlog::level::level_enum
 spdlog::level::level_enum toSpdlogLevel(LogLevel level) {
@@ -74,7 +74,7 @@ LogLevel fromSpdlogLevel(spdlog::level::level_enum level) {
 bool initialize(const LogConfig& config) {
     std::lock_guard<std::mutex> lock(g_init_mutex);
 
-    if (g_initialized) {
+    if (g_initialized.load(std::memory_order_acquire)) {
         // Already initialized, just update settings
         if (g_logger) {
             g_logger->set_level(toSpdlogLevel(config.level));
@@ -118,7 +118,7 @@ bool initialize(const LogConfig& config) {
         // Flush on error level and above
         g_logger->flush_on(spdlog::level::err);
 
-        g_initialized = true;
+        g_initialized.store(true, std::memory_order_release);
 
         LOG_INFO("Logging initialized (level={})", levelToString(config.level));
         if (!config.filePath.empty()) {
@@ -194,9 +194,9 @@ void shutdown() {
         g_logger->flush();
     }
 
+    g_initialized.store(false, std::memory_order_release);
     spdlog::shutdown();
     g_logger.reset();
-    g_initialized = false;
 }
 
 void setLevel(LogLevel level) {
@@ -220,10 +220,12 @@ void flush() {
 }
 
 std::shared_ptr<spdlog::logger> getLogger() {
-    // Auto-initialize with defaults if not initialized
-    if (!g_initialized) {
-        initialize();
+    // Fast path: already initialized (no lock)
+    if (g_initialized.load(std::memory_order_acquire)) {
+        return g_logger;
     }
+    // Slow path: need initialization
+    initialize();
     return g_logger;
 }
 
