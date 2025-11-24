@@ -422,3 +422,127 @@ class TestDacServiceUnit:
 
         # Clear cache for other tests
         _capability_cache.clear()
+
+
+class TestProcParsing:
+    """Tests for /proc/asound parsing logic."""
+
+    def test_playback_only_parsing(self, tmp_path):
+        """Should only parse Playback section, ignoring Capture rates."""
+        from web.services.dac import _scan_from_proc
+
+        # Create a mock /proc/asound/card0/stream0 file
+        # Playback: 44100-192000, Capture: 44100-384000
+        proc_content = """USB DAC at usb-0000:00:14.0-3, high speed : USB Audio
+
+Playback:
+  Status: Stop
+  Interface 1
+    Altset 1
+    Format: S32_LE
+    Channels: 2
+    Rates: 44100, 48000, 88200, 96000, 176400, 192000
+
+Capture:
+  Status: Stop
+  Interface 2
+    Altset 1
+    Format: S32_LE
+    Channels: 2
+    Rates: 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000
+"""
+        # Mock the proc path by patching
+        with patch("web.services.dac.Path") as mock_path:
+            mock_stream = mock_path.return_value
+            mock_stream.exists.return_value = True
+            mock_stream.read_text.return_value = proc_content
+
+            result = _scan_from_proc(0)
+
+        assert result is not None
+        assert result.is_valid is True
+        # Should only have Playback rates (up to 192000)
+        assert 192000 in result.supported_rates
+        assert 352800 not in result.supported_rates  # Capture-only rate
+        assert 384000 not in result.supported_rates  # Capture-only rate
+        assert result.max_channels == 2
+
+    def test_capture_only_device_returns_none(self, tmp_path):
+        """Capture-only device should return None (no playback capability)."""
+        from web.services.dac import _scan_from_proc
+
+        # A capture-only device (like a microphone)
+        proc_content = """Microphone at usb-0000:00:14.0-3, high speed : USB Audio
+
+Capture:
+  Status: Stop
+  Interface 1
+    Altset 1
+    Format: S16_LE
+    Channels: 1
+    Rates: 44100, 48000
+"""
+        with patch("web.services.dac.Path") as mock_path:
+            mock_stream = mock_path.return_value
+            mock_stream.exists.return_value = True
+            mock_stream.read_text.return_value = proc_content
+
+            result = _scan_from_proc(0)
+
+        # Should return None because there's no Playback section
+        assert result is None
+
+    def test_mono_dac_channels(self):
+        """Mono DAC should report 1 channel, not default to 2."""
+        from web.services.dac import _scan_from_proc
+
+        # A hypothetical mono DAC
+        proc_content = """Mono DAC at usb-0000:00:14.0-3, high speed : USB Audio
+
+Playback:
+  Status: Stop
+  Interface 1
+    Altset 1
+    Format: S32_LE
+    Channels: 1
+    Rates: 44100, 48000, 96000
+"""
+        with patch("web.services.dac.Path") as mock_path:
+            mock_stream = mock_path.return_value
+            mock_stream.exists.return_value = True
+            mock_stream.read_text.return_value = proc_content
+
+            result = _scan_from_proc(0)
+
+        assert result is not None
+        assert result.max_channels == 1  # Should be 1, not 2
+
+    def test_multiple_altsets_max_channels(self):
+        """Should report maximum channels across all altsets."""
+        from web.services.dac import _scan_from_proc
+
+        # DAC with multiple altsets, different channel counts
+        proc_content = """Multi-channel DAC at usb-0000:00:14.0-3, high speed : USB Audio
+
+Playback:
+  Status: Stop
+  Interface 1
+    Altset 1
+    Format: S32_LE
+    Channels: 2
+    Rates: 44100, 48000
+  Interface 1
+    Altset 2
+    Format: S32_LE
+    Channels: 8
+    Rates: 44100, 48000, 96000
+"""
+        with patch("web.services.dac.Path") as mock_path:
+            mock_stream = mock_path.return_value
+            mock_stream.exists.return_value = True
+            mock_stream.read_text.return_value = proc_content
+
+            result = _scan_from_proc(0)
+
+        assert result is not None
+        assert result.max_channels == 8  # Should be max across altsets

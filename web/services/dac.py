@@ -85,7 +85,8 @@ def _scan_from_proc(card_num: int) -> DacCapability | None:
     Scan DAC capabilities from /proc/asound/cardN/stream0.
 
     This method reads the USB Audio stream information directly.
-    Collects ALL rates and maximum channels across all interfaces/altsets.
+    Only parses the Playback section to avoid mixing in Capture-only rates.
+    Collects rates and maximum channels across all interfaces/altsets within Playback.
     """
     stream_path = Path(f"/proc/asound/card{card_num}/stream0")
     if not stream_path.exists():
@@ -96,16 +97,40 @@ def _scan_from_proc(card_num: int) -> DacCapability | None:
     except OSError:
         return None
 
-    # Parse ALL Rates and Channels lines (multiple interfaces may exist)
-    # Format: "    Rates: 44100, 48000, 88200, 96000, ..."
+    # Parse only the Playback section
+    # Format:
+    #   Playback:
+    #     Status: ...
+    #     Interface N
+    #       Altset M
+    #       Rates: 44100, 48000, ...
+    #       Channels: 2
+    #   Capture:
+    #     ...
     all_rates: set[int] = set()
-    max_channels = 2  # Default
+    max_channels = 0  # Start with 0 to detect actual channel count
+
+    in_playback_section = False
 
     for line in content.split("\n"):
-        line = line.strip()
+        stripped = line.strip()
 
-        if line.startswith("Rates:"):
-            rate_str = line[6:].strip()
+        # Detect section boundaries
+        # Section headers are at the start of the line (no leading whitespace)
+        if line and not line[0].isspace():
+            if stripped.startswith("Playback:"):
+                in_playback_section = True
+                continue
+            elif stripped.startswith("Capture:"):
+                in_playback_section = False
+                continue
+
+        # Only parse rates/channels within Playback section
+        if not in_playback_section:
+            continue
+
+        if stripped.startswith("Rates:"):
+            rate_str = stripped[6:].strip()
             for part in rate_str.split(","):
                 part = part.strip()
                 try:
@@ -113,9 +138,9 @@ def _scan_from_proc(card_num: int) -> DacCapability | None:
                 except ValueError:
                     pass
 
-        elif line.startswith("Channels:"):
+        elif stripped.startswith("Channels:"):
             try:
-                ch = int(line[9:].strip())
+                ch = int(stripped[9:].strip())
                 max_channels = max(max_channels, ch)
             except ValueError:
                 pass
