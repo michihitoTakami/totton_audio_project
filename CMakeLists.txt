@@ -22,6 +22,16 @@ pkg_check_modules(ALSA REQUIRED alsa)
 # ZeroMQ for IPC communication
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
+# systemd for daemon notification (optional, for Type=notify support)
+pkg_check_modules(SYSTEMD libsystemd)
+if(SYSTEMD_FOUND)
+    set(HAVE_SYSTEMD TRUE)
+    message(STATUS "libsystemd found - systemd notification enabled")
+else()
+    set(HAVE_SYSTEMD FALSE)
+    message(STATUS "libsystemd not found - systemd notification disabled")
+endif()
+
 # NVML for GPU utilization monitoring (optional)
 # On minimal Jetson environments or some container setups, NVML may not be available
 if(TARGET CUDA::nvml)
@@ -159,6 +169,14 @@ target_link_libraries(gpu_upsampler_alsa
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
 )
+
+# Conditionally link libsystemd for Type=notify support
+if(HAVE_SYSTEMD)
+    target_link_libraries(gpu_upsampler_alsa ${SYSTEMD_LIBRARIES})
+    target_compile_definitions(gpu_upsampler_alsa PRIVATE HAVE_SYSTEMD)
+    target_include_directories(gpu_upsampler_alsa PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+endif()
+
 target_include_directories(gpu_upsampler_alsa PRIVATE
     ${ZMQ_INCLUDE_DIRS}
     ${cppzmq_SOURCE_DIR}

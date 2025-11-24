@@ -35,6 +35,11 @@
 #include <vector>
 #include <zmq.hpp>
 
+// systemd notification support (optional)
+#ifdef HAVE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
@@ -53,13 +58,20 @@ constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 // Runtime configuration (loaded from config.json)
 static AppConfig g_config;
 
+// ========== Signal Handling (Async-Signal-Safe) ==========
+// These flags are set by the signal handler and polled by the main loop.
+// Using volatile sig_atomic_t ensures async-signal-safe access.
+static volatile sig_atomic_t g_signal_shutdown = 0;  // SIGTERM, SIGINT
+static volatile sig_atomic_t g_signal_reload = 0;    // SIGHUP
+static volatile sig_atomic_t g_signal_received = 0;  // Last signal number (for logging)
+
 // Global state
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_reload_requested{false};
 static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_run() is active
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
-static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
+static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 
 // Statistics (atomic for thread-safe access from stats writer)
 static std::atomic<size_t> g_clip_count{0};
@@ -626,32 +638,79 @@ static void zeromq_listener_thread() {
 struct Data {
     struct pw_main_loop* loop;
     struct pw_stream* input_stream;
+    struct spa_source* signal_check_timer;  // Timer for checking signal flags
     bool gpu_ready;
 };
 
-// Signal handler for graceful shutdown
+// ========== Async-Signal-Safe Signal Handler ==========
+// This handler ONLY sets flags. All other processing is done in the main loop.
+// POSIX async-signal-safe: only sig_atomic_t writes are safe here.
 static void signal_handler(int sig) {
+    g_signal_received = sig;
     if (sig == SIGHUP) {
-        std::cout << "\nReceived SIGHUP, restarting for config reload..." << std::endl;
+        g_signal_reload = 1;
+    } else {
+        g_signal_shutdown = 1;
+    }
+}
+
+// Process pending signals (called from main loop context, NOT from signal handler)
+// This function is safe to call with non-async-signal-safe code.
+static void process_pending_signals() {
+    // Check for reload request (SIGHUP)
+    if (g_signal_reload) {
+        g_signal_reload = 0;
+        int sig = g_signal_received;
+        std::cout << "\nReceived SIGHUP (signal " << sig << "), restarting for config reload..."
+                  << std::endl;
         g_reload_requested = true;
-    } else {
+
+        // Start fade-out for glitch-free reload
+        if (g_soft_mute) {
+            g_soft_mute->startFadeOut();
+        }
+
+        // Quit main loop to trigger reload sequence
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        } else {
+            g_running = false;
+        }
+    }
+
+    // Check for shutdown request (SIGTERM, SIGINT)
+    if (g_signal_shutdown) {
+        g_signal_shutdown = 0;
+        int sig = g_signal_received;
         std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
-    }
 
-    // Start fade-out for glitch-free shutdown/restart (safe to call from signal handler)
-    if (g_soft_mute) {
-        g_soft_mute->startFadeOut();
-    }
+        // Start fade-out for glitch-free shutdown
+        if (g_soft_mute) {
+            g_soft_mute->startFadeOut();
+        }
 
-    // If main loop is running, quit it to trigger clean shutdown sequence
-    // If not yet running (during startup/initialization), set g_running = false
-    // to allow immediate abort
-    if (g_main_loop_running.load() && g_pw_loop) {
-        pw_main_loop_quit(g_pw_loop);
-    } else {
-        // Startup phase - allow immediate abort
-        g_running = false;
+        // Quit main loop to trigger shutdown sequence
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        } else {
+            g_running = false;
+        }
     }
+}
+
+// PipeWire timer callback to check for pending signals
+// Called periodically (every 100ms) from the PipeWire main loop.
+static void on_signal_check_timer(void* userdata, uint64_t expirations) {
+    (void)userdata;
+    (void)expirations;
+
+    // Process any pending signals
+    process_pending_signals();
+
+#ifdef HAVE_SYSTEMD
+    // Send watchdog heartbeat to systemd
+    sd_notify(0, "WATCHDOG=1");
+#endif
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
@@ -1076,6 +1135,10 @@ int main(int argc, char* argv[]) {
     do {
         g_running = true;
         g_reload_requested = false;
+        // Reset signal flags for clean restart
+        g_signal_shutdown = 0;
+        g_signal_reload = 0;
+        g_signal_received = 0;
         reset_runtime_state();
 
         // Load configuration from config.json (if exists)
@@ -1376,6 +1439,17 @@ int main(int argc, char* argv[]) {
             static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
             input_params, 1);
 
+        // Add timer to check signal flags periodically (100ms interval)
+        // This enables async-signal-safe shutdown by polling flags from main loop
+        struct timespec interval = {0, 100000000};  // 100ms in nanoseconds
+        data.signal_check_timer = pw_loop_add_timer(loop, on_signal_check_timer, &data);
+        if (data.signal_check_timer) {
+            pw_loop_update_timer(loop, data.signal_check_timer, &interval, &interval, false);
+            std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
+        } else {
+            std::cerr << "Warning: Failed to create signal check timer" << std::endl;
+        }
+
         double outputRateKHz = g_config.inputSampleRate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
         std::cout << "System ready. Audio routing configured:" << std::endl;
@@ -1390,6 +1464,14 @@ int main(int argc, char* argv[]) {
                   << "kHz)' as output device in sound settings." << std::endl;
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
+
+#ifdef HAVE_SYSTEMD
+        // Notify systemd that daemon is ready
+        sd_notify(0,
+                  "READY=1\n"
+                  "STATUS=Processing audio...\n");
+        std::cout << "systemd: Notified READY=1" << std::endl;
+#endif
 
         // Check if RELOAD was requested during startup (before main loop),
         // ZeroMQ bind failed, or signal received during initialization
@@ -1406,37 +1488,58 @@ int main(int argc, char* argv[]) {
             std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
         }
 
-        // Cleanup
+        // ========== Shutdown Sequence ==========
+        // Order: Stop input → Fade out → Flush buffers → Close ALSA → Release resources
         std::cout << "Shutting down..." << std::endl;
 
-        // Wait for soft mute fade-out to complete (with 100ms timeout)
+#ifdef HAVE_SYSTEMD
+        // Notify systemd that we're stopping
+        sd_notify(0, "STOPPING=1\nSTATUS=Shutting down...\n");
+#endif
+
+        // Step 1: Stop signal check timer
+        if (data.signal_check_timer) {
+            pw_loop_destroy_source(loop, data.signal_check_timer);
+            data.signal_check_timer = nullptr;
+        }
+
+        // Step 2: Wait for soft mute fade-out to complete (with 100ms timeout)
         // This ensures glitch-free audio shutdown
         if (g_soft_mute && g_soft_mute->isTransitioning()) {
-            std::cout << "Waiting for fade-out to complete..." << std::endl;
+            std::cout << "  Step 2: Waiting for fade-out to complete..." << std::endl;
             auto fade_start = std::chrono::steady_clock::now();
             while (g_soft_mute->isTransitioning()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 if (std::chrono::steady_clock::now() - fade_start >
                     std::chrono::milliseconds(100)) {
-                    std::cout << "Fade-out timeout, forcing shutdown" << std::endl;
+                    std::cout << "  Step 2: Fade-out timeout, forcing shutdown" << std::endl;
                     break;
                 }
             }
         }
 
+        // Step 3: Destroy PipeWire stream (stops audio input)
         if (data.input_stream) {
+            std::cout << "  Step 3: Destroying PipeWire stream..." << std::endl;
             pw_stream_destroy(data.input_stream);
         }
+
+        // Step 4: Destroy PipeWire main loop
         if (data.loop) {
+            std::cout << "  Step 4: Destroying PipeWire main loop..." << std::endl;
             pw_main_loop_destroy(data.loop);
             g_pw_loop = nullptr;
         }
 
+        // Step 5: Signal worker threads to stop and wait for them
+        std::cout << "  Step 5: Stopping worker threads..." << std::endl;
         g_running = false;
         g_buffer_cv.notify_all();
         zmq_thread.join();
-        alsa_thread.join();
+        alsa_thread.join();  // ALSA thread will call snd_pcm_drain() before exit
 
+        // Step 6: Release audio processing resources
+        std::cout << "  Step 6: Releasing resources..." << std::endl;
         delete g_soft_mute;
         g_soft_mute = nullptr;
         delete g_hrtf_processor;
@@ -1444,6 +1547,8 @@ int main(int argc, char* argv[]) {
         g_crossfeed_enabled.store(false);
         delete g_upsampler;
         g_upsampler = nullptr;
+
+        // Step 7: Deinitialize PipeWire
         pw_deinit();
 
         // Don't reload if ZMQ bind failed - exit completely

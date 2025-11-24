@@ -7,14 +7,29 @@ After=pipewire.service
 BindsTo=pipewire.service
 
 [Service]
-Type=simple
+# Type=notify: Daemon sends READY=1 when initialization is complete
+# This ensures systemd waits for full initialization before considering the service "started"
+Type=notify
+NotifyAccess=main
 WorkingDirectory=@CMAKE_INSTALL_FULL_DATADIR@/gpu_upsampler
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/gpu_upsampler_alsa
 ExecReload=/bin/kill -HUP $MAINPID
 
+# Watchdog: Daemon sends WATCHDOG=1 every 100ms, systemd expects it within 5s
+# If daemon hangs, systemd will restart it automatically
+WatchdogSec=5
+
+# Graceful shutdown timeout: Allow 3 seconds for fade-out and cleanup
+# After this timeout, systemd will send SIGKILL
+TimeoutStopSec=3
+
 # Restart policy
 Restart=on-failure
 RestartSec=3
+
+# OOM protection: This is a critical audio service, protect from OOM killer
+# -1000 = never kill, -900 = very unlikely to kill
+OOMScoreAdjust=-900
 
 # Security hardening (compatible with CUDA)
 # Note: MemoryDenyWriteExecute=yes breaks CUDA, so omitted
