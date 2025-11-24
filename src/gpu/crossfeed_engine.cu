@@ -464,20 +464,22 @@ bool HRTFProcessor::switchRateFamily(RateFamily targetFamily) {
     int targetConfig = getFilterIndex(currentHeadSize_, targetFamily);
 
     // Check if combined filter is available for target family
-    if (combinedFilterLoaded_[familyIdx] && usingCombinedFilter_) {
-        // Use combined filter
+    // Auto-restore combined filter when switching back to a family that has one loaded
+    if (combinedFilterLoaded_[familyIdx]) {
+        // Use combined filter (auto-restore if previously fell back to predefined)
         for (int c = 0; c < NUM_CHANNELS; ++c) {
             d_activeFilterFFT_[c] = d_combinedFilterFFT_[familyIdx][c];
         }
         currentRateFamily_ = targetFamily;
         activeFilterConfig_ = targetConfig;
+        usingCombinedFilter_ = true;
         resetStreaming();
         std::cout << "Switched to rate family: " << rateFamilyToString(targetFamily)
                   << " (using combined filter)" << std::endl;
         return true;
     }
 
-    // Fall back to predefined filter
+    // Fall back to predefined filter (no combined filter for this family)
     if (d_filterFFT_[targetConfig][0] == nullptr) {
         std::cerr << "Error: Target HRTF config not available" << std::endl;
         return false;

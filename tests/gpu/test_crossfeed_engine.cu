@@ -369,6 +369,40 @@ TEST_F(HRTFProcessorTest, SetCombinedFilterRateFamilySwitch) {
     EXPECT_TRUE(processor.isUsingCombinedFilter());
 }
 
+// Test: Combined filter auto-restore after fallback to predefined
+// Regression test for: 44k combined only → 48k (predefined) → 44k (should restore combined)
+TEST_F(HRTFProcessorTest, SetCombinedFilterAutoRestore) {
+    createTestHRTFFiles();
+
+    HRTFProcessor processor;
+    ASSERT_TRUE(processor.initialize(testDir_, 256));
+
+    size_t filterFftSize = processor.getFilterFftSize();
+    std::vector<cufftComplex> filter44k(filterFftSize);
+
+    // Initialize filter for 44k only
+    for (size_t i = 0; i < filterFftSize; ++i) {
+        filter44k[i] = make_cuFloatComplex(1.0f, 0.0f);
+    }
+
+    // Set combined filter for 44k ONLY (not 48k)
+    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_44K, filter44k.data(), filter44k.data(),
+                                            filter44k.data(), filter44k.data(), filterFftSize));
+    EXPECT_TRUE(processor.isUsingCombinedFilter());
+    EXPECT_EQ(processor.getCurrentRateFamily(), RateFamily::RATE_44K);
+
+    // Switch to 48k - should fall back to predefined (no combined filter for 48k)
+    ASSERT_TRUE(processor.switchRateFamily(RateFamily::RATE_48K));
+    EXPECT_FALSE(processor.isUsingCombinedFilter()) << "Should fall back to predefined for 48k";
+    EXPECT_EQ(processor.getCurrentRateFamily(), RateFamily::RATE_48K);
+
+    // Switch back to 44k - should AUTO-RESTORE combined filter
+    ASSERT_TRUE(processor.switchRateFamily(RateFamily::RATE_44K));
+    EXPECT_TRUE(processor.isUsingCombinedFilter())
+        << "Should auto-restore combined filter when returning to 44k";
+    EXPECT_EQ(processor.getCurrentRateFamily(), RateFamily::RATE_44K);
+}
+
 // Test: Helper functions
 TEST(CrossfeedHelperTest, HeadSizeToString) {
     EXPECT_STREQ(headSizeToString(HeadSize::S), "s");
