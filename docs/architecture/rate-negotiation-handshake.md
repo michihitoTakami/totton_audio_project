@@ -203,9 +203,9 @@ struct NegotiatedConfig {
 };
 ```
 
-### 4.2 handle_rate_change() (追加予定)
+### 4.2 handle_rate_change()
 
-**現在の状態:** `[[maybe_unused]]`、未接続
+**現在の状態:** `on_param_changed()` イベントから接続済み
 
 **接続先:**
 1. PipeWire `param_changed` イベント
@@ -346,7 +346,8 @@ while (g_running) {
         handle_rate_change(pending_rate);
     }
 
-    pw_main_loop_iterate(data.loop, true);
+    // pw_loop_iterate を使用（pw_main_loop_runの代わり）
+    pw_loop_iterate(pw_main_loop_get_loop(data.loop), 10);  // 10ms timeout
 }
 ```
 
@@ -377,10 +378,10 @@ while (g_running) {
 
 ## 8. 実装チェックリスト
 
-- [ ] `on_param_changed()` イベントハンドラ追加
-- [ ] `g_pending_rate_change` atomic変数追加
-- [ ] `handle_rate_change()` の `[[maybe_unused]]` 削除、接続
-- [ ] `SWITCH_RATE` ZMQコマンドハンドラ実装
-- [ ] `publishRateChanged()` PUB通知実装
-- [ ] ユニットテスト追加 (`test_auto_negotiation.cpp`)
+- [x] `on_param_changed()` イベントハンドラ追加
+- [x] `g_pending_rate_change` atomic変数追加
+- [x] `handle_rate_change()` の `[[maybe_unused]]` 削除、接続
+- [ ] `SWITCH_RATE` ZMQコマンドハンドラ実装 (後続Issue)
+- [ ] `publishRateChanged()` PUB通知実装 (後続Issue)
+- [x] ユニットテスト追加 (`test_auto_negotiation.cpp`)
 - [ ] 統合テスト実行
