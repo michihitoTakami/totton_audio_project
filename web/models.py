@@ -135,14 +135,6 @@ class EqActiveResponse(BaseModel):
     original_filters: list[str] = []
 
 
-class EqProfile(BaseModel):
-    """EQ profile model."""
-
-    name: str
-    path: str
-    filters: list[dict[str, Any]] = []
-
-
 # ============================================================================
 # OPRA Models
 # ============================================================================
