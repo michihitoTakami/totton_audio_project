@@ -478,9 +478,16 @@ class GPUUpsampler {
     size_t pinnedStreamInputLeftBytes_;
     size_t pinnedStreamInputRightBytes_;
     size_t pinnedStreamInputMonoBytes_;
+    void* pinnedStreamOutputLeft_;
+    void* pinnedStreamOutputRight_;
+    void* pinnedStreamOutputMono_;
+    size_t pinnedStreamOutputLeftBytes_;
+    size_t pinnedStreamOutputRightBytes_;
+    size_t pinnedStreamOutputMonoBytes_;
 
     void registerHostBuffer(void* ptr, size_t bytes, const char* context);
     void registerStreamInputBuffer(std::vector<float>& buffer, cudaStream_t stream);
+    void registerStreamOutputBuffer(std::vector<float>& buffer, cudaStream_t stream);
     void removePinnedHostBuffer(void* ptr);
     void unregisterHostBuffers();
 };

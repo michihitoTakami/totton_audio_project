@@ -255,9 +255,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
         // Extract valid output
         outputData.resize(validOutputPerBlock_);
-        ScopedHostPin outputPinned(outputData.data(),
-                                   outputData.size() * sizeof(float),
-                                   "cudaHostRegister streaming output");
+        registerStreamOutputBuffer(outputData, stream);
         Utils::checkCudaError(
             cudaMemcpyAsync(outputData.data(), d_streamConvResult_ + adjustedOverlapSize,
                            validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
