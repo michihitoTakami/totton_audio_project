@@ -656,8 +656,8 @@ class TestCoefficientFileLoading:
         assert len(h) == 2_000_000
         assert np.isfinite(h).all()
 
-    def test_coefficient_dc_gain_is_normalized(self, coefficients_dir):
-        """Loaded coefficients should have DC gain ~1.0."""
+    def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):
+        """Loaded coefficients should have DC gain equal to upsample ratio (unity overall gain)."""
         coeff_path = coefficients_dir / "filter_44k_2m_min_phase.bin"
 
         if not coeff_path.exists():
@@ -666,7 +666,7 @@ class TestCoefficientFileLoading:
         h = np.fromfile(coeff_path, dtype=np.float32)
         dc_gain = np.sum(h)
 
-        assert np.isclose(dc_gain, 1.0, rtol=0.01)
+        assert np.isclose(dc_gain, 16.0, rtol=0.01)
 
 
 class TestMultiRateConfigs:
