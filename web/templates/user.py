@@ -308,10 +308,33 @@ def get_embedded_html() -> str:
             }
             try {
                 const res = await fetch(API + '/opra/search?q=' + encodeURIComponent(query) + '&limit=20');
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+                    const container = document.getElementById('opraResults');
+
+                    if (res.status === 503) {
+                        // Service unavailable - database not initialized
+                        container.innerHTML = '<div style="color:#e74c3c; font-size:12px; padding:8px; line-height:1.5;">' +
+                            '<strong>Headphone database is not available</strong><br>' +
+                            'Please contact the administrator to initialize the database.' +
+                            '</div>';
+                    } else {
+                        // Other errors - safely display message without XSS risk
+                        const errorDiv = document.createElement('div');
+                        errorDiv.style.cssText = 'color:#e74c3c; font-size:12px; padding:8px;';
+                        errorDiv.textContent = 'Error: ' + (errorData.detail || 'Search failed');
+                        container.innerHTML = '';
+                        container.appendChild(errorDiv);
+                    }
+                    console.error('OPRA search failed:', errorData);
+                    return;
+                }
                 const data = await res.json();
                 renderOpraResults(data.results);
             } catch (e) {
                 console.error('OPRA search failed:', e);
+                const container = document.getElementById('opraResults');
+                container.innerHTML = '<div style="color:#e74c3c; font-size:12px; padding:8px;">Network error. Please check the server.</div>';
             }
         }
 
