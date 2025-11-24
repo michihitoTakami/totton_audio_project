@@ -7,19 +7,16 @@ After=pipewire.service
 BindsTo=pipewire.service
 
 [Service]
-# Type=notify: Daemon sends READY=1 when initialization is complete
-# This ensures systemd waits for full initialization before considering the service "started"
-# NOTE: If built without libsystemd (HAVE_SYSTEMD=OFF), change to Type=simple
-#       or install libsystemd-dev and rebuild
-Type=notify
-NotifyAccess=main
+# Service type depends on libsystemd availability at build time:
+# - Type=notify (HAVE_SYSTEMD=ON): Daemon sends READY=1/WATCHDOG=1
+# - Type=simple (HAVE_SYSTEMD=OFF): No systemd notification
+Type=@SYSTEMD_SERVICE_TYPE@
+@SYSTEMD_NOTIFY_ACCESS@
 WorkingDirectory=@CMAKE_INSTALL_FULL_DATADIR@/gpu_upsampler
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/gpu_upsampler_alsa
 ExecReload=/bin/kill -HUP $MAINPID
 
-# Watchdog: Daemon sends WATCHDOG=1 every 100ms, systemd expects it within 5s
-# If daemon hangs, systemd will restart it automatically
-WatchdogSec=5
+@SYSTEMD_WATCHDOG_SEC@
 
 # Graceful shutdown timeout: Allow 3 seconds for fade-out and cleanup
 # After this timeout, systemd will send SIGKILL

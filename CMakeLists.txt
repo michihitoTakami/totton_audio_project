@@ -23,15 +23,15 @@ pkg_check_modules(ALSA REQUIRED alsa)
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
 # systemd for daemon notification (optional, for Type=notify support)
+# Service file Type is automatically set based on libsystemd availability
 pkg_check_modules(SYSTEMD libsystemd)
 if(SYSTEMD_FOUND)
     set(HAVE_SYSTEMD TRUE)
-    message(STATUS "libsystemd found - systemd notification enabled")
+    message(STATUS "libsystemd found - systemd notification enabled (Type=notify)")
 else()
     set(HAVE_SYSTEMD FALSE)
-    message(STATUS "libsystemd not found - systemd notification disabled")
-    message(STATUS "  To enable: sudo apt-get install libsystemd-dev")
-    message(STATUS "  Or change Type=notify to Type=simple in service file")
+    message(STATUS "libsystemd not found - systemd notification disabled (Type=simple)")
+    message(STATUS "  To enable: sudo apt-get install libsystemd-dev && cmake -B build")
 endif()
 
 # NVML for GPU utilization monitoring (optional)
@@ -329,6 +329,17 @@ if(NOT DEFINED SYSTEMD_USER_UNIT_DIR)
     else()
         set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
     endif()
+endif()
+
+# Set systemd service type based on libsystemd availability
+if(HAVE_SYSTEMD)
+    set(SYSTEMD_SERVICE_TYPE "notify")
+    set(SYSTEMD_NOTIFY_ACCESS "NotifyAccess=main")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog: Daemon sends WATCHDOG=1 every 100ms, systemd expects it within 5s\nWatchdogSec=5")
+else()
+    set(SYSTEMD_SERVICE_TYPE "simple")
+    set(SYSTEMD_NOTIFY_ACCESS "# NotifyAccess not needed for Type=simple")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog disabled (libsystemd not available at build time)")
 endif()
 
 # Generate service file with correct install paths

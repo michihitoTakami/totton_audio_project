@@ -656,8 +656,35 @@ static void signal_handler(int sig) {
 
 // Process pending signals (called from main loop context, NOT from signal handler)
 // This function is safe to call with non-async-signal-safe code.
+// IMPORTANT: Shutdown (SIGTERM/SIGINT) takes priority over reload (SIGHUP).
+// If both signals arrive in the same cycle, shutdown wins.
 static void process_pending_signals() {
-    // Check for reload request (SIGHUP)
+    // Check for shutdown request FIRST (SIGTERM, SIGINT) - takes priority over reload
+    if (g_signal_shutdown) {
+        g_signal_shutdown = 0;
+        g_signal_reload = 0;  // Clear any pending reload - shutdown takes priority
+        int sig = g_signal_received;
+        std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
+
+        // Clear reload flag to ensure clean shutdown (not restart)
+        // This prevents do { ... } while (g_reload_requested) from restarting
+        g_reload_requested = false;
+
+        // Start fade-out for glitch-free shutdown
+        if (g_soft_mute) {
+            g_soft_mute->startFadeOut();
+        }
+
+        // Quit main loop to trigger shutdown sequence
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        } else {
+            g_running = false;
+        }
+        return;  // Don't process reload if shutdown was requested
+    }
+
+    // Check for reload request (SIGHUP) - only if no shutdown pending
     if (g_signal_reload) {
         g_signal_reload = 0;
         int sig = g_signal_received;
@@ -671,25 +698,6 @@ static void process_pending_signals() {
         }
 
         // Quit main loop to trigger reload sequence
-        if (g_main_loop_running.load() && g_pw_loop) {
-            pw_main_loop_quit(g_pw_loop);
-        } else {
-            g_running = false;
-        }
-    }
-
-    // Check for shutdown request (SIGTERM, SIGINT)
-    if (g_signal_shutdown) {
-        g_signal_shutdown = 0;
-        int sig = g_signal_received;
-        std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
-
-        // Start fade-out for glitch-free shutdown
-        if (g_soft_mute) {
-            g_soft_mute->startFadeOut();
-        }
-
-        // Quit main loop to trigger shutdown sequence
         if (g_main_loop_running.load() && g_pw_loop) {
             pw_main_loop_quit(g_pw_loop);
         } else {
