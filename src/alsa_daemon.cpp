@@ -455,8 +455,12 @@ static void zeromq_listener_thread() {
                                     // Validate filter data size
                                     // cufftComplex = 2 * sizeof(float) = 8 bytes
                                     constexpr size_t CUFFT_COMPLEX_SIZE = 8;
-                                    // Max filter size: 64KB per channel (8192 complex values)
-                                    constexpr size_t MAX_FILTER_BYTES = 64 * 1024;
+                                    // Max filter size: 256KB per channel (32768 complex values)
+                                    // This supports fftSize up to 65536 (filterFftSize =
+                                    // fftSize/2+1) Typical HRTF: blockSize=8192, filterTaps=2048 →
+                                    // fftSize=16384 → ~64KB High quality: blockSize=8192,
+                                    // filterTaps=8192 → fftSize=32768 → ~128KB
+                                    constexpr size_t MAX_FILTER_BYTES = 256 * 1024;
 
                                     bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
                                                      (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
@@ -488,7 +492,7 @@ static void zeromq_listener_thread() {
                                         resp["status"] = "error";
                                         resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
                                         resp["message"] =
-                                            "Filter size exceeds maximum (64KB per channel)";
+                                            "Filter size exceeds maximum (256KB per channel)";
                                         response = resp.dump();
                                     } else {
                                         // Filter data is valid but application not yet implemented
