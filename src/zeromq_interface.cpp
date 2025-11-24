@@ -125,6 +125,59 @@ std::string buildResponse(ResponseStatus status, const std::string& message,
     return j.dump();
 }
 
+std::string buildErrorResponse(AudioEngine::ErrorCode code, const std::string& message,
+                               const AudioEngine::InnerError& innerError) {
+    json j;
+    j["status"] = "error";
+    j["error_code"] = AudioEngine::errorCodeToString(code);
+    j["message"] = message;
+
+    // Build inner_error object
+    json inner;
+    if (!innerError.cpp_code.empty()) {
+        inner["cpp_code"] = innerError.cpp_code;
+    } else {
+        inner["cpp_code"] = AudioEngine::errorCodeToHex(code);
+    }
+    if (!innerError.cpp_message.empty()) {
+        inner["cpp_message"] = innerError.cpp_message;
+    }
+    if (innerError.alsa_errno.has_value()) {
+        inner["alsa_errno"] = innerError.alsa_errno.value();
+    } else {
+        inner["alsa_errno"] = nullptr;
+    }
+    if (innerError.alsa_func.has_value()) {
+        inner["alsa_func"] = innerError.alsa_func.value();
+    } else {
+        inner["alsa_func"] = nullptr;
+    }
+    if (innerError.cuda_error.has_value()) {
+        inner["cuda_error"] = innerError.cuda_error.value();
+    } else {
+        inner["cuda_error"] = nullptr;
+    }
+    j["inner_error"] = inner;
+
+    return j.dump();
+}
+
+std::string buildOkResponse(const std::string& message, const std::string& data) {
+    json j;
+    j["status"] = "ok";
+    if (!message.empty()) {
+        j["message"] = message;
+    }
+    if (!data.empty()) {
+        try {
+            j["data"] = json::parse(data);
+        } catch (...) {
+            j["data"] = data;
+        }
+    }
+    return j.dump();
+}
+
 bool parseResponse(const std::string& jsonStr, ResponseStatus& status, std::string& message,
                    std::string& data) {
     try {
@@ -154,6 +207,29 @@ bool parseResponse(const std::string& jsonStr, ResponseStatus& status, std::stri
             }
         } else {
             data = "";
+        }
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "ZMQ JSON parse error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool parseErrorResponse(const std::string& jsonStr, std::string& errorCode, std::string& message,
+                        std::string& innerErrorJson) {
+    try {
+        auto j = json::parse(jsonStr);
+        if (!j.contains("status") || j["status"].get<std::string>() != "error") {
+            return false;
+        }
+
+        errorCode = j.value("error_code", "UNKNOWN_ERROR");
+        message = j.value("message", "");
+
+        if (j.contains("inner_error") && j["inner_error"].is_object()) {
+            innerErrorJson = j["inner_error"].dump();
+        } else {
+            innerErrorJson = "";
         }
         return true;
     } catch (const std::exception& e) {

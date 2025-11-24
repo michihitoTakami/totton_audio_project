@@ -1,6 +1,8 @@
 #ifndef ZEROMQ_INTERFACE_H
 #define ZEROMQ_INTERFACE_H
 
+#include "error_codes.h"
+
 #include <atomic>
 #include <functional>
 #include <map>
@@ -143,13 +145,26 @@ std::string buildCommand(CommandType type, const std::string& params);
 // Parse command JSON
 bool parseCommand(const std::string& json, CommandType& type, std::string& params);
 
-// Build response JSON
+// Build response JSON (legacy format)
 std::string buildResponse(ResponseStatus status, const std::string& message = "",
                           const std::string& data = "");
+
+// Build error response JSON with structured error code and inner_error
+// Format: { "status": "error", "error_code": "...", "message": "...", "inner_error": {...} }
+std::string buildErrorResponse(AudioEngine::ErrorCode code, const std::string& message,
+                               const AudioEngine::InnerError& innerError = {});
+
+// Build success response JSON
+// Format: { "status": "ok", "message": "...", "data": {...} }
+std::string buildOkResponse(const std::string& message = "", const std::string& data = "");
 
 // Parse response JSON
 bool parseResponse(const std::string& json, ResponseStatus& status, std::string& message,
                    std::string& data);
+
+// Parse error response JSON (new format with error_code)
+bool parseErrorResponse(const std::string& json, std::string& errorCode, std::string& message,
+                        std::string& innerErrorJson);
 
 // Build status JSON
 std::string buildStatus(const EngineStatus& status);
