@@ -199,8 +199,8 @@ class HRTFProcessor {
     // Free all GPU resources
     void cleanup();
 
-    void registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
-                              size_t* trackedBytes, const char* context);
+    void registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr, size_t* trackedBytes,
+                              const char* context);
 
     // Get filter index for (size, family) combination
     static int getFilterIndex(HeadSize size, RateFamily family) {
