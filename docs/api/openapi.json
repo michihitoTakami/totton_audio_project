@@ -267,6 +267,68 @@
         }
       }
     },
+    "/daemon/phase-type": {
+      "get": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Get Phase Type",
+        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or linear).\nLinear phase has high latency (~1 second) but no phase distortion.\nMinimum phase has no pre-ringing and low latency.",
+        "operationId": "get_phase_type_daemon_phase_type_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhaseTypeResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Set Phase Type",
+        "description": "Set phase type on daemon.\n\nRequires quad-phase mode to be enabled (4 filter variants preloaded).\nChanges take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- linear: Linear phase filter (high latency ~1 second)",
+        "operationId": "set_phase_type_daemon_phase_type_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhaseTypeUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/daemon/restart-full": {
       "post": {
         "tags": [
@@ -1842,6 +1904,56 @@
         ],
         "title": "OpraVendorsResponse",
         "description": "OPRA vendors list response model."
+      },
+      "PhaseTypeResponse": {
+        "properties": {
+          "phase_type": {
+            "type": "string",
+            "enum": [
+              "minimum",
+              "linear"
+            ],
+            "title": "Phase Type",
+            "description": "Current phase type: 'minimum' or 'linear'"
+          },
+          "latency_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Warning",
+            "description": "Warning message for linear phase (high latency ~1 second)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase_type"
+        ],
+        "title": "PhaseTypeResponse",
+        "description": "Phase type response model."
+      },
+      "PhaseTypeUpdateRequest": {
+        "properties": {
+          "phase_type": {
+            "type": "string",
+            "enum": [
+              "minimum",
+              "linear"
+            ],
+            "title": "Phase Type",
+            "description": "Target phase type: 'minimum' or 'linear'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase_type"
+        ],
+        "title": "PhaseTypeUpdateRequest",
+        "description": "Phase type update request model."
       },
       "RewireRequest": {
         "properties": {
