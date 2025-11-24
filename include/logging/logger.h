@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -53,6 +54,17 @@ struct LogConfig {
  * @return true if initialization succeeded, false otherwise
  */
 bool initialize(const LogConfig& config = LogConfig{});
+
+/**
+ * @brief Early initialization with stderr output only
+ *
+ * Lightweight initialization for logging before config file is available.
+ * Outputs to stderr only. Should be called before PID lock acquisition.
+ * Can be followed by initializeFromConfig() for full initialization.
+ *
+ * @return true if initialization succeeded, false otherwise
+ */
+bool initializeEarly();
 
 /**
  * @brief Initialize logging from JSON config file

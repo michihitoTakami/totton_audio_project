@@ -71,16 +71,49 @@ LogLevel fromSpdlogLevel(spdlog::level::level_enum level) {
 
 }  // namespace
 
+bool initializeEarly() {
+    std::lock_guard<std::mutex> lock(g_init_mutex);
+
+    if (g_initialized.load(std::memory_order_acquire)) {
+        // Already initialized (either early or full), skip
+        return true;
+    }
+
+    try {
+        // Create stderr-only logger for early initialization
+        auto console_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+        console_sink->set_level(spdlog::level::info);
+
+        g_logger = std::make_shared<spdlog::logger>("gpu_upsampler", console_sink);
+        g_logger->set_level(spdlog::level::info);
+        g_logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%t] %v");
+
+        // Register as default logger
+        spdlog::set_default_logger(g_logger);
+
+        // Flush on error level and above
+        g_logger->flush_on(spdlog::level::err);
+
+        g_initialized.store(true, std::memory_order_release);
+
+        return true;
+    } catch (const spdlog::spdlog_ex& ex) {
+        std::cerr << "Early logger initialization failed: " << ex.what() << std::endl;
+        return false;
+    }
+}
+
 bool initialize(const LogConfig& config) {
     std::lock_guard<std::mutex> lock(g_init_mutex);
 
     if (g_initialized.load(std::memory_order_acquire)) {
-        // Already initialized, just update settings
-        if (g_logger) {
-            g_logger->set_level(toSpdlogLevel(config.level));
-            g_logger->set_pattern(config.pattern);
-        }
-        return true;
+        // Already initialized, need to re-initialize with new config
+        // Drop existing logger and re-create with new sinks
+        LOG_DEBUG("Re-initializing logger with new configuration");
+        g_initialized.store(false, std::memory_order_release);
+        spdlog::drop_all();
+        g_logger.reset();
+        // Continue to full initialization below
     }
 
     try {
@@ -224,9 +257,9 @@ std::shared_ptr<spdlog::logger> getLogger() {
     if (g_initialized.load(std::memory_order_acquire)) {
         return g_logger;
     }
-    // Slow path: need initialization
-    initialize();
-    return g_logger;
+    // Not initialized - caller must call initializeEarly() or initialize() first
+    // Return nullptr to allow LOG macros to safely skip logging
+    return nullptr;
 }
 
 std::string_view levelToString(LogLevel level) {

@@ -1057,13 +1057,18 @@ void alsa_output_thread() {
 }
 
 int main(int argc, char* argv[]) {
-    // Acquire PID file lock FIRST (prevent multiple instances)
-    // Note: Logging is initialized AFTER lock to avoid file conflicts
+    // Early initialization with stderr output only (before PID lock)
+    // This allows logging during PID lock acquisition
+    gpu_upsampler::logging::initializeEarly();
+
+    // Acquire PID file lock (prevent multiple instances)
+    // Note: At this point, logging outputs to stderr only
     if (!acquire_pid_lock()) {
         return 1;
     }
 
-    // Initialize logging system from config file (after PID lock acquired)
+    // Full initialization from config file (after PID lock acquired)
+    // This replaces stderr-only logger with configured logger (file + console)
     gpu_upsampler::logging::initializeFromConfig(CONFIG_FILE_PATH);
 
     LOG_INFO("========================================");
