@@ -33,6 +33,7 @@ class Controller {
     // Callbacks for shutdown actions
     using FadeOutCallback = std::function<void()>;
     using QuitLoopCallback = std::function<void()>;
+    using LogCallback = std::function<void(const char*)>;
 
     Controller() = default;
 
@@ -47,6 +48,9 @@ class Controller {
     }
     void setQuitLoopCallback(QuitLoopCallback cb) {
         quitLoopCallback_ = std::move(cb);
+    }
+    void setLogCallback(LogCallback cb) {
+        logCallback_ = std::move(cb);
     }
 
     // Process pending signals. Returns true if any signal was processed.
@@ -100,6 +104,7 @@ class Controller {
 
     FadeOutCallback fadeOutCallback_;
     QuitLoopCallback quitLoopCallback_;
+    LogCallback logCallback_;
 
     int lastSignal_ = 0;
     Action lastAction_ = Action::NONE;

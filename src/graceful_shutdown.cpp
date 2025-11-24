@@ -1,6 +1,6 @@
 #include "graceful_shutdown.h"
 
-#include <iostream>
+#include <cstdio>
 
 namespace GracefulShutdown {
 
@@ -35,7 +35,12 @@ bool Controller::processPendingSignals() {
         lastSignal_ = signalState_->received;
         lastAction_ = Action::SHUTDOWN;
 
-        std::cout << "\nReceived signal " << lastSignal_ << ", shutting down..." << std::endl;
+        // Log via callback (avoids std::cout blocking in realtime context)
+        if (logCallback_) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "\nReceived signal %d, shutting down...", lastSignal_);
+            logCallback_(buf);
+        }
 
         // Clear reload flag to ensure clean shutdown (not restart)
         // This prevents do { ... } while (reloadRequested) from restarting
@@ -49,9 +54,10 @@ bool Controller::processPendingSignals() {
         // Quit main loop to trigger shutdown sequence
         if (mainLoopRunning_.load() && quitLoopCallback_) {
             quitLoopCallback_();
-        } else {
-            running_ = false;
         }
+        // Always set running_ = false as fallback (even if callback called)
+        // This ensures we stop even if quitLoopCallback_ fails or is no-op
+        running_ = false;
         return true;
     }
 
@@ -61,8 +67,13 @@ bool Controller::processPendingSignals() {
         lastSignal_ = signalState_->received;
         lastAction_ = Action::RELOAD;
 
-        std::cout << "\nReceived SIGHUP (signal " << lastSignal_
-                  << "), restarting for config reload..." << std::endl;
+        // Log via callback (avoids std::cout blocking in realtime context)
+        if (logCallback_) {
+            char buf[80];
+            snprintf(buf, sizeof(buf),
+                     "\nReceived SIGHUP (signal %d), restarting for config reload...", lastSignal_);
+            logCallback_(buf);
+        }
         reloadRequested_ = true;
 
         // Start fade-out for glitch-free reload
@@ -73,9 +84,10 @@ bool Controller::processPendingSignals() {
         // Quit main loop to trigger reload sequence
         if (mainLoopRunning_.load() && quitLoopCallback_) {
             quitLoopCallback_();
-        } else {
-            running_ = false;
         }
+        // Always set running_ = false as fallback (even if callback called)
+        // This ensures we stop even if quitLoopCallback_ fails or is no-op
+        running_ = false;
         return true;
     }
 

@@ -1,6 +1,7 @@
 #include "graceful_shutdown.h"
 
 #include <gtest/gtest.h>
+#include <iostream>
 
 using namespace GracefulShutdown;
 
@@ -13,6 +14,8 @@ class GracefulShutdownTest : public ::testing::Test {
         quitLoopCalled_ = false;
         controller_.setFadeOutCallback([this]() { fadeOutCalled_ = true; });
         controller_.setQuitLoopCallback([this]() { quitLoopCalled_ = true; });
+        // Set log callback to print to stdout (safe in test context)
+        controller_.setLogCallback([](const char* msg) { std::cout << msg << std::endl; });
     }
 
     SignalState state_;
@@ -103,6 +106,8 @@ TEST_F(GracefulShutdownTest, ProcessPendingSignals_SIGTERM_CallsQuitLoop_WhenMai
 
     controller_.processPendingSignals();
     EXPECT_TRUE(quitLoopCalled_);
+    // Also verify running_ is set to false (fallback)
+    EXPECT_FALSE(controller_.isRunning());
 }
 
 TEST_F(GracefulShutdownTest, ProcessPendingSignals_SIGTERM_ClearsReloadRequested) {
@@ -159,6 +164,18 @@ TEST_F(GracefulShutdownTest, ProcessPendingSignals_SIGHUP_CallsFadeOut) {
 
     controller_.processPendingSignals();
     EXPECT_TRUE(fadeOutCalled_);
+}
+
+TEST_F(GracefulShutdownTest, ProcessPendingSignals_SIGHUP_SetsRunningFalse_Fallback) {
+    // Verify running_ is always set to false (even when quitLoopCallback is called)
+    state_.reload = 1;
+    state_.received = SIGHUP;
+    controller_.setMainLoopRunning(true);
+
+    controller_.processPendingSignals();
+    EXPECT_TRUE(quitLoopCalled_);
+    // Fallback: running_ should be false even if callback was called
+    EXPECT_FALSE(controller_.isRunning());
 }
 
 // ========== CRITICAL: SIGTERM + SIGHUP Race Condition Tests ==========
