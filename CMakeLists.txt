@@ -22,6 +22,18 @@ pkg_check_modules(ALSA REQUIRED alsa)
 # ZeroMQ for IPC communication
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
+# systemd for daemon notification (optional, for Type=notify support)
+# Service file Type is automatically set based on libsystemd availability
+pkg_check_modules(SYSTEMD libsystemd)
+if(SYSTEMD_FOUND)
+    set(HAVE_SYSTEMD TRUE)
+    message(STATUS "libsystemd found - systemd notification enabled (Type=notify)")
+else()
+    set(HAVE_SYSTEMD FALSE)
+    message(STATUS "libsystemd not found - systemd notification disabled (Type=simple)")
+    message(STATUS "  To enable: sudo apt-get install libsystemd-dev && cmake -B build")
+endif()
+
 # NVML for GPU utilization monitoring (optional)
 # On minimal Jetson environments or some container setups, NVML may not be available
 if(TARGET CUDA::nvml)
@@ -159,6 +171,14 @@ target_link_libraries(gpu_upsampler_alsa
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
 )
+
+# Conditionally link libsystemd for Type=notify support
+if(HAVE_SYSTEMD)
+    target_link_libraries(gpu_upsampler_alsa ${SYSTEMD_LIBRARIES})
+    target_compile_definitions(gpu_upsampler_alsa PRIVATE HAVE_SYSTEMD)
+    target_include_directories(gpu_upsampler_alsa PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+endif()
+
 target_include_directories(gpu_upsampler_alsa PRIVATE
     ${ZMQ_INCLUDE_DIRS}
     ${cppzmq_SOURCE_DIR}
@@ -309,6 +329,17 @@ if(NOT DEFINED SYSTEMD_USER_UNIT_DIR)
     else()
         set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
     endif()
+endif()
+
+# Set systemd service type based on libsystemd availability
+if(HAVE_SYSTEMD)
+    set(SYSTEMD_SERVICE_TYPE "notify")
+    set(SYSTEMD_NOTIFY_ACCESS "NotifyAccess=main")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog: Daemon sends WATCHDOG=1 every 100ms, systemd expects it within 5s\nWatchdogSec=5")
+else()
+    set(SYSTEMD_SERVICE_TYPE "simple")
+    set(SYSTEMD_NOTIFY_ACCESS "# NotifyAccess not needed for Type=simple")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog disabled (libsystemd not available at build time)")
 endif()
 
 # Generate service file with correct install paths
