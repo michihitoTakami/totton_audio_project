@@ -6,7 +6,14 @@ import time
 from fastapi import APIRouter, HTTPException
 
 from ..constants import DAEMON_BINARY, PID_FILE_PATH
-from ..models import ApiResponse, DaemonStatus, RewireRequest, ZmqPingResponse
+from ..models import (
+    ApiResponse,
+    DaemonStatus,
+    PhaseTypeResponse,
+    PhaseTypeUpdateRequest,
+    RewireRequest,
+    ZmqPingResponse,
+)
 from ..services import (
     check_daemon_running,
     check_pipewire_sink,
@@ -112,6 +119,75 @@ async def zmq_command(cmd: str):
             success=success,
             message=response if isinstance(response, str) else "Command executed",
             data={"response": response} if success else None,
+        )
+
+
+# ============================================================================
+# Phase Type Control
+# ============================================================================
+
+
+@router.get("/phase-type", response_model=PhaseTypeResponse)
+async def get_phase_type():
+    """
+    Get current phase type from daemon.
+
+    Returns the current filter phase type (minimum or linear).
+    Linear phase has high latency (~1 second) but no phase distortion.
+    Minimum phase has no pre-ringing and low latency.
+    """
+    with get_daemon_client() as client:
+        success, result = client.get_phase_type()
+        if not success:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to get phase type: {result}",
+            )
+
+        phase_type = result.get("phase_type")
+        if phase_type not in ("minimum", "linear"):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Invalid phase type from daemon: {phase_type}",
+            )
+
+        latency_warning = None
+        if phase_type == "linear":
+            latency_warning = (
+                "Linear phase filter has high latency (~1 second). "
+                "Use minimum phase for real-time applications."
+            )
+
+        return PhaseTypeResponse(
+            phase_type=phase_type,
+            latency_warning=latency_warning,
+        )
+
+
+@router.put("/phase-type", response_model=ApiResponse)
+async def set_phase_type(request: PhaseTypeUpdateRequest):
+    """
+    Set phase type on daemon.
+
+    Requires quad-phase mode to be enabled (4 filter variants preloaded).
+    Changes take effect immediately without daemon restart.
+
+    - minimum: Minimum phase filter (recommended, no pre-ringing)
+    - linear: Linear phase filter (high latency ~1 second)
+    """
+    # Validation is handled by Pydantic Literal type (returns 422 for invalid values)
+    with get_daemon_client() as client:
+        success, message = client.set_phase_type(request.phase_type)
+        if not success:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to set phase type: {message}",
+            )
+
+        return ApiResponse(
+            success=True,
+            message=f"Phase type set to {request.phase_type}",
+            data={"phase_type": request.phase_type},
         )
 
 

@@ -1,6 +1,6 @@
 """Pydantic models for the GPU Upsampler Web API."""
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -66,6 +66,29 @@ class ZmqPingResponse(BaseModel):
     success: bool
     response: Optional[Any] = None
     daemon_running: bool
+
+
+PhaseType = Literal["minimum", "linear"]
+
+
+class PhaseTypeResponse(BaseModel):
+    """Phase type response model."""
+
+    phase_type: PhaseType = Field(
+        description="Current phase type: 'minimum' or 'linear'"
+    )
+    latency_warning: Optional[str] = Field(
+        default=None,
+        description="Warning message for linear phase (high latency ~1 second)",
+    )
+
+
+class PhaseTypeUpdateRequest(BaseModel):
+    """Phase type update request model."""
+
+    phase_type: PhaseType = Field(
+        description="Target phase type: 'minimum' or 'linear'"
+    )
 
 
 # ============================================================================

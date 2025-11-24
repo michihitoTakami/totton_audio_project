@@ -112,6 +112,38 @@ class DaemonClient:
         success, _ = self.send_command("PING")
         return success
 
+    def get_phase_type(self) -> tuple[bool, dict | str]:
+        """
+        Get current phase type from daemon.
+
+        Returns:
+            (success, {"phase_type": "minimum"|"linear"}) on success
+            (False, error_message) on failure
+        """
+        import json
+
+        success, response = self.send_command("PHASE_TYPE_GET")
+        if success:
+            try:
+                return True, json.loads(response)
+            except json.JSONDecodeError:
+                return False, f"Invalid JSON response: {response}"
+        return False, response
+
+    def set_phase_type(self, phase_type: str) -> tuple[bool, str]:
+        """
+        Set phase type on daemon.
+
+        Args:
+            phase_type: "minimum" or "linear"
+
+        Returns:
+            (success, message) tuple
+        """
+        if phase_type not in ("minimum", "linear"):
+            return False, f"Invalid phase type: {phase_type}"
+        return self.send_command(f"PHASE_TYPE_SET:{phase_type}")
+
 
 def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:
     """

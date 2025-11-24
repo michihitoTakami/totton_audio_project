@@ -242,3 +242,65 @@ class TestResponseModels:
         required_fields = ["success", "daemon_running"]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"
+
+
+class TestPhaseTypeEndpoints:
+    """Test phase type API endpoints (Issue #197)."""
+
+    def test_get_phase_type_response_model(self, client: TestClient):
+        """GET /daemon/phase-type should return PhaseTypeResponse model."""
+        response = client.get("/daemon/phase-type")
+        # May return 503 if daemon not running
+        if response.status_code == 503:
+            pytest.skip("Daemon not running")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should have PhaseTypeResponse model fields
+        assert "phase_type" in data, "Missing field: phase_type"
+        assert data["phase_type"] in ["minimum", "linear"], "Invalid phase_type value"
+        # latency_warning is optional (null for minimum phase)
+        assert "latency_warning" in data
+
+    def test_get_phase_type_in_openapi_schema(self, client: TestClient):
+        """GET /daemon/phase-type should be in OpenAPI schema."""
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+        schema = response.json()
+
+        # Check endpoint exists
+        phase_type_path = schema["paths"].get("/daemon/phase-type", {})
+        assert "get" in phase_type_path, "GET /daemon/phase-type missing in OpenAPI"
+        assert "put" in phase_type_path, "PUT /daemon/phase-type missing in OpenAPI"
+
+        # Check response schema
+        get_op = phase_type_path["get"]
+        responses = get_op.get("responses", {})
+        success_response = responses.get("200", {})
+        assert (
+            "content" in success_response
+        ), "GET /daemon/phase-type missing response content"
+
+    def test_put_phase_type_validation_error(self, client: TestClient):
+        """PUT /daemon/phase-type with invalid value should return 422 (Pydantic Literal validation)."""
+        response = client.put(
+            "/daemon/phase-type",
+            json={"phase_type": "invalid_value"},
+        )
+        assert response.status_code == 422
+        data = response.json()
+        assert "detail" in data
+        assert "error_code" in data
+        assert data["error_code"] == "VALIDATION_ERROR"
+
+    def test_put_phase_type_missing_field(self, client: TestClient):
+        """PUT /daemon/phase-type with missing field should return 422."""
+        response = client.put(
+            "/daemon/phase-type",
+            json={},
+        )
+        assert response.status_code == 422
+        data = response.json()
+        assert "detail" in data
+        assert "error_code" in data
+        assert data["error_code"] == "VALIDATION_ERROR"
