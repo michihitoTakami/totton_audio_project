@@ -626,25 +626,13 @@ class TestOpraIntegration:
 
 
 @requires_opra_submodule
-@pytest.mark.skip(
-    reason="API import requires package mode. Use conftest.py fixture instead."
-)
 class TestOpraApi:
     """API layer tests for OPRA endpoints with apply_correction."""
 
     @pytest.fixture
-    def client(self):
-        """Create test client for FastAPI app."""
-        from fastapi.testclient import TestClient
-
-        # Import from web module
-        import sys
-        from pathlib import Path
-
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
-        import main
-
-        return TestClient(main.app)
+    def client(self, web_app):
+        """Use shared web_app fixture from conftest.py."""
+        return web_app
 
     @pytest.fixture
     def sample_eq_id(self, client):
@@ -716,8 +704,6 @@ class TestOpraApi:
         avoiding side effects on shared workspace.
         """
         from fastapi.testclient import TestClient
-        import sys
-        from pathlib import Path
 
         # Setup temp directories
         temp_eq_dir = tmp_path / "EQ"
@@ -726,11 +712,12 @@ class TestOpraApi:
         temp_config.write_text("{}")
 
         # Import and patch the web module before creating client
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
-        import main
+        from web import constants
 
-        monkeypatch.setattr(main, "EQ_PROFILES_DIR", temp_eq_dir)
-        monkeypatch.setattr(main, "CONFIG_PATH", temp_config)
+        monkeypatch.setattr(constants, "EQ_PROFILES_DIR", temp_eq_dir)
+        monkeypatch.setattr(constants, "CONFIG_PATH", temp_config)
+
+        from web import main
 
         client = TestClient(main.app)
 
@@ -746,7 +733,7 @@ class TestOpraApi:
         data = response.json()
 
         assert data["data"]["modern_target_applied"] is True
-        assert "_kb5000_7" in data["data"]["path"]
+        assert "_kb5000_7" in data["data"]["profile_name"]
 
         # Verify file was created in temp directory (not real data/EQ)
         created_files = list(temp_eq_dir.glob("opra_*_kb5000_7.txt"))
