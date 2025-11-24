@@ -308,10 +308,26 @@ def get_embedded_html() -> str:
             }
             try {
                 const res = await fetch(API + '/opra/search?q=' + encodeURIComponent(query) + '&limit=20');
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+                    const container = document.getElementById('opraResults');
+                    if (res.status === 503) {
+                        container.innerHTML = '<div style="color:#e74c3c; font-size:12px; padding:8px; line-height:1.5;">' +
+                            '<strong>OPRA database is not available</strong><br>' +
+                            'Run <code style="background:#0f3460; padding:2px 4px;">git submodule update --init</code> to initialize.' +
+                            '</div>';
+                    } else {
+                        container.innerHTML = `<div style="color:#e74c3c; font-size:12px; padding:8px;">Error: ${errorData.detail || 'Search failed'}</div>`;
+                    }
+                    console.error('OPRA search failed:', errorData);
+                    return;
+                }
                 const data = await res.json();
                 renderOpraResults(data.results);
             } catch (e) {
                 console.error('OPRA search failed:', e);
+                const container = document.getElementById('opraResults');
+                container.innerHTML = '<div style="color:#e74c3c; font-size:12px; padding:8px;">Network error. Please check the server.</div>';
             }
         }
 

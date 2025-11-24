@@ -755,3 +755,33 @@ class TestOpraApi:
         config_data = json.loads(temp_config.read_text())
         assert config_data.get("eqEnabled") is True
         assert "_kb5000_7" in config_data.get("eqProfilePath", "")
+
+
+class TestOpraErrorHandling:
+    """Tests for OPRA error handling when database is not available."""
+
+    def test_database_not_found_raises_error(self, tmp_path):
+        """OpraDatabase should raise FileNotFoundError when DB is missing."""
+        nonexistent_path = tmp_path / "nonexistent" / "database.jsonl"
+        db = OpraDatabase(db_path=nonexistent_path)
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            _ = db.vendor_count  # Triggers _ensure_loaded()
+
+        assert "OPRA database not found" in str(exc_info.value)
+        assert "git submodule update --init" in str(exc_info.value)
+
+    def test_error_message_includes_helpful_instructions(self, tmp_path):
+        """Error message should include helpful instructions for users."""
+        nonexistent_path = tmp_path / "nonexistent" / "database.jsonl"
+        db = OpraDatabase(db_path=nonexistent_path)
+
+        try:
+            _ = db.search("test")
+            assert False, "Expected FileNotFoundError"
+        except FileNotFoundError as e:
+            error_msg = str(e)
+            # Check for essential information
+            assert "OPRA database not found" in error_msg
+            assert "git submodule update --init" in error_msg
+            assert str(nonexistent_path) in error_msg
