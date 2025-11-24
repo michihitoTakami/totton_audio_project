@@ -94,7 +94,9 @@ class TestSaveConfig:
         new_settings = Settings(
             alsa_device="hw:NEW",
             upsample_ratio=16,
+            eq_enabled=True,
             eq_profile="NewProfile",
+            eq_profile_path="/path/to/new_eq.txt",
             input_rate=48000,
             output_rate=768000,
         )
@@ -135,7 +137,7 @@ class TestSaveConfig:
         assert saved_config["phaseType"] == "minimum"
         assert saved_config["inputSampleRate"] == 44100
         assert saved_config["eqEnabled"] is True
-        assert saved_config["eqProfilePath"] == "/path/to/eq.txt"
+        assert saved_config["eqProfilePath"] == "/path/to/new_eq.txt"
 
     def test_save_creates_new_file(self, tmp_path: Path) -> None:
         """Test that save_config creates a new file if it doesn't exist."""
