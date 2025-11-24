@@ -75,11 +75,24 @@ fi
 if $RUN_CPP; then
     echo -e "${YELLOW}=== Running C++ CPU tests ===${NC}"
 
-    # Check if build exists, if not build
+    # Check if build exists or needs rebuild (check for stale binary)
+    NEEDS_BUILD=false
     if [ ! -f "build/cpu_tests" ]; then
+        NEEDS_BUILD=true
+    else
+        # Check if any source files are newer than the binary
+        for src in src/*.cpp include/*.h; do
+            if [ -f "$src" ] && [ "$src" -nt "build/cpu_tests" ]; then
+                NEEDS_BUILD=true
+                break
+            fi
+        done
+    fi
+
+    if $NEEDS_BUILD; then
         echo "Building cpu_tests..."
-        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release > /dev/null 2>&1
-        "$CMAKE_BIN" --build build --target cpu_tests -j8 > /dev/null 2>&1
+        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
+        "$CMAKE_BIN" --build build --target cpu_tests -j8 2>&1 | tail -20
     fi
 
     if ./build/cpu_tests; then
@@ -95,11 +108,24 @@ fi
 if $RUN_GPU; then
     echo -e "${YELLOW}=== Running GPU tests ===${NC}"
 
-    # Check if build exists, if not build
+    # Check if build exists or needs rebuild (check for stale binary)
+    NEEDS_BUILD=false
     if [ ! -f "build/gpu_tests" ]; then
+        NEEDS_BUILD=true
+    else
+        # Check if any source files are newer than the binary
+        for src in src/*.cpp src/*.cu src/gpu/*.cu include/*.h data/coefficients/*.h; do
+            if [ -f "$src" ] && [ "$src" -nt "build/gpu_tests" ]; then
+                NEEDS_BUILD=true
+                break
+            fi
+        done
+    fi
+
+    if $NEEDS_BUILD; then
         echo "Building gpu_tests..."
-        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release > /dev/null 2>&1
-        "$CMAKE_BIN" --build build --target gpu_tests -j8 > /dev/null 2>&1
+        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
+        "$CMAKE_BIN" --build build --target gpu_tests -j8 2>&1 | tail -20
     fi
 
     if ./build/gpu_tests; then

@@ -96,14 +96,14 @@ Phase 3: Hardware Integration         [                    ] 0%
 
 | Rate Family | Input Rate | Upsample Ratio | Output Rate | Coefficient File |
 |-------------|------------|----------------|-------------|------------------|
-| 44.1k系 | 44,100 Hz | 16x | 705,600 Hz | `filter_44k_16x_2000000_min_phase.bin` |
-| 44.1k系 | 88,200 Hz | 8x | 705,600 Hz | `filter_44k_8x_2000000_min_phase.bin` |
-| 44.1k系 | 176,400 Hz | 4x | 705,600 Hz | `filter_44k_4x_2000000_min_phase.bin` |
-| 44.1k系 | 352,800 Hz | 2x | 705,600 Hz | `filter_44k_2x_2000000_min_phase.bin` |
-| 48k系 | 48,000 Hz | 16x | 768,000 Hz | `filter_48k_16x_2000000_min_phase.bin` |
-| 48k系 | 96,000 Hz | 8x | 768,000 Hz | `filter_48k_8x_2000000_min_phase.bin` |
-| 48k系 | 192,000 Hz | 4x | 768,000 Hz | `filter_48k_4x_2000000_min_phase.bin` |
-| 48k系 | 384,000 Hz | 2x | 768,000 Hz | `filter_48k_2x_2000000_min_phase.bin` |
+| 44.1k系 | 44,100 Hz | 16x | 705,600 Hz | `filter_44k_16x_2m_min_phase.bin` |
+| 44.1k系 | 88,200 Hz | 8x | 705,600 Hz | `filter_44k_8x_2m_min_phase.bin` |
+| 44.1k系 | 176,400 Hz | 4x | 705,600 Hz | `filter_44k_4x_2m_min_phase.bin` |
+| 44.1k系 | 352,800 Hz | 2x | 705,600 Hz | `filter_44k_2x_2m_min_phase.bin` |
+| 48k系 | 48,000 Hz | 16x | 768,000 Hz | `filter_48k_16x_2m_min_phase.bin` |
+| 48k系 | 96,000 Hz | 8x | 768,000 Hz | `filter_48k_8x_2m_min_phase.bin` |
+| 48k系 | 192,000 Hz | 4x | 768,000 Hz | `filter_48k_4x_2m_min_phase.bin` |
+| 48k系 | 384,000 Hz | 2x | 768,000 Hz | `filter_48k_2x_2m_min_phase.bin` |
 
 ### 実装状況
 
