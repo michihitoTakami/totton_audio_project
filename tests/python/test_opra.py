@@ -702,6 +702,11 @@ class TestOpraApi:
 
         This test uses the real data/EQ directory and cleans up after itself.
         """
+        from web.constants import CONFIG_PATH, EQ_PROFILES_DIR
+        import json
+
+        # Backup original config
+        original_config = json.loads(CONFIG_PATH.read_text())
 
         # Get sample EQ ID
         response = client.get("/opra/search?q=HD650&limit=1")
@@ -719,8 +724,6 @@ class TestOpraApi:
         assert "_kb5000_7" in profile_name
 
         # Verify file was created in real data/EQ directory
-        from web.constants import EQ_PROFILES_DIR
-
         expected_file = EQ_PROFILES_DIR / f"{profile_name}.txt"
         try:
             assert expected_file.exists(), f"Expected file not found: {expected_file}"
@@ -732,16 +735,14 @@ class TestOpraApi:
             assert "2.8" in content  # Correction gain
 
             # Verify config.json was updated
-            from web.constants import CONFIG_PATH
-            import json
-
             config_data = json.loads(CONFIG_PATH.read_text())
             assert config_data.get("eqEnabled") is True
             assert profile_name in config_data.get("eqProfile", "")
         finally:
-            # Cleanup: remove the test file
+            # Cleanup: remove the test file and restore config
             if expected_file.exists():
                 expected_file.unlink()
+            CONFIG_PATH.write_text(json.dumps(original_config, indent=2) + "\n")
 
 
 class TestOpraErrorHandling:
