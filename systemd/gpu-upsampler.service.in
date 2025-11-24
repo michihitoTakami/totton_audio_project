@@ -9,6 +9,8 @@ BindsTo=pipewire.service
 [Service]
 # Type=notify: Daemon sends READY=1 when initialization is complete
 # This ensures systemd waits for full initialization before considering the service "started"
+# NOTE: If built without libsystemd (HAVE_SYSTEMD=OFF), change to Type=simple
+#       or install libsystemd-dev and rebuild
 Type=notify
 NotifyAccess=main
 WorkingDirectory=@CMAKE_INSTALL_FULL_DATADIR@/gpu_upsampler

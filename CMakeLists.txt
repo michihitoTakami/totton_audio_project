@@ -30,6 +30,8 @@ if(SYSTEMD_FOUND)
 else()
     set(HAVE_SYSTEMD FALSE)
     message(STATUS "libsystemd not found - systemd notification disabled")
+    message(STATUS "  To enable: sudo apt-get install libsystemd-dev")
+    message(STATUS "  Or change Type=notify to Type=simple in service file")
 endif()
 
 # NVML for GPU utilization monitoring (optional)
