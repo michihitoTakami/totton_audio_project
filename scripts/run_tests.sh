@@ -12,6 +12,12 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}=== Diff-based Test Runner ===${NC}"
 
+# Prefer system cmake (avoid python shim in ~/.local/bin without module)
+CMAKE_BIN=${CMAKE_BIN:-cmake}
+if ! "$CMAKE_BIN" --version >/dev/null 2>&1 && [ -x /usr/bin/cmake ]; then
+    CMAKE_BIN=/usr/bin/cmake
+fi
+
 # Get changed files compared to origin/main
 # For pre-push, we compare against what we're pushing to
 CHANGED_FILES=$(git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only HEAD~1)
@@ -72,8 +78,8 @@ if $RUN_CPP; then
     # Check if build exists, if not build
     if [ ! -f "build/cpu_tests" ]; then
         echo "Building cpu_tests..."
-        cmake -B build -DCMAKE_BUILD_TYPE=Release > /dev/null 2>&1
-        cmake --build build --target cpu_tests -j8 > /dev/null 2>&1
+        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release > /dev/null 2>&1
+        "$CMAKE_BIN" --build build --target cpu_tests -j8 > /dev/null 2>&1
     fi
 
     if ./build/cpu_tests; then
@@ -92,8 +98,8 @@ if $RUN_GPU; then
     # Check if build exists, if not build
     if [ ! -f "build/gpu_tests" ]; then
         echo "Building gpu_tests..."
-        cmake -B build -DCMAKE_BUILD_TYPE=Release > /dev/null 2>&1
-        cmake --build build --target gpu_tests -j8 > /dev/null 2>&1
+        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release > /dev/null 2>&1
+        "$CMAKE_BIN" --build build --target gpu_tests -j8 > /dev/null 2>&1
     fi
 
     if ./build/gpu_tests; then
