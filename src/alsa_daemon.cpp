@@ -1,4 +1,5 @@
 #include "audio_utils.h"
+#include "base64.h"
 #include "config_loader.h"
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <sstream>
@@ -360,6 +362,183 @@ static void zeromq_listener_thread() {
                 bool initialized = (g_hrtf_processor != nullptr);
                 response = "OK:{\"enabled\":" + std::string(enabled ? "true" : "false") +
                            ",\"initialized\":" + std::string(initialized ? "true" : "false") + "}";
+            }
+            // JSON format commands for crossfeed (#150)
+            else if (cmd.find("{") == 0) {
+                // Parse JSON command
+                try {
+                    nlohmann::json j = nlohmann::json::parse(cmd);
+                    std::string cmdType = j.value("cmd", "");
+
+                    if (cmdType == "CROSSFEED_ENABLE") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        if (g_hrtf_processor) {
+                            g_hrtf_processor->resetStreaming();
+                            g_cf_stream_input_left.clear();
+                            g_cf_stream_input_right.clear();
+                            g_cf_stream_accumulated_left = 0;
+                            g_cf_stream_accumulated_right = 0;
+                            g_hrtf_processor->setEnabled(true);
+                            g_crossfeed_enabled.store(true);
+                            nlohmann::json resp;
+                            resp["status"] = "ok";
+                            resp["message"] = "Crossfeed enabled";
+                            response = resp.dump();
+                        } else {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                            resp["message"] = "HRTF processor not initialized";
+                            response = resp.dump();
+                        }
+                    } else if (cmdType == "CROSSFEED_DISABLE") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        g_crossfeed_enabled.store(false);
+                        if (g_hrtf_processor) {
+                            g_hrtf_processor->setEnabled(false);
+                        }
+                        nlohmann::json resp;
+                        resp["status"] = "ok";
+                        resp["message"] = "Crossfeed disabled";
+                        response = resp.dump();
+                    } else if (cmdType == "CROSSFEED_SET_COMBINED") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        if (!g_hrtf_processor) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                            resp["message"] = "HRTF processor not initialized";
+                            response = resp.dump();
+                        } else if (!j.contains("params")) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params field";
+                            response = resp.dump();
+                        } else {
+                            auto params = j["params"];
+                            std::string rateFamily = params.value("rate_family", "");
+                            std::string combinedLL = params.value("combined_ll", "");
+                            std::string combinedLR = params.value("combined_lr", "");
+                            std::string combinedRL = params.value("combined_rl", "");
+                            std::string combinedRR = params.value("combined_rr", "");
+
+                            if (rateFamily.empty() || combinedLL.empty() || combinedLR.empty() ||
+                                combinedRL.empty() || combinedRR.empty()) {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "IPC_INVALID_PARAMS";
+                                resp["message"] = "Missing required filter data";
+                                response = resp.dump();
+                            } else if (rateFamily != "44k" && rateFamily != "48k") {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "CROSSFEED_INVALID_RATE_FAMILY";
+                                resp["message"] =
+                                    "Invalid rate family: " + rateFamily + " (expected 44k or 48k)";
+                                response = resp.dump();
+                            } else {
+                                // Decode Base64 filter data
+                                auto decodedLL = Base64::decode(combinedLL);
+                                auto decodedLR = Base64::decode(combinedLR);
+                                auto decodedRL = Base64::decode(combinedRL);
+                                auto decodedRR = Base64::decode(combinedRR);
+
+                                if (decodedLL.empty() || decodedLR.empty() || decodedRL.empty() ||
+                                    decodedRR.empty()) {
+                                    nlohmann::json resp;
+                                    resp["status"] = "error";
+                                    resp["error_code"] = "IPC_INVALID_PARAMS";
+                                    resp["message"] = "Failed to decode Base64 filter data";
+                                    response = resp.dump();
+                                } else {
+                                    // Validate filter data size
+                                    // cufftComplex = 2 * sizeof(float) = 8 bytes
+                                    constexpr size_t CUFFT_COMPLEX_SIZE = 8;
+                                    // Max filter size: 256KB per channel (32768 complex values)
+                                    // This supports fftSize up to 65536 (filterFftSize =
+                                    // fftSize/2+1) Typical HRTF: blockSize=8192, filterTaps=2048 →
+                                    // fftSize=16384 → ~64KB High quality: blockSize=8192,
+                                    // filterTaps=8192 → fftSize=32768 → ~128KB
+                                    constexpr size_t MAX_FILTER_BYTES = 256 * 1024;
+
+                                    bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedRL.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedRR.size() % CUFFT_COMPLEX_SIZE == 0);
+
+                                    bool sizesMatch = (decodedLL.size() == decodedLR.size()) &&
+                                                      (decodedLL.size() == decodedRL.size()) &&
+                                                      (decodedLL.size() == decodedRR.size());
+
+                                    bool withinLimit = (decodedLL.size() <= MAX_FILTER_BYTES);
+
+                                    if (!sizeValid) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "Filter size must be multiple of 8 (cufftComplex)";
+                                        response = resp.dump();
+                                    } else if (!sizesMatch) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "All 4 channel filters must have same size";
+                                        response = resp.dump();
+                                    } else if (!withinLimit) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "Filter size exceeds maximum (256KB per channel)";
+                                        response = resp.dump();
+                                    } else {
+                                        // Filter data is valid but application not yet implemented
+                                        // See GitHub Issue #233 for HRTFProcessor API extension
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_NOT_IMPLEMENTED";
+                                        resp["message"] =
+                                            "Filter application not yet implemented (see #233)";
+                                        resp["data"]["rate_family"] = rateFamily;
+                                        resp["data"]["filter_size"] = decodedLL.size();
+                                        resp["data"]["complex_count"] =
+                                            decodedLL.size() / CUFFT_COMPLEX_SIZE;
+                                        response = resp.dump();
+                                        std::cout << "ZeroMQ: CROSSFEED_SET_COMBINED received for "
+                                                  << rateFamily << " (" << decodedLL.size()
+                                                  << " bytes) - NOT YET IMPLEMENTED" << std::endl;
+                                    }
+                                }
+                            }
+                        }
+                    } else if (cmdType == "CROSSFEED_GET_STATUS") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        bool enabled = g_crossfeed_enabled.load();
+                        bool initialized = (g_hrtf_processor != nullptr);
+                        nlohmann::json resp;
+                        resp["status"] = "ok";
+                        resp["data"]["enabled"] = enabled;
+                        resp["data"]["initialized"] = initialized;
+                        // head_size and headphone fields are intentionally omitted
+                        // until HRTFProcessor exposes actual HRTF metadata (#233)
+                        response = resp.dump();
+                    } else {
+                        nlohmann::json resp;
+                        resp["status"] = "error";
+                        resp["error_code"] = "IPC_INVALID_COMMAND";
+                        resp["message"] = "Unknown JSON command: " + cmdType;
+                        response = resp.dump();
+                    }
+                } catch (const nlohmann::json::exception& e) {
+                    nlohmann::json resp;
+                    resp["status"] = "error";
+                    resp["error_code"] = "IPC_PROTOCOL_ERROR";
+                    resp["message"] = std::string("JSON parse error: ") + e.what();
+                    response = resp.dump();
+                }
             } else if (cmd == "PHASE_TYPE_GET") {
                 // Get current phase type
                 if (g_upsampler) {

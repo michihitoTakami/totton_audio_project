@@ -31,6 +31,14 @@ const char* commandTypeToString(CommandType type) {
         return "RESTORE_EQ";
     case CommandType::SHUTDOWN:
         return "SHUTDOWN";
+    case CommandType::CROSSFEED_ENABLE:
+        return "CROSSFEED_ENABLE";
+    case CommandType::CROSSFEED_DISABLE:
+        return "CROSSFEED_DISABLE";
+    case CommandType::CROSSFEED_SET_COMBINED:
+        return "CROSSFEED_SET_COMBINED";
+    case CommandType::CROSSFEED_GET_STATUS:
+        return "CROSSFEED_GET_STATUS";
     default:
         return "UNKNOWN";
     }
@@ -38,10 +46,18 @@ const char* commandTypeToString(CommandType type) {
 
 CommandType stringToCommandType(const std::string& str) {
     static const std::map<std::string, CommandType> lookup = {
-        {"LOAD_IR", CommandType::LOAD_IR},         {"SET_GAIN", CommandType::SET_GAIN},
-        {"SOFT_RESET", CommandType::SOFT_RESET},   {"GET_STATUS", CommandType::GET_STATUS},
-        {"SWITCH_RATE", CommandType::SWITCH_RATE}, {"APPLY_EQ", CommandType::APPLY_EQ},
-        {"RESTORE_EQ", CommandType::RESTORE_EQ},   {"SHUTDOWN", CommandType::SHUTDOWN}};
+        {"LOAD_IR", CommandType::LOAD_IR},
+        {"SET_GAIN", CommandType::SET_GAIN},
+        {"SOFT_RESET", CommandType::SOFT_RESET},
+        {"GET_STATUS", CommandType::GET_STATUS},
+        {"SWITCH_RATE", CommandType::SWITCH_RATE},
+        {"APPLY_EQ", CommandType::APPLY_EQ},
+        {"RESTORE_EQ", CommandType::RESTORE_EQ},
+        {"SHUTDOWN", CommandType::SHUTDOWN},
+        {"CROSSFEED_ENABLE", CommandType::CROSSFEED_ENABLE},
+        {"CROSSFEED_DISABLE", CommandType::CROSSFEED_DISABLE},
+        {"CROSSFEED_SET_COMBINED", CommandType::CROSSFEED_SET_COMBINED},
+        {"CROSSFEED_GET_STATUS", CommandType::CROSSFEED_GET_STATUS}};
 
     auto it = lookup.find(str);
     if (it != lookup.end()) {
@@ -608,6 +624,32 @@ CommandResult ZMQClient::restoreEQ() {
 
 CommandResult ZMQClient::shutdown() {
     return sendCommand(CommandType::SHUTDOWN);
+}
+
+CommandResult ZMQClient::crossfeedEnable() {
+    return sendCommand(CommandType::CROSSFEED_ENABLE);
+}
+
+CommandResult ZMQClient::crossfeedDisable() {
+    return sendCommand(CommandType::CROSSFEED_DISABLE);
+}
+
+CommandResult ZMQClient::crossfeedSetCombined(const std::string& rateFamily,
+                                              const std::string& combinedLL,
+                                              const std::string& combinedLR,
+                                              const std::string& combinedRL,
+                                              const std::string& combinedRR) {
+    json params;
+    params["rate_family"] = rateFamily;
+    params["combined_ll"] = combinedLL;
+    params["combined_lr"] = combinedLR;
+    params["combined_rl"] = combinedRL;
+    params["combined_rr"] = combinedRR;
+    return sendCommand(CommandType::CROSSFEED_SET_COMBINED, params.dump());
+}
+
+CommandResult ZMQClient::crossfeedGetStatus() {
+    return sendCommand(CommandType::CROSSFEED_GET_STATUS);
 }
 
 bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, StatusCallback callback) {

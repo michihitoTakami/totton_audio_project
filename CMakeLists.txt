@@ -154,6 +154,7 @@ target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
+    zeromq_interface
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
@@ -196,6 +197,7 @@ target_compile_options(error_codes PRIVATE
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/zeromq_interface.cpp
+    src/base64.cpp
 )
 target_link_libraries(zeromq_interface PUBLIC
     error_codes
@@ -368,6 +370,16 @@ target_link_libraries(zmq_tests
     zeromq_interface
 )
 gtest_discover_tests(zmq_tests)
+
+# Base64 encoding/decoding tests (CPU-only)
+add_executable(base64_tests
+    tests/cpp/test_base64.cpp
+)
+target_link_libraries(base64_tests
+    GTest::gtest_main
+    zeromq_interface
+)
+gtest_discover_tests(base64_tests)
 
 # Error codes tests (CPU-only)
 add_executable(error_codes_tests
