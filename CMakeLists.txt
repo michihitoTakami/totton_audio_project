@@ -182,11 +182,23 @@ target_compile_options(test_eq PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# Error Codes Library (used by zeromq_interface and other components)
+add_library(error_codes STATIC
+    src/error_codes.cpp
+)
+target_include_directories(error_codes PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(error_codes PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/zeromq_interface.cpp
 )
 target_link_libraries(zeromq_interface PUBLIC
+    error_codes
     nlohmann_json::nlohmann_json
     ${ZMQ_LIBRARIES}
 )
@@ -356,6 +368,20 @@ target_link_libraries(zmq_tests
     zeromq_interface
 )
 gtest_discover_tests(zmq_tests)
+
+# Error codes tests (CPU-only)
+add_executable(error_codes_tests
+    tests/cpp/test_error_codes.cpp
+)
+target_link_libraries(error_codes_tests
+    GTest::gtest_main
+    error_codes
+    zeromq_interface
+)
+target_include_directories(error_codes_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(error_codes_tests)
 
 # Auto-Negotiation tests (CPU-only, no ALSA hardware required)
 add_executable(auto_negotiation_tests

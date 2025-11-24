@@ -125,6 +125,63 @@ std::string buildResponse(ResponseStatus status, const std::string& message,
     return j.dump();
 }
 
+std::string buildErrorResponse(AudioEngine::ErrorCode code, const std::string& message,
+                               const AudioEngine::InnerError& innerError) {
+    json j;
+    j["status"] = "error";
+    j["error_code"] = AudioEngine::errorCodeToString(code);
+    j["message"] = message;
+
+    // Build inner_error object
+    json inner;
+    if (!innerError.cpp_code.empty()) {
+        inner["cpp_code"] = innerError.cpp_code;
+    } else {
+        inner["cpp_code"] = AudioEngine::errorCodeToHex(code);
+    }
+    // cpp_message is always included per design doc §4.2
+    // Fallback to outer message if cpp_message is empty
+    if (!innerError.cpp_message.empty()) {
+        inner["cpp_message"] = innerError.cpp_message;
+    } else {
+        inner["cpp_message"] = message;
+    }
+    if (innerError.alsa_errno.has_value()) {
+        inner["alsa_errno"] = innerError.alsa_errno.value();
+    } else {
+        inner["alsa_errno"] = nullptr;
+    }
+    if (innerError.alsa_func.has_value()) {
+        inner["alsa_func"] = innerError.alsa_func.value();
+    } else {
+        inner["alsa_func"] = nullptr;
+    }
+    if (innerError.cuda_error.has_value()) {
+        inner["cuda_error"] = innerError.cuda_error.value();
+    } else {
+        inner["cuda_error"] = nullptr;
+    }
+    j["inner_error"] = inner;
+
+    return j.dump();
+}
+
+std::string buildOkResponse(const std::string& message, const std::string& data) {
+    json j;
+    j["status"] = "ok";
+    if (!message.empty()) {
+        j["message"] = message;
+    }
+    if (!data.empty()) {
+        try {
+            j["data"] = json::parse(data);
+        } catch (...) {
+            j["data"] = data;
+        }
+    }
+    return j.dump();
+}
+
 bool parseResponse(const std::string& jsonStr, ResponseStatus& status, std::string& message,
                    std::string& data) {
     try {
@@ -134,16 +191,29 @@ bool parseResponse(const std::string& jsonStr, ResponseStatus& status, std::stri
         }
 
         std::string statusStr = j["status"].get<std::string>();
-        if (statusStr == "ok")
+        if (statusStr == "ok") {
             status = ResponseStatus::OK;
-        else if (statusStr == "error")
-            status = ResponseStatus::ERROR;
-        else if (statusStr == "invalid_command")
+        } else if (statusStr == "error") {
+            // New error format with error_code - map back to ResponseStatus
+            if (j.contains("error_code") && j["error_code"].is_string()) {
+                std::string errorCode = j["error_code"].get<std::string>();
+                if (errorCode == "IPC_INVALID_COMMAND") {
+                    status = ResponseStatus::INVALID_COMMAND;
+                } else if (errorCode == "IPC_INVALID_PARAMS") {
+                    status = ResponseStatus::INVALID_PARAMS;
+                } else {
+                    status = ResponseStatus::ERROR;
+                }
+            } else {
+                status = ResponseStatus::ERROR;
+            }
+        } else if (statusStr == "invalid_command") {
             status = ResponseStatus::INVALID_COMMAND;
-        else if (statusStr == "invalid_params")
+        } else if (statusStr == "invalid_params") {
             status = ResponseStatus::INVALID_PARAMS;
-        else
+        } else {
             status = ResponseStatus::ERROR;
+        }
 
         message = j.value("message", "");
         if (j.contains("data")) {
@@ -154,6 +224,41 @@ bool parseResponse(const std::string& jsonStr, ResponseStatus& status, std::stri
             }
         } else {
             data = "";
+        }
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "ZMQ JSON parse error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool parseErrorResponse(const std::string& jsonStr, std::string& errorCode, std::string& message,
+                        std::string& innerErrorJson) {
+    try {
+        auto j = json::parse(jsonStr);
+
+        // Validate status field exists and is "error"
+        if (!j.contains("status") || !j["status"].is_string() ||
+            j["status"].get<std::string>() != "error") {
+            return false;
+        }
+
+        // Validate error_code field exists and is string (required per design doc)
+        if (!j.contains("error_code") || !j["error_code"].is_string()) {
+            return false;
+        }
+        errorCode = j["error_code"].get<std::string>();
+
+        // Validate message field exists and is string (required per design doc)
+        if (!j.contains("message") || !j["message"].is_string()) {
+            return false;
+        }
+        message = j["message"].get<std::string>();
+
+        if (j.contains("inner_error") && j["inner_error"].is_object()) {
+            innerErrorJson = j["inner_error"].dump();
+        } else {
+            innerErrorJson = "";
         }
         return true;
     } catch (const std::exception& e) {
@@ -317,29 +422,47 @@ std::string ZMQServer::processMessage(const std::string& message) {
     std::string params;
 
     if (!JSON::parseCommand(message, type, params)) {
-        return JSON::buildResponse(ResponseStatus::INVALID_COMMAND, "Failed to parse command");
+        return JSON::buildErrorResponse(AudioEngine::ErrorCode::IPC_INVALID_COMMAND,
+                                        "Failed to parse command");
     }
 
     // Handle SHUTDOWN specially
     if (type == CommandType::SHUTDOWN) {
         running_.store(false);
-        return JSON::buildResponse(ResponseStatus::OK, "Shutting down");
+        return JSON::buildOkResponse("Shutting down");
     }
 
     // Find and execute handler
     auto it = handlers_.find(type);
     if (it == handlers_.end()) {
-        return JSON::buildResponse(
-            ResponseStatus::INVALID_COMMAND,
+        return JSON::buildErrorResponse(
+            AudioEngine::ErrorCode::IPC_INVALID_COMMAND,
             std::string("No handler for command: ") + commandTypeToString(type));
     }
 
     try {
         CommandResult result = it->second(params);
-        return JSON::buildResponse(result.status, result.message, result.data);
+        if (result.status == ResponseStatus::OK) {
+            return JSON::buildOkResponse(result.message, result.data);
+        } else {
+            // Map legacy ResponseStatus to ErrorCode
+            AudioEngine::ErrorCode code;
+            switch (result.status) {
+            case ResponseStatus::INVALID_COMMAND:
+                code = AudioEngine::ErrorCode::IPC_INVALID_COMMAND;
+                break;
+            case ResponseStatus::INVALID_PARAMS:
+                code = AudioEngine::ErrorCode::IPC_INVALID_PARAMS;
+                break;
+            default:
+                code = AudioEngine::ErrorCode::IPC_PROTOCOL_ERROR;
+                break;
+            }
+            return JSON::buildErrorResponse(code, result.message);
+        }
     } catch (const std::exception& e) {
-        return JSON::buildResponse(ResponseStatus::ERROR,
-                                   std::string("Handler exception: ") + e.what());
+        return JSON::buildErrorResponse(AudioEngine::ErrorCode::IPC_PROTOCOL_ERROR,
+                                        std::string("Handler exception: ") + e.what());
     }
 }
 
