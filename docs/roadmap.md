@@ -35,6 +35,12 @@ Phase 3: Hardware Integration         [                    ] 0%
   - 197dB stopband attenuation達成
   - Kaiser window (β=55) 適用
 
+- [x] **Phase Type Selection** (#165, #166, #167)
+  - Minimum Phase / Linear Phase 切り替え機能
+  - `--phase-type` CLIオプション
+  - C++/CUDA側の位相タイプ対応（遅延計算含む）
+  - 設定システム（`PhaseType` enum）
+
 - [x] **Basic Daemon Implementation**
   - PipeWire入力 → GPU処理 → ALSA出力
   - Working prototype動作確認済み

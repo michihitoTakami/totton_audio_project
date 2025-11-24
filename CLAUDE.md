@@ -126,10 +126,29 @@ graph TD
 | Parameter | Value |
 |-----------|-------|
 | Tap Count | 2,000,000 (2M) |
-| Phase Type | Minimum Phase (NO pre-ringing) |
+| Phase Type | Minimum Phase (default) / Linear Phase (optional) |
 | Window | Kaiser (β=55) |
 | Stopband Attenuation | ~197dB |
 | Upsampling Ratio | Up to 16x |
+
+### Phase Type Options
+
+システムは2種類の位相タイプをサポート：
+
+| 位相タイプ | 特性 | レイテンシ | ユースケース |
+|-----------|------|-----------|-------------|
+| **Minimum Phase** (default) | プリリンギングなし、トランジェントを保持 | ゼロ（因果的フィルタ） | 音楽再生、リスニング用途 |
+| **Linear Phase** | 完全に対称なインパルス応答、群遅延一定 | (N-1)/2 サンプル | ミキシング・マスタリング、位相精度が必要な用途 |
+
+#### Minimum Phase (推奨)
+- **プリリンギングなし**: インパルス応答がt≥0に集中するため、トランジェント（アタック）前にアーティファクトが発生しない
+- **因果的フィルタ**: 理論的にリアルタイム処理可能
+- **音楽再生に最適**: ドラムやピアノのアタック感を損なわない
+
+#### Linear Phase
+- **完全な対称性**: インパルス応答が中心で対称、群遅延が全周波数で一定
+- **高レイテンシ**: 2Mタップ @ 705.6kHz = 約1.4秒のレイテンシ
+- **位相精度重視の用途向け**: マスタリングやミキシングなど、位相の正確性が重要な場面で使用
 
 ### Audio Processing
 | Parameter | Value |
@@ -172,14 +191,27 @@ graph TD
 # Setup environment
 uv sync
 
-# Generate 2M-tap filter coefficients
+# Generate 2M-tap minimum phase filter (default)
 uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
 
-# Output:
-# - data/coefficients/filter_44k_2m_min_phase.bin (8 MB binary)
-# - data/coefficients/filter_44k_2m_min_phase.json (metadata)
-# - plots/analysis/*.png (validation plots)
+# Generate 2M-tap linear phase filter
+uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55 --phase-type linear
+
+# Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)
+uv run python scripts/generate_filter.py --generate-all --phase-type minimum
+
+# Output (example for minimum phase, 44.1kHz input, 16x upsample):
+# - data/coefficients/filter_44k_16x_2m_minimum.bin (8 MB binary)
+# - data/coefficients/filter_44k_16x_2m_minimum.json (metadata)
+# - plots/analysis/filter_44k_16x_2m_minimum_*.png (validation plots)
 ```
+
+### Phase Type CLI Options
+| オプション | 値 | 説明 |
+|-----------|-----|------|
+| `--phase-type` | `minimum` (default) | 最小位相フィルタを生成 |
+| `--phase-type` | `linear` | 線形位相フィルタを生成 |
+| `--generate-all` | (flag) | 全8構成（44k/48k × 2x/4x/8x/16x）を一括生成 |
 
 ### Build (C++/CUDA)
 ```bash
@@ -227,6 +259,10 @@ gpu_os/
 │   └── EQ/                # EQ profiles
 │
 ├── docs/
+│   ├── api/               # REST API documentation
+│   │   ├── openapi.json   # OpenAPI spec (auto-generated)
+│   │   ├── README.md      # API overview
+│   │   └── CHANGELOG.md   # API change history
 │   ├── architecture/      # System design docs
 │   ├── reports/           # Phase implementation reports
 │   ├── investigations/    # Investigation logs
@@ -238,6 +274,86 @@ gpu_os/
 └── build/                 # Build output
 ```
 
+## REST API Development Guidelines
+
+### レスポンスモデル必須
+
+すべてのAPIエンドポイントには `response_model` を指定すること。
+これにより OpenAPI スキーマが自動生成され、ドキュメントの整合性が保たれる。
+
+```python
+# Good
+@router.get("/status", response_model=Status)
+async def get_status():
+    return Status(...)
+
+# Bad - response_model なし
+@router.get("/status")
+async def get_status():
+    return {"status": "ok"}
+```
+
+### エラーハンドリング統一
+
+HTTPExceptionは以下の形式で統一する：
+
+```python
+from fastapi import HTTPException
+
+# 標準的なエラー
+raise HTTPException(status_code=404, detail="Profile not found")
+
+# 構造化エラー（将来対応）
+raise HTTPException(status_code=400, detail={"field": "name", "error": "invalid"})
+```
+
+エラーレスポンスは自動的に `ErrorResponse` 形式に変換される：
+```json
+{"detail": "...", "error_code": "HTTP_404"}
+```
+
+### OpenAPIドキュメント
+
+#### タグの使用
+
+各ルーターには適切なタグを設定：
+
+```python
+router = APIRouter(prefix="/eq", tags=["eq"])
+```
+
+#### Deprecated エンドポイント
+
+非推奨エンドポイントは明示的にマーク：
+
+```python
+@app.post("/restart", deprecated=True, tags=["legacy"])
+async def restart():
+    """Deprecated: Use POST /daemon/restart instead."""
+    ...
+```
+
+### OpenAPI仕様の自動生成
+
+`web/` 配下のファイルを変更すると、pre-commit フックにより `docs/api/openapi.json` が自動更新される。
+
+手動実行：
+```bash
+# OpenAPI spec を出力
+uv run python scripts/export_openapi.py
+
+# 最新かどうか確認
+uv run python scripts/export_openapi.py --check
+```
+
+### API変更時のチェックリスト
+
+- [ ] `response_model` を指定したか
+- [ ] エラーケースは `HTTPException` で処理しているか
+- [ ] 適切なタグを設定したか
+- [ ] 破壊的変更の場合は `deprecated` を使用したか
+- [ ] `docs/api/CHANGELOG.md` を更新したか
+
 ## Git Workflow
 
 ### Mandatory Rules
@@ -248,6 +364,7 @@ gpu_os/
    - PR名: `#123 機能の説明` または `Fix #456: バグの説明`
 3. **⚠️ PRマージ禁止:** `gh pr merge` は**絶対に**ユーザーの明示的な許可なしに実行しないこと。PRの作成までは行ってよいが、マージはユーザーがレビュー後に自分で行う。
 4. **⚠️ mainブランチ直接作業禁止:** mainブランチで直接コミット・編集しないこと。必ずworktreeでfeature/fix branchを作成して作業する。
+5. **⚠️ `--no-verify`禁止:** `git push --no-verify`や`git commit --no-verify`は**絶対に使用しないこと**。pre-commitフックやpre-pushフックで失敗した場合は、たとえ自分の変更に起因しないエラーであっても、そのエラーを修正してからプッシュすること。テストの品質維持は全員の責任。
 
 ### Git Worktree
 
