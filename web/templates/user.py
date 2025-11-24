@@ -401,20 +401,28 @@ def get_embedded_html() -> str:
 
         // Phase Type Functions
         let currentPhaseType = 'minimum';
+        let phaseTypeAvailable = false;
 
         async function fetchPhaseType() {
+            const select = document.getElementById('phaseType');
             try {
                 const res = await fetch(API + '/daemon/phase-type');
-                if (res.status === 503) {
-                    // Daemon not running, skip
+                if (!res.ok) {
+                    // Daemon not running or error - disable UI
+                    phaseTypeAvailable = false;
+                    select.disabled = true;
                     return;
                 }
                 const data = await res.json();
                 currentPhaseType = data.phase_type;
-                document.getElementById('phaseType').value = data.phase_type;
+                select.value = data.phase_type;
                 updatePhaseWarning(data.phase_type);
+                phaseTypeAvailable = true;
+                select.disabled = false;
             } catch (e) {
                 console.error('Failed to fetch phase type:', e);
+                phaseTypeAvailable = false;
+                select.disabled = true;
             }
         }
 
@@ -452,14 +460,15 @@ def get_embedded_html() -> str:
                 });
                 const data = await res.json();
 
-                if (data.success) {
+                if (res.ok && data.success) {
                     currentPhaseType = newPhaseType;
                     showPhaseMessage('Phase type updated to ' + newPhaseType, true);
                 } else {
                     // Revert selection
                     select.value = currentPhaseType;
                     updatePhaseWarning(currentPhaseType);
-                    showPhaseMessage(data.message || 'Failed to update phase type', false);
+                    // RFC 9457: error response has 'detail' field
+                    showPhaseMessage(data.detail || data.message || 'Failed to update phase type', false);
                 }
             } catch (e) {
                 select.value = currentPhaseType;
@@ -475,6 +484,7 @@ def get_embedded_html() -> str:
         fetchStatus();
         fetchPhaseType();
         setInterval(fetchStatus, 5000);
+        setInterval(fetchPhaseType, 5000);
     </script>
 </body>
 </html>
