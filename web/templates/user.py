@@ -89,6 +89,17 @@ def get_embedded_html() -> str:
         }
         .message.success { background: #00ff8840; display: block; }
         .message.error { background: #ff444440; display: block; }
+        .warning-banner {
+            background: #ffaa0030;
+            border: 1px solid #ffaa00;
+            border-radius: 4px;
+            padding: 8px 12px;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #ffaa00;
+            display: none;
+        }
+        .warning-banner.visible { display: block; }
     </style>
 </head>
 <body>
@@ -125,6 +136,21 @@ def get_embedded_html() -> str:
             </div>
         </form>
         <div id="settingsMessage" class="message"></div>
+    </div>
+
+    <h2>Phase Type</h2>
+    <div class="card">
+        <div class="form-group">
+            <label>Filter Phase</label>
+            <select id="phaseType">
+                <option value="minimum">Minimum Phase (推奨)</option>
+                <option value="linear">Linear Phase</option>
+            </select>
+        </div>
+        <div id="phaseWarning" class="warning-banner">
+            ⚠️ Linear phaseはレイテンシが約1秒あります。リアルタイム用途にはMinimum phaseを推奨します。
+        </div>
+        <div id="phaseMessage" class="message"></div>
     </div>
 
     <h2>Headphone EQ (OPRA)</h2>
@@ -373,9 +399,81 @@ def get_embedded_html() -> str:
             }
         });
 
+        // Phase Type Functions
+        let currentPhaseType = 'minimum';
+
+        async function fetchPhaseType() {
+            try {
+                const res = await fetch(API + '/daemon/phase-type');
+                if (res.status === 503) {
+                    // Daemon not running, skip
+                    return;
+                }
+                const data = await res.json();
+                currentPhaseType = data.phase_type;
+                document.getElementById('phaseType').value = data.phase_type;
+                updatePhaseWarning(data.phase_type);
+            } catch (e) {
+                console.error('Failed to fetch phase type:', e);
+            }
+        }
+
+        function updatePhaseWarning(phaseType) {
+            const warning = document.getElementById('phaseWarning');
+            if (phaseType === 'linear') {
+                warning.classList.add('visible');
+            } else {
+                warning.classList.remove('visible');
+            }
+        }
+
+        function showPhaseMessage(text, success) {
+            const el = document.getElementById('phaseMessage');
+            el.textContent = text;
+            el.classList.remove('success', 'error');
+            el.classList.add(success ? 'success' : 'error');
+            setTimeout(() => el.classList.remove('success', 'error'), 4000);
+        }
+
+        document.getElementById('phaseType').addEventListener('change', async (e) => {
+            const newPhaseType = e.target.value;
+            updatePhaseWarning(newPhaseType);
+
+            if (newPhaseType === currentPhaseType) return;
+
+            const select = e.target;
+            select.disabled = true;
+
+            try {
+                const res = await fetch(API + '/daemon/phase-type', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase_type: newPhaseType }),
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    currentPhaseType = newPhaseType;
+                    showPhaseMessage('Phase type updated to ' + newPhaseType, true);
+                } else {
+                    // Revert selection
+                    select.value = currentPhaseType;
+                    updatePhaseWarning(currentPhaseType);
+                    showPhaseMessage(data.message || 'Failed to update phase type', false);
+                }
+            } catch (e) {
+                select.value = currentPhaseType;
+                updatePhaseWarning(currentPhaseType);
+                showPhaseMessage('Error: ' + e.message, false);
+            } finally {
+                select.disabled = false;
+            }
+        });
+
         // Initial load
         fetchDevices();
         fetchStatus();
+        fetchPhaseType();
         setInterval(fetchStatus, 5000);
     </script>
 </body>
