@@ -295,9 +295,9 @@ class ApiResponse(BaseModel):
 
 
 class InnerError(BaseModel):
-    """Inner error details from lower layers (C++/ALSA/CUDA).
+    """Inner error details from lower layers (C++/ALSA/CUDA/ZeroMQ).
 
-    This model captures error details from the C++ Audio Engine,
+    This model captures error details from the C++ Audio Engine and IPC layer,
     preserving diagnostic information for debugging.
     """
 
@@ -315,6 +315,9 @@ class InnerError(BaseModel):
     )
     cuda_error: Optional[str] = Field(
         default=None, description="CUDA error name (e.g., 'cudaErrorMemoryAllocation')"
+    )
+    zmq_errno: Optional[int] = Field(
+        default=None, description="ZeroMQ error number (Python-side IPC errors)"
     )
 
 

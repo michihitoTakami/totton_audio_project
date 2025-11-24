@@ -66,6 +66,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 alsa_errno=exc.inner_error.get("alsa_errno"),
                 alsa_func=exc.inner_error.get("alsa_func"),
                 cuda_error=exc.inner_error.get("cuda_error"),
+                zmq_errno=exc.inner_error.get("zmq_errno"),
             )
 
         response = _create_error_response(
