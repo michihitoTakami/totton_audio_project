@@ -371,9 +371,12 @@ static void zeromq_listener_thread() {
                 }
             } else if (cmd.rfind("PHASE_TYPE_SET:", 0) == 0) {
                 // Set phase type: PHASE_TYPE_SET:minimum or PHASE_TYPE_SET:linear
+                // Requires quad-phase mode to be enabled (4 filter variants preloaded)
                 std::string phaseStr = cmd.substr(15);  // Extract after "PHASE_TYPE_SET:"
                 if (!g_upsampler) {
                     response = "ERR:Upsampler not initialized";
+                } else if (!g_upsampler->isQuadPhaseEnabled()) {
+                    response = "ERR:Quad-phase mode not enabled (runtime switching unavailable)";
                 } else if (phaseStr != "minimum" && phaseStr != "linear") {
                     response = "ERR:Invalid phase type (use 'minimum' or 'linear')";
                 } else {
@@ -384,33 +387,35 @@ static void zeromq_listener_thread() {
                     if (oldPhase == newPhase) {
                         response = "OK:Phase type already " + phaseStr;
                     } else {
-                        // Set new phase type
-                        g_upsampler->setPhaseType(newPhase);
-
-                        // Re-apply EQ if enabled (EQ processing depends on phase type)
-                        if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
-                            EQ::EqProfile eqProfile;
-                            if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
-                                size_t filterFftSize = g_upsampler->getFilterFftSize();
-                                size_t fullFftSize = g_upsampler->getFullFftSize();
-                                double outputSampleRate =
-                                    static_cast<double>(g_config.inputSampleRate) *
-                                    g_config.upsampleRatio;
-                                auto eqMagnitude = EQ::computeEqMagnitudeForFft(
-                                    filterFftSize, fullFftSize, outputSampleRate, eqProfile);
-                                if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                                    std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
-                                              << " phase" << std::endl;
+                        // Switch phase type (changes actual filter FFT in quad-phase mode)
+                        if (!g_upsampler->switchPhaseType(newPhase)) {
+                            response = "ERR:Failed to switch phase type";
+                        } else {
+                            // Re-apply EQ if enabled (switchPhaseType clears eqApplied_)
+                            if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
+                                EQ::EqProfile eqProfile;
+                                if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
+                                    size_t filterFftSize = g_upsampler->getFilterFftSize();
+                                    size_t fullFftSize = g_upsampler->getFullFftSize();
+                                    double outputSampleRate =
+                                        static_cast<double>(g_config.inputSampleRate) *
+                                        g_config.upsampleRatio;
+                                    auto eqMagnitude = EQ::computeEqMagnitudeForFft(
+                                        filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+                                    if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
+                                        std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
+                                                  << " phase" << std::endl;
+                                    } else {
+                                        std::cerr << "ZeroMQ: Warning - EQ re-apply failed"
+                                                  << std::endl;
+                                    }
                                 } else {
-                                    std::cerr << "ZeroMQ: Warning - EQ re-apply failed"
-                                              << std::endl;
+                                    std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
+                                              << g_config.eqProfilePath << std::endl;
                                 }
-                            } else {
-                                std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                                          << g_config.eqProfilePath << std::endl;
                             }
+                            response = "OK:Phase type set to " + phaseStr;
                         }
-                        response = "OK:Phase type set to " + phaseStr;
                     }
                 }
             } else {
