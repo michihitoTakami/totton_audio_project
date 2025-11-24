@@ -1,6 +1,8 @@
 #ifndef DAC_CAPABILITY_H
 #define DAC_CAPABILITY_H
 
+#include "error_codes.h"
+
 #include <string>
 #include <vector>
 
@@ -15,6 +17,10 @@ struct Capability {
     int maxChannels;                  // Maximum channels
     bool isValid;                     // Whether scan was successful
     std::string errorMessage;         // Error message if scan failed
+
+    // Error code for structured error handling (Issue #44)
+    AudioEngine::ErrorCode errorCode = AudioEngine::ErrorCode::OK;
+    int alsaErrno = 0;  // ALSA error number if applicable
 };
 
 // Scan DAC capabilities via ALSA

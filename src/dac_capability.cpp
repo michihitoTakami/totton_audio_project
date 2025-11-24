@@ -5,6 +5,24 @@
 
 namespace DacCapability {
 
+// Helper to map ALSA error to ErrorCode
+static AudioEngine::ErrorCode alsaErrorToErrorCode(int alsaErr) {
+    // ALSA errors are negative
+    switch (alsaErr) {
+    case -ENOENT:
+    case -ENODEV:
+        return AudioEngine::ErrorCode::DAC_DEVICE_NOT_FOUND;
+    case -EBUSY:
+        return AudioEngine::ErrorCode::DAC_BUSY;
+    case -EINVAL:
+    case -EPERM:
+    case -EACCES:
+        return AudioEngine::ErrorCode::DAC_OPEN_FAILED;
+    default:
+        return AudioEngine::ErrorCode::DAC_CAPABILITY_SCAN_FAILED;
+    }
+}
+
 Capability scan(const std::string& device) {
     Capability cap;
     cap.deviceName = device;
@@ -12,6 +30,8 @@ Capability scan(const std::string& device) {
     cap.maxSampleRate = 0;
     cap.minSampleRate = 0;
     cap.maxChannels = 0;
+    cap.errorCode = AudioEngine::ErrorCode::OK;
+    cap.alsaErrno = 0;
 
     snd_pcm_t* pcm = nullptr;
     snd_pcm_hw_params_t* params = nullptr;
@@ -19,6 +39,8 @@ Capability scan(const std::string& device) {
     int err = snd_pcm_open(&pcm, device.c_str(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
     if (err < 0) {
         cap.errorMessage = "Cannot open device: " + std::string(snd_strerror(err));
+        cap.alsaErrno = err;
+        cap.errorCode = alsaErrorToErrorCode(err);
         return cap;
     }
 
@@ -27,6 +49,8 @@ Capability scan(const std::string& device) {
     err = snd_pcm_hw_params_any(pcm, params);
     if (err < 0) {
         cap.errorMessage = "Cannot get hardware params: " + std::string(snd_strerror(err));
+        cap.alsaErrno = err;
+        cap.errorCode = alsaErrorToErrorCode(err);
         snd_pcm_close(pcm);
         return cap;
     }
@@ -37,6 +61,8 @@ Capability scan(const std::string& device) {
     err = snd_pcm_hw_params_get_rate_min(params, &minRate, &dir);
     if (err < 0) {
         cap.errorMessage = "Cannot get min rate: " + std::string(snd_strerror(err));
+        cap.alsaErrno = err;
+        cap.errorCode = alsaErrorToErrorCode(err);
         snd_pcm_close(pcm);
         return cap;
     }
@@ -44,6 +70,8 @@ Capability scan(const std::string& device) {
     err = snd_pcm_hw_params_get_rate_max(params, &maxRate, &dir);
     if (err < 0) {
         cap.errorMessage = "Cannot get max rate: " + std::string(snd_strerror(err));
+        cap.alsaErrno = err;
+        cap.errorCode = alsaErrorToErrorCode(err);
         snd_pcm_close(pcm);
         return cap;
     }

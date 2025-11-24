@@ -388,3 +388,76 @@ TEST(ErrorCodes, AllErrorCodesHaveHttpStatusMapping) {
     EXPECT_TRUE(validateStatus(ErrorCode::GPU_MEMORY_ERROR));
     EXPECT_TRUE(validateStatus(ErrorCode::VALIDATION_PATH_TRAVERSAL));
 }
+
+// ============================================================
+// INTERNAL_UNKNOWN Tests (Issue #44 additions)
+// ============================================================
+
+TEST(ErrorCodes, InternalUnknownExists) {
+    EXPECT_STREQ(errorCodeToString(ErrorCode::INTERNAL_UNKNOWN), "INTERNAL_UNKNOWN");
+    EXPECT_EQ(errorCodeToHex(ErrorCode::INTERNAL_UNKNOWN), "0xf001");
+    EXPECT_EQ(toHttpStatus(ErrorCode::INTERNAL_UNKNOWN), 500);
+}
+
+TEST(ErrorCodes, IsInternalErrorHelper) {
+    EXPECT_TRUE(isInternalError(ErrorCode::INTERNAL_UNKNOWN));
+    EXPECT_FALSE(isInternalError(ErrorCode::DAC_DEVICE_NOT_FOUND));
+    EXPECT_FALSE(isInternalError(ErrorCode::GPU_INIT_FAILED));
+    EXPECT_FALSE(isInternalError(ErrorCode::OK));
+}
+
+// ============================================================
+// isRetryable Tests
+// ============================================================
+
+TEST(ErrorCodes, IsRetryableReturnsTrue) {
+    EXPECT_TRUE(isRetryable(ErrorCode::IPC_DAEMON_NOT_RUNNING));
+    EXPECT_TRUE(isRetryable(ErrorCode::IPC_TIMEOUT));
+    EXPECT_TRUE(isRetryable(ErrorCode::IPC_CONNECTION_FAILED));
+}
+
+TEST(ErrorCodes, IsRetryableReturnsFalse) {
+    EXPECT_FALSE(isRetryable(ErrorCode::OK));
+    EXPECT_FALSE(isRetryable(ErrorCode::DAC_DEVICE_NOT_FOUND));
+    EXPECT_FALSE(isRetryable(ErrorCode::GPU_MEMORY_ERROR));
+    EXPECT_FALSE(isRetryable(ErrorCode::VALIDATION_INVALID_CONFIG));
+    EXPECT_FALSE(isRetryable(ErrorCode::IPC_INVALID_COMMAND));
+    EXPECT_FALSE(isRetryable(ErrorCode::INTERNAL_UNKNOWN));
+}
+
+// ============================================================
+// stringToErrorCode Tests
+// ============================================================
+
+TEST(ErrorCodes, StringToErrorCodeValid) {
+    EXPECT_EQ(stringToErrorCode("OK"), ErrorCode::OK);
+    EXPECT_EQ(stringToErrorCode("AUDIO_INVALID_INPUT_RATE"), ErrorCode::AUDIO_INVALID_INPUT_RATE);
+    EXPECT_EQ(stringToErrorCode("DAC_DEVICE_NOT_FOUND"), ErrorCode::DAC_DEVICE_NOT_FOUND);
+    EXPECT_EQ(stringToErrorCode("IPC_TIMEOUT"), ErrorCode::IPC_TIMEOUT);
+    EXPECT_EQ(stringToErrorCode("GPU_MEMORY_ERROR"), ErrorCode::GPU_MEMORY_ERROR);
+    EXPECT_EQ(stringToErrorCode("VALIDATION_PATH_TRAVERSAL"), ErrorCode::VALIDATION_PATH_TRAVERSAL);
+    EXPECT_EQ(stringToErrorCode("INTERNAL_UNKNOWN"), ErrorCode::INTERNAL_UNKNOWN);
+}
+
+TEST(ErrorCodes, StringToErrorCodeInvalid) {
+    EXPECT_EQ(stringToErrorCode("INVALID_CODE"), ErrorCode::INTERNAL_UNKNOWN);
+    EXPECT_EQ(stringToErrorCode(""), ErrorCode::INTERNAL_UNKNOWN);
+    EXPECT_EQ(stringToErrorCode("random_string"), ErrorCode::INTERNAL_UNKNOWN);
+}
+
+TEST(ErrorCodes, RoundTripStringConversion) {
+    // Test that errorCodeToString and stringToErrorCode are inverses
+    auto testRoundTrip = [](ErrorCode code) {
+        const char* str = errorCodeToString(code);
+        ErrorCode result = stringToErrorCode(str);
+        EXPECT_EQ(code, result) << "Failed for: " << str;
+    };
+
+    testRoundTrip(ErrorCode::OK);
+    testRoundTrip(ErrorCode::AUDIO_XRUN_DETECTED);
+    testRoundTrip(ErrorCode::DAC_BUSY);
+    testRoundTrip(ErrorCode::IPC_PROTOCOL_ERROR);
+    testRoundTrip(ErrorCode::GPU_CUFFT_ERROR);
+    testRoundTrip(ErrorCode::VALIDATION_INVALID_HEADPHONE);
+    testRoundTrip(ErrorCode::INTERNAL_UNKNOWN);
+}
