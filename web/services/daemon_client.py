@@ -1,8 +1,64 @@
 """ZeroMQ client for communicating with the C++ audio daemon."""
 
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
 import zmq
 
 from ..constants import ZEROMQ_IPC_PATH
+from ..error_codes import ErrorCode, get_error_mapping
+
+
+@dataclass
+class DaemonError(Exception):
+    """Exception raised when daemon returns an error.
+
+    Captures structured error information from C++ Audio Engine,
+    including error code and inner_error details for debugging.
+
+    Attributes:
+        error_code: Application error code (e.g., "DAC_RATE_NOT_SUPPORTED")
+        message: Human-readable error message
+        inner_error: Optional nested error details from lower layers
+    """
+
+    error_code: str
+    message: str
+    inner_error: dict[str, Any] | None = field(default=None)
+
+    def __str__(self) -> str:
+        return f"[{self.error_code}] {self.message}"
+
+    @property
+    def http_status(self) -> int:
+        """Get HTTP status code for this error."""
+        return get_error_mapping(self.error_code).http_status
+
+    @property
+    def category(self) -> str:
+        """Get error category."""
+        return get_error_mapping(self.error_code).category.value
+
+    @property
+    def title(self) -> str:
+        """Get error title."""
+        return get_error_mapping(self.error_code).title
+
+
+@dataclass
+class DaemonResponse:
+    """Structured response from daemon.
+
+    Attributes:
+        success: Whether the command succeeded
+        data: Response data (for successful commands)
+        error: DaemonError if command failed
+    """
+
+    success: bool
+    data: Any = None
+    error: DaemonError | None = None
 
 
 class DaemonClient:
@@ -13,6 +69,15 @@ class DaemonClient:
     Thread Safety: Each DaemonClient instance should be used by a single
     thread/coroutine at a time. Use the context manager or create new
     instances per request for concurrent access.
+
+    Response Format (JSON from C++):
+        Success: {"status": "ok", "data": ...}
+        Error: {
+            "status": "error",
+            "error_code": "DAC_RATE_NOT_SUPPORTED",
+            "message": "Sample rate not supported",
+            "inner_error": {"cpp_code": "0x2004", "alsa_errno": -22}
+        }
     """
 
     def __init__(self, endpoint: str = ZEROMQ_IPC_PATH, timeout_ms: int = 3000):
@@ -50,37 +115,115 @@ class DaemonClient:
             self._context.term()
             self._context = None
 
+    def _parse_json_response(self, response: str) -> DaemonResponse:
+        """Parse JSON response from daemon.
+
+        Expected format:
+            Success: {"status": "ok", "data": ...}
+            Error: {"status": "error", "error_code": "...", "message": "...", "inner_error": {...}}
+        """
+        try:
+            data = json.loads(response)
+        except json.JSONDecodeError:
+            # Fallback: treat as legacy text response
+            return self._parse_legacy_response(response)
+
+        status = data.get("status", "")
+
+        if status == "ok":
+            return DaemonResponse(success=True, data=data.get("data"))
+        elif status == "error":
+            error = DaemonError(
+                error_code=data.get("error_code", "IPC_PROTOCOL_ERROR"),
+                message=data.get("message", "Unknown error"),
+                inner_error=data.get("inner_error"),
+            )
+            return DaemonResponse(success=False, error=error)
+        else:
+            # Unknown status - treat as protocol error
+            error = DaemonError(
+                error_code=ErrorCode.IPC_PROTOCOL_ERROR.value,
+                message=f"Unknown response status: {status}",
+            )
+            return DaemonResponse(success=False, error=error)
+
+    def _parse_legacy_response(self, response: str) -> DaemonResponse:
+        """Parse legacy text response format.
+
+        Legacy format: "OK" or "OK:data" or "ERR:message"
+        """
+        if response.startswith("OK"):
+            if ":" in response:
+                return DaemonResponse(success=True, data=response.split(":", 1)[1])
+            return DaemonResponse(success=True, data="Command executed")
+        elif response.startswith("ERR"):
+            msg = response.split(":", 1)[1] if ":" in response else "Unknown error"
+            error = DaemonError(
+                error_code=ErrorCode.IPC_PROTOCOL_ERROR.value,
+                message=msg,
+            )
+            return DaemonResponse(success=False, error=error)
+        else:
+            error = DaemonError(
+                error_code=ErrorCode.IPC_PROTOCOL_ERROR.value,
+                message=f"Unexpected response: {response}",
+            )
+            return DaemonResponse(success=False, error=error)
+
     def send_command(self, command: str) -> tuple[bool, str]:
         """
         Send a command to the daemon and wait for response.
 
         Returns:
-            (success, message) tuple
+            (success, message) tuple for backward compatibility.
+            Use send_command_v2() for structured error handling.
+        """
+        result = self.send_command_v2(command)
+        if result.success:
+            if isinstance(result.data, dict):
+                return True, json.dumps(result.data)
+            return True, str(result.data) if result.data else "Command executed"
+        else:
+            return False, str(result.error) if result.error else "Unknown error"
+
+    def send_command_v2(self, command: str) -> DaemonResponse:
+        """
+        Send a command to the daemon and return structured response.
+
+        Returns:
+            DaemonResponse with success/data or error details.
+
+        Raises:
+            No exceptions - all errors are returned in DaemonResponse.
         """
         try:
             socket = self._ensure_connected()
             socket.send_string(command)
             response = socket.recv_string()
-
-            # Parse response: "OK" or "OK:data" or "ERR:message"
-            if response.startswith("OK"):
-                if ":" in response:
-                    return True, response.split(":", 1)[1]
-                return True, "Command executed"
-            elif response.startswith("ERR"):
-                return False, (
-                    response.split(":", 1)[1] if ":" in response else "Unknown error"
-                )
-            else:
-                return False, f"Unexpected response: {response}"
+            return self._parse_json_response(response)
 
         except zmq.Again:
             # Timeout - daemon not responding
-            self.close()  # Reset socket for next attempt
-            return False, "Daemon not responding (timeout)"
+            self.close()
+            error = DaemonError(
+                error_code=ErrorCode.IPC_TIMEOUT.value,
+                message="Daemon not responding (timeout)",
+            )
+            return DaemonResponse(success=False, error=error)
+
         except zmq.ZMQError as e:
             self.close()
-            return False, f"ZeroMQ error: {e}"
+            # Determine appropriate error code
+            if e.errno == zmq.ECONNREFUSED:
+                error_code = ErrorCode.IPC_DAEMON_NOT_RUNNING.value
+            else:
+                error_code = ErrorCode.IPC_CONNECTION_FAILED.value
+            error = DaemonError(
+                error_code=error_code,
+                message=f"ZeroMQ error: {e}",
+                inner_error={"zmq_errno": e.errno},
+            )
+            return DaemonResponse(success=False, error=error)
 
     def reload_config(self) -> tuple[bool, str]:
         """Send RELOAD command to daemon."""
@@ -88,15 +231,18 @@ class DaemonClient:
 
     def get_stats(self) -> tuple[bool, dict | str]:
         """Send STATS command and parse JSON response."""
-        import json
-
-        success, response = self.send_command("STATS")
-        if success:
-            try:
-                return True, json.loads(response)
-            except json.JSONDecodeError:
-                return False, f"Invalid JSON response: {response}"
-        return False, response
+        result = self.send_command_v2("STATS")
+        if result.success:
+            if isinstance(result.data, dict):
+                return True, result.data
+            # Try to parse data as JSON if it's a string
+            if isinstance(result.data, str):
+                try:
+                    return True, json.loads(result.data)
+                except json.JSONDecodeError:
+                    return False, f"Invalid JSON response: {result.data}"
+            return True, {}
+        return False, str(result.error) if result.error else "Unknown error"
 
     def soft_reset(self) -> tuple[bool, str]:
         """Send SOFT_RESET command to daemon."""
@@ -109,8 +255,8 @@ class DaemonClient:
         Returns:
             True if daemon responds, False otherwise.
         """
-        success, _ = self.send_command("PING")
-        return success
+        result = self.send_command_v2("PING")
+        return result.success
 
     def get_phase_type(self) -> tuple[bool, dict | str]:
         """
@@ -120,15 +266,17 @@ class DaemonClient:
             (success, {"phase_type": "minimum"|"linear"}) on success
             (False, error_message) on failure
         """
-        import json
-
-        success, response = self.send_command("PHASE_TYPE_GET")
-        if success:
-            try:
-                return True, json.loads(response)
-            except json.JSONDecodeError:
-                return False, f"Invalid JSON response: {response}"
-        return False, response
+        result = self.send_command_v2("PHASE_TYPE_GET")
+        if result.success:
+            if isinstance(result.data, dict):
+                return True, result.data
+            if isinstance(result.data, str):
+                try:
+                    return True, json.loads(result.data)
+                except json.JSONDecodeError:
+                    return False, f"Invalid JSON response: {result.data}"
+            return True, {}
+        return False, str(result.error) if result.error else "Unknown error"
 
     def set_phase_type(self, phase_type: str) -> tuple[bool, str]:
         """

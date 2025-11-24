@@ -289,11 +289,70 @@ class ApiResponse(BaseModel):
     restart_required: bool = False
 
 
-class ErrorResponse(BaseModel):
-    """Standard error response model.
+# ============================================================================
+# Error Response Models (RFC 9457 Problem Details)
+# ============================================================================
 
-    Supports both string and structured error details for flexibility.
+
+class InnerError(BaseModel):
+    """Inner error details from lower layers (C++/ALSA/CUDA).
+
+    This model captures error details from the C++ Audio Engine,
+    preserving diagnostic information for debugging.
     """
 
-    detail: str | dict[str, Any]
-    error_code: Optional[str] = None
+    cpp_code: Optional[str] = Field(
+        default=None, description="C++ error code in hex (e.g., '0x2004')"
+    )
+    cpp_message: Optional[str] = Field(
+        default=None, description="Original C++ error message"
+    )
+    alsa_errno: Optional[int] = Field(
+        default=None, description="ALSA error number (negative values)"
+    )
+    alsa_func: Optional[str] = Field(
+        default=None, description="ALSA function that failed"
+    )
+    cuda_error: Optional[str] = Field(
+        default=None, description="CUDA error name (e.g., 'cudaErrorMemoryAllocation')"
+    )
+
+
+class ErrorResponse(BaseModel):
+    """RFC 9457 Problem Details compliant error response.
+
+    Content-Type: application/problem+json
+
+    Example:
+        {
+            "type": "/errors/dac-rate-not-supported",
+            "title": "DAC Rate Not Supported",
+            "status": 422,
+            "detail": "Sample rate 1000000 is not supported by DAC",
+            "error_code": "DAC_RATE_NOT_SUPPORTED",
+            "category": "dac_alsa",
+            "inner_error": {"cpp_code": "0x2004", "alsa_errno": -22}
+        }
+    """
+
+    type: Optional[str] = Field(
+        default=None,
+        description="URI reference identifying the problem type (e.g., '/errors/dac-rate-not-supported')",
+    )
+    title: Optional[str] = Field(
+        default=None, description="Short human-readable summary of the problem"
+    )
+    status: Optional[int] = Field(
+        default=None, description="HTTP status code for this error"
+    )
+    detail: str | dict[str, Any] = Field(description="Human-readable error description")
+    error_code: Optional[str] = Field(
+        default=None,
+        description="Application-specific error code (e.g., 'DAC_RATE_NOT_SUPPORTED')",
+    )
+    category: Optional[str] = Field(
+        default=None, description="Error category (e.g., 'dac_alsa', 'ipc_zeromq')"
+    )
+    inner_error: Optional[InnerError] = Field(
+        default=None, description="Nested error details from lower layers"
+    )
