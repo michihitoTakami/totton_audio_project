@@ -452,21 +452,61 @@ static void zeromq_listener_thread() {
                                     resp["message"] = "Failed to decode Base64 filter data";
                                     response = resp.dump();
                                 } else {
-                                    // TODO: Apply decoded filters to HRTFProcessor
-                                    // This requires extending HRTFProcessor API to accept
-                                    // pre-computed combined filters
-                                    nlohmann::json resp;
-                                    resp["status"] = "ok";
-                                    resp["message"] = "Combined filter received";
-                                    resp["data"]["rate_family"] = rateFamily;
-                                    resp["data"]["ll_size"] = decodedLL.size();
-                                    resp["data"]["lr_size"] = decodedLR.size();
-                                    resp["data"]["rl_size"] = decodedRL.size();
-                                    resp["data"]["rr_size"] = decodedRR.size();
-                                    response = resp.dump();
-                                    std::cout << "ZeroMQ: Received combined filter for "
-                                              << rateFamily << " (LL:" << decodedLL.size()
-                                              << " bytes)" << std::endl;
+                                    // Validate filter data size
+                                    // cufftComplex = 2 * sizeof(float) = 8 bytes
+                                    constexpr size_t CUFFT_COMPLEX_SIZE = 8;
+                                    // Max filter size: 64KB per channel (8192 complex values)
+                                    constexpr size_t MAX_FILTER_BYTES = 64 * 1024;
+
+                                    bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedRL.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedRR.size() % CUFFT_COMPLEX_SIZE == 0);
+
+                                    bool sizesMatch = (decodedLL.size() == decodedLR.size()) &&
+                                                      (decodedLL.size() == decodedRL.size()) &&
+                                                      (decodedLL.size() == decodedRR.size());
+
+                                    bool withinLimit = (decodedLL.size() <= MAX_FILTER_BYTES);
+
+                                    if (!sizeValid) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "Filter size must be multiple of 8 (cufftComplex)";
+                                        response = resp.dump();
+                                    } else if (!sizesMatch) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "All 4 channel filters must have same size";
+                                        response = resp.dump();
+                                    } else if (!withinLimit) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "Filter size exceeds maximum (64KB per channel)";
+                                        response = resp.dump();
+                                    } else {
+                                        // Filter data is valid but application not yet implemented
+                                        // See GitHub Issue #233 for HRTFProcessor API extension
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_NOT_IMPLEMENTED";
+                                        resp["message"] =
+                                            "Filter application not yet implemented (see #233)";
+                                        resp["data"]["rate_family"] = rateFamily;
+                                        resp["data"]["filter_size"] = decodedLL.size();
+                                        resp["data"]["complex_count"] =
+                                            decodedLL.size() / CUFFT_COMPLEX_SIZE;
+                                        response = resp.dump();
+                                        std::cout << "ZeroMQ: CROSSFEED_SET_COMBINED received for "
+                                                  << rateFamily << " (" << decodedLL.size()
+                                                  << " bytes) - NOT YET IMPLEMENTED" << std::endl;
+                                    }
                                 }
                             }
                         }
@@ -478,9 +518,8 @@ static void zeromq_listener_thread() {
                         resp["status"] = "ok";
                         resp["data"]["enabled"] = enabled;
                         resp["data"]["initialized"] = initialized;
-                        // TODO: Add head_size and headphone info when available
-                        resp["data"]["head_size"] = "m";
-                        resp["data"]["headphone"] = "";
+                        // head_size and headphone fields are intentionally omitted
+                        // until HRTFProcessor exposes actual HRTF metadata (#233)
                         response = resp.dump();
                     } else {
                         nlohmann::json resp;

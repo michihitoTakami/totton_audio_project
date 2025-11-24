@@ -20,8 +20,8 @@ class TestErrorCodeEnum:
     """Tests for ErrorCode enum."""
 
     def test_all_codes_defined(self):
-        """Verify all error codes are defined (30 base + 2 crossfeed)."""
-        assert len(ErrorCode) == 32
+        """Verify all error codes are defined (30 base + 4 crossfeed)."""
+        assert len(ErrorCode) == 34
 
     def test_no_duplicate_values(self):
         """Verify no duplicate enum values."""
@@ -64,11 +64,13 @@ class TestErrorCodeEnum:
         assert ErrorCode.VALIDATION_INVALID_HEADPHONE in validation_codes
 
     def test_crossfeed_codes(self):
-        """Verify Crossfeed/HRTF category codes (2 codes)."""
+        """Verify Crossfeed/HRTF category codes (4 codes)."""
         crossfeed_codes = [c for c in ErrorCode if c.value.startswith("CROSSFEED_")]
-        assert len(crossfeed_codes) == 2
+        assert len(crossfeed_codes) == 4
         assert ErrorCode.CROSSFEED_NOT_INITIALIZED in crossfeed_codes
         assert ErrorCode.CROSSFEED_INVALID_RATE_FAMILY in crossfeed_codes
+        assert ErrorCode.CROSSFEED_NOT_IMPLEMENTED in crossfeed_codes
+        assert ErrorCode.CROSSFEED_INVALID_FILTER_SIZE in crossfeed_codes
 
 
 class TestErrorCategory:
@@ -93,8 +95,8 @@ class TestErrorMappings:
     """Tests for ERROR_MAPPINGS dictionary."""
 
     def test_all_codes_have_mappings(self):
-        """Verify all error codes have mappings (30 base + 2 crossfeed)."""
-        assert len(ERROR_MAPPINGS) == 32
+        """Verify all error codes have mappings (30 base + 4 crossfeed)."""
+        assert len(ERROR_MAPPINGS) == 34
         for code in ErrorCode:
             assert code in ERROR_MAPPINGS, f"Missing mapping for {code}"
 
@@ -108,7 +110,7 @@ class TestErrorMappings:
 
     def test_http_status_ranges(self):
         """Verify HTTP status codes are in valid ranges."""
-        valid_statuses = {400, 404, 409, 422, 500, 503, 504}
+        valid_statuses = {400, 404, 409, 422, 500, 501, 503, 504}
         for code, mapping in ERROR_MAPPINGS.items():
             assert (
                 mapping.http_status in valid_statuses
