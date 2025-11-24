@@ -163,8 +163,10 @@ class FilterConfig:
     def taps_label(self) -> str:
         """ファイル名用のタップ数ラベル（パディング後の実タップ数を使用）
 
-        C++ initializeMultiRate() expects numeric format (e.g., "2000000")
+        2,000,000 taps -> "2m" for shorter filenames
         """
+        if self.final_taps == 2_000_000:
+            return "2m"
         return str(self.final_taps)
 
     @property
