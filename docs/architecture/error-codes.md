@@ -24,7 +24,7 @@ C++ Audio Engine から Web API クライアントまで、システム全体で
 
 ## 2. エラーカテゴリ
 
-エラーコードは5つのカテゴリに分類される。各カテゴリは16ビットの上位4ビットで識別する。
+エラーコードは5つの主要カテゴリと1つの予約カテゴリに分類される。各カテゴリは16ビットの上位4ビットで識別する。
 
 | カテゴリ | プレフィックス | 数値範囲 | 説明 |
 |---------|---------------|----------|------|
@@ -33,6 +33,20 @@ C++ Audio Engine から Web API クライアントまで、システム全体で
 | IPC/ZeroMQ | `IPC_` | 0x3000-0x3FFF | プロセス間通信関連 |
 | GPU/CUDA | `GPU_` | 0x4000-0x4FFF | CUDA、GPUメモリ関連 |
 | Validation | `VALIDATION_` | 0x5000-0x5FFF | 入力検証、設定ファイル関連 |
+| Internal | `INTERNAL_` | 0xF000-0xFFFF | 予約：未分類エラー、フォールバック用 |
+
+### 2.2 Internal カテゴリについて
+
+`INTERNAL` カテゴリは以下の用途で使用する**予約カテゴリ**である：
+
+1. **未知のエラーコード**: C++側から受信したエラーコードがマッピングに存在しない場合
+2. **Python側のみのエラー**: C++を経由しないPython固有のエラー
+3. **フォールバック**: エラー伝播中にカテゴリを特定できない場合
+
+**使用方針:**
+- 新しいエラーが発生した場合、まず適切な主要カテゴリへの追加を検討する
+- `INTERNAL` は一時的なフォールバックであり、恒久的な使用は避ける
+- `INTERNAL` エラーが頻発する場合は、エラーコード体系の見直しを検討する
 
 ### 2.1 カテゴリ選択ガイドライン
 
@@ -348,35 +362,60 @@ class ErrorMapping:
     category: ErrorCategory
     title: str
 
-# エラーコード → HTTPステータス マッピング
+# エラーコード → HTTPステータス マッピング（全30コード）
 ERROR_MAPPINGS: dict[ErrorCode, ErrorMapping] = {
-    # Audio Processing
+    # Audio Processing (6コード)
     ErrorCode.AUDIO_INVALID_INPUT_RATE: ErrorMapping(400, ErrorCategory.AUDIO_PROCESSING, "Invalid Input Sample Rate"),
     ErrorCode.AUDIO_INVALID_OUTPUT_RATE: ErrorMapping(400, ErrorCategory.AUDIO_PROCESSING, "Invalid Output Sample Rate"),
+    ErrorCode.AUDIO_UNSUPPORTED_FORMAT: ErrorMapping(400, ErrorCategory.AUDIO_PROCESSING, "Unsupported Audio Format"),
     ErrorCode.AUDIO_FILTER_NOT_FOUND: ErrorMapping(404, ErrorCategory.AUDIO_PROCESSING, "Filter Not Found"),
     ErrorCode.AUDIO_BUFFER_OVERFLOW: ErrorMapping(500, ErrorCategory.AUDIO_PROCESSING, "Buffer Overflow"),
+    ErrorCode.AUDIO_XRUN_DETECTED: ErrorMapping(500, ErrorCategory.AUDIO_PROCESSING, "Audio XRUN Detected"),
 
-    # DAC/ALSA
+    # DAC/ALSA (6コード)
     ErrorCode.DAC_DEVICE_NOT_FOUND: ErrorMapping(404, ErrorCategory.DAC_ALSA, "DAC Device Not Found"),
+    ErrorCode.DAC_OPEN_FAILED: ErrorMapping(500, ErrorCategory.DAC_ALSA, "DAC Open Failed"),
+    ErrorCode.DAC_CAPABILITY_SCAN_FAILED: ErrorMapping(500, ErrorCategory.DAC_ALSA, "DAC Capability Scan Failed"),
     ErrorCode.DAC_RATE_NOT_SUPPORTED: ErrorMapping(422, ErrorCategory.DAC_ALSA, "DAC Rate Not Supported"),
+    ErrorCode.DAC_FORMAT_NOT_SUPPORTED: ErrorMapping(422, ErrorCategory.DAC_ALSA, "DAC Format Not Supported"),
     ErrorCode.DAC_BUSY: ErrorMapping(409, ErrorCategory.DAC_ALSA, "DAC Device Busy"),
 
-    # IPC/ZeroMQ
+    # IPC/ZeroMQ (6コード)
     ErrorCode.IPC_CONNECTION_FAILED: ErrorMapping(503, ErrorCategory.IPC_ZEROMQ, "Daemon Connection Failed"),
     ErrorCode.IPC_TIMEOUT: ErrorMapping(504, ErrorCategory.IPC_ZEROMQ, "Daemon Timeout"),
-    ErrorCode.IPC_DAEMON_NOT_RUNNING: ErrorMapping(503, ErrorCategory.IPC_ZEROMQ, "Daemon Not Running"),
     ErrorCode.IPC_INVALID_COMMAND: ErrorMapping(400, ErrorCategory.IPC_ZEROMQ, "Invalid Command"),
+    ErrorCode.IPC_INVALID_PARAMS: ErrorMapping(400, ErrorCategory.IPC_ZEROMQ, "Invalid Parameters"),
+    ErrorCode.IPC_DAEMON_NOT_RUNNING: ErrorMapping(503, ErrorCategory.IPC_ZEROMQ, "Daemon Not Running"),
+    ErrorCode.IPC_PROTOCOL_ERROR: ErrorMapping(500, ErrorCategory.IPC_ZEROMQ, "Protocol Error"),
 
-    # GPU/CUDA
+    # GPU/CUDA (6コード)
     ErrorCode.GPU_INIT_FAILED: ErrorMapping(500, ErrorCategory.GPU_CUDA, "GPU Initialization Failed"),
+    ErrorCode.GPU_DEVICE_NOT_FOUND: ErrorMapping(500, ErrorCategory.GPU_CUDA, "GPU Device Not Found"),
     ErrorCode.GPU_MEMORY_ERROR: ErrorMapping(500, ErrorCategory.GPU_CUDA, "GPU Memory Error"),
+    ErrorCode.GPU_KERNEL_LAUNCH_FAILED: ErrorMapping(500, ErrorCategory.GPU_CUDA, "GPU Kernel Launch Failed"),
+    ErrorCode.GPU_FILTER_LOAD_FAILED: ErrorMapping(500, ErrorCategory.GPU_CUDA, "GPU Filter Load Failed"),
+    ErrorCode.GPU_CUFFT_ERROR: ErrorMapping(500, ErrorCategory.GPU_CUDA, "cuFFT Error"),
 
-    # Validation
+    # Validation (6コード)
+    ErrorCode.VALIDATION_INVALID_CONFIG: ErrorMapping(400, ErrorCategory.VALIDATION, "Invalid Configuration"),
     ErrorCode.VALIDATION_INVALID_PROFILE: ErrorMapping(400, ErrorCategory.VALIDATION, "Invalid EQ Profile"),
     ErrorCode.VALIDATION_PATH_TRAVERSAL: ErrorMapping(400, ErrorCategory.VALIDATION, "Path Traversal Detected"),
     ErrorCode.VALIDATION_FILE_NOT_FOUND: ErrorMapping(404, ErrorCategory.VALIDATION, "File Not Found"),
     ErrorCode.VALIDATION_PROFILE_EXISTS: ErrorMapping(409, ErrorCategory.VALIDATION, "Profile Already Exists"),
+    ErrorCode.VALIDATION_INVALID_HEADPHONE: ErrorMapping(404, ErrorCategory.VALIDATION, "Headphone Not Found in OPRA DB"),
 }
+
+def get_error_mapping(error_code: str) -> ErrorMapping:
+    """
+    エラーコードからマッピングを取得する。
+    未知のエラーコードの場合はデフォルト（500 Internal Error）を返す。
+    """
+    try:
+        code = ErrorCode(error_code)
+        return ERROR_MAPPINGS.get(code, ErrorMapping(500, ErrorCategory.INTERNAL, "Internal Error"))
+    except ValueError:
+        # 未知のエラーコード
+        return ErrorMapping(500, ErrorCategory.INTERNAL, "Unknown Error")
 ```
 
 ## 7. 変更履歴
