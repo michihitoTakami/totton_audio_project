@@ -60,7 +60,9 @@ class TestFilterConfig:
         assert config.upsample_ratio == 16
         assert config.passband_end == 20000
         assert config.stopband_start == 22050  # auto-calculated
-        assert config.stopband_attenuation_db == 197
+        assert (
+            config.stopband_attenuation_db == 160
+        )  # Updated: realistic target for min phase
         assert config.kaiser_beta == 55.0
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
@@ -404,15 +406,30 @@ class TestNormalizeCoefficients:
         assert np.isclose(info["target_dc_gain"], 1.0)
 
     def test_normalizes_to_target_dc_gain(self):
-        """DC gain should follow requested target."""
+        """DC gain should follow requested target when no peak limiting."""
         from generate_filter import normalize_coefficients
 
-        h = np.array([1.0, 1.0])  # DC gain = 2.0
-        target = 4.0
+        # Use small coefficients so peak limiting won't apply
+        h = np.array([0.1, 0.1])  # DC gain = 0.2
+        target = 0.5  # After scaling, max_coef = 0.25 < 1.0, no peak limiting
         h_norm, info = normalize_coefficients(h, target_dc_gain=target)
 
         assert np.isclose(np.sum(h_norm), target, rtol=1e-6)
-        assert np.isclose(info["applied_scale"], 2.0)
+        assert np.isclose(info["applied_scale"], 2.5)
+        assert not info["peak_limited"]
+
+    def test_peak_limiting_reduces_dc_gain(self):
+        """Peak limiting should reduce DC gain when max_coef exceeds limit."""
+        from generate_filter import normalize_coefficients
+
+        h = np.array([1.0, 1.0])  # DC gain = 2.0
+        target = 4.0  # After DC norm, max_coef = 2.0 > 1.0, needs limiting
+        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+
+        # With peak limiting: max_coef scaled to 1.0, DC gain = 2.0 (not 4.0)
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        assert info["peak_limited"]
+        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
 
     def test_zero_dc_gain_raises_error(self):
         """Zero DC gain should raise ValueError."""

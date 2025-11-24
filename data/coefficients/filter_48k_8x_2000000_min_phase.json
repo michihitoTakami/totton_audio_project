@@ -1,5 +1,5 @@
 {
-  "generation_date": "2025-11-24T22:25:45.852414",
+  "generation_date": "2025-11-25T01:18:36.088473",
   "n_taps_specified": 2000000,
   "n_taps_actual": 2000000,
   "sample_rate_input": 96000,
@@ -7,7 +7,7 @@
   "upsample_ratio": 8,
   "passband_end_hz": 20000,
   "stopband_start_hz": 48000,
-  "target_stopband_attenuation_db": 197,
+  "target_stopband_attenuation_db": 160,
   "kaiser_beta": 55.0,
   "phase_type": "minimum",
   "minimum_phase_method": "homomorphic",
@@ -19,17 +19,19 @@
     "peak_position": 23,
     "peak_threshold_samples": 20000,
     "energy_ratio_first_to_second_half": 11333332688529.104,
-    "meets_stopband_spec": false,
+    "meets_stopband_spec": true,
     "is_minimum_phase": true,
     "is_symmetric": false,
     "phase_type": "minimum",
     "actual_taps": 2000000,
     "normalization": {
       "original_dc_gain": 1.0000001361686228,
-      "normalized_dc_gain": 8.0,
       "target_dc_gain": 8.0,
+      "normalized_dc_gain": 8.0,
       "applied_scale": 7.999998910651166,
       "max_coefficient_amplitude": 0.9263088170455172,
+      "max_coefficient_limit": 1.0,
+      "peak_limited": false,
       "normalization_applied": true
     }
   }

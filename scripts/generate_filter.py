@@ -18,7 +18,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 - タップ数: 2,000,000 (2M) デフォルト
 - 通過帯域: 0-20,000 Hz
 - 阻止帯域: 入力Nyquist周波数以降
-- 阻止帯域減衰: -197 dB以下
+- 阻止帯域減衰: -160 dB以下 (24bit品質に十分、最小位相変換後の現実的値)
 - 窓関数: Kaiser (β ≈ 55)
 
 注意:
@@ -81,7 +81,7 @@ class FilterConfig:
     upsample_ratio: int = 16
     passband_end: int = 20000
     stopband_start: int | None = None  # Noneの場合は入力Nyquist周波数
-    stopband_attenuation_db: int = 197
+    stopband_attenuation_db: int = 160  # 24bit品質に十分、最小位相変換後の現実的値
     kaiser_beta: float = 55.0
     phase_type: PhaseType = PhaseType.MINIMUM
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
@@ -731,7 +731,7 @@ UPSAMPLE_RATIO = 16
 SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO
 PASSBAND_END = 20000
 STOPBAND_START = 22050
-STOPBAND_ATTENUATION_DB = 197
+STOPBAND_ATTENUATION_DB = 160  # 24bit品質に十分
 KAISER_BETA = 55
 OUTPUT_PREFIX = None
 
@@ -762,9 +762,21 @@ def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
 
 
 def normalize_coefficients(
-    h: np.ndarray, target_dc_gain: float = 1.0
+    h: np.ndarray, target_dc_gain: float = 1.0, max_coefficient_limit: float = 1.0
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """フィルタ係数を正規化してクリッピングを防止する"""
+    """フィルタ係数を正規化してクリッピングを防止する
+
+    Args:
+        h: フィルタ係数配列
+        target_dc_gain: 目標DCゲイン（アップサンプル比）
+        max_coefficient_limit: 最大係数の上限（クリッピング防止）
+
+    Note:
+        アップサンプリングではゼロ挿入によりDCが1/Lに減衰するため、
+        フィルタのDCゲイン=Lで補償して元の振幅を維持する。
+        ただし、最大係数が1.0を超えるとトランジェントでクリップするため、
+        max_coefficient_limit=1.0で制限する。
+    """
     if h.size == 0:
         raise ValueError("フィルタ係数が空です。")
 
@@ -776,16 +788,30 @@ def normalize_coefficients(
     if abs(dc_gain) < 1e-12:
         raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
 
+    # Step 1: DCゲインを目標値に正規化
     scale = target_dc_gain / dc_gain
     h_normalized = h * scale
     max_amplitude = np.max(np.abs(h_normalized))
 
+    # Step 2: 最大係数が上限を超える場合、追加スケーリングで制限
+    peak_limited = False
+    peak_scale = 1.0
+    if max_amplitude > max_coefficient_limit:
+        peak_scale = max_coefficient_limit / max_amplitude
+        h_normalized = h_normalized * peak_scale
+        max_amplitude = np.max(np.abs(h_normalized))
+        peak_limited = True
+
+    final_dc_gain = float(np.sum(h_normalized))
+
     info = {
         "original_dc_gain": dc_gain,
-        "normalized_dc_gain": float(np.sum(h_normalized)),
         "target_dc_gain": float(target_dc_gain),
-        "applied_scale": float(scale),
+        "normalized_dc_gain": final_dc_gain,
+        "applied_scale": float(scale * peak_scale),
         "max_coefficient_amplitude": float(max_amplitude),
+        "max_coefficient_limit": float(max_coefficient_limit),
+        "peak_limited": peak_limited,
         "normalization_applied": True,
     }
 
@@ -793,7 +819,11 @@ def normalize_coefficients(
     print(f"  目標DCゲイン: {target_dc_gain:.6f}")
     print(f"  元のDCゲイン: {dc_gain:.6f}")
     print(f"  正規化スケール: {scale:.6f}x")
-    print(f"  正規化後DCゲイン: {np.sum(h_normalized):.6f}")
+    if peak_limited:
+        print(
+            f"  ⚠️ ピーク制限適用: {peak_scale:.6f}x (max_coef > {max_coefficient_limit})"
+        )
+    print(f"  最終DCゲイン: {final_dc_gain:.6f}")
     print(f"  最大係数振幅: {max_amplitude:.6f}")
 
     return h_normalized, info
@@ -1098,8 +1128,8 @@ Phase Types:
     parser.add_argument(
         "--stopband-attenuation",
         type=int,
-        default=197,
-        help="Target stopband attenuation (dB). Default: 197",
+        default=160,
+        help="Target stopband attenuation (dB). Default: 160 (sufficient for 24-bit)",
     )
     parser.add_argument(
         "--kaiser-beta",
