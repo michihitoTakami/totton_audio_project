@@ -128,7 +128,7 @@ graph TD
 | Tap Count | 2,000,000 (2M) |
 | Phase Type | Minimum Phase (default) / Linear Phase (optional) |
 | Window | Kaiser (β=55) |
-| Stopband Attenuation | ~197dB |
+| Stopband Attenuation | ~160dB (24bit品質に十分) |
 | Upsampling Ratio | Up to 16x |
 
 ### Phase Type Options
@@ -174,10 +174,16 @@ graph TD
 - Minimum phase concentrates impulse energy at t≥0, preserving transient attack
 - **Non-negotiable** for high-fidelity audio reproduction
 
-### Stopband Attenuation (-197dB)
+### Stopband Attenuation (-160dB)
 - Ensures aliasing components are far below quantization noise floor
-- Requires large tap count + careful windowing (Kaiser β≈55)
-- Coefficients normalized to DC gain = 1.0 to prevent clipping
+- 160dB is sufficient for 24-bit audio (144dB dynamic range)
+- Minimum phase conversion reduces theoretical maximum (~197dB for Kaiser β=55)
+
+### DC Gain Normalization
+- Zero-stuffing upsampling reduces DC by factor of L (upsample ratio)
+- Filter DC gain = L compensates to maintain original signal amplitude
+- Peak coefficient limited to ≤1.0 to prevent transient clipping
+- Example: 16x upsampling → DC gain = 16, peak coefficient ≤ 1.0
 
 ### GPU Memory Management
 - Filter coefficients loaded once at initialization
@@ -416,7 +422,7 @@ gh milestone list
 Current phase: **Phase 1** (Core Engine & Middleware)
 
 **Achieved:**
-- 2M-tap minimum phase FIR filter generation (197dB stopband attenuation)
+- 2M-tap minimum phase FIR filter generation (~160dB stopband attenuation)
 - GPU FFT convolution engine (~28x realtime on RTX 2070S)
 - PipeWire→GPU→ALSA daemon (working prototype)
 

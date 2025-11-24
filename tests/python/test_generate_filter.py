@@ -60,11 +60,14 @@ class TestFilterConfig:
         assert config.upsample_ratio == 16
         assert config.passband_end == 20000
         assert config.stopband_start == 22050  # auto-calculated
-        assert config.stopband_attenuation_db == 197
+        assert (
+            config.stopband_attenuation_db == 160
+        )  # Updated: realistic target for min phase
         assert config.kaiser_beta == 55.0
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
+        assert config.max_coefficient_limit == 1.0  # New: always 1.0 for unified volume
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
@@ -102,7 +105,8 @@ class TestFilterConfig:
             upsample_ratio=16,
             phase_type=PhaseType.MINIMUM,
         )
-        assert config.base_name == "filter_44k_16x_2m_minimum"
+        # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
+        assert config.base_name == "filter_44k_16x_2000000_min_phase"
 
     def test_base_name_linear_phase(self):
         """base_name should include phase type for linear phase."""
@@ -390,28 +394,51 @@ class TestNormalizeCoefficients:
     """Tests for normalize_coefficients function."""
 
     def test_normalizes_dc_gain_to_one(self):
-        """DC gain should be normalized to 1.0."""
+        """max_coef should be scaled to 1.0 (takes priority over DC gain target)."""
         from generate_filter import normalize_coefficients
 
         # Create test coefficients with known DC gain
         h = np.array([0.5, 1.0, 0.5])  # DC gain = 2.0
         h_norm, info = normalize_coefficients(h)
 
-        assert np.isclose(np.sum(h_norm), 1.0, rtol=1e-6)
+        # New logic: max_coef=1.0 takes priority, so DC gain becomes 2.0
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
         assert info["normalization_applied"] is True
         assert np.isclose(info["original_dc_gain"], 2.0)
         assert np.isclose(info["target_dc_gain"], 1.0)
+        # Final DC gain differs due to max_coef=1.0 scaling
+        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
 
     def test_normalizes_to_target_dc_gain(self):
-        """DC gain should follow requested target."""
+        """max_coef should always be scaled to 1.0 (upscale or downscale)."""
+        from generate_filter import normalize_coefficients
+
+        # Use small coefficients - will be upscaled to max_coef=1.0
+        h = np.array([0.1, 0.1])  # DC gain = 0.2
+        target = 0.5  # After DC norm: h=[0.25, 0.25], then upscaled to max=1.0
+        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+
+        # New logic: max_coef=1.0 always (upscaled 4x from 0.25)
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        assert np.isclose(info["applied_scale"], 2.5 * 4.0)  # DC norm × upscale
+        assert not info["peak_limited"]  # upscale, not downscale
+        assert info["scale_direction"] == "up"
+        assert np.isclose(info["max_coefficient_limit"], 1.0)
+
+    def test_peak_limiting_reduces_dc_gain(self):
+        """Peak limiting should reduce DC gain when max_coef exceeds limit."""
         from generate_filter import normalize_coefficients
 
         h = np.array([1.0, 1.0])  # DC gain = 2.0
-        target = 4.0
-        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+        target = 4.0  # After DC norm, max_coef = 2.0 > 1.0, needs limiting
+        h_norm, info = normalize_coefficients(
+            h, target_dc_gain=target, max_coefficient_limit=1.0
+        )
 
-        assert np.isclose(np.sum(h_norm), target, rtol=1e-6)
-        assert np.isclose(info["applied_scale"], 2.0)
+        # With peak limiting: max_coef scaled to 1.0, DC gain = 2.0 (not 4.0)
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        assert info["peak_limited"]
+        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
 
     def test_zero_dc_gain_raises_error(self):
         """Zero DC gain should raise ValueError."""
@@ -767,7 +794,8 @@ class TestMultiRateOutputFilename:
             upsample_ratio=16,
             phase_type=PhaseType.MINIMUM,
         )
-        assert config_min.base_name == "filter_44k_16x_2m_minimum"
+        # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
+        assert config_min.base_name == "filter_44k_16x_2000000_min_phase"
 
         # Linear phase (odd taps required)
         config_lin = FilterConfig(
@@ -890,9 +918,9 @@ class TestLinearPhasePadding:
         # taps_label should be "2000016" (not "2m" since it's not exactly 2M)
         assert config.taps_label == "2000016"
 
-        # For minimum phase with 2M taps
+        # For minimum phase with 2M taps - C++ expects numeric format
         config_min = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
-        assert config_min.taps_label == "2m"
+        assert config_min.taps_label == "2000000"
 
 
 class TestFilterGenerator:
