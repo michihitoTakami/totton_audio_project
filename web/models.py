@@ -87,6 +87,18 @@ class DevicesResponse(BaseModel):
     devices: list[AlsaDevice]
 
 
+class DacCapabilityResponse(BaseModel):
+    """DAC capability response model."""
+
+    device_name: str
+    min_sample_rate: int
+    max_sample_rate: int
+    supported_rates: list[int]
+    max_channels: int
+    is_valid: bool
+    error_message: Optional[str] = None
+
+
 # ============================================================================
 # EQ Profile Models
 # ============================================================================

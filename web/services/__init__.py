@@ -2,6 +2,12 @@
 
 from .alsa import get_alsa_devices
 from .config import load_config, save_config
+from .dac import (
+    DacCapability,
+    get_max_upsample_ratio,
+    get_supported_output_rates,
+    scan_dac_capability,
+)
 from .daemon import (
     check_daemon_running,
     check_pipewire_sink,
@@ -26,6 +32,11 @@ __all__ = [
     # config
     "load_config",
     "save_config",
+    # dac
+    "DacCapability",
+    "get_max_upsample_ratio",
+    "get_supported_output_rates",
+    "scan_dac_capability",
     # daemon
     "check_daemon_running",
     "check_pipewire_sink",
