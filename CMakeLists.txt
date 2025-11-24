@@ -166,6 +166,7 @@ target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
+    graceful_shutdown
     zeromq_interface
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
@@ -270,6 +271,17 @@ target_include_directories(soft_mute PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 target_compile_options(soft_mute PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+# Graceful Shutdown Library (CPU-only, for async-signal-safe shutdown)
+add_library(graceful_shutdown STATIC
+    src/graceful_shutdown.cpp
+)
+target_include_directories(graceful_shutdown PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(graceful_shutdown PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
@@ -452,6 +464,19 @@ target_include_directories(soft_mute_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(soft_mute_tests)
+
+# Graceful Shutdown tests (CPU-only, Issue #215)
+add_executable(graceful_shutdown_tests
+    tests/cpp/test_graceful_shutdown.cpp
+)
+target_link_libraries(graceful_shutdown_tests
+    GTest::gtest_main
+    graceful_shutdown
+)
+target_include_directories(graceful_shutdown_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(graceful_shutdown_tests)
 
 # Audio common utilities tests (AudioRingBuffer, AudioUtils)
 add_executable(audio_common_tests
