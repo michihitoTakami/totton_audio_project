@@ -171,7 +171,9 @@ class TestDaemonClientMocked:
             success, message = client.send_command("INVALID")
 
         assert success is False
-        assert message == "Unknown command"
+        assert (
+            "Unknown command" in message
+        )  # Message format changed to include error code prefix
 
     def test_reload_config_success(self):
         """Test reload_config with mocked success."""

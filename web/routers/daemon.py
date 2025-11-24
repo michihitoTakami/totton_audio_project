@@ -23,6 +23,7 @@ from ..services import (
     start_daemon,
     stop_daemon,
 )
+from ..services.daemon_client import DaemonError
 
 router = APIRouter(prefix="/daemon", tags=["daemon"])
 
@@ -137,18 +138,35 @@ async def get_phase_type():
     Minimum phase has no pre-ringing and low latency.
     """
     with get_daemon_client() as client:
-        success, result = client.get_phase_type()
-        if not success:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Failed to get phase type: {result}",
+        response = client.send_command_v2("PHASE_TYPE_GET")
+        if not response.success:
+            # Raise DaemonError to trigger RFC 9457 error handler
+            raise response.error
+
+        # Parse phase type from response data
+        data = response.data
+        if isinstance(data, str):
+            import json
+
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                raise DaemonError(
+                    error_code="IPC_PROTOCOL_ERROR",
+                    message=f"Invalid JSON in phase type response: {data}",
+                )
+
+        if not isinstance(data, dict):
+            raise DaemonError(
+                error_code="IPC_PROTOCOL_ERROR",
+                message=f"Expected dict for phase type, got {type(data).__name__}",
             )
 
-        phase_type = result.get("phase_type")
+        phase_type = data.get("phase_type")
         if phase_type not in ("minimum", "linear"):
-            raise HTTPException(
-                status_code=503,
-                detail=f"Invalid phase type from daemon: {phase_type}",
+            raise DaemonError(
+                error_code="IPC_PROTOCOL_ERROR",
+                message=f"Invalid phase type from daemon: {phase_type}",
             )
 
         latency_warning = None
@@ -177,12 +195,10 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
     """
     # Validation is handled by Pydantic Literal type (returns 422 for invalid values)
     with get_daemon_client() as client:
-        success, message = client.set_phase_type(request.phase_type)
-        if not success:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Failed to set phase type: {message}",
-            )
+        response = client.send_command_v2(f"PHASE_TYPE_SET:{request.phase_type}")
+        if not response.success:
+            # Raise DaemonError to trigger RFC 9457 error handler
+            raise response.error
 
         return ApiResponse(
             success=True,
