@@ -824,6 +824,257 @@
         }
       }
     },
+    "/dac/capabilities": {
+      "get": {
+        "tags": [
+          "dac"
+        ],
+        "summary": "Get Dac Capabilities",
+        "description": "Get DAC capabilities for the specified device.\n\nReturns supported sample rates, channel count, and other hardware info.\nResults are cached for 60 seconds.",
+        "operationId": "get_dac_capabilities_dac_capabilities_get",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "ALSA device name (e.g., hw:0)",
+              "default": "default",
+              "title": "Device"
+            },
+            "description": "ALSA device name (e.g., hw:0)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DacCapabilityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dac/devices": {
+      "get": {
+        "tags": [
+          "dac"
+        ],
+        "summary": "List Dac Devices",
+        "description": "List available DAC devices with their capabilities.\n\nReturns device list with basic info and supported rates.\nCapability scan is skipped for 'default' device.",
+        "operationId": "list_dac_devices_dac_devices_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DacDevicesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dac/supported-rates": {
+      "get": {
+        "tags": [
+          "dac"
+        ],
+        "summary": "Get Supported Rates",
+        "description": "Get supported output rates for a specific rate family.\n\nUseful for filtering UI options based on DAC capabilities.\nOnly rates that belong to the specified family (44.1k multiples or 48k multiples)\nand are supported by the DAC are returned.",
+        "operationId": "get_supported_rates_dac_supported_rates_get",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "ALSA device name",
+              "default": "default",
+              "title": "Device"
+            },
+            "description": "ALSA device name"
+          },
+          {
+            "name": "family",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Rate family: '44k' or '48k'",
+              "default": "44k",
+              "title": "Family"
+            },
+            "description": "Rate family: '44k' or '48k'"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DacSupportedRatesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dac/max-ratio": {
+      "get": {
+        "tags": [
+          "dac"
+        ],
+        "summary": "Get Max Ratio",
+        "description": "Get maximum upsampling ratio for a given input rate.\n\nReturns the highest ratio (1, 2, 4, 8, 16) that the DAC supports\nfor the specified input sample rate.",
+        "operationId": "get_max_ratio_dac_max_ratio_get",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "ALSA device name",
+              "default": "default",
+              "title": "Device"
+            },
+            "description": "ALSA device name"
+          },
+          {
+            "name": "input_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Input sample rate",
+              "default": 44100,
+              "title": "Input Rate"
+            },
+            "description": "Input sample rate"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DacMaxRatioResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dac/validate-config": {
+      "get": {
+        "tags": [
+          "dac"
+        ],
+        "summary": "Validate Dac Config",
+        "description": "Validate if a DAC configuration is supported.\n\nChecks if the DAC supports the specified output rate and if the\nupsampling ratio is valid (1, 2, 4, 8, or 16).",
+        "operationId": "validate_dac_config_dac_validate_config_get",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ALSA device name",
+              "title": "Device"
+            },
+            "description": "ALSA device name"
+          },
+          {
+            "name": "input_rate",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "Input sample rate",
+              "title": "Input Rate"
+            },
+            "description": "Input sample rate"
+          },
+          {
+            "name": "output_rate",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "Output sample rate",
+              "title": "Output Rate"
+            },
+            "description": "Output sample rate"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -962,6 +1213,205 @@
           "file"
         ],
         "title": "Body_validate_eq_profile_eq_validate_post"
+      },
+      "DacCapabilityInfo": {
+        "properties": {
+          "min_sample_rate": {
+            "type": "integer",
+            "title": "Min Sample Rate"
+          },
+          "max_sample_rate": {
+            "type": "integer",
+            "title": "Max Sample Rate"
+          },
+          "supported_rates": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Supported Rates"
+          },
+          "max_channels": {
+            "type": "integer",
+            "title": "Max Channels"
+          }
+        },
+        "type": "object",
+        "required": [
+          "min_sample_rate",
+          "max_sample_rate",
+          "supported_rates",
+          "max_channels"
+        ],
+        "title": "DacCapabilityInfo",
+        "description": "DAC capability info for device list."
+      },
+      "DacCapabilityResponse": {
+        "properties": {
+          "device_name": {
+            "type": "string",
+            "title": "Device Name"
+          },
+          "min_sample_rate": {
+            "type": "integer",
+            "title": "Min Sample Rate"
+          },
+          "max_sample_rate": {
+            "type": "integer",
+            "title": "Max Sample Rate"
+          },
+          "supported_rates": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Supported Rates"
+          },
+          "max_channels": {
+            "type": "integer",
+            "title": "Max Channels"
+          },
+          "is_valid": {
+            "type": "boolean",
+            "title": "Is Valid"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_name",
+          "min_sample_rate",
+          "max_sample_rate",
+          "supported_rates",
+          "max_channels",
+          "is_valid"
+        ],
+        "title": "DacCapabilityResponse",
+        "description": "DAC capability response model."
+      },
+      "DacDeviceInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DacCapabilityInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "DacDeviceInfo",
+        "description": "DAC device with capabilities."
+      },
+      "DacDevicesResponse": {
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DacDeviceInfo"
+            },
+            "type": "array",
+            "title": "Devices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "devices"
+        ],
+        "title": "DacDevicesResponse",
+        "description": "DAC devices list response model."
+      },
+      "DacMaxRatioResponse": {
+        "properties": {
+          "device": {
+            "type": "string",
+            "title": "Device"
+          },
+          "input_rate": {
+            "type": "integer",
+            "title": "Input Rate"
+          },
+          "max_ratio": {
+            "type": "integer",
+            "title": "Max Ratio"
+          },
+          "max_output_rate": {
+            "type": "integer",
+            "title": "Max Output Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device",
+          "input_rate",
+          "max_ratio",
+          "max_output_rate"
+        ],
+        "title": "DacMaxRatioResponse",
+        "description": "Maximum upsampling ratio response model."
+      },
+      "DacSupportedRatesResponse": {
+        "properties": {
+          "device": {
+            "type": "string",
+            "title": "Device"
+          },
+          "family": {
+            "type": "string",
+            "title": "Family",
+            "description": "Rate family: '44k' or '48k'"
+          },
+          "supported_rates": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Supported Rates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device",
+          "family",
+          "supported_rates"
+        ],
+        "title": "DacSupportedRatesResponse",
+        "description": "Supported rates for a rate family response model."
       },
       "DaemonStatus": {
         "properties": {
@@ -1649,6 +2099,10 @@
     {
       "name": "opra",
       "description": "OPRA headphone database integration (CC BY-SA 4.0)"
+    },
+    {
+      "name": "dac",
+      "description": "DAC capability detection and sample rate filtering"
     },
     {
       "name": "legacy",

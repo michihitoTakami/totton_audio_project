@@ -48,3 +48,19 @@ SAFE_FILENAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+\.txt$")
 # Allowed profile name pattern: alphanumeric, underscore, hyphen, dot (no extension)
 # Used for EQ profile names in config and URL parameters
 SAFE_PROFILE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
+# ============================================================================
+# DAC Device Name Validation
+# ============================================================================
+
+# Allowed ALSA device name patterns:
+# - "default"
+# - "hw:N" or "hw:N,M" where N, M are card/device numbers (0-99)
+# - "plughw:N" or "plughw:N,M"
+# - "sysdefault:CARD=name" format
+SAFE_ALSA_DEVICE_PATTERN = re.compile(
+    r"^(default|"  # default device
+    r"(plug)?hw:\d{1,2}(,\d{1,2})?|"  # hw:0, hw:0,0, plughw:1,0
+    r"sysdefault(:CARD=[a-zA-Z0-9_]+)?"  # sysdefault:CARD=PCH
+    r")$"
+)

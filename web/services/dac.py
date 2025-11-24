@@ -2,8 +2,11 @@
 
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from ..constants import SAFE_ALSA_DEVICE_PATTERN
 
 # Standard sample rates to test
 STANDARD_RATES = [
@@ -19,6 +22,10 @@ STANDARD_RATES = [
     768000,
 ]
 
+# Simple TTL cache for DAC capabilities (60 seconds)
+_capability_cache: dict[str, tuple[float, "DacCapability"]] = {}
+_CACHE_TTL_SECONDS = 60.0
+
 
 @dataclass
 class DacCapability:
@@ -31,6 +38,27 @@ class DacCapability:
     max_channels: int
     is_valid: bool
     error_message: str | None = None
+
+
+def is_safe_device_name(device: str) -> bool:
+    """Check if the device name matches the allowed pattern."""
+    return SAFE_ALSA_DEVICE_PATTERN.match(device) is not None
+
+
+def _get_cached_capability(device: str) -> DacCapability | None:
+    """Get cached capability if still valid."""
+    if device in _capability_cache:
+        timestamp, cap = _capability_cache[device]
+        if time.time() - timestamp < _CACHE_TTL_SECONDS:
+            return cap
+        # Cache expired, remove it
+        del _capability_cache[device]
+    return None
+
+
+def _set_cached_capability(device: str, cap: DacCapability) -> None:
+    """Cache the capability with current timestamp."""
+    _capability_cache[device] = (time.time(), cap)
 
 
 def _parse_device_name(device: str) -> tuple[int | None, int | None]:
@@ -57,6 +85,7 @@ def _scan_from_proc(card_num: int) -> DacCapability | None:
     Scan DAC capabilities from /proc/asound/cardN/stream0.
 
     This method reads the USB Audio stream information directly.
+    Collects ALL rates and maximum channels across all interfaces/altsets.
     """
     stream_path = Path(f"/proc/asound/card{card_num}/stream0")
     if not stream_path.exists():
@@ -67,10 +96,10 @@ def _scan_from_proc(card_num: int) -> DacCapability | None:
     except OSError:
         return None
 
-    # Parse Rates line
+    # Parse ALL Rates and Channels lines (multiple interfaces may exist)
     # Format: "    Rates: 44100, 48000, 88200, 96000, ..."
-    rates: list[int] = []
-    channels = 2  # Default
+    all_rates: set[int] = set()
+    max_channels = 2  # Default
 
     for line in content.split("\n"):
         line = line.strip()
@@ -80,58 +109,88 @@ def _scan_from_proc(card_num: int) -> DacCapability | None:
             for part in rate_str.split(","):
                 part = part.strip()
                 try:
-                    rates.append(int(part))
+                    all_rates.add(int(part))
                 except ValueError:
                     pass
 
         elif line.startswith("Channels:"):
             try:
-                channels = int(line[9:].strip())
+                ch = int(line[9:].strip())
+                max_channels = max(max_channels, ch)
             except ValueError:
                 pass
 
-    if not rates:
+    if not all_rates:
         return None
 
-    # Remove duplicates and sort
-    rates = sorted(set(rates))
+    # Sort rates
+    rates = sorted(all_rates)
 
     return DacCapability(
         device_name=f"hw:{card_num}",
         min_sample_rate=min(rates),
         max_sample_rate=max(rates),
         supported_rates=rates,
-        max_channels=channels,
+        max_channels=max_channels,
         is_valid=True,
         error_message=None,
     )
 
 
-def scan_dac_capability(device: str) -> DacCapability:
+def scan_dac_capability(device: str, use_cache: bool = True) -> DacCapability:
     """
     Scan DAC capabilities via ALSA.
 
     First tries to read from /proc/asound/cardN/stream0 (fastest, works for USB DACs).
     Falls back to aplay --dump-hw-params if /proc method fails.
 
+    Results are cached for 60 seconds to avoid repeated I/O operations.
+
     Args:
         device: ALSA device name (e.g., "hw:0", "hw:0,0", "default")
+        use_cache: Whether to use cached results (default: True)
 
     Returns:
         DacCapability with supported rates and other info
     """
+    # Validate device name
+    if not is_safe_device_name(device):
+        return DacCapability(
+            device_name=device,
+            min_sample_rate=0,
+            max_sample_rate=0,
+            supported_rates=[],
+            max_channels=0,
+            is_valid=False,
+            error_message="Invalid device name format",
+        )
+
+    # Check cache first
+    if use_cache:
+        cached = _get_cached_capability(device)
+        if cached is not None:
+            return cached
+
     # Try to parse card number from device name
     card_num, _ = _parse_device_name(device)
+
+    cap: DacCapability | None = None
 
     # Method 1: Try /proc/asound/cardN/stream0 (for USB Audio devices)
     if card_num is not None:
         proc_cap = _scan_from_proc(card_num)
         if proc_cap is not None:
             proc_cap.device_name = device  # Use original device name
-            return proc_cap
+            cap = proc_cap
 
     # Method 2: Fall back to aplay --dump-hw-params
-    return _scan_via_aplay(device)
+    if cap is None:
+        cap = _scan_via_aplay(device)
+
+    # Cache the result
+    _set_cached_capability(device, cap)
+
+    return cap
 
 
 def _scan_via_aplay(device: str) -> DacCapability:

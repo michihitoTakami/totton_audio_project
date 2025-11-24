@@ -6,6 +6,17 @@ APIへの重要な変更はこのファイルに記録されます。
 
 ## [Unreleased]
 
+### Added
+- **DAC**: DAC Capability検出API (#199)
+  - `GET /dac/capabilities` - DAC対応サンプリングレート取得
+  - `GET /dac/devices` - デバイス一覧とCapability
+  - `GET /dac/supported-rates` - レートファミリ（44k/48k）別対応レート
+  - `GET /dac/max-ratio` - 最大アップサンプリング倍率取得
+  - `GET /dac/validate-config` - 設定バリデーション
+
+### Security
+- ALSAデバイス名のバリデーション追加（パストラバーサル防止）
+
 ## [1.0.0] - 2024-11-24
 
 ### Added

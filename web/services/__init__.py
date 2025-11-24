@@ -6,6 +6,7 @@ from .dac import (
     DacCapability,
     get_max_upsample_ratio,
     get_supported_output_rates,
+    is_safe_device_name,
     scan_dac_capability,
 )
 from .daemon import (
@@ -36,6 +37,7 @@ __all__ = [
     "DacCapability",
     "get_max_upsample_ratio",
     "get_supported_output_rates",
+    "is_safe_device_name",
     "scan_dac_capability",
     # daemon
     "check_daemon_running",
