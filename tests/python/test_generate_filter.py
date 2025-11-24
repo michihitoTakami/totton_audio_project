@@ -67,7 +67,7 @@ class TestFilterConfig:
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
-        assert config.max_coefficient_limit == config.upsample_ratio
+        assert config.max_coefficient_limit == 1.0  # New: always 1.0 for unified volume
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
@@ -394,31 +394,36 @@ class TestNormalizeCoefficients:
     """Tests for normalize_coefficients function."""
 
     def test_normalizes_dc_gain_to_one(self):
-        """DC gain should be normalized to 1.0."""
+        """max_coef should be scaled to 1.0 (takes priority over DC gain target)."""
         from generate_filter import normalize_coefficients
 
         # Create test coefficients with known DC gain
         h = np.array([0.5, 1.0, 0.5])  # DC gain = 2.0
         h_norm, info = normalize_coefficients(h)
 
-        assert np.isclose(np.sum(h_norm), 1.0, rtol=1e-6)
+        # New logic: max_coef=1.0 takes priority, so DC gain becomes 2.0
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
         assert info["normalization_applied"] is True
         assert np.isclose(info["original_dc_gain"], 2.0)
         assert np.isclose(info["target_dc_gain"], 1.0)
+        # Final DC gain differs due to max_coef=1.0 scaling
+        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
 
     def test_normalizes_to_target_dc_gain(self):
-        """DC gain should follow requested target when no peak limiting."""
+        """max_coef should always be scaled to 1.0 (upscale or downscale)."""
         from generate_filter import normalize_coefficients
 
-        # Use small coefficients so peak limiting won't apply
+        # Use small coefficients - will be upscaled to max_coef=1.0
         h = np.array([0.1, 0.1])  # DC gain = 0.2
-        target = 0.5  # After scaling, max_coef = 0.25 < 1.0, no peak limiting
+        target = 0.5  # After DC norm: h=[0.25, 0.25], then upscaled to max=1.0
         h_norm, info = normalize_coefficients(h, target_dc_gain=target)
 
-        assert np.isclose(np.sum(h_norm), target, rtol=1e-6)
-        assert np.isclose(info["applied_scale"], 2.5)
-        assert not info["peak_limited"]
-        assert np.isclose(info["max_coefficient_limit"], target)
+        # New logic: max_coef=1.0 always (upscaled 4x from 0.25)
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        assert np.isclose(info["applied_scale"], 2.5 * 4.0)  # DC norm × upscale
+        assert not info["peak_limited"]  # upscale, not downscale
+        assert info["scale_direction"] == "up"
+        assert np.isclose(info["max_coefficient_limit"], 1.0)
 
     def test_peak_limiting_reduces_dc_gain(self):
         """Peak limiting should reduce DC gain when max_coef exceeds limit."""
