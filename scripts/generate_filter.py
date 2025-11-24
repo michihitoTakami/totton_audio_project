@@ -85,6 +85,8 @@ class FilterConfig:
     kaiser_beta: float = 55.0
     phase_type: PhaseType = PhaseType.MINIMUM
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
+    # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
+    target_dc_gain: float | None = None
     output_prefix: str | None = None
 
     def __post_init__(self) -> None:
@@ -125,6 +127,14 @@ class FilterConfig:
                 f"ストップバンド開始 ({self.stopband_start} Hz) は出力ナイキスト周波数 ({output_nyquist} Hz) 未満である必要があります"
             )
         # 線形位相はfinal_tapsで比率の倍数に調整される
+
+        # DCゲインターゲットの設定（指定がなければアップサンプル比）
+        if self.target_dc_gain is None:
+            self.target_dc_gain = float(self.upsample_ratio)
+        if self.target_dc_gain <= 0:
+            raise ValueError(
+                f"DCゲインのターゲットは正の値である必要があります: {self.target_dc_gain}"
+            )
 
     @property
     def output_rate(self) -> int:
@@ -623,7 +633,9 @@ class FilterGenerator:
         h_final, h_linear = self.designer.design()
 
         # 2. 係数正規化
-        h_final, normalization_info = normalize_coefficients(h_final)
+        h_final, normalization_info = normalize_coefficients(
+            h_final, target_dc_gain=self.config.target_dc_gain
+        )
 
         # 3. 仕様検証
         validation_results = self.validator.validate(h_final)
@@ -662,6 +674,7 @@ class FilterGenerator:
             "kaiser_beta": self.config.kaiser_beta,
             "phase_type": self.config.phase_type.value,
             "minimum_phase_method": self.config.minimum_phase_method.value,
+            "target_dc_gain": self.config.target_dc_gain,
             "output_basename": self.config.base_name,
             "validation_results": validation_results,
         }
@@ -685,7 +698,11 @@ class FilterGenerator:
         print(f"阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
         spec_status = "合格" if validation_results["meets_stopband_spec"] else "不合格"
         print(f"  {spec_status} (目標: {self.config.stopband_attenuation_db} dB以上)")
-        print(f"係数正規化: DCゲイン={normalization_info['normalized_dc_gain']:.6f}")
+        print(
+            "係数正規化: "
+            f"目標DC={normalization_info['target_dc_gain']:.6f}, "
+            f"結果DC={normalization_info['normalized_dc_gain']:.6f}"
+        )
         print(
             f"係数ファイル: data/coefficients/{base_name}.bin ({actual_taps:,} coeffs)"
         )
@@ -734,25 +751,38 @@ def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
     return ((n_taps // upsample_ratio) + 1) * upsample_ratio
 
 
-def normalize_coefficients(h: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+def normalize_coefficients(
+    h: np.ndarray, target_dc_gain: float = 1.0
+) -> tuple[np.ndarray, dict[str, Any]]:
     """フィルタ係数を正規化してクリッピングを防止する"""
-    dc_gain = np.sum(h)
+    if h.size == 0:
+        raise ValueError("フィルタ係数が空です。")
+
+    if target_dc_gain <= 0:
+        raise ValueError("DCゲインのターゲットは正の値である必要があります。")
+
+    dc_gain = float(np.sum(h))
 
     if abs(dc_gain) < 1e-12:
         raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
 
-    h_normalized = h / dc_gain
+    scale = target_dc_gain / dc_gain
+    h_normalized = h * scale
     max_amplitude = np.max(np.abs(h_normalized))
 
     info = {
-        "original_dc_gain": float(dc_gain),
+        "original_dc_gain": dc_gain,
         "normalized_dc_gain": float(np.sum(h_normalized)),
+        "target_dc_gain": float(target_dc_gain),
+        "applied_scale": float(scale),
         "max_coefficient_amplitude": float(max_amplitude),
         "normalization_applied": True,
     }
 
     print("\n係数正規化:")
+    print(f"  目標DCゲイン: {target_dc_gain:.6f}")
     print(f"  元のDCゲイン: {dc_gain:.6f}")
+    print(f"  正規化スケール: {scale:.6f}x")
     print(f"  正規化後DCゲイン: {np.sum(h_normalized):.6f}")
     print(f"  最大係数振幅: {max_amplitude:.6f}")
 

@@ -1,5 +1,5 @@
 {
-  "generation_date": "2025-11-22T19:55:57.602624",
+  "generation_date": "2025-11-24T17:04:24.150864",
   "n_taps": 2000000,
   "sample_rate_input": 48000,
   "sample_rate_output": 768000,
@@ -17,9 +17,11 @@
     "meets_stopband_spec": false,
     "is_minimum_phase": true,
     "normalization": {
-      "original_dc_gain": 1.0000002956479594,
-      "normalized_dc_gain": 1.0,
-      "max_coefficient_amplitude": 0.07843215618436346,
+      "original_dc_gain": 0.9999998807907104,
+      "normalized_dc_gain": 16.0,
+      "target_dc_gain": 16.0,
+      "applied_scale": 16.00000190734886,
+      "max_coefficient_amplitude": 1.25491464138031,
       "normalization_applied": true
     }
   },
