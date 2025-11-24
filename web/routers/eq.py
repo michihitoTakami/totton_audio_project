@@ -3,7 +3,13 @@
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from ..constants import EQ_PROFILES_DIR
-from ..models import ApiResponse
+from ..models import (
+    ApiResponse,
+    EqActiveResponse,
+    EqProfileInfo,
+    EqProfilesResponse,
+    EqValidationResponse,
+)
 from ..services import (
     is_safe_profile_name,
     load_config,
@@ -28,7 +34,7 @@ def validate_profile_name(name: str) -> None:
         )
 
 
-@router.get("/profiles")
+@router.get("/profiles", response_model=EqProfilesResponse)
 async def list_eq_profiles():
     """
     List available EQ profiles in data/EQ directory.
@@ -56,22 +62,22 @@ async def list_eq_profiles():
 
                 stat = f.stat()
                 profiles.append(
-                    {
-                        "name": f.stem,
-                        "filename": f.name,
-                        "path": str(f),
-                        "size": stat.st_size,
-                        "modified": stat.st_mtime,
-                        "type": profile_type,
-                        "filter_count": filter_count,
-                    }
+                    EqProfileInfo(
+                        name=f.stem,
+                        filename=f.name,
+                        path=str(f),
+                        size=stat.st_size,
+                        modified=stat.st_mtime,
+                        type=profile_type,
+                        filter_count=filter_count,
+                    )
                 )
     # Sort by modified time (newest first)
-    profiles.sort(key=lambda x: x["modified"], reverse=True)
-    return {"profiles": profiles}
+    profiles.sort(key=lambda x: x.modified, reverse=True)
+    return EqProfilesResponse(profiles=profiles)
 
 
-@router.post("/validate")
+@router.post("/validate", response_model=EqValidationResponse)
 async def validate_eq_profile(file: UploadFile):
     """
     Validate an EQ profile file before importing.
@@ -84,16 +90,16 @@ async def validate_eq_profile(file: UploadFile):
     dest_path = EQ_PROFILES_DIR / safe_filename
     file_exists = dest_path.exists()
 
-    return {
-        "valid": validation["valid"],
-        "errors": validation["errors"],
-        "warnings": validation["warnings"],
-        "preamp_db": validation["preamp_db"],
-        "filter_count": validation["filter_count"],
-        "filename": safe_filename,
-        "file_exists": file_exists,
-        "size_bytes": validation["size_bytes"],
-    }
+    return EqValidationResponse(
+        valid=validation["valid"],
+        errors=validation["errors"],
+        warnings=validation["warnings"],
+        preamp_db=validation["preamp_db"],
+        filter_count=validation["filter_count"],
+        filename=safe_filename,
+        file_exists=file_exists,
+        size_bytes=validation["size_bytes"],
+    )
 
 
 @router.post("/import", response_model=ApiResponse)
@@ -205,57 +211,39 @@ async def delete_eq_profile(name: str):
         raise HTTPException(status_code=500, detail=f"Failed to delete: {e}")
 
 
-@router.get("/active")
+@router.get("/active", response_model=EqActiveResponse)
 async def get_active_eq():
     """Get the currently active EQ profile with parsed content."""
     config = load_config()
 
     if not config.eq_profile:
-        return {
-            "active": False,
-            "name": None,
-            "source_type": None,
-            "has_modern_target": False,
-            "opra_info": None,
-            "opra_filters": [],
-            "original_filters": [],
-        }
+        return EqActiveResponse(active=False)
 
     # Defense-in-depth: validate profile name from config
     # This catches cases where config was tampered with or contains unsafe values
     if not is_safe_profile_name(config.eq_profile):
-        return {
-            "active": True,
-            "name": config.eq_profile,
-            "error": "Invalid profile name in config",
-            "source_type": None,
-            "has_modern_target": False,
-            "opra_info": None,
-            "opra_filters": [],
-            "original_filters": [],
-        }
+        return EqActiveResponse(
+            active=True,
+            name=config.eq_profile,
+            error="Invalid profile name in config",
+        )
 
     profile_path = EQ_PROFILES_DIR / f"{config.eq_profile}.txt"
     if not profile_path.exists():
-        return {
-            "active": True,
-            "name": config.eq_profile,
-            "error": "Profile file not found",
-            "source_type": None,
-            "has_modern_target": False,
-            "opra_info": None,
-            "opra_filters": [],
-            "original_filters": [],
-        }
+        return EqActiveResponse(
+            active=True,
+            name=config.eq_profile,
+            error="Profile file not found",
+        )
 
     parsed = parse_eq_profile_content(profile_path)
 
-    return {
-        "active": True,
-        "name": config.eq_profile,
-        "source_type": parsed["source_type"],
-        "has_modern_target": parsed["has_modern_target"],
-        "opra_info": parsed["opra_info"],
-        "opra_filters": parsed["opra_filters"],
-        "original_filters": parsed["original_filters"],
-    }
+    return EqActiveResponse(
+        active=True,
+        name=config.eq_profile,
+        source_type=parsed["source_type"],
+        has_modern_target=parsed["has_modern_target"],
+        opra_info=parsed["opra_info"],
+        opra_filters=parsed["opra_filters"],
+        original_filters=parsed["original_filters"],
+    )

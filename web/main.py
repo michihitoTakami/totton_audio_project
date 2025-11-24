@@ -9,14 +9,57 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from .exceptions import register_exception_handlers
+from .models import ApiResponse
 from .routers import daemon_router, eq_router, opra_router, status_router
 from .templates import get_admin_html
 
+# OpenAPI tag descriptions
+tags_metadata = [
+    {
+        "name": "status",
+        "description": "System status and settings management",
+    },
+    {
+        "name": "daemon",
+        "description": "Audio daemon lifecycle and ZeroMQ communication",
+    },
+    {
+        "name": "eq",
+        "description": "EQ profile management (import, activate, delete)",
+    },
+    {
+        "name": "opra",
+        "description": "OPRA headphone database integration (CC BY-SA 4.0)",
+    },
+    {
+        "name": "legacy",
+        "description": "Deprecated endpoints - use alternatives instead",
+    },
+]
+
 app = FastAPI(
     title="GPU Upsampler Control",
-    description="Web API for GPU Audio Upsampler daemon control",
+    description="""
+## GPU Audio Upsampler Web API
+
+Control interface for the GPU-accelerated audio upsampler daemon.
+
+### Features
+- **Daemon Control**: Start/stop/restart the audio processing daemon
+- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)
+- **OPRA Integration**: Access the OPRA headphone EQ database
+- **Real-time Stats**: WebSocket endpoint for live statistics
+
+### Authentication
+No authentication required (local network only).
+    """,
     version="1.0.0",
+    openapi_tags=tags_metadata,
 )
+
+# Register exception handlers for unified error responses
+register_exception_handlers(app)
 
 # Mount static files
 static_dir = Path(__file__).parent / "static"
@@ -31,9 +74,20 @@ app.include_router(opra_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)
-@app.post("/restart")
+@app.post(
+    "/restart",
+    response_model=ApiResponse,
+    tags=["legacy"],
+    deprecated=True,
+    summary="Restart daemon (DEPRECATED)",
+    description="**Deprecated**: Use `POST /daemon/restart` instead.",
+)
 async def restart():
-    """Legacy restart endpoint - forwards to daemon restart."""
+    """
+    Legacy restart endpoint - forwards to daemon restart.
+
+    **Deprecated**: Use `POST /daemon/restart` instead.
+    """
     from .routers.daemon import daemon_restart
 
     return await daemon_restart()

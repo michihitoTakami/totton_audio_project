@@ -6,7 +6,7 @@ import time
 from fastapi import APIRouter, HTTPException
 
 from ..constants import DAEMON_BINARY, PID_FILE_PATH
-from ..models import ApiResponse, RewireRequest
+from ..models import ApiResponse, DaemonStatus, RewireRequest, ZmqPingResponse
 from ..services import (
     check_daemon_running,
     check_pipewire_sink,
@@ -61,20 +61,20 @@ async def daemon_restart():
         )
 
 
-@router.get("/status")
+@router.get("/status", response_model=DaemonStatus)
 async def daemon_status():
     """Get detailed daemon status."""
     running = check_daemon_running()
     pid = get_daemon_pid()
     pipewire_connected = check_pipewire_sink() if running else False
 
-    return {
-        "running": running,
-        "pid": pid,
-        "pid_file": str(PID_FILE_PATH),
-        "binary_path": str(DAEMON_BINARY),
-        "pipewire_connected": pipewire_connected,
-    }
+    return DaemonStatus(
+        running=running,
+        pid=pid,
+        pid_file=str(PID_FILE_PATH),
+        binary_path=str(DAEMON_BINARY),
+        pipewire_connected=pipewire_connected,
+    )
 
 
 # ============================================================================
@@ -82,16 +82,16 @@ async def daemon_status():
 # ============================================================================
 
 
-@router.get("/zmq/ping")
+@router.get("/zmq/ping", response_model=ZmqPingResponse)
 async def zmq_ping():
     """Ping the daemon via ZeroMQ."""
     with get_daemon_client(timeout_ms=1000) as client:
         success, response = client.send_command("PING")
-        return {
-            "success": success,
-            "response": response,
-            "daemon_running": check_daemon_running(),
-        }
+        return ZmqPingResponse(
+            success=success,
+            response=response,
+            daemon_running=check_daemon_running(),
+        )
 
 
 @router.post("/zmq/command/{cmd}", response_model=ApiResponse)

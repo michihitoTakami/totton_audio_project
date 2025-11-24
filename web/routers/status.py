@@ -5,7 +5,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from ..models import ApiResponse, SettingsUpdate, Status
+from ..models import ApiResponse, DevicesResponse, SettingsUpdate, Status
 from ..services import (
     check_daemon_running,
     check_pipewire_sink,
@@ -17,7 +17,7 @@ from ..services import (
 )
 from ..templates import get_embedded_html
 
-router = APIRouter()
+router = APIRouter(tags=["status"])
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -112,7 +112,7 @@ async def update_settings(update: SettingsUpdate):
         return ApiResponse(success=False, message="Failed to save settings")
 
 
-@router.get("/devices")
+@router.get("/devices", response_model=DevicesResponse)
 async def list_devices():
     """List available ALSA devices."""
-    return {"devices": get_alsa_devices()}
+    return DevicesResponse(devices=get_alsa_devices())
