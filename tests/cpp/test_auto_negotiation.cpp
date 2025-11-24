@@ -368,3 +368,161 @@ TEST_F(AutoNegotiationTest, IsRateSupported_EmptySupportedRates) {
     EXPECT_FALSE(DacCapability::isRateSupported(dac, 705600));
     EXPECT_FALSE(DacCapability::isRateSupported(dac, 768000));
 }
+
+// ============================================================================
+// Issue #218: Rate Negotiation Handshake Tests
+// See: docs/architecture/rate-negotiation-handshake.md
+// ============================================================================
+
+/**
+ * Test cases from Issue #218 design document (Section 7.1):
+ * - Input rate detection → candidate rate determination
+ * - Expected output rates for various input rates
+ * - Reconfiguration flag behavior
+ */
+
+TEST_F(AutoNegotiationTest, Issue218_InputRateDetection_44kFamily) {
+    auto dac = createFullCapabilityDac();
+
+    // Test all 44.1kHz family input rates
+    struct TestCase {
+        int inputRate;
+        int expectedOutputRate;
+        int expectedRatio;
+    };
+    std::vector<TestCase> testCases = {
+        {44100, 705600, 16},
+        {88200, 705600, 8},
+        {176400, 705600, 4},
+        {352800, 705600, 2},
+    };
+
+    for (const auto& tc : testCases) {
+        auto config = negotiate(tc.inputRate, dac);
+        EXPECT_TRUE(config.isValid) << "Input rate: " << tc.inputRate;
+        EXPECT_EQ(config.outputRate, tc.expectedOutputRate) << "Input rate: " << tc.inputRate;
+        EXPECT_EQ(config.upsampleRatio, tc.expectedRatio) << "Input rate: " << tc.inputRate;
+        EXPECT_EQ(config.inputFamily, RateFamily::RATE_44K) << "Input rate: " << tc.inputRate;
+    }
+}
+
+TEST_F(AutoNegotiationTest, Issue218_InputRateDetection_48kFamily) {
+    auto dac = createFullCapabilityDac();
+
+    // Test all 48kHz family input rates
+    struct TestCase {
+        int inputRate;
+        int expectedOutputRate;
+        int expectedRatio;
+    };
+    std::vector<TestCase> testCases = {
+        {48000, 768000, 16},
+        {96000, 768000, 8},
+        {192000, 768000, 4},
+        {384000, 768000, 2},
+    };
+
+    for (const auto& tc : testCases) {
+        auto config = negotiate(tc.inputRate, dac);
+        EXPECT_TRUE(config.isValid) << "Input rate: " << tc.inputRate;
+        EXPECT_EQ(config.outputRate, tc.expectedOutputRate) << "Input rate: " << tc.inputRate;
+        EXPECT_EQ(config.upsampleRatio, tc.expectedRatio) << "Input rate: " << tc.inputRate;
+        EXPECT_EQ(config.inputFamily, RateFamily::RATE_48K) << "Input rate: " << tc.inputRate;
+    }
+}
+
+TEST_F(AutoNegotiationTest, Issue218_FamilySwitch_44kTo48k) {
+    auto dac = createFullCapabilityDac();
+
+    // Start with 44.1kHz family
+    auto config1 = negotiate(44100, dac, 0);
+    EXPECT_TRUE(config1.isValid);
+    EXPECT_EQ(config1.outputRate, 705600);
+    EXPECT_TRUE(config1.requiresReconfiguration);
+
+    // Switch to 48kHz family - MUST require reconfiguration
+    auto config2 = negotiate(48000, dac, 705600);
+    EXPECT_TRUE(config2.isValid);
+    EXPECT_EQ(config2.outputRate, 768000);
+    EXPECT_TRUE(config2.requiresReconfiguration)
+        << "Cross-family switch (44k->48k) must require reconfiguration";
+    EXPECT_EQ(config2.inputFamily, RateFamily::RATE_48K);
+}
+
+TEST_F(AutoNegotiationTest, Issue218_FamilySwitch_48kTo44k) {
+    auto dac = createFullCapabilityDac();
+
+    // Start with 48kHz family
+    auto config1 = negotiate(96000, dac, 0);
+    EXPECT_TRUE(config1.isValid);
+    EXPECT_EQ(config1.outputRate, 768000);
+
+    // Switch to 44.1kHz family - MUST require reconfiguration
+    auto config2 = negotiate(88200, dac, 768000);
+    EXPECT_TRUE(config2.isValid);
+    EXPECT_EQ(config2.outputRate, 705600);
+    EXPECT_TRUE(config2.requiresReconfiguration)
+        << "Cross-family switch (48k->44k) must require reconfiguration";
+    EXPECT_EQ(config2.inputFamily, RateFamily::RATE_44K);
+}
+
+TEST_F(AutoNegotiationTest, Issue218_SameFamily_NoReconfiguration) {
+    auto dac = createFullCapabilityDac();
+
+    // Start with 44.1kHz
+    auto config1 = negotiate(44100, dac, 0);
+    EXPECT_TRUE(config1.requiresReconfiguration);
+
+    // Switch within same family (44100 -> 88200)
+    auto config2 = negotiate(88200, dac, 705600);
+    EXPECT_TRUE(config2.isValid);
+    EXPECT_FALSE(config2.requiresReconfiguration)
+        << "Same-family switch should NOT require reconfiguration";
+    EXPECT_EQ(config2.outputRate, 705600);
+
+    // Switch within same family again (88200 -> 176400)
+    auto config3 = negotiate(176400, dac, 705600);
+    EXPECT_TRUE(config3.isValid);
+    EXPECT_FALSE(config3.requiresReconfiguration)
+        << "Same-family switch should NOT require reconfiguration";
+}
+
+TEST_F(AutoNegotiationTest, Issue218_DacLimitation_384kHz) {
+    // Create DAC limited to 384kHz
+    DacCapability::Capability dac;
+    dac.deviceName = "test:384k";
+    dac.minSampleRate = 44100;
+    dac.maxSampleRate = 384000;
+    dac.supportedRates = {44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000};
+    dac.maxChannels = 2;
+    dac.isValid = true;
+
+    // 44.1kHz input should negotiate to 352800 (8x)
+    auto config44k = negotiate(44100, dac);
+    EXPECT_TRUE(config44k.isValid);
+    EXPECT_EQ(config44k.outputRate, 352800);
+    EXPECT_EQ(config44k.upsampleRatio, 8);
+
+    // 48kHz input should negotiate to 384000 (8x)
+    auto config48k = negotiate(48000, dac, 352800);
+    EXPECT_TRUE(config48k.isValid);
+    EXPECT_EQ(config48k.outputRate, 384000);
+    EXPECT_EQ(config48k.upsampleRatio, 8);
+}
+
+TEST_F(AutoNegotiationTest, Issue218_UnsupportedInputRate) {
+    auto dac = createFullCapabilityDac();
+
+    // Rates that are not standard multiples
+    // 22050Hz - would need 32x upsampling (not supported)
+    auto config1 = negotiate(22050, dac);
+    EXPECT_FALSE(config1.isValid);
+
+    // 11025Hz - would need 64x upsampling (not supported)
+    auto config2 = negotiate(11025, dac);
+    EXPECT_FALSE(config2.isValid);
+
+    // 0Hz - invalid input
+    auto config3 = negotiate(0, dac);
+    EXPECT_FALSE(config3.isValid);
+}

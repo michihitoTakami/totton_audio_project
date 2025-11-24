@@ -37,6 +37,10 @@ inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
 static std::atomic<bool> g_running{true};
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 
+// Pending rate change (set by PipeWire callback, processed in main loop)
+// Value: 0 = no change pending, >0 = detected input sample rate
+static std::atomic<int> g_pending_rate_change{0};
+
 // Output ring buffers (using common AudioRingBuffer class)
 static AudioRingBuffer g_output_buffer_left;
 static AudioRingBuffer g_output_buffer_right;
@@ -73,10 +77,9 @@ static void signal_handler(int sig) {
 
 // Rate family switching helper
 // Called when input sample rate changes (e.g., from PipeWire param event or ZeroMQ)
-// TODO: Connect this to PipeWire param_changed event or ZeroMQ command handler
-// Currently this is a prepared skeleton for future dynamic rate detection.
-// See: https://github.com/michihitoTakami/michy_os/issues/38
-[[maybe_unused]] static bool handle_rate_change(int detected_sample_rate) {
+// Connected via on_param_changed() event and processed in main loop.
+// See: https://github.com/michihitoTakami/michy_os/issues/218
+static bool handle_rate_change(int detected_sample_rate) {
     if (!g_upsampler || !g_upsampler->isDualRateEnabled()) {
         return false;  // Dual-rate not enabled
     }
@@ -219,9 +222,42 @@ static void on_stream_state_changed(void* userdata, enum pw_stream_state old_sta
     std::cout << std::endl;
 }
 
+// Input stream param changed callback (detects sample rate changes)
+// This is called in the PipeWire real-time thread, so we only set a flag
+// and let the main loop handle the actual rate change.
+// See: docs/architecture/rate-negotiation-handshake.md
+static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* param) {
+    (void)userdata;
+
+    // Only handle format changes
+    if (id != SPA_PARAM_Format || param == nullptr) {
+        return;
+    }
+
+    // Parse audio format info
+    struct spa_audio_info_raw info;
+    if (spa_format_audio_raw_parse(param, &info) < 0) {
+        return;
+    }
+
+    int detected_rate = static_cast<int>(info.rate);
+    int current_rate = g_current_input_rate.load(std::memory_order_acquire);
+
+    // Check if rate has changed
+    if (detected_rate != current_rate && detected_rate > 0) {
+        std::cout << "[PipeWire] Sample rate change detected: " << current_rate << " -> "
+                  << detected_rate << " Hz" << std::endl;
+
+        // Set pending rate change (will be processed in main loop)
+        // This avoids blocking the real-time audio thread
+        g_pending_rate_change.store(detected_rate, std::memory_order_release);
+    }
+}
+
 static const struct pw_stream_events input_stream_events = {
     .version = PW_VERSION_STREAM_EVENTS,
     .state_changed = on_stream_state_changed,
+    .param_changed = on_param_changed,
     .process = on_input_process,
 };
 
@@ -410,9 +446,27 @@ int main(int argc, char* argv[]) {
     std::cout << "Press Ctrl+C to stop." << std::endl;
     std::cout << "========================================" << std::endl;
 
-    // Run main loop
+    // Run main loop with rate change handling
+    // Using iterate instead of run to check for pending rate changes
     while (g_running) {
-        pw_main_loop_run(data.loop);
+        // Check for pending rate change (set by on_param_changed callback)
+        int pending_rate = g_pending_rate_change.exchange(0, std::memory_order_acq_rel);
+        if (pending_rate > 0) {
+            std::cout << "[Main] Processing rate change to " << pending_rate << " Hz..."
+                      << std::endl;
+            if (handle_rate_change(pending_rate)) {
+                std::cout << "[Main] Rate change successful: " << g_current_input_rate.load()
+                          << " Hz input -> " << g_current_output_rate.load() << " Hz output"
+                          << std::endl;
+            } else {
+                std::cerr << "[Main] Rate change failed or not supported" << std::endl;
+            }
+        }
+
+        // Process PipeWire events (non-blocking iteration)
+        // timeout_ms = -1 means wait indefinitely, but we use a short timeout
+        // to periodically check g_running and pending rate changes
+        pw_loop_iterate(pw_main_loop_get_loop(data.loop), 10);  // 10ms timeout
     }
 
     // Cleanup
