@@ -40,6 +40,29 @@ def create_success_response(data: dict | None = None) -> DaemonResponse:
     return DaemonResponse(success=True, data=data)
 
 
+@pytest.fixture
+def mock_daemon_error():
+    """Fixture to mock daemon client with error response.
+
+    Usage:
+        def test_example(client, mock_daemon_error):
+            with mock_daemon_error(ErrorCode.IPC_TIMEOUT.value, "Timeout"):
+                response = client.get("/daemon/phase-type")
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _mock(error_code: str, message: str, inner_error: dict | None = None):
+        error_response = create_error_response(error_code, message, inner_error)
+        with patch("web.routers.daemon.get_daemon_client") as mock_factory:
+            mock_client = MagicMock()
+            mock_client.send_command_v2.return_value = error_response
+            mock_factory.return_value.__enter__.return_value = mock_client
+            yield mock_client
+
+    return _mock
+
+
 class TestIPCErrorPropagation:
     """Tests for IPC layer (ZeroMQ) error propagation."""
 
@@ -122,6 +145,32 @@ class TestIPCErrorPropagation:
         assert response.status_code == 503
         data = response.json()
         assert data["error_code"] == "IPC_CONNECTION_FAILED"
+
+    def test_ipc_invalid_command_returns_400(self, client, mock_daemon_error):
+        """IPC_INVALID_COMMAND should return 400 Bad Request."""
+        with mock_daemon_error(
+            ErrorCode.IPC_INVALID_COMMAND.value, "Unknown command: FOOBAR"
+        ):
+            response = client.get("/daemon/phase-type")
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["error_code"] == "IPC_INVALID_COMMAND"
+        assert data["category"] == "ipc_zeromq"
+        assert data["title"] == "Invalid Command"
+
+    def test_ipc_invalid_params_returns_400(self, client, mock_daemon_error):
+        """IPC_INVALID_PARAMS should return 400 Bad Request."""
+        with mock_daemon_error(
+            ErrorCode.IPC_INVALID_PARAMS.value, "Missing required parameter: device"
+        ):
+            response = client.get("/daemon/phase-type")
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["error_code"] == "IPC_INVALID_PARAMS"
+        assert data["category"] == "ipc_zeromq"
+        assert data["title"] == "Invalid Parameters"
 
 
 class TestDACErrorPropagation:
@@ -465,20 +514,72 @@ class TestSuccessResponse:
 class TestPhaseTypeEndpointErrors:
     """Tests specific to phase-type endpoint error handling."""
 
-    def test_put_phase_type_error(self, client):
+    def test_put_phase_type_error(self, client, mock_daemon_error):
         """PUT /daemon/phase-type should propagate errors."""
-        error_response = create_error_response(
-            error_code=ErrorCode.IPC_TIMEOUT.value,
-            message="Daemon not responding",
-        )
-
-        with patch("web.routers.daemon.get_daemon_client") as mock_factory:
-            mock_client = MagicMock()
-            mock_client.send_command_v2.return_value = error_response
-            mock_factory.return_value.__enter__.return_value = mock_client
-
+        with mock_daemon_error(ErrorCode.IPC_TIMEOUT.value, "Daemon not responding"):
             response = client.put("/daemon/phase-type", json={"phase_type": "minimum"})
 
         assert response.status_code == 504
         data = response.json()
         assert data["error_code"] == "IPC_TIMEOUT"
+
+
+class TestErrorCodeHttpMapping:
+    """Parametrized tests for error code to HTTP status mapping.
+
+    Ensures all error codes in ERROR_MAPPINGS return correct HTTP status.
+    """
+
+    @pytest.mark.parametrize(
+        "error_code,expected_http,expected_category",
+        [
+            # Audio Processing (400/404/500)
+            ("AUDIO_INVALID_INPUT_RATE", 400, "audio_processing"),
+            ("AUDIO_INVALID_OUTPUT_RATE", 400, "audio_processing"),
+            ("AUDIO_UNSUPPORTED_FORMAT", 400, "audio_processing"),
+            ("AUDIO_FILTER_NOT_FOUND", 404, "audio_processing"),
+            ("AUDIO_BUFFER_OVERFLOW", 500, "audio_processing"),
+            ("AUDIO_XRUN_DETECTED", 500, "audio_processing"),
+            # DAC/ALSA (404/409/422/500)
+            ("DAC_DEVICE_NOT_FOUND", 404, "dac_alsa"),
+            ("DAC_OPEN_FAILED", 500, "dac_alsa"),
+            ("DAC_CAPABILITY_SCAN_FAILED", 500, "dac_alsa"),
+            ("DAC_RATE_NOT_SUPPORTED", 422, "dac_alsa"),
+            ("DAC_FORMAT_NOT_SUPPORTED", 422, "dac_alsa"),
+            ("DAC_BUSY", 409, "dac_alsa"),
+            # IPC/ZeroMQ (400/500/503/504)
+            ("IPC_CONNECTION_FAILED", 503, "ipc_zeromq"),
+            ("IPC_TIMEOUT", 504, "ipc_zeromq"),
+            ("IPC_INVALID_COMMAND", 400, "ipc_zeromq"),
+            ("IPC_INVALID_PARAMS", 400, "ipc_zeromq"),
+            ("IPC_DAEMON_NOT_RUNNING", 503, "ipc_zeromq"),
+            ("IPC_PROTOCOL_ERROR", 500, "ipc_zeromq"),
+            # GPU/CUDA (500)
+            ("GPU_INIT_FAILED", 500, "gpu_cuda"),
+            ("GPU_DEVICE_NOT_FOUND", 500, "gpu_cuda"),
+            ("GPU_MEMORY_ERROR", 500, "gpu_cuda"),
+            ("GPU_KERNEL_LAUNCH_FAILED", 500, "gpu_cuda"),
+            ("GPU_FILTER_LOAD_FAILED", 500, "gpu_cuda"),
+            ("GPU_CUFFT_ERROR", 500, "gpu_cuda"),
+            # Validation (400/404/409)
+            ("VALIDATION_INVALID_CONFIG", 400, "validation"),
+            ("VALIDATION_INVALID_PROFILE", 400, "validation"),
+            ("VALIDATION_PATH_TRAVERSAL", 400, "validation"),
+            ("VALIDATION_FILE_NOT_FOUND", 404, "validation"),
+            ("VALIDATION_PROFILE_EXISTS", 409, "validation"),
+            ("VALIDATION_INVALID_HEADPHONE", 404, "validation"),
+        ],
+    )
+    def test_error_code_mapping(
+        self, client, mock_daemon_error, error_code, expected_http, expected_category
+    ):
+        """Verify error code maps to correct HTTP status and category."""
+        with mock_daemon_error(error_code, f"Test error for {error_code}"):
+            response = client.get("/daemon/phase-type")
+
+        assert (
+            response.status_code == expected_http
+        ), f"{error_code} should return {expected_http}, got {response.status_code}"
+        data = response.json()
+        assert data["error_code"] == error_code
+        assert data["category"] == expected_category
