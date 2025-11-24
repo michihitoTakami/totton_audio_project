@@ -85,3 +85,15 @@ repos:
         stages: [pre-push]
         pass_filenames: false
         always_run: true
+
+  # OpenAPI spec export (pre-commit, web/ changes only)
+  # Generates docs/api/openapi.json from FastAPI app
+  - repo: local
+    hooks:
+      - id: export-openapi
+        name: Export OpenAPI spec
+        entry: uv run python scripts/export_openapi.py
+        language: system
+        files: ^web/.*\.py$
+        pass_filenames: false
+        stages: [pre-commit]

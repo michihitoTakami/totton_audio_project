@@ -259,6 +259,10 @@ gpu_os/
 │   └── EQ/                # EQ profiles
 │
 ├── docs/
+│   ├── api/               # REST API documentation
+│   │   ├── openapi.json   # OpenAPI spec (auto-generated)
+│   │   ├── README.md      # API overview
+│   │   └── CHANGELOG.md   # API change history
 │   ├── architecture/      # System design docs
 │   ├── reports/           # Phase implementation reports
 │   ├── investigations/    # Investigation logs
@@ -269,6 +273,86 @@ gpu_os/
 ├── plots/                 # Analysis plots
 └── build/                 # Build output
 ```
+
+## REST API Development Guidelines
+
+### レスポンスモデル必須
+
+すべてのAPIエンドポイントには `response_model` を指定すること。
+これにより OpenAPI スキーマが自動生成され、ドキュメントの整合性が保たれる。
+
+```python
+# Good
+@router.get("/status", response_model=Status)
+async def get_status():
+    return Status(...)
+
+# Bad - response_model なし
+@router.get("/status")
+async def get_status():
+    return {"status": "ok"}
+```
+
+### エラーハンドリング統一
+
+HTTPExceptionは以下の形式で統一する：
+
+```python
+from fastapi import HTTPException
+
+# 標準的なエラー
+raise HTTPException(status_code=404, detail="Profile not found")
+
+# 構造化エラー（将来対応）
+raise HTTPException(status_code=400, detail={"field": "name", "error": "invalid"})
+```
+
+エラーレスポンスは自動的に `ErrorResponse` 形式に変換される：
+```json
+{"detail": "...", "error_code": "HTTP_404"}
+```
+
+### OpenAPIドキュメント
+
+#### タグの使用
+
+各ルーターには適切なタグを設定：
+
+```python
+router = APIRouter(prefix="/eq", tags=["eq"])
+```
+
+#### Deprecated エンドポイント
+
+非推奨エンドポイントは明示的にマーク：
+
+```python
+@app.post("/restart", deprecated=True, tags=["legacy"])
+async def restart():
+    """Deprecated: Use POST /daemon/restart instead."""
+    ...
+```
+
+### OpenAPI仕様の自動生成
+
+`web/` 配下のファイルを変更すると、pre-commit フックにより `docs/api/openapi.json` が自動更新される。
+
+手動実行：
+```bash
+# OpenAPI spec を出力
+uv run python scripts/export_openapi.py
+
+# 最新かどうか確認
+uv run python scripts/export_openapi.py --check
+```
+
+### API変更時のチェックリスト
+
+- [ ] `response_model` を指定したか
+- [ ] エラーケースは `HTTPException` で処理しているか
+- [ ] 適切なタグを設定したか
+- [ ] 破壊的変更の場合は `deprecated` を使用したか
+- [ ] `docs/api/CHANGELOG.md` を更新したか
 
 ## Git Workflow
 
