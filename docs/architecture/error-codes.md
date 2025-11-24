@@ -35,6 +35,18 @@ C++ Audio Engine から Web API クライアントまで、システム全体で
 | Validation | `VALIDATION_` | 0x5000-0x5FFF | 入力検証、設定ファイル関連 |
 | Internal | `INTERNAL_` | 0xF000-0xFFFF | 予約：未分類エラー、フォールバック用 |
 
+### 2.1 カテゴリ選択ガイドライン
+
+```
+Q: どのカテゴリを使うべきか？
+
+1. 入力サンプリングレートやフォーマットの問題 → AUDIO_
+2. DAC/ALSAデバイスへのアクセス問題 → DAC_
+3. ZeroMQやデーモンとの通信問題 → IPC_
+4. CUDAの初期化やメモリ確保の問題 → GPU_
+5. ユーザー入力や設定ファイルの問題 → VALIDATION_
+```
+
 ### 2.2 Internal カテゴリについて
 
 `INTERNAL` カテゴリは以下の用途で使用する**予約カテゴリ**である：
@@ -47,18 +59,6 @@ C++ Audio Engine から Web API クライアントまで、システム全体で
 - 新しいエラーが発生した場合、まず適切な主要カテゴリへの追加を検討する
 - `INTERNAL` は一時的なフォールバックであり、恒久的な使用は避ける
 - `INTERNAL` エラーが頻発する場合は、エラーコード体系の見直しを検討する
-
-### 2.1 カテゴリ選択ガイドライン
-
-```
-Q: どのカテゴリを使うべきか？
-
-1. 入力サンプリングレートやフォーマットの問題 → AUDIO_
-2. DAC/ALSAデバイスへのアクセス問題 → DAC_
-3. ZeroMQやデーモンとの通信問題 → IPC_
-4. CUDAの初期化やメモリ確保の問題 → GPU_
-5. ユーザー入力や設定ファイルの問題 → VALIDATION_
-```
 
 ## 3. エラーコード一覧
 
@@ -269,12 +269,15 @@ enum class ErrorCode : uint32_t {
 };
 
 // エラーコードを文字列に変換
+// 未知のコードの場合は "UNKNOWN_ERROR" を返す
 const char* errorCodeToString(ErrorCode code);
 
 // カテゴリ名を取得
+// 未知のコードの場合は "internal" を返す
 const char* getErrorCategory(ErrorCode code);
 
 // HTTPステータスコードに変換
+// 未知のコードの場合は 500 を返す（Python側と同様のフォールバック）
 int toHttpStatus(ErrorCode code);
 
 // カテゴリ判定ヘルパー
