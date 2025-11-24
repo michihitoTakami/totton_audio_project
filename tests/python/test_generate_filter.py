@@ -102,7 +102,8 @@ class TestFilterConfig:
             upsample_ratio=16,
             phase_type=PhaseType.MINIMUM,
         )
-        assert config.base_name == "filter_44k_16x_2m_minimum"
+        # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
+        assert config.base_name == "filter_44k_16x_2000000_min_phase"
 
     def test_base_name_linear_phase(self):
         """base_name should include phase type for linear phase."""
@@ -767,7 +768,8 @@ class TestMultiRateOutputFilename:
             upsample_ratio=16,
             phase_type=PhaseType.MINIMUM,
         )
-        assert config_min.base_name == "filter_44k_16x_2m_minimum"
+        # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
+        assert config_min.base_name == "filter_44k_16x_2000000_min_phase"
 
         # Linear phase (odd taps required)
         config_lin = FilterConfig(
@@ -890,9 +892,9 @@ class TestLinearPhasePadding:
         # taps_label should be "2000016" (not "2m" since it's not exactly 2M)
         assert config.taps_label == "2000016"
 
-        # For minimum phase with 2M taps
+        # For minimum phase with 2M taps - C++ expects numeric format
         config_min = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
-        assert config_min.taps_label == "2m"
+        assert config_min.taps_label == "2000000"
 
 
 class TestFilterGenerator:

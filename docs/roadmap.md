@@ -62,7 +62,7 @@ Phase 3: Hardware Integration         [                    ] 0%
   - Input Rate Detection（44.1k vs 48k系）
   - Optimal Upsampling Rate計算
 
-- [ ] **Multi-Rate Support (Critical)**
+- [x] **Multi-Rate Support (Critical)** ✅ Issue #231
   - 詳細は下記「Multi-Rate Support」セクション参照
   - 44.1k系/48k系両方の係数セット生成・管理
   - 入力レート変更時の動的係数切り替え
@@ -88,57 +88,47 @@ Phase 3: Hardware Integration         [                    ] 0%
 
 ## Multi-Rate Support (Critical Feature)
 
-**現状の問題**: 44.1kHz系のみ対応。48kHz系やその倍数（88.2k, 96k, 192k等）が来た時に対応できない。
-**Magic Boxとして必須**: どんな入力レートでも自動的に最適処理できないと意味がない。
+> **Status: ✅ 実装完了** (Issue #231)
+>
+> GPUUpsamplerは全8入力レートに対応。係数ファイルの生成と配置で動作可能。
 
-### 対応すべき入力レート
+### 対応入力レート
 
-| Rate Family | Input Rates | Output Target (16x max) |
-|-------------|-------------|-------------------------|
-| 44.1k系 | 44,100 / 88,200 / 176,400 Hz | 705,600 Hz |
-| 48k系 | 48,000 / 96,000 / 192,000 Hz | 768,000 Hz |
+| Rate Family | Input Rate | Upsample Ratio | Output Rate | Coefficient File |
+|-------------|------------|----------------|-------------|------------------|
+| 44.1k系 | 44,100 Hz | 16x | 705,600 Hz | `filter_44k_16x_2000000_min_phase.bin` |
+| 44.1k系 | 88,200 Hz | 8x | 705,600 Hz | `filter_44k_8x_2000000_min_phase.bin` |
+| 44.1k系 | 176,400 Hz | 4x | 705,600 Hz | `filter_44k_4x_2000000_min_phase.bin` |
+| 44.1k系 | 352,800 Hz | 2x | 705,600 Hz | `filter_44k_2x_2000000_min_phase.bin` |
+| 48k系 | 48,000 Hz | 16x | 768,000 Hz | `filter_48k_16x_2000000_min_phase.bin` |
+| 48k系 | 96,000 Hz | 8x | 768,000 Hz | `filter_48k_8x_2000000_min_phase.bin` |
+| 48k系 | 192,000 Hz | 4x | 768,000 Hz | `filter_48k_4x_2000000_min_phase.bin` |
+| 48k系 | 384,000 Hz | 2x | 768,000 Hz | `filter_48k_2x_2000000_min_phase.bin` |
 
-### 必要な係数セット
+### 実装状況
 
-各Rate Family用に別々のFIR係数が必要（ストップバンド周波数が異なるため）
-
-| Family | Passband | Stopband Start | Coefficient File |
-|--------|----------|----------------|------------------|
-| 44.1k系 | 0-20kHz | 22.05kHz | `filter_44k_2m_min_phase.bin` |
-| 48k系 | 0-22kHz | 24.0kHz | `filter_48k_2m_min_phase.bin` |
-
-### 実装タスク
-
-#### 1. 係数生成 (Phase 1)
-- [ ] 48kHz系用2M-tap係数の生成
+#### 1. 係数生成 ✅
+- [x] 全8構成の係数ファイル生成スクリプト完成
   ```bash
-  uv run python scripts/generate_filter.py \
-    --input-rate 48000 \
-    --stopband-start 24000 \
-    --passband-end 22000 \
-    --output-prefix filter_48k_2m_min_phase
+  uv run python scripts/generate_filter.py --generate-all --taps 2000000
   ```
-- [ ] 両係数セットのバリデーション・検証
+- [x] C++が期待するファイル名パターンに対応 (`filter_{family}_{ratio}x_{taps}_min_phase.bin`)
 
-#### 2. 動的レート検知 (Phase 1)
-- [ ] PipeWire/ALSA入力のサンプルレート変更イベント検知
-- [ ] Rate Family判定ロジック
-  ```
-  if (rate % 44100 == 0) → 44.1k Family
-  if (rate % 48000 == 0) → 48k Family
-  ```
+#### 2. GPUUpsampler Multi-Rate対応 ✅
+- [x] `MULTI_RATE_CONFIGS`: 全8構成定義 (`include/convolution_engine.h`)
+- [x] `initializeMultiRate()`: 全8構成のFFT事前計算 (`gpu_upsampler_multi_rate.cu`)
+- [x] `switchToInputRate()`: グリッチフリー動的切り替え
+- [x] ダブルバッファリング（ピンポン方式）
 
-#### 3. 係数ホットスワップ (Phase 1)
-- [ ] Rate Family変更時の係数切り替え
-- [ ] ダブルバッファリングによるグリッチレス切り替え
-- [ ] Soft Mute（切り替え時のポップノイズ防止）
+#### 3. 動的レート検知 ✅ (Issue #218)
+- [x] PipeWire `param_changed` イベントでのレート検出
+- [x] Rate Family判定ロジック (`detectRateFamily()`)
+- [x] `handle_rate_change()` による自動切り替え
 
-#### 4. リサンプリング統合 (Phase 1)
-- [ ] libsoxrによる入力レート正規化
-  - 88.2k → 44.1k → 処理 → 705.6k
-  - 96k → 48k → 処理 → 768k
-- [ ] または高レート入力を直接処理
-  - 96k × 8 = 768k（係数は48k系を使用）
+#### 4. 自動ネゴシエーション ✅
+- [x] `AutoNegotiation::negotiate()`: 全8レート対応
+- [x] DAC Capability検証
+- [x] `requiresReconfiguration` フラグ（ファミリ変更検出）
 
 ### データフロー例
 

@@ -153,17 +153,27 @@ class FilterConfig:
 
     @property
     def taps_label(self) -> str:
-        """ファイル名用のタップ数ラベル（パディング後の実タップ数を使用）"""
-        taps = self.final_taps
-        if taps % 1_000_000 == 0:
-            return f"{taps // 1_000_000}m"
-        return str(taps)
+        """ファイル名用のタップ数ラベル（パディング後の実タップ数を使用）
+
+        C++ initializeMultiRate() expects numeric format (e.g., "2000000")
+        """
+        return str(self.final_taps)
+
+    @property
+    def phase_label(self) -> str:
+        """ファイル名用の位相タイプラベル
+
+        C++ expects "min_phase" for minimum phase filters
+        """
+        if self.phase_type == PhaseType.MINIMUM:
+            return "min_phase"
+        return self.phase_type.value  # "linear" for linear phase
 
     @property
     def base_name(self) -> str:
         if self.output_prefix:
             return self.output_prefix
-        return f"filter_{self.family}_{self.upsample_ratio}x_{self.taps_label}_{self.phase_type.value}"
+        return f"filter_{self.family}_{self.upsample_ratio}x_{self.taps_label}_{self.phase_label}"
 
 
 class FilterDesigner:
