@@ -102,6 +102,16 @@ class DaemonClient:
         """Send SOFT_RESET command to daemon."""
         return self.send_command("SOFT_RESET")
 
+    def ping(self) -> bool:
+        """
+        Ping the daemon to check if it's responding.
+
+        Returns:
+            True if daemon responds, False otherwise.
+        """
+        success, _ = self.send_command("PING")
+        return success
+
 
 def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:
     """

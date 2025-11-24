@@ -14,40 +14,45 @@ from opra import (  # noqa: E402
 )
 
 from ..constants import EQ_PROFILES_DIR
-from ..models import ApiResponse
+from ..models import (
+    ApiResponse,
+    OpraEqAttribution,
+    OpraEqResponse,
+    OpraSearchResponse,
+    OpraStats,
+    OpraVendorsResponse,
+)
 from ..services import load_config, save_config
 
 router = APIRouter(prefix="/opra", tags=["opra"])
 
 
-@router.get("/stats")
+@router.get("/stats", response_model=OpraStats)
 async def opra_stats():
     """Get OPRA database statistics."""
     try:
         db = get_opra_database()
-        return {
-            "vendors": db.vendor_count,
-            "products": db.product_count,
-            "eq_profiles": db.eq_profile_count,
-            "license": "CC BY-SA 4.0",
-            "attribution": "OPRA Project (https://github.com/opra-project/OPRA)",
-        }
+        return OpraStats(
+            vendors=db.vendor_count,
+            products=db.product_count,
+            eq_profiles=db.eq_profile_count,
+        )
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@router.get("/vendors")
+@router.get("/vendors", response_model=OpraVendorsResponse)
 async def opra_vendors():
     """List all vendors in OPRA database."""
     try:
         db = get_opra_database()
         vendors = db.get_vendors()
-        return {"vendors": vendors, "count": len(vendors)}
+        return OpraVendorsResponse(vendors=vendors, count=len(vendors))
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@router.get("/search")
+@router.get("/search", response_model=OpraSearchResponse)
 async def opra_search(q: str = "", limit: int = 50):
     """
     Search headphones by name.
@@ -56,7 +61,7 @@ async def opra_search(q: str = "", limit: int = 50):
     try:
         db = get_opra_database()
         results = db.search(q, limit=limit)
-        return {"results": results, "count": len(results), "query": q}
+        return OpraSearchResponse(results=results, count=len(results), query=q)
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -76,7 +81,7 @@ async def opra_product(product_id: str):
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@router.get("/eq/{eq_id}")
+@router.get("/eq/{eq_id}", response_model=OpraEqResponse)
 async def opra_eq_profile(eq_id: str, apply_correction: bool = False):
     """
     Get a specific EQ profile with APO format preview.
@@ -100,20 +105,18 @@ async def opra_eq_profile(eq_id: str, apply_correction: bool = False):
         if apply_correction:
             apo_profile = apply_modern_target_correction(apo_profile)
 
-        return {
-            "id": eq_id,
-            "name": eq_data.get("name", ""),
-            "author": eq_data.get("author", ""),
-            "details": apo_profile.details,  # Includes correction info if applied
-            "parameters": eq_data.get("parameters", {}),
-            "apo_format": apo_profile.to_apo_format(),
-            "modern_target_applied": apply_correction,
-            "attribution": {
-                "license": "CC BY-SA 4.0",
-                "source": "OPRA Project",
-                "author": eq_data.get("author", "unknown"),
-            },
-        }
+        return OpraEqResponse(
+            id=eq_id,
+            name=eq_data.get("name", ""),
+            author=eq_data.get("author", ""),
+            details=apo_profile.details,
+            parameters=eq_data.get("parameters", {}),
+            apo_format=apo_profile.to_apo_format(),
+            modern_target_applied=apply_correction,
+            attribution=OpraEqAttribution(
+                author=eq_data.get("author", "unknown"),
+            ),
+        )
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
