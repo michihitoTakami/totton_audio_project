@@ -5,7 +5,7 @@
   "periodSize": 32768,
   "upsampleRatio": 16,
   "blockSize": 4096,
-  "gain": 16.0,
+  "gain": 1.0,
   "phaseType": "minimum",
   "filterPath": "data/coefficients/filter_44k_2m_min_phase.bin",
   "eqEnabled": true,

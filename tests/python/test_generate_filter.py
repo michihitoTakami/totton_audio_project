@@ -1058,6 +1058,24 @@ class TestNormalizeCoefficientsErrorHandling:
             normalize_coefficients(h)
 
 
+class TestCoefficientDcGain:
+    """Tests for shipped coefficient DC gain after upsample normalization."""
+
+    def test_coefficient_dc_matches_ratio(self):
+        """Shipped filters should sum to their upsample ratio (unity overall gain)."""
+        coeff_dir = Path(__file__).parent.parent.parent / "data" / "coefficients"
+        cases = [
+            ("filter_44k_2m_min_phase.bin", 16.0),
+            ("filter_48k_2m_min_phase.bin", 16.0),
+            ("filter_44k_16x_2m_linear.bin", 16.0),
+            ("filter_48k_16x_2m_linear.bin", 16.0),
+        ]
+        for filename, expected_dc in cases:
+            data = np.fromfile(coeff_dir / filename, dtype=np.float32)
+            dc_gain = float(np.sum(data))
+            assert np.isclose(dc_gain, expected_dc, rtol=1e-5, atol=1e-3)
+
+
 class TestValidateTapCountErrorHandling:
     """Tests for error handling in validate_tap_count."""
 
