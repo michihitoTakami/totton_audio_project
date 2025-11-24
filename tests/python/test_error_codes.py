@@ -19,9 +19,9 @@ from web.error_codes import (
 class TestErrorCodeEnum:
     """Tests for ErrorCode enum."""
 
-    def test_all_30_codes_defined(self):
-        """Verify all 30 error codes are defined."""
-        assert len(ErrorCode) == 30
+    def test_all_codes_defined(self):
+        """Verify all error codes are defined (30 base + 2 crossfeed)."""
+        assert len(ErrorCode) == 32
 
     def test_no_duplicate_values(self):
         """Verify no duplicate enum values."""
@@ -63,13 +63,20 @@ class TestErrorCodeEnum:
         assert ErrorCode.VALIDATION_PATH_TRAVERSAL in validation_codes
         assert ErrorCode.VALIDATION_INVALID_HEADPHONE in validation_codes
 
+    def test_crossfeed_codes(self):
+        """Verify Crossfeed/HRTF category codes (2 codes)."""
+        crossfeed_codes = [c for c in ErrorCode if c.value.startswith("CROSSFEED_")]
+        assert len(crossfeed_codes) == 2
+        assert ErrorCode.CROSSFEED_NOT_INITIALIZED in crossfeed_codes
+        assert ErrorCode.CROSSFEED_INVALID_RATE_FAMILY in crossfeed_codes
+
 
 class TestErrorCategory:
     """Tests for ErrorCategory enum."""
 
     def test_all_categories_defined(self):
-        """Verify all 6 categories are defined."""
-        assert len(ErrorCategory) == 6
+        """Verify all categories are defined (6 base + 1 crossfeed)."""
+        assert len(ErrorCategory) == 7
 
     def test_category_values(self):
         """Verify category string values."""
@@ -78,6 +85,7 @@ class TestErrorCategory:
         assert ErrorCategory.IPC_ZEROMQ.value == "ipc_zeromq"
         assert ErrorCategory.GPU_CUDA.value == "gpu_cuda"
         assert ErrorCategory.VALIDATION.value == "validation"
+        assert ErrorCategory.CROSSFEED.value == "crossfeed"
         assert ErrorCategory.INTERNAL.value == "internal"
 
 
@@ -85,8 +93,8 @@ class TestErrorMappings:
     """Tests for ERROR_MAPPINGS dictionary."""
 
     def test_all_codes_have_mappings(self):
-        """Verify all 30 error codes have mappings."""
-        assert len(ERROR_MAPPINGS) == 30
+        """Verify all error codes have mappings (30 base + 2 crossfeed)."""
+        assert len(ERROR_MAPPINGS) == 32
         for code in ErrorCode:
             assert code in ERROR_MAPPINGS, f"Missing mapping for {code}"
 

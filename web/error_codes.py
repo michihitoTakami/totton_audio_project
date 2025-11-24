@@ -23,6 +23,7 @@ class ErrorCategory(str, Enum):
     IPC_ZEROMQ = "ipc_zeromq"
     GPU_CUDA = "gpu_cuda"
     VALIDATION = "validation"
+    CROSSFEED = "crossfeed"  # #150
     INTERNAL = "internal"
 
 
@@ -72,6 +73,10 @@ class ErrorCode(str, Enum):
     VALIDATION_FILE_NOT_FOUND = "VALIDATION_FILE_NOT_FOUND"
     VALIDATION_PROFILE_EXISTS = "VALIDATION_PROFILE_EXISTS"
     VALIDATION_INVALID_HEADPHONE = "VALIDATION_INVALID_HEADPHONE"
+
+    # Crossfeed/HRTF (0x6000) - #150
+    CROSSFEED_NOT_INITIALIZED = "CROSSFEED_NOT_INITIALIZED"
+    CROSSFEED_INVALID_RATE_FAMILY = "CROSSFEED_INVALID_RATE_FAMILY"
 
 
 @dataclass(frozen=True)
@@ -177,6 +182,13 @@ ERROR_MAPPINGS: dict[ErrorCode, ErrorMapping] = {
     ErrorCode.VALIDATION_INVALID_HEADPHONE: ErrorMapping(
         404, ErrorCategory.VALIDATION, "Headphone Not Found in OPRA DB"
     ),
+    # Crossfeed/HRTF (2 codes) - #150
+    ErrorCode.CROSSFEED_NOT_INITIALIZED: ErrorMapping(
+        503, ErrorCategory.CROSSFEED, "Crossfeed Not Initialized"
+    ),
+    ErrorCode.CROSSFEED_INVALID_RATE_FAMILY: ErrorMapping(
+        400, ErrorCategory.CROSSFEED, "Invalid Rate Family"
+    ),
 }
 
 # Default mapping for unknown error codes
@@ -217,5 +229,7 @@ def get_category_from_code(error_code: str) -> ErrorCategory:
         return ErrorCategory.GPU_CUDA
     elif error_code.startswith("VALIDATION_"):
         return ErrorCategory.VALIDATION
+    elif error_code.startswith("CROSSFEED_"):
+        return ErrorCategory.CROSSFEED
     else:
         return ErrorCategory.INTERNAL

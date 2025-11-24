@@ -430,6 +430,13 @@ static void zeromq_listener_thread() {
                                 resp["error_code"] = "IPC_INVALID_PARAMS";
                                 resp["message"] = "Missing required filter data";
                                 response = resp.dump();
+                            } else if (rateFamily != "44k" && rateFamily != "48k") {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "CROSSFEED_INVALID_RATE_FAMILY";
+                                resp["message"] =
+                                    "Invalid rate family: " + rateFamily + " (expected 44k or 48k)";
+                                response = resp.dump();
                             } else {
                                 // Decode Base64 filter data
                                 auto decodedLL = Base64::decode(combinedLL);

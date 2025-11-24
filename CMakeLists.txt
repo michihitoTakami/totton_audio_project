@@ -371,6 +371,16 @@ target_link_libraries(zmq_tests
 )
 gtest_discover_tests(zmq_tests)
 
+# Base64 encoding/decoding tests (CPU-only)
+add_executable(base64_tests
+    tests/cpp/test_base64.cpp
+)
+target_link_libraries(base64_tests
+    GTest::gtest_main
+    zeromq_interface
+)
+gtest_discover_tests(base64_tests)
+
 # Error codes tests (CPU-only)
 add_executable(error_codes_tests
     tests/cpp/test_error_codes.cpp
