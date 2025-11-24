@@ -88,8 +88,42 @@ class FilterConfig:
     output_prefix: str | None = None
 
     def __post_init__(self) -> None:
+        # バリデーション
+        if self.n_taps <= 0:
+            raise ValueError(f"タップ数は正の整数である必要があります: {self.n_taps}")
+        if self.input_rate <= 0:
+            raise ValueError(
+                f"入力レートは正の整数である必要があります: {self.input_rate}"
+            )
+        if self.upsample_ratio <= 0:
+            raise ValueError(
+                f"アップサンプリング比率は正の整数である必要があります: {self.upsample_ratio}"
+            )
+        if self.kaiser_beta < 0:
+            raise ValueError(
+                f"カイザーベータは非負である必要があります: {self.kaiser_beta}"
+            )
+
+        # Nyquist制約チェック
+        nyquist = self.input_rate // 2
+        if self.passband_end > nyquist:
+            raise ValueError(
+                f"パスバンド終端 ({self.passband_end} Hz) は入力ナイキスト周波数 ({nyquist} Hz) 以下である必要があります"
+            )
+
         if self.stopband_start is None:
-            self.stopband_start = self.input_rate // 2
+            self.stopband_start = nyquist
+        elif self.stopband_start <= self.passband_end:
+            raise ValueError(
+                f"ストップバンド開始 ({self.stopband_start} Hz) はパスバンド終端 ({self.passband_end} Hz) より大きい必要があります"
+            )
+
+        # ストップバンドが出力ナイキスト以上の場合はエラー
+        output_nyquist = self.input_rate * self.upsample_ratio // 2
+        if self.stopband_start >= output_nyquist:
+            raise ValueError(
+                f"ストップバンド開始 ({self.stopband_start} Hz) は出力ナイキスト周波数 ({output_nyquist} Hz) 未満である必要があります"
+            )
         # 線形位相はfinal_tapsで比率の倍数に調整される
 
     @property

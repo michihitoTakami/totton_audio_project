@@ -896,3 +896,162 @@ class TestFilterGenerator:
         assert isinstance(generator.validator, FilterValidator)
         assert isinstance(generator.exporter, FilterExporter)
         assert isinstance(generator.plotter, FilterPlotter)
+
+
+class TestPhaseTypeErrorHandling:
+    """Tests for error handling with invalid phase type parameters."""
+
+    def test_invalid_phase_type_string_raises_error(self):
+        """PhaseType should raise ValueError for invalid string."""
+        from generate_filter import PhaseType
+
+        with pytest.raises(ValueError):
+            PhaseType("invalid")
+
+        with pytest.raises(ValueError):
+            PhaseType("mixed")
+
+        with pytest.raises(ValueError):
+            PhaseType("")
+
+    def test_invalid_minimum_phase_method_string_raises_error(self):
+        """MinimumPhaseMethod should raise ValueError for invalid string."""
+        from generate_filter import MinimumPhaseMethod
+
+        with pytest.raises(ValueError):
+            MinimumPhaseMethod("invalid")
+
+        with pytest.raises(ValueError):
+            MinimumPhaseMethod("")
+
+
+class TestFilterConfigErrorHandling:
+    """Tests for error handling with invalid FilterConfig parameters."""
+
+    def test_zero_tap_count_raises_error(self):
+        """FilterConfig should raise ValueError for zero tap count."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(n_taps=0)
+
+    def test_negative_tap_count_raises_error(self):
+        """FilterConfig should raise ValueError for negative tap count."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(n_taps=-1000)
+
+    def test_zero_input_rate_raises_error(self):
+        """FilterConfig should raise ValueError for zero input rate."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(input_rate=0)
+
+    def test_negative_input_rate_raises_error(self):
+        """FilterConfig should raise ValueError for negative input rate."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(input_rate=-44100)
+
+    def test_zero_upsample_ratio_raises_error(self):
+        """FilterConfig should raise ValueError for zero upsample ratio."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(upsample_ratio=0)
+
+    def test_negative_upsample_ratio_raises_error(self):
+        """FilterConfig should raise ValueError for negative upsample ratio."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(upsample_ratio=-16)
+
+    def test_negative_kaiser_beta_raises_error(self):
+        """FilterConfig should raise ValueError for negative kaiser beta."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(kaiser_beta=-1.0)
+
+    def test_passband_exceeds_nyquist_raises_error(self):
+        """FilterConfig should raise ValueError if passband > Nyquist."""
+        from generate_filter import FilterConfig
+
+        # Passband (25kHz) > Nyquist (22.05kHz) for 44.1kHz input
+        with pytest.raises(ValueError):
+            FilterConfig(input_rate=44100, passband_end=25000)
+
+    def test_stopband_less_than_passband_raises_error(self):
+        """FilterConfig should raise ValueError if stopband < passband."""
+        from generate_filter import FilterConfig
+
+        with pytest.raises(ValueError):
+            FilterConfig(passband_end=20000, stopband_start=18000)
+
+    def test_stopband_exceeds_output_nyquist_raises_error(self):
+        """FilterConfig should raise ValueError if stopband >= output Nyquist."""
+        from generate_filter import FilterConfig
+
+        # output_nyquist = 44100 * 16 / 2 = 352800 Hz
+        # stopband_start = 1000000 Hz > 352800 Hz -> エラー
+        with pytest.raises(ValueError, match="出力ナイキスト周波数"):
+            FilterConfig(
+                input_rate=44100,
+                upsample_ratio=16,
+                stopband_start=1_000_000,
+            )
+
+    def test_stopband_at_output_nyquist_raises_error(self):
+        """FilterConfig should raise ValueError if stopband == output Nyquist."""
+        from generate_filter import FilterConfig
+
+        # output_nyquist = 44100 * 16 / 2 = 352800 Hz
+        with pytest.raises(ValueError, match="出力ナイキスト周波数"):
+            FilterConfig(
+                input_rate=44100,
+                upsample_ratio=16,
+                stopband_start=352800,
+            )
+
+
+class TestNormalizeCoefficientsErrorHandling:
+    """Tests for error handling in normalize_coefficients."""
+
+    def test_empty_array_raises_error(self):
+        """normalize_coefficients should raise ValueError for empty array."""
+        from generate_filter import normalize_coefficients
+
+        with pytest.raises(ValueError):
+            normalize_coefficients(np.array([]))
+
+    def test_near_zero_dc_gain_raises_error(self):
+        """normalize_coefficients should raise ValueError for near-zero DC gain."""
+        from generate_filter import normalize_coefficients
+
+        # Array with DC gain very close to zero
+        h = np.array([1.0, -1.0, 1e-15])
+        with pytest.raises(ValueError, match="DCゲインが0に近すぎます"):
+            normalize_coefficients(h)
+
+
+class TestValidateTapCountErrorHandling:
+    """Tests for error handling in validate_tap_count."""
+
+    def test_non_multiple_ratio_raises_error(self):
+        """validate_tap_count should raise ValueError for non-multiple taps."""
+        from generate_filter import validate_tap_count
+
+        # Float ratio will cause non-integer result, raising ValueError
+        with pytest.raises(ValueError, match="倍数である必要があります"):
+            validate_tap_count(1024, 16.5)
+
+    def test_zero_ratio_raises_error(self):
+        """validate_tap_count should raise error for zero ratio."""
+        from generate_filter import validate_tap_count
+
+        with pytest.raises((ValueError, ZeroDivisionError)):
+            validate_tap_count(1024, 0)
