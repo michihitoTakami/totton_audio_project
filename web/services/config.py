@@ -25,19 +25,37 @@ def load_config() -> Settings:
     return Settings()
 
 
+def load_raw_config() -> dict:
+    """Load raw config.json as dictionary, preserving all fields."""
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
 def save_config(settings: Settings) -> bool:
-    """Save configuration to JSON file."""
+    """Save configuration to JSON file, preserving existing fields.
+
+    This function merges the Settings fields into the existing config.json,
+    preserving any fields not managed by Settings (e.g., quadPhaseEnabled,
+    filterPath*, etc.).
+    """
     try:
-        # Convert snake_case to camelCase for JSON
-        data = {
-            "alsaDevice": settings.alsa_device,
-            "upsampleRatio": settings.upsample_ratio,
-            "eqProfile": settings.eq_profile,
-            "inputRate": settings.input_rate,
-            "outputRate": settings.output_rate,
-        }
+        # Load existing config to preserve unmanaged fields
+        existing = load_raw_config()
+
+        # Update only the fields managed by Settings
+        existing["alsaDevice"] = settings.alsa_device
+        existing["upsampleRatio"] = settings.upsample_ratio
+        existing["eqProfile"] = settings.eq_profile
+        existing["inputRate"] = settings.input_rate
+        existing["outputRate"] = settings.output_rate
+
         with open(CONFIG_PATH, "w") as f:
-            json.dump(data, f, indent=2)
+            json.dump(existing, f, indent=2)
         return True
     except IOError:
         return False
