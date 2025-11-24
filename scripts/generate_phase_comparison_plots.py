@@ -259,8 +259,8 @@ def plot_preringing_comparison(
 
     # 最小位相
     ax = axes[0]
-    start_min = max(0, peak_min - n_before)
-    end_min = min(len(h_min), peak_min + n_after)
+    start_min: int = max(0, int(peak_min) - n_before)
+    end_min: int = min(len(h_min), int(peak_min) + n_after)
     t_min = (np.arange(start_min, end_min) - peak_min) / fs * 1000  # ms from peak
 
     ax.plot(t_min, h_min[start_min:end_min], "b-", linewidth=1)
@@ -286,8 +286,8 @@ def plot_preringing_comparison(
 
     # 線形位相
     ax = axes[1]
-    start_lin = max(0, peak_lin - n_before)
-    end_lin = min(len(h_lin), peak_lin + n_after)
+    start_lin: int = max(0, int(peak_lin) - n_before)
+    end_lin: int = min(len(h_lin), int(peak_lin) + n_after)
     t_lin = (np.arange(start_lin, end_lin) - peak_lin) / fs * 1000  # ms from peak
 
     ax.plot(t_lin, h_lin[start_lin:end_lin], "g-", linewidth=1)
