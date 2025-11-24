@@ -47,6 +47,26 @@ class TestLoadRawConfig:
 
         assert result == {}
 
+    def test_load_non_dict_json_array(self, tmp_path: Path) -> None:
+        """Test loading when config file contains a JSON array (not dict)."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text('["item1", "item2"]')
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            result = load_raw_config()
+
+        assert result == {}
+
+    def test_load_non_dict_json_string(self, tmp_path: Path) -> None:
+        """Test loading when config file contains a JSON string (not dict)."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text('"just a string"')
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            result = load_raw_config()
+
+        assert result == {}
+
 
 class TestSaveConfig:
     """Tests for save_config function."""

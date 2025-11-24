@@ -27,11 +27,18 @@ def load_config() -> Settings:
 
 
 def load_raw_config() -> dict[str, Any]:
-    """Load raw config.json as dictionary, preserving all fields."""
+    """Load raw config.json as dictionary, preserving all fields.
+
+    Returns an empty dict if the file doesn't exist, is invalid JSON,
+    or contains non-dict JSON (e.g., array or string).
+    """
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH) as f:
-                return json.load(f)
+                data = json.load(f)
+            # Guard: ensure we got a dict, not array/string/etc
+            if isinstance(data, dict):
+                return data
         except (json.JSONDecodeError, IOError):
             pass
     return {}
