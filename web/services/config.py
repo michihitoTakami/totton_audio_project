@@ -25,11 +25,18 @@ def load_config() -> Settings:
             eq_profile_path = data.get("eqProfilePath")
             eq_enabled = data.get("eqEnabled")
 
-            # Migration: if only eqProfile is present, derive path and enable flag
-            if eq_profile_path is None and eq_profile:
-                eq_profile_path = _build_profile_path(eq_profile)
+            # Migration / normalization
+            if eq_profile_path is None:
+                if eq_enabled is None and eq_profile:
+                    # Old style: only eqProfile present
+                    eq_profile_path = _build_profile_path(eq_profile)
+                else:
+                    # Explicitly enabled but missing path -> treat as disabled
+                    eq_enabled = False
+
             if eq_enabled is None:
                 eq_enabled = bool(eq_profile_path)
+
             if eq_profile is None and eq_profile_path:
                 eq_profile = Path(eq_profile_path).stem
 
