@@ -311,13 +311,20 @@ def get_embedded_html() -> str:
                 if (!res.ok) {
                     const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
                     const container = document.getElementById('opraResults');
+
                     if (res.status === 503) {
+                        // Service unavailable - database not initialized
                         container.innerHTML = '<div style="color:#e74c3c; font-size:12px; padding:8px; line-height:1.5;">' +
-                            '<strong>OPRA database is not available</strong><br>' +
-                            'Run <code style="background:#0f3460; padding:2px 4px;">git submodule update --init</code> to initialize.' +
+                            '<strong>Headphone database is not available</strong><br>' +
+                            'Please contact the administrator to initialize the database.' +
                             '</div>';
                     } else {
-                        container.innerHTML = `<div style="color:#e74c3c; font-size:12px; padding:8px;">Error: ${errorData.detail || 'Search failed'}</div>`;
+                        // Other errors - safely display message without XSS risk
+                        const errorDiv = document.createElement('div');
+                        errorDiv.style.cssText = 'color:#e74c3c; font-size:12px; padding:8px;';
+                        errorDiv.textContent = 'Error: ' + (errorData.detail || 'Search failed');
+                        container.innerHTML = '';
+                        container.appendChild(errorDiv);
                     }
                     console.error('OPRA search failed:', errorData);
                     return;
