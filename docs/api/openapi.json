@@ -1,0 +1,1658 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GPU Upsampler Control",
+    "description": "\n## GPU Audio Upsampler Web API\n\nControl interface for the GPU-accelerated audio upsampler daemon.\n\n### Features\n- **Daemon Control**: Start/stop/restart the audio processing daemon\n- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)\n- **OPRA Integration**: Access the OPRA headphone EQ database\n- **Real-time Stats**: WebSocket endpoint for live statistics\n\n### Authentication\nNo authentication required (local network only).\n    ",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Root",
+        "description": "Serve the embedded HTML page.",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Get Status",
+        "description": "Get current system status.",
+        "operationId": "get_status_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings": {
+      "post": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Update Settings",
+        "description": "Update application settings.",
+        "operationId": "update_settings_settings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "summary": "List Devices",
+        "description": "List available ALSA devices.",
+        "operationId": "list_devices_devices_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/start": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Daemon Start",
+        "description": "Start the daemon.",
+        "operationId": "daemon_start_daemon_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/stop": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Daemon Stop",
+        "description": "Stop the daemon.",
+        "operationId": "daemon_stop_daemon_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/restart": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Daemon Restart",
+        "description": "Restart the daemon.",
+        "operationId": "daemon_restart_daemon_restart_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/status": {
+      "get": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Daemon Status",
+        "description": "Get detailed daemon status.",
+        "operationId": "daemon_status_daemon_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/zmq/ping": {
+      "get": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Zmq Ping",
+        "description": "Ping the daemon via ZeroMQ.",
+        "operationId": "zmq_ping_daemon_zmq_ping_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZmqPingResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/zmq/command/{cmd}": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Zmq Command",
+        "description": "Send arbitrary command to daemon via ZeroMQ.",
+        "operationId": "zmq_command_daemon_zmq_command__cmd__post",
+        "parameters": [
+          {
+            "name": "cmd",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cmd"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/restart-full": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Reload Daemon",
+        "description": "Restart daemon with updated configuration.\n\nThis is called after settings changes that require a daemon restart\n(e.g., sample rate changes, EQ profile changes).",
+        "operationId": "reload_daemon_daemon_restart_full_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/daemon/rewire": {
+      "post": {
+        "tags": [
+          "daemon"
+        ],
+        "summary": "Rewire Pipewire",
+        "description": "Rewire PipeWire connections.",
+        "operationId": "rewire_pipewire_daemon_rewire_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eq/profiles": {
+      "get": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "List Eq Profiles",
+        "description": "List available EQ profiles in data/EQ directory.\nReturns extended info including file size and profile type.",
+        "operationId": "list_eq_profiles_eq_profiles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EqProfilesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eq/validate": {
+      "post": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Validate Eq Profile",
+        "description": "Validate an EQ profile file before importing.\nChecks format, parameter ranges, and security constraints.\nDoes not save the file.",
+        "operationId": "validate_eq_profile_eq_validate_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_validate_eq_profile_eq_validate_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EqValidationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eq/import": {
+      "post": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Import Eq Profile",
+        "description": "Import an EQ profile file (AutoEq/Equalizer APO format).\n\nSecurity features:\n- File size limit (1MB)\n- Filename sanitization (path traversal prevention)\n- Content validation (format, parameter ranges)\n- Overwrite protection (requires explicit flag)",
+        "operationId": "import_eq_profile_eq_import_post",
+        "parameters": [
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Overwrite"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_eq_profile_eq_import_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eq/activate/{name}": {
+      "post": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Activate Eq Profile",
+        "description": "Activate an EQ profile by name.",
+        "operationId": "activate_eq_profile_eq_activate__name__post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eq/deactivate": {
+      "post": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Deactivate Eq",
+        "description": "Deactivate current EQ profile.",
+        "operationId": "deactivate_eq_eq_deactivate_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eq/profiles/{name}": {
+      "delete": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Delete Eq Profile",
+        "description": "Delete an EQ profile.",
+        "operationId": "delete_eq_profile_eq_profiles__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/eq/active": {
+      "get": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Get Active Eq",
+        "description": "Get the currently active EQ profile with parsed content.",
+        "operationId": "get_active_eq_eq_active_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EqActiveResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opra/stats": {
+      "get": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Stats",
+        "description": "Get OPRA database statistics.",
+        "operationId": "opra_stats_opra_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opra/vendors": {
+      "get": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Vendors",
+        "description": "List all vendors in OPRA database.",
+        "operationId": "opra_vendors_opra_vendors_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraVendorsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opra/search": {
+      "get": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Search",
+        "description": "Search headphones by name.\nReturns products with embedded vendor info and EQ profiles.",
+        "operationId": "opra_search_opra_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opra/products/{product_id}": {
+      "get": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Product",
+        "description": "Get a specific product with its EQ profiles.",
+        "operationId": "opra_product_opra_products__product_id__get",
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Product Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opra/eq/{eq_id}": {
+      "get": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Eq Profile",
+        "description": "Get a specific EQ profile with APO format preview.\n\nArgs:\n    eq_id: EQ profile ID\n    apply_correction: If True, apply Modern Target (KB5000_7) correction",
+        "operationId": "opra_eq_profile_opra_eq__eq_id__get",
+        "parameters": [
+          {
+            "name": "eq_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Eq Id"
+            }
+          },
+          {
+            "name": "apply_correction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Apply Correction"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraEqResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/opra/apply/{eq_id}": {
+      "post": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Apply Eq",
+        "description": "Apply an OPRA EQ profile.\nConverts to APO format, saves to data/EQ, and activates.\n\nArgs:\n    eq_id: EQ profile ID\n    apply_correction: If True, apply Modern Target (KB5000_7) correction",
+        "operationId": "opra_apply_eq_opra_apply__eq_id__post",
+        "parameters": [
+          {
+            "name": "eq_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Eq Id"
+            }
+          },
+          {
+            "name": "apply_correction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Apply Correction"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/restart": {
+      "post": {
+        "tags": [
+          "legacy"
+        ],
+        "summary": "Restart daemon (DEPRECATED)",
+        "description": "**Deprecated**: Use `POST /daemon/restart` instead.",
+        "operationId": "restart_restart_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/admin": {
+      "get": {
+        "summary": "Admin Page",
+        "description": "Serve the admin dashboard",
+        "operationId": "admin_page_admin_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AlsaDevice": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "AlsaDevice",
+        "description": "ALSA device info model."
+      },
+      "ApiResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "restart_required": {
+            "type": "boolean",
+            "title": "Restart Required",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "ApiResponse",
+        "description": "Standard API response model for mutations."
+      },
+      "Body_import_eq_profile_eq_import_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_eq_profile_eq_import_post"
+      },
+      "Body_validate_eq_profile_eq_validate_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_validate_eq_profile_eq_validate_post"
+      },
+      "DaemonStatus": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "pid_file": {
+            "type": "string",
+            "title": "Pid File"
+          },
+          "binary_path": {
+            "type": "string",
+            "title": "Binary Path"
+          },
+          "pipewire_connected": {
+            "type": "boolean",
+            "title": "Pipewire Connected",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "running",
+          "pid_file",
+          "binary_path"
+        ],
+        "title": "DaemonStatus",
+        "description": "Daemon status response model."
+      },
+      "DevicesResponse": {
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/AlsaDevice"
+            },
+            "type": "array",
+            "title": "Devices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "devices"
+        ],
+        "title": "DevicesResponse",
+        "description": "Available ALSA devices response model."
+      },
+      "EqActiveResponse": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "has_modern_target": {
+            "type": "boolean",
+            "title": "Has Modern Target",
+            "default": false
+          },
+          "opra_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opra Info"
+          },
+          "opra_filters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Opra Filters",
+            "default": []
+          },
+          "original_filters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Original Filters",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "active"
+        ],
+        "title": "EqActiveResponse",
+        "description": "Active EQ profile response model."
+      },
+      "EqProfileInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "modified": {
+            "type": "number",
+            "title": "Modified"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "Profile type: 'opra' or 'custom'"
+          },
+          "filter_count": {
+            "type": "integer",
+            "title": "Filter Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "filename",
+          "path",
+          "size",
+          "modified",
+          "type",
+          "filter_count"
+        ],
+        "title": "EqProfileInfo",
+        "description": "EQ profile info model."
+      },
+      "EqProfilesResponse": {
+        "properties": {
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/EqProfileInfo"
+            },
+            "type": "array",
+            "title": "Profiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "profiles"
+        ],
+        "title": "EqProfilesResponse",
+        "description": "EQ profiles list response model."
+      },
+      "EqValidationResponse": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors",
+            "default": []
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          },
+          "preamp_db": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preamp Db"
+          },
+          "filter_count": {
+            "type": "integer",
+            "title": "Filter Count",
+            "default": 0
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "file_exists": {
+            "type": "boolean",
+            "title": "File Exists"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "valid",
+          "filename",
+          "file_exists",
+          "size_bytes"
+        ],
+        "title": "EqValidationResponse",
+        "description": "EQ profile validation response model."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "OpraEqAttribution": {
+        "properties": {
+          "license": {
+            "type": "string",
+            "title": "License",
+            "default": "CC BY-SA 4.0"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "OPRA Project"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          }
+        },
+        "type": "object",
+        "required": [
+          "author"
+        ],
+        "title": "OpraEqAttribution",
+        "description": "OPRA EQ attribution model."
+      },
+      "OpraEqResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "details": {
+            "type": "string",
+            "title": "Details"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters",
+            "default": {}
+          },
+          "apo_format": {
+            "type": "string",
+            "title": "Apo Format"
+          },
+          "modern_target_applied": {
+            "type": "boolean",
+            "title": "Modern Target Applied"
+          },
+          "attribution": {
+            "$ref": "#/components/schemas/OpraEqAttribution"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "author",
+          "details",
+          "apo_format",
+          "modern_target_applied",
+          "attribution"
+        ],
+        "title": "OpraEqResponse",
+        "description": "OPRA EQ profile response model."
+      },
+      "OpraSearchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "count",
+          "query"
+        ],
+        "title": "OpraSearchResponse",
+        "description": "OPRA search results response model."
+      },
+      "OpraStats": {
+        "properties": {
+          "vendors": {
+            "type": "integer",
+            "title": "Vendors"
+          },
+          "products": {
+            "type": "integer",
+            "title": "Products"
+          },
+          "eq_profiles": {
+            "type": "integer",
+            "title": "Eq Profiles"
+          },
+          "license": {
+            "type": "string",
+            "title": "License",
+            "default": "CC BY-SA 4.0"
+          },
+          "attribution": {
+            "type": "string",
+            "title": "Attribution",
+            "default": "OPRA Project (https://github.com/opra-project/OPRA)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "vendors",
+          "products",
+          "eq_profiles"
+        ],
+        "title": "OpraStats",
+        "description": "OPRA database statistics response model."
+      },
+      "OpraVendorsResponse": {
+        "properties": {
+          "vendors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Vendors"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "vendors",
+          "count"
+        ],
+        "title": "OpraVendorsResponse",
+        "description": "OPRA vendors list response model."
+      },
+      "RewireRequest": {
+        "properties": {
+          "source_node": {
+            "type": "string",
+            "title": "Source Node"
+          },
+          "target_node": {
+            "type": "string",
+            "title": "Target Node"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_node",
+          "target_node"
+        ],
+        "title": "RewireRequest",
+        "description": "Request model for rewiring PipeWire connections."
+      },
+      "Settings": {
+        "properties": {
+          "alsa_device": {
+            "type": "string",
+            "title": "Alsa Device",
+            "default": "default"
+          },
+          "upsample_ratio": {
+            "type": "integer",
+            "title": "Upsample Ratio",
+            "default": 8
+          },
+          "eq_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eq Profile"
+          },
+          "input_rate": {
+            "type": "integer",
+            "title": "Input Rate",
+            "default": 44100
+          },
+          "output_rate": {
+            "type": "integer",
+            "title": "Output Rate",
+            "default": 352800
+          }
+        },
+        "type": "object",
+        "title": "Settings",
+        "description": "Application settings model."
+      },
+      "SettingsUpdate": {
+        "properties": {
+          "alsa_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alsa Device"
+          },
+          "upsample_ratio": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upsample Ratio"
+          },
+          "eq_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eq Profile"
+          },
+          "input_rate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Rate"
+          },
+          "output_rate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Rate"
+          }
+        },
+        "type": "object",
+        "title": "SettingsUpdate",
+        "description": "Settings update request model."
+      },
+      "Status": {
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          },
+          "pipewire_connected": {
+            "type": "boolean",
+            "title": "Pipewire Connected",
+            "default": false
+          },
+          "alsa_connected": {
+            "type": "boolean",
+            "title": "Alsa Connected",
+            "default": false
+          },
+          "clip_count": {
+            "type": "integer",
+            "title": "Clip Count",
+            "default": 0
+          },
+          "total_samples": {
+            "type": "integer",
+            "title": "Total Samples",
+            "default": 0
+          },
+          "clip_rate": {
+            "type": "number",
+            "title": "Clip Rate",
+            "default": 0.0
+          },
+          "daemon_running": {
+            "type": "boolean",
+            "title": "Daemon Running",
+            "default": false
+          },
+          "eq_active": {
+            "type": "boolean",
+            "title": "Eq Active",
+            "default": false
+          },
+          "input_rate": {
+            "type": "integer",
+            "title": "Input Rate",
+            "default": 0
+          },
+          "output_rate": {
+            "type": "integer",
+            "title": "Output Rate",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "settings"
+        ],
+        "title": "Status",
+        "description": "System status response model."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ZmqPingResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "response": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response"
+          },
+          "daemon_running": {
+            "type": "boolean",
+            "title": "Daemon Running"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "daemon_running"
+        ],
+        "title": "ZmqPingResponse",
+        "description": "ZeroMQ ping response model."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "status",
+      "description": "System status and settings management"
+    },
+    {
+      "name": "daemon",
+      "description": "Audio daemon lifecycle and ZeroMQ communication"
+    },
+    {
+      "name": "eq",
+      "description": "EQ profile management (import, activate, delete)"
+    },
+    {
+      "name": "opra",
+      "description": "OPRA headphone database integration (CC BY-SA 4.0)"
+    },
+    {
+      "name": "legacy",
+      "description": "Deprecated endpoints - use alternatives instead"
+    }
+  ]
+}
