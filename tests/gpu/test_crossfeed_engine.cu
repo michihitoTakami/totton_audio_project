@@ -295,6 +295,80 @@ TEST_F(HRTFProcessorTest, MetadataAccess) {
     EXPECT_EQ(meta.normalization, "ild_preserving");
 }
 
+// Test: setCombinedFilter API
+TEST_F(HRTFProcessorTest, SetCombinedFilter) {
+    createTestHRTFFiles();
+
+    HRTFProcessor processor;
+    ASSERT_TRUE(processor.initialize(testDir_, 256));
+
+    // Get expected filter size
+    size_t filterFftSize = processor.getFilterFftSize();
+    ASSERT_GT(filterFftSize, 0u);
+
+    // Create synthetic combined filter data (FFT'd complex values)
+    std::vector<cufftComplex> combinedLL(filterFftSize);
+    std::vector<cufftComplex> combinedLR(filterFftSize);
+    std::vector<cufftComplex> combinedRL(filterFftSize);
+    std::vector<cufftComplex> combinedRR(filterFftSize);
+
+    // Initialize with identity-like response (DC gain = 1)
+    for (size_t i = 0; i < filterFftSize; ++i) {
+        combinedLL[i] = make_cuFloatComplex(1.0f, 0.0f);
+        combinedLR[i] = make_cuFloatComplex(0.1f, 0.0f);  // Some crossfeed
+        combinedRL[i] = make_cuFloatComplex(0.1f, 0.0f);
+        combinedRR[i] = make_cuFloatComplex(1.0f, 0.0f);
+    }
+
+    // Apply combined filter for 44k family
+    EXPECT_FALSE(processor.isUsingCombinedFilter());
+    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_44K, combinedLL.data(),
+                                            combinedLR.data(), combinedRL.data(), combinedRR.data(),
+                                            filterFftSize));
+    EXPECT_TRUE(processor.isUsingCombinedFilter());
+
+    // Wrong size should fail
+    std::vector<cufftComplex> wrongSize(filterFftSize + 10);
+    EXPECT_FALSE(processor.setCombinedFilter(RateFamily::RATE_44K, wrongSize.data(),
+                                             wrongSize.data(), wrongSize.data(), wrongSize.data(),
+                                             wrongSize.size()));
+
+    // Clear combined filter
+    processor.clearCombinedFilter();
+    EXPECT_FALSE(processor.isUsingCombinedFilter());
+}
+
+// Test: setCombinedFilter with rate family switching
+TEST_F(HRTFProcessorTest, SetCombinedFilterRateFamilySwitch) {
+    createTestHRTFFiles();
+
+    HRTFProcessor processor;
+    ASSERT_TRUE(processor.initialize(testDir_, 256));
+
+    size_t filterFftSize = processor.getFilterFftSize();
+    std::vector<cufftComplex> filter44k(filterFftSize);
+    std::vector<cufftComplex> filter48k(filterFftSize);
+
+    // Initialize filters with different values to distinguish them
+    for (size_t i = 0; i < filterFftSize; ++i) {
+        filter44k[i] = make_cuFloatComplex(1.0f, 0.0f);
+        filter48k[i] = make_cuFloatComplex(2.0f, 0.0f);
+    }
+
+    // Set both rate families
+    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_44K, filter44k.data(), filter44k.data(),
+                                            filter44k.data(), filter44k.data(), filterFftSize));
+    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_48K, filter48k.data(), filter48k.data(),
+                                            filter48k.data(), filter48k.data(), filterFftSize));
+
+    // Switch between rate families should maintain combined filter mode
+    EXPECT_TRUE(processor.isUsingCombinedFilter());
+    ASSERT_TRUE(processor.switchRateFamily(RateFamily::RATE_48K));
+    EXPECT_TRUE(processor.isUsingCombinedFilter());
+    ASSERT_TRUE(processor.switchRateFamily(RateFamily::RATE_44K));
+    EXPECT_TRUE(processor.isUsingCombinedFilter());
+}
+
 // Test: Helper functions
 TEST(CrossfeedHelperTest, HeadSizeToString) {
     EXPECT_STREQ(headSizeToString(HeadSize::S), "s");

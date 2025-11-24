@@ -164,6 +164,14 @@ HRTFProcessor::HRTFProcessor()
     for (int c = 0; c < NUM_CHANNELS; ++c) {
         d_activeFilterFFT_[c] = nullptr;
     }
+    // Initialize combined filter pointers
+    for (int f = 0; f < NUM_RATE_FAMILIES; ++f) {
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            d_combinedFilterFFT_[f][c] = nullptr;
+        }
+        combinedFilterLoaded_[f] = false;
+    }
+    usingCombinedFilter_ = false;
 }
 
 HRTFProcessor::~HRTFProcessor() {
@@ -452,13 +460,30 @@ bool HRTFProcessor::switchRateFamily(RateFamily targetFamily) {
         return false;
     }
 
+    int familyIdx = static_cast<int>(targetFamily);
     int targetConfig = getFilterIndex(currentHeadSize_, targetFamily);
+
+    // Check if combined filter is available for target family
+    if (combinedFilterLoaded_[familyIdx] && usingCombinedFilter_) {
+        // Use combined filter
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            d_activeFilterFFT_[c] = d_combinedFilterFFT_[familyIdx][c];
+        }
+        currentRateFamily_ = targetFamily;
+        activeFilterConfig_ = targetConfig;
+        resetStreaming();
+        std::cout << "Switched to rate family: " << rateFamilyToString(targetFamily)
+                  << " (using combined filter)" << std::endl;
+        return true;
+    }
+
+    // Fall back to predefined filter
     if (d_filterFFT_[targetConfig][0] == nullptr) {
         std::cerr << "Error: Target HRTF config not available" << std::endl;
         return false;
     }
 
-    if (targetConfig == activeFilterConfig_) {
+    if (targetConfig == activeFilterConfig_ && !usingCombinedFilter_) {
         return true;
     }
 
@@ -467,6 +492,7 @@ bool HRTFProcessor::switchRateFamily(RateFamily targetFamily) {
         d_activeFilterFFT_[c] = d_filterFFT_[targetConfig][c];
     }
     currentRateFamily_ = targetFamily;
+    usingCombinedFilter_ = false;
 
     // Reset overlap buffers on rate change
     resetStreaming();
@@ -801,6 +827,18 @@ void HRTFProcessor::cleanup() {
         }
     }
 
+    // Free combined filter FFT buffers
+    for (int f = 0; f < NUM_RATE_FAMILIES; ++f) {
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            if (d_combinedFilterFFT_[f][c]) {
+                cudaFree(d_combinedFilterFFT_[f][c]);
+                d_combinedFilterFFT_[f][c] = nullptr;
+            }
+        }
+        combinedFilterLoaded_[f] = false;
+    }
+    usingCombinedFilter_ = false;
+
     // Free working buffers
     if (d_inputL_) cudaFree(d_inputL_);
     if (d_inputR_) cudaFree(d_inputR_);
@@ -879,6 +917,109 @@ void HRTFProcessor::cleanup() {
 
     initialized_ = false;
     streamInitialized_ = false;
+}
+
+bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily,
+                                       const cufftComplex* combinedLL,
+                                       const cufftComplex* combinedLR,
+                                       const cufftComplex* combinedRL,
+                                       const cufftComplex* combinedRR,
+                                       size_t filterComplexCount) {
+    if (!initialized_) {
+        std::cerr << "HRTFProcessor::setCombinedFilter: Not initialized" << std::endl;
+        return false;
+    }
+
+    if (rateFamily == RateFamily::RATE_UNKNOWN) {
+        std::cerr << "HRTFProcessor::setCombinedFilter: Invalid rate family" << std::endl;
+        return false;
+    }
+
+    // Validate filter size matches expected FFT size
+    if (filterComplexCount != filterFftSize_) {
+        std::cerr << "HRTFProcessor::setCombinedFilter: Filter size mismatch. "
+                  << "Expected " << filterFftSize_ << " complex values, got " << filterComplexCount
+                  << std::endl;
+        return false;
+    }
+
+    int familyIdx = static_cast<int>(rateFamily);
+    size_t filterBytes = filterComplexCount * sizeof(cufftComplex);
+
+    // Allocate device memory if not already allocated
+    for (int c = 0; c < NUM_CHANNELS; ++c) {
+        if (d_combinedFilterFFT_[familyIdx][c] == nullptr) {
+            cudaError_t err = cudaMalloc(&d_combinedFilterFFT_[familyIdx][c], filterBytes);
+            if (err != cudaSuccess) {
+                std::cerr << "HRTFProcessor::setCombinedFilter: cudaMalloc failed for channel " << c
+                          << ": " << cudaGetErrorString(err) << std::endl;
+                // Clean up any partially allocated memory
+                for (int cc = 0; cc < c; ++cc) {
+                    if (d_combinedFilterFFT_[familyIdx][cc]) {
+                        cudaFree(d_combinedFilterFFT_[familyIdx][cc]);
+                        d_combinedFilterFFT_[familyIdx][cc] = nullptr;
+                    }
+                }
+                return false;
+            }
+        }
+    }
+
+    // Copy filter data from host to device
+    const cufftComplex* srcFilters[NUM_CHANNELS] = {combinedLL, combinedLR, combinedRL, combinedRR};
+    for (int c = 0; c < NUM_CHANNELS; ++c) {
+        cudaError_t err = cudaMemcpy(d_combinedFilterFFT_[familyIdx][c], srcFilters[c], filterBytes,
+                                     cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            std::cerr << "HRTFProcessor::setCombinedFilter: cudaMemcpy failed for channel " << c
+                      << ": " << cudaGetErrorString(err) << std::endl;
+            return false;
+        }
+    }
+
+    combinedFilterLoaded_[familyIdx] = true;
+
+    // If this is for the current rate family, switch to combined filter
+    if (rateFamily == currentRateFamily_) {
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            d_activeFilterFFT_[c] = d_combinedFilterFFT_[familyIdx][c];
+        }
+        usingCombinedFilter_ = true;
+    }
+
+    std::cout << "HRTFProcessor: Set combined filter for " << rateFamilyToString(rateFamily)
+              << " (" << filterComplexCount << " complex values)" << std::endl;
+    return true;
+}
+
+void HRTFProcessor::clearCombinedFilter() {
+    if (!initialized_) {
+        return;
+    }
+
+    // If currently using combined filter, switch back to predefined
+    if (usingCombinedFilter_) {
+        int config = getFilterIndex(currentHeadSize_, currentRateFamily_);
+        if (d_filterFFT_[config][0] != nullptr) {
+            for (int c = 0; c < NUM_CHANNELS; ++c) {
+                d_activeFilterFFT_[c] = d_filterFFT_[config][c];
+            }
+        }
+        usingCombinedFilter_ = false;
+        std::cout << "HRTFProcessor: Cleared combined filter, reverted to predefined HRTF"
+                  << std::endl;
+    }
+
+    // Free combined filter memory
+    for (int f = 0; f < NUM_RATE_FAMILIES; ++f) {
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            if (d_combinedFilterFFT_[f][c]) {
+                cudaFree(d_combinedFilterFFT_[f][c]);
+                d_combinedFilterFFT_[f][c] = nullptr;
+            }
+        }
+        combinedFilterLoaded_[f] = false;
+    }
 }
 
 }  // namespace CrossfeedEngine
