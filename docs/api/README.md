@@ -66,6 +66,17 @@ OPRAヘッドホンEQデータベース連携
 | GET | `/opra/eq/{id}` | EQプロファイル取得 |
 | POST | `/opra/apply/{id}` | EQプロファイル適用 |
 
+### DAC (`/dac`)
+DAC Capability検出とサンプリングレートフィルタリング
+
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/dac/capabilities` | DAC対応サンプリングレート取得 |
+| GET | `/dac/devices` | デバイス一覧とCapability |
+| GET | `/dac/supported-rates` | レートファミリ別対応レート |
+| GET | `/dac/max-ratio` | 最大アップサンプリング倍率 |
+| GET | `/dac/validate-config` | 設定バリデーション |
+
 ## レスポンス形式
 
 ### 成功レスポンス（変更系）

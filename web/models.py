@@ -87,6 +87,59 @@ class DevicesResponse(BaseModel):
     devices: list[AlsaDevice]
 
 
+class DacCapabilityResponse(BaseModel):
+    """DAC capability response model."""
+
+    device_name: str
+    min_sample_rate: int
+    max_sample_rate: int
+    supported_rates: list[int]
+    max_channels: int
+    is_valid: bool
+    error_message: Optional[str] = None
+
+
+class DacCapabilityInfo(BaseModel):
+    """DAC capability info for device list."""
+
+    min_sample_rate: int
+    max_sample_rate: int
+    supported_rates: list[int]
+    max_channels: int
+
+
+class DacDeviceInfo(BaseModel):
+    """DAC device with capabilities."""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    capabilities: Optional[DacCapabilityInfo] = None
+
+
+class DacDevicesResponse(BaseModel):
+    """DAC devices list response model."""
+
+    devices: list[DacDeviceInfo]
+
+
+class DacSupportedRatesResponse(BaseModel):
+    """Supported rates for a rate family response model."""
+
+    device: str
+    family: str = Field(description="Rate family: '44k' or '48k'")
+    supported_rates: list[int]
+
+
+class DacMaxRatioResponse(BaseModel):
+    """Maximum upsampling ratio response model."""
+
+    device: str
+    input_rate: int
+    max_ratio: int
+    max_output_rate: int
+
+
 # ============================================================================
 # EQ Profile Models
 # ============================================================================

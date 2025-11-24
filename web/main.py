@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .exceptions import register_exception_handlers
 from .models import ApiResponse
-from .routers import daemon_router, eq_router, opra_router, status_router
+from .routers import dac_router, daemon_router, eq_router, opra_router, status_router
 from .templates import get_admin_html
 
 # OpenAPI tag descriptions
@@ -31,6 +31,10 @@ tags_metadata = [
     {
         "name": "opra",
         "description": "OPRA headphone database integration (CC BY-SA 4.0)",
+    },
+    {
+        "name": "dac",
+        "description": "DAC capability detection and sample rate filtering",
     },
     {
         "name": "legacy",
@@ -71,6 +75,7 @@ app.include_router(status_router)
 app.include_router(daemon_router)
 app.include_router(eq_router)
 app.include_router(opra_router)
+app.include_router(dac_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)
