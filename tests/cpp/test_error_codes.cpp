@@ -171,6 +171,8 @@ TEST(ErrorCodes, BuildErrorResponseBasic) {
     EXPECT_EQ(j["message"], "Rate not supported");
     EXPECT_TRUE(j.contains("inner_error"));
     EXPECT_EQ(j["inner_error"]["cpp_code"], "0x2004");
+    // cpp_message should fallback to outer message when InnerError is default
+    EXPECT_EQ(j["inner_error"]["cpp_message"], "Rate not supported");
 }
 
 TEST(ErrorCodes, BuildErrorResponseWithInnerError) {
@@ -278,6 +280,52 @@ TEST(ErrorCodes, ParseErrorResponseFailsOnOkStatus) {
 
     std::string errorCode, message, innerErrorJson;
     EXPECT_FALSE(ZMQComm::JSON::parseErrorResponse(okJson, errorCode, message, innerErrorJson));
+}
+
+TEST(ErrorCodes, ParseErrorResponseFailsOnMissingErrorCode) {
+    // Missing error_code field - should fail validation
+    std::string brokenJson = R"({
+        "status": "error",
+        "message": "Some error"
+    })";
+
+    std::string errorCode, message, innerErrorJson;
+    EXPECT_FALSE(ZMQComm::JSON::parseErrorResponse(brokenJson, errorCode, message, innerErrorJson));
+}
+
+TEST(ErrorCodes, ParseErrorResponseFailsOnMissingMessage) {
+    // Missing message field - should fail validation
+    std::string brokenJson = R"({
+        "status": "error",
+        "error_code": "IPC_TIMEOUT"
+    })";
+
+    std::string errorCode, message, innerErrorJson;
+    EXPECT_FALSE(ZMQComm::JSON::parseErrorResponse(brokenJson, errorCode, message, innerErrorJson));
+}
+
+TEST(ErrorCodes, ParseErrorResponseFailsOnWrongTypeErrorCode) {
+    // error_code is not a string - should fail validation
+    std::string brokenJson = R"({
+        "status": "error",
+        "error_code": 12345,
+        "message": "Some error"
+    })";
+
+    std::string errorCode, message, innerErrorJson;
+    EXPECT_FALSE(ZMQComm::JSON::parseErrorResponse(brokenJson, errorCode, message, innerErrorJson));
+}
+
+TEST(ErrorCodes, ParseErrorResponseFailsOnWrongTypeMessage) {
+    // message is not a string - should fail validation
+    std::string brokenJson = R"({
+        "status": "error",
+        "error_code": "IPC_TIMEOUT",
+        "message": 12345
+    })";
+
+    std::string errorCode, message, innerErrorJson;
+    EXPECT_FALSE(ZMQComm::JSON::parseErrorResponse(brokenJson, errorCode, message, innerErrorJson));
 }
 
 // ============================================================
