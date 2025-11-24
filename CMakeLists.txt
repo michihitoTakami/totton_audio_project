@@ -154,6 +154,7 @@ target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
+    zeromq_interface
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
@@ -196,6 +197,7 @@ target_compile_options(error_codes PRIVATE
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/zeromq_interface.cpp
+    src/base64.cpp
 )
 target_link_libraries(zeromq_interface PUBLIC
     error_codes

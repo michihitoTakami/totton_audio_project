@@ -21,7 +21,13 @@ enum class CommandType {
     SWITCH_RATE,  // Switch rate family (44k/48k)
     APPLY_EQ,     // Apply EQ magnitude
     RESTORE_EQ,   // Restore original filter (remove EQ)
-    SHUTDOWN      // Shutdown daemon
+    SHUTDOWN,     // Shutdown daemon
+
+    // Crossfeed commands (#150)
+    CROSSFEED_ENABLE,        // Enable crossfeed processing
+    CROSSFEED_DISABLE,       // Disable crossfeed processing
+    CROSSFEED_SET_COMBINED,  // Set combined filter (4ch x 2 rate families, Base64 encoded)
+    CROSSFEED_GET_STATUS     // Get crossfeed status (enabled, head_size, headphone)
 };
 
 // Response status
@@ -36,6 +42,13 @@ struct EngineStatus {
     bool eqApplied = false;
     std::string currentRateFamily;
     size_t framesProcessed = 0;
+};
+
+// Crossfeed status data structure (#150)
+struct CrossfeedStatus {
+    bool enabled = false;
+    std::string headSize;   // "xs", "s", "m", "l"
+    std::string headphone;  // e.g., "HD650", "Sundara"
 };
 
 // Command result structure
@@ -124,6 +137,16 @@ class ZMQClient {
     CommandResult applyEQ(const std::string& eqMagnitudeJson);
     CommandResult restoreEQ();
     CommandResult shutdown();
+
+    // Crossfeed commands (#150)
+    CommandResult crossfeedEnable();
+    CommandResult crossfeedDisable();
+    // Set combined filter for a rate family
+    // combinedLL/LR/RL/RR: Base64-encoded cufftComplex arrays
+    CommandResult crossfeedSetCombined(const std::string& rateFamily, const std::string& combinedLL,
+                                       const std::string& combinedLR, const std::string& combinedRL,
+                                       const std::string& combinedRR);
+    CommandResult crossfeedGetStatus();
 
     // Subscribe to status updates (async)
     bool subscribeStatus(const std::string& pubEndpoint, StatusCallback callback);
