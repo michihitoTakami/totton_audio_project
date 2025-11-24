@@ -263,12 +263,21 @@ static std::string build_stats_json() {
     size_t total = g_total_samples.load(std::memory_order_relaxed);
     double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
 
+    // Get phase type from upsampler (or config default if not initialized)
+    std::string phaseTypeStr = "minimum";
+    if (g_upsampler) {
+        phaseTypeStr = (g_upsampler->getPhaseType() == PhaseType::Minimum) ? "minimum" : "linear";
+    } else {
+        phaseTypeStr = (g_config.phaseType == PhaseType::Minimum) ? "minimum" : "linear";
+    }
+
     std::ostringstream oss;
     oss << "{"
         << "\"clip_count\":" << clips << ","
         << "\"total_samples\":" << total << ","
         << "\"clip_rate\":" << clip_rate << ","
         << "\"eq_enabled\":" << (g_config.eqEnabled ? "true" : "false") << ","
+        << "\"phase_type\":\"" << phaseTypeStr << "\","
         << "\"input_rate\":" << g_config.inputSampleRate << ","
         << "\"upsample_ratio\":" << g_config.upsampleRatio << "}";
     return oss.str();
@@ -351,6 +360,53 @@ static void zeromq_listener_thread() {
                 bool initialized = (g_hrtf_processor != nullptr);
                 response = "OK:{\"enabled\":" + std::string(enabled ? "true" : "false") +
                            ",\"initialized\":" + std::string(initialized ? "true" : "false") + "}";
+            } else if (cmd == "PHASE_TYPE_GET") {
+                // Get current phase type
+                if (g_upsampler) {
+                    PhaseType pt = g_upsampler->getPhaseType();
+                    std::string ptStr = (pt == PhaseType::Minimum) ? "minimum" : "linear";
+                    response = "OK:{\"phase_type\":\"" + ptStr + "\"}";
+                } else {
+                    response = "ERR:Upsampler not initialized";
+                }
+            } else if (cmd.rfind("PHASE_TYPE_SET:", 0) == 0) {
+                // Set phase type: PHASE_TYPE_SET:minimum or PHASE_TYPE_SET:linear
+                std::string phaseStr = cmd.substr(15);  // Extract after "PHASE_TYPE_SET:"
+                if (!g_upsampler) {
+                    response = "ERR:Upsampler not initialized";
+                } else if (phaseStr != "minimum" && phaseStr != "linear") {
+                    response = "ERR:Invalid phase type (use 'minimum' or 'linear')";
+                } else {
+                    PhaseType newPhase =
+                        (phaseStr == "minimum") ? PhaseType::Minimum : PhaseType::Linear;
+                    PhaseType oldPhase = g_upsampler->getPhaseType();
+
+                    if (oldPhase == newPhase) {
+                        response = "OK:Phase type already " + phaseStr;
+                    } else {
+                        // Set new phase type
+                        g_upsampler->setPhaseType(newPhase);
+
+                        // Re-apply EQ if enabled (EQ processing depends on phase type)
+                        if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
+                            EQ::EqProfile eqProfile;
+                            if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
+                                size_t filterFftSize = g_upsampler->getFilterFftSize();
+                                size_t fullFftSize = g_upsampler->getFullFftSize();
+                                double outputSampleRate =
+                                    static_cast<double>(g_config.inputSampleRate) *
+                                    g_config.upsampleRatio;
+                                auto eqMagnitude = EQ::computeEqMagnitudeForFft(
+                                    filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+                                if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
+                                    std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
+                                              << " phase" << std::endl;
+                                }
+                            }
+                        }
+                        response = "OK:Phase type set to " + phaseStr;
+                    }
+                }
             } else {
                 response = "ERR:Unknown command";
             }
