@@ -424,6 +424,64 @@ class TestEqConfigPersistence:
         assert cfg.eq_profile_path == str(eq_profile_dir / "migrate_me.txt")
         assert cfg.eq_enabled is True
 
+    def test_update_other_settings_preserves_eq(
+        self, client, eq_profile_dir, config_path, valid_eq_content
+    ):
+        """Updating non-EQ settings should preserve EQ configuration (regression test for #249)."""
+        # Setup: Create a profile and activate EQ
+        profile_file = eq_profile_dir / "active.txt"
+        profile_file.write_text(valid_eq_content)
+        config_path.write_text(
+            json.dumps(
+                {
+                    "alsaDevice": "hw:0",
+                    "upsampleRatio": 8,
+                    "eqEnabled": True,
+                    "eqProfile": "active",
+                    "eqProfilePath": str(profile_file),
+                }
+            )
+        )
+
+        # Update upsample_ratio (without touching eq_enabled)
+        response = client.post("/settings", json={"upsample_ratio": 16})
+        assert response.status_code == 200
+
+        # EQ settings should be preserved
+        saved_config = json.loads(config_path.read_text())
+        assert saved_config["eqEnabled"] is True
+        assert saved_config["eqProfile"] == "active"
+        assert saved_config["eqProfilePath"] == str(profile_file)
+        assert saved_config["upsampleRatio"] == 16  # Verify update applied
+
+    def test_explicit_eq_disable_clears_fields(
+        self, client, eq_profile_dir, config_path, valid_eq_content
+    ):
+        """Explicitly disabling EQ should clear eq_profile_path (regression test for #249)."""
+        # Setup: Create a profile and activate EQ
+        profile_file = eq_profile_dir / "active.txt"
+        profile_file.write_text(valid_eq_content)
+        config_path.write_text(
+            json.dumps(
+                {
+                    "alsaDevice": "hw:0",
+                    "upsampleRatio": 8,
+                    "eqEnabled": True,
+                    "eqProfile": "active",
+                    "eqProfilePath": str(profile_file),
+                }
+            )
+        )
+
+        # Explicitly disable EQ
+        response = client.post("/settings", json={"eq_enabled": False})
+        assert response.status_code == 200
+
+        # EQ fields should be cleared
+        saved_config = json.loads(config_path.read_text())
+        assert saved_config["eqEnabled"] is False
+        assert saved_config["eqProfilePath"] is None
+
 
 class TestDeleteEndpoint:
     """Tests for DELETE /eq/profiles/{name} endpoint."""
