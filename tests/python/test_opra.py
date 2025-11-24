@@ -697,29 +697,11 @@ class TestOpraApi:
         expected_preamp = preamp_no_correction - correction_gain
         assert preamp_with_correction == pytest.approx(expected_preamp, rel=0.01)
 
-    def test_opra_apply_with_correction_filename(self, tmp_path, monkeypatch):
+    def test_opra_apply_with_correction_filename(self, client):
         """Test /opra/apply endpoint generates correct filename suffix.
 
-        Uses monkeypatch to redirect file writes to temp directory,
-        avoiding side effects on shared workspace.
+        This test uses the real data/EQ directory and cleans up after itself.
         """
-        from fastapi.testclient import TestClient
-
-        # Setup temp directories
-        temp_eq_dir = tmp_path / "EQ"
-        temp_eq_dir.mkdir()
-        temp_config = tmp_path / "config.json"
-        temp_config.write_text("{}")
-
-        # Import and patch the web module before creating client
-        from web import constants
-
-        monkeypatch.setattr(constants, "EQ_PROFILES_DIR", temp_eq_dir)
-        monkeypatch.setattr(constants, "CONFIG_PATH", temp_config)
-
-        from web import main
-
-        client = TestClient(main.app)
 
         # Get sample EQ ID
         response = client.get("/opra/search?q=HD650&limit=1")
@@ -727,24 +709,39 @@ class TestOpraApi:
         data = response.json()
         sample_eq_id = data["results"][0]["eq_profiles"][0]["id"]
 
-        # Test apply endpoint
+        # Test apply endpoint with correction
         response = client.post(f"/opra/apply/{sample_eq_id}?apply_correction=true")
         assert response.status_code == 200
         data = response.json()
 
         assert data["data"]["modern_target_applied"] is True
-        assert "_kb5000_7" in data["data"]["profile_name"]
+        profile_name = data["data"]["profile_name"]
+        assert "_kb5000_7" in profile_name
 
-        # Verify file was created in temp directory (not real data/EQ)
-        created_files = list(temp_eq_dir.glob("opra_*_kb5000_7.txt"))
-        assert len(created_files) == 1
+        # Verify file was created in real data/EQ directory
+        from web.constants import EQ_PROFILES_DIR
 
-        # Verify config was updated in temp file
-        import json
+        expected_file = EQ_PROFILES_DIR / f"{profile_name}.txt"
+        try:
+            assert expected_file.exists(), f"Expected file not found: {expected_file}"
 
-        config_data = json.loads(temp_config.read_text())
-        assert config_data.get("eqEnabled") is True
-        assert "_kb5000_7" in config_data.get("eqProfilePath", "")
+            # Verify file content has Modern Target correction
+            content = expected_file.read_text()
+            assert "KB5000_7" in content
+            assert "5366" in content  # Correction frequency
+            assert "2.8" in content  # Correction gain
+
+            # Verify config.json was updated
+            from web.constants import CONFIG_PATH
+            import json
+
+            config_data = json.loads(CONFIG_PATH.read_text())
+            assert config_data.get("eqEnabled") is True
+            assert profile_name in config_data.get("eqProfile", "")
+        finally:
+            # Cleanup: remove the test file
+            if expected_file.exists():
+                expected_file.unlink()
 
 
 class TestOpraErrorHandling:
