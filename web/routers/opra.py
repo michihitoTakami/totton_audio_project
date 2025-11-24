@@ -169,7 +169,9 @@ async def opra_apply_eq(eq_id: str, apply_correction: bool = False):
 
         # Update config to use this profile
         config = load_config()
+        config.eq_enabled = True
         config.eq_profile = profile_path.stem
+        config.eq_profile_path = str(profile_path)
         save_config(config)
 
         return ApiResponse(
