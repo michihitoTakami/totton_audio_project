@@ -64,6 +64,7 @@ class TestFilterConfig:
         assert config.kaiser_beta == 55.0
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
+        assert config.target_dc_gain == config.upsample_ratio
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
@@ -399,6 +400,18 @@ class TestNormalizeCoefficients:
         assert np.isclose(np.sum(h_norm), 1.0, rtol=1e-6)
         assert info["normalization_applied"] is True
         assert np.isclose(info["original_dc_gain"], 2.0)
+        assert np.isclose(info["target_dc_gain"], 1.0)
+
+    def test_normalizes_to_target_dc_gain(self):
+        """DC gain should follow requested target."""
+        from generate_filter import normalize_coefficients
+
+        h = np.array([1.0, 1.0])  # DC gain = 2.0
+        target = 4.0
+        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+
+        assert np.isclose(np.sum(h_norm), target, rtol=1e-6)
+        assert np.isclose(info["applied_scale"], 2.0)
 
     def test_zero_dc_gain_raises_error(self):
         """Zero DC gain should raise ValueError."""
@@ -416,6 +429,13 @@ class TestNormalizeCoefficients:
         h_norm, _ = normalize_coefficients(h)
 
         assert h_norm.shape == h.shape
+
+    def test_invalid_target_raises_error(self):
+        """Non-positive target DC gain should raise ValueError."""
+        from generate_filter import normalize_coefficients
+
+        with pytest.raises(ValueError, match="DCゲインのターゲット"):
+            normalize_coefficients(np.array([1.0]), target_dc_gain=0.0)
 
 
 class TestFilterDesignLegacy:
@@ -636,8 +656,8 @@ class TestCoefficientFileLoading:
         assert len(h) == 2_000_000
         assert np.isfinite(h).all()
 
-    def test_coefficient_dc_gain_is_normalized(self, coefficients_dir):
-        """Loaded coefficients should have DC gain ~1.0."""
+    def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):
+        """Loaded coefficients should have DC gain equal to upsample ratio (unity overall gain)."""
         coeff_path = coefficients_dir / "filter_44k_2m_min_phase.bin"
 
         if not coeff_path.exists():
@@ -646,7 +666,7 @@ class TestCoefficientFileLoading:
         h = np.fromfile(coeff_path, dtype=np.float32)
         dc_gain = np.sum(h)
 
-        assert np.isclose(dc_gain, 1.0, rtol=0.01)
+        assert np.isclose(dc_gain, 16.0, rtol=0.01)
 
 
 class TestMultiRateConfigs:
@@ -1036,6 +1056,24 @@ class TestNormalizeCoefficientsErrorHandling:
         h = np.array([1.0, -1.0, 1e-15])
         with pytest.raises(ValueError, match="DCゲインが0に近すぎます"):
             normalize_coefficients(h)
+
+
+class TestCoefficientDcGain:
+    """Tests for shipped coefficient DC gain after upsample normalization."""
+
+    def test_coefficient_dc_matches_ratio(self):
+        """Shipped filters should sum to their upsample ratio (unity overall gain)."""
+        coeff_dir = Path(__file__).parent.parent.parent / "data" / "coefficients"
+        cases = [
+            ("filter_44k_2m_min_phase.bin", 16.0),
+            ("filter_48k_2m_min_phase.bin", 16.0),
+            ("filter_44k_16x_2m_linear.bin", 16.0),
+            ("filter_48k_16x_2m_linear.bin", 16.0),
+        ]
+        for filename, expected_dc in cases:
+            data = np.fromfile(coeff_dir / filename, dtype=np.float32)
+            dc_gain = float(np.sum(data))
+            assert np.isclose(dc_gain, expected_dc, rtol=1e-5, atol=1e-3)
 
 
 class TestValidateTapCountErrorHandling:

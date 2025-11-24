@@ -86,6 +86,28 @@ void checkCufftError(cufftResult result, const char* context) {
 
 }  // namespace
 
+void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
+                                         size_t* trackedBytes, const char* context) {
+    if (buffer.empty()) {
+        return;
+    }
+
+    void* ptr = buffer.data();
+    size_t bytes = buffer.size() * sizeof(float);
+
+    if (*trackedPtr == ptr && *trackedBytes == bytes) {
+        return;  // Already registered
+    }
+
+    if (*trackedPtr) {
+        checkCudaError(cudaHostUnregister(*trackedPtr), "cudaHostUnregister stream buffer");
+    }
+
+    checkCudaError(cudaHostRegister(ptr, bytes, cudaHostRegisterDefault), context);
+    *trackedPtr = ptr;
+    *trackedBytes = bytes;
+}
+
 // ============================================================================
 // HRTFProcessor Implementation
 // ============================================================================
@@ -123,6 +145,14 @@ HRTFProcessor::HRTFProcessor()
       d_overlapR_(nullptr),
       streamInitialized_(false),
       streamValidInputPerBlock_(0),
+      pinnedStreamInputL_(nullptr),
+      pinnedStreamInputR_(nullptr),
+      pinnedStreamOutputL_(nullptr),
+      pinnedStreamOutputR_(nullptr),
+      pinnedStreamInputLBytes_(0),
+      pinnedStreamInputRBytes_(0),
+      pinnedStreamOutputLBytes_(0),
+      pinnedStreamOutputRBytes_(0),
       validOutputPerBlock_(0) {
     stats_ = Stats();
     // Initialize all filter FFT pointers to nullptr
@@ -626,6 +656,10 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         streamInputBufferL.resize(streamInputAccumulatedL + inputFrames + streamValidInputPerBlock_);
         streamInputBufferR.resize(streamInputAccumulatedR + inputFrames + streamValidInputPerBlock_);
     }
+    registerStreamBuffer(streamInputBufferL, &pinnedStreamInputL_, &pinnedStreamInputLBytes_,
+                         "cudaHostRegister crossfeed stream input L");
+    registerStreamBuffer(streamInputBufferR, &pinnedStreamInputR_, &pinnedStreamInputRBytes_,
+                         "cudaHostRegister crossfeed stream input R");
 
     std::memcpy(streamInputBufferL.data() + streamInputAccumulatedL,
                 inputL, inputFrames * sizeof(float));
@@ -644,6 +678,10 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     // Process one block
     outputL.resize(validOutputPerBlock_);
     outputR.resize(validOutputPerBlock_);
+    registerStreamBuffer(outputL, &pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
+                         "cudaHostRegister crossfeed stream output L");
+    registerStreamBuffer(outputR, &pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
+                         "cudaHostRegister crossfeed stream output R");
 
     int threadsPerBlock = 256;
     int blocks = (filterFftSize_ + threadsPerBlock - 1) / threadsPerBlock;
@@ -788,6 +826,20 @@ void HRTFProcessor::cleanup() {
     if (stream_) cudaStreamDestroy(stream_);
     if (streamL_) cudaStreamDestroy(streamL_);
     if (streamR_) cudaStreamDestroy(streamR_);
+
+    // Unregister pinned host buffers
+    if (pinnedStreamInputL_) cudaHostUnregister(pinnedStreamInputL_);
+    if (pinnedStreamInputR_) cudaHostUnregister(pinnedStreamInputR_);
+    if (pinnedStreamOutputL_) cudaHostUnregister(pinnedStreamOutputL_);
+    if (pinnedStreamOutputR_) cudaHostUnregister(pinnedStreamOutputR_);
+    pinnedStreamInputL_ = nullptr;
+    pinnedStreamInputR_ = nullptr;
+    pinnedStreamOutputL_ = nullptr;
+    pinnedStreamOutputR_ = nullptr;
+    pinnedStreamInputLBytes_ = 0;
+    pinnedStreamInputRBytes_ = 0;
+    pinnedStreamOutputLBytes_ = 0;
+    pinnedStreamOutputRBytes_ = 0;
 
     // Reset pointers
     d_inputL_ = nullptr;

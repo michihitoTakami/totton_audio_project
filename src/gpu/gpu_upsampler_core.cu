@@ -48,7 +48,11 @@ GPUUpsampler::GPUUpsampler()
       pinnedStreamInputLeft_(nullptr), pinnedStreamInputRight_(nullptr),
       pinnedStreamInputMono_(nullptr),
       pinnedStreamInputLeftBytes_(0), pinnedStreamInputRightBytes_(0),
-      pinnedStreamInputMonoBytes_(0) {
+      pinnedStreamInputMonoBytes_(0),
+      pinnedStreamOutputLeft_(nullptr), pinnedStreamOutputRight_(nullptr),
+      pinnedStreamOutputMono_(nullptr),
+      pinnedStreamOutputLeftBytes_(0), pinnedStreamOutputRightBytes_(0),
+      pinnedStreamOutputMonoBytes_(0) {
     stats_ = Stats();
     // Initialize multi-rate FFT pointers to nullptr
     for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {
@@ -359,6 +363,46 @@ void GPUUpsampler::registerStreamInputBuffer(std::vector<float>& buffer, cudaStr
     *trackedBytes = bytes;
 }
 
+void GPUUpsampler::registerStreamOutputBuffer(std::vector<float>& buffer, cudaStream_t stream) {
+    if (buffer.empty()) {
+        return;
+    }
+
+    void* ptr = buffer.data();
+    size_t bytes = buffer.size() * sizeof(float);
+
+    void** trackedPtr = nullptr;
+    size_t* trackedBytes = nullptr;
+    const char* context = nullptr;
+
+    if (stream == streamLeft_) {
+        trackedPtr = &pinnedStreamOutputLeft_;
+        trackedBytes = &pinnedStreamOutputLeftBytes_;
+        context = "cudaHostRegister streaming output buffer (L)";
+    } else if (stream == streamRight_) {
+        trackedPtr = &pinnedStreamOutputRight_;
+        trackedBytes = &pinnedStreamOutputRightBytes_;
+        context = "cudaHostRegister streaming output buffer (R)";
+    } else {
+        trackedPtr = &pinnedStreamOutputMono_;
+        trackedBytes = &pinnedStreamOutputMonoBytes_;
+        context = "cudaHostRegister streaming output buffer (mono)";
+    }
+
+    if (*trackedPtr == ptr && *trackedBytes == bytes) {
+        return;  // Already registered
+    }
+
+    if (*trackedPtr) {
+        cudaHostUnregister(*trackedPtr);
+        removePinnedHostBuffer(*trackedPtr);
+    }
+
+    registerHostBuffer(ptr, bytes, context);
+    *trackedPtr = ptr;
+    *trackedBytes = bytes;
+}
+
 void GPUUpsampler::unregisterHostBuffers() {
     for (const auto& buf : pinnedHostBuffers_) {
         cudaHostUnregister(buf.ptr);
@@ -370,6 +414,12 @@ void GPUUpsampler::unregisterHostBuffers() {
     pinnedStreamInputLeftBytes_ = 0;
     pinnedStreamInputRightBytes_ = 0;
     pinnedStreamInputMonoBytes_ = 0;
+    pinnedStreamOutputLeft_ = nullptr;
+    pinnedStreamOutputRight_ = nullptr;
+    pinnedStreamOutputMono_ = nullptr;
+    pinnedStreamOutputLeftBytes_ = 0;
+    pinnedStreamOutputRightBytes_ = 0;
+    pinnedStreamOutputMonoBytes_ = 0;
 }
 
 bool GPUUpsampler::processChannel(const float* inputData,

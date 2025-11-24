@@ -57,7 +57,7 @@ TEST_F(ConfigLoaderTest, LoadNonExistentFileUsesDefaults) {
     EXPECT_EQ(config.periodSize, 32768);
     EXPECT_EQ(config.upsampleRatio, 16);
     EXPECT_EQ(config.blockSize, 4096);
-    EXPECT_FLOAT_EQ(config.gain, 16.0f);
+    EXPECT_FLOAT_EQ(config.gain, 1.0f);
     EXPECT_EQ(config.inputSampleRate, 44100);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");
@@ -119,7 +119,7 @@ TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
     EXPECT_EQ(config.bufferSize, 262144);
     EXPECT_EQ(config.periodSize, 32768);
     EXPECT_EQ(config.blockSize, 4096);
-    EXPECT_FLOAT_EQ(config.gain, 16.0f);
+    EXPECT_FLOAT_EQ(config.gain, 1.0f);
     EXPECT_EQ(config.inputSampleRate, 44100);
 }
 
@@ -158,7 +158,7 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultValues) {
     EXPECT_EQ(config.periodSize, 32768);
     EXPECT_EQ(config.upsampleRatio, 16);
     EXPECT_EQ(config.blockSize, 4096);
-    EXPECT_FLOAT_EQ(config.gain, 16.0f);
+    EXPECT_FLOAT_EQ(config.gain, 1.0f);
     EXPECT_EQ(config.filterPath, "data/coefficients/filter_1m_min_phase.bin");
     EXPECT_EQ(config.inputSampleRate, 44100);
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
