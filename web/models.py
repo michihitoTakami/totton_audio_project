@@ -76,6 +76,7 @@ class ZmqPingResponse(BaseModel):
 class AlsaDevice(BaseModel):
     """ALSA device info model."""
 
+    id: str
     name: str
     description: Optional[str] = None
 
@@ -83,7 +84,7 @@ class AlsaDevice(BaseModel):
 class DevicesResponse(BaseModel):
     """Available ALSA devices response model."""
 
-    devices: list[str]
+    devices: list[AlsaDevice]
 
 
 # ============================================================================
@@ -213,7 +214,10 @@ class ApiResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    """Standard error response model."""
+    """Standard error response model.
 
-    detail: str
+    Supports both string and structured error details for flexibility.
+    """
+
+    detail: str | dict[str, Any]
     error_code: Optional[str] = None

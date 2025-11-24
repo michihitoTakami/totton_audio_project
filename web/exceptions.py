@@ -15,11 +15,16 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def http_exception_handler(
         request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
-        """Handle HTTP exceptions with unified format."""
+        """Handle HTTP exceptions with unified format.
+
+        Preserves structured details (dict) if provided, otherwise uses string.
+        """
+        # Preserve original detail type (string or dict)
+        detail = exc.detail if isinstance(exc.detail, (str, dict)) else str(exc.detail)
         return JSONResponse(
             status_code=exc.status_code,
             content=ErrorResponse(
-                detail=str(exc.detail),
+                detail=detail,
                 error_code=f"HTTP_{exc.status_code}",
             ).model_dump(),
         )

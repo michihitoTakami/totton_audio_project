@@ -55,6 +55,15 @@ class TestUnifiedErrorResponse:
         assert "error_code" in data
         assert data["error_code"] == "VALIDATION_ERROR"
 
+    def test_error_detail_can_be_string(self, client: TestClient):
+        """Error detail should preserve string format."""
+        response = client.delete("/eq/profiles/nonexistent_profile")
+        assert response.status_code == 404
+        data = response.json()
+        # String detail should remain a string
+        assert isinstance(data["detail"], str)
+        assert "nonexistent_profile" in data["detail"]
+
 
 class TestDeprecatedEndpoint:
     """Test deprecated /restart endpoint."""
@@ -172,6 +181,13 @@ class TestResponseModels:
         # Should have DevicesResponse model fields
         assert "devices" in data
         assert isinstance(data["devices"], list)
+
+        # If there are devices, check they have AlsaDevice structure
+        if len(data["devices"]) > 0:
+            device = data["devices"][0]
+            assert "id" in device, "AlsaDevice should have 'id' field"
+            assert "name" in device, "AlsaDevice should have 'name' field"
+            # description is optional
 
     def test_daemon_status_response_model(self, client: TestClient):
         """GET /daemon/status should return DaemonStatus model."""
