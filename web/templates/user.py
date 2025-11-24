@@ -411,8 +411,12 @@ def get_embedded_html() -> str:
                     // Daemon not running or error - disable UI and show message
                     select.disabled = true;
                     warning.classList.remove('visible');
-                    if (res.status === 503) {
-                        showPhaseMessage('Daemon not running - phase type unavailable', false);
+                    try {
+                        const err = await res.json();
+                        // RFC 9457: use detail field for error message
+                        showPhaseMessage(err.detail || 'Phase type unavailable', false);
+                    } catch {
+                        showPhaseMessage('Phase type unavailable (HTTP ' + res.status + ')', false);
                     }
                     return;
                 }
