@@ -1,7 +1,9 @@
 #include "audio_ring_buffer.h"
 #include "audio_utils.h"
+#include "auto_negotiation.h"
 #include "config_loader.h"
 #include "convolution_engine.h"
+#include "dac_capability.h"
 #include "daemon_constants.h"
 
 #include <algorithm>
@@ -79,31 +81,80 @@ static void signal_handler(int sig) {
 // Called when input sample rate changes (e.g., from PipeWire param event or ZeroMQ)
 // Connected via on_param_changed() event and processed in main loop.
 // See: https://github.com/michihitoTakami/michy_os/issues/218
+//
+// LIMITATION (Issue #231): Current dual-rate mode only supports base rates (44.1k/48k).
+// Non-base rates (88.2k/96k/176.4k/192k) are detected but require multi-rate mode.
 static bool handle_rate_change(int detected_sample_rate) {
     if (!g_upsampler || !g_upsampler->isDualRateEnabled()) {
         return false;  // Dual-rate not enabled
     }
 
-    auto new_family = ConvolutionEngine::detectRateFamily(detected_sample_rate);
-    if (new_family == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
-        // Note: Avoid std::cerr in real-time path if called from audio callback
+    // Use AutoNegotiation to determine the correct configuration
+    // Note: In production, dacCap should come from actual DAC scan
+    // For now, use a mock capability that supports all rates
+    DacCapability::Capability dacCap;
+    dacCap.deviceName = "default";
+    dacCap.minSampleRate = 44100;
+    dacCap.maxSampleRate = 768000;
+    dacCap.supportedRates = {44100,  48000,  88200,  96000,  176400,
+                             192000, 352800, 384000, 705600, 768000};
+    dacCap.maxChannels = 2;
+    dacCap.isValid = true;
+
+    auto config = AutoNegotiation::negotiate(detected_sample_rate, dacCap,
+                                             g_current_output_rate.load(std::memory_order_acquire));
+
+    if (!config.isValid) {
+        std::cerr << "[Rate] Negotiation failed: " << config.errorMessage << std::endl;
         return false;
     }
 
-    if (new_family == g_get_rate_family()) {
-        return true;  // Already at correct family
+    // Check if this is a non-base rate (requires multi-rate mode - Issue #231)
+    int baseRate = ConvolutionEngine::getBaseSampleRate(config.inputFamily);
+    if (detected_sample_rate != baseRate) {
+        std::cerr << "[Rate] WARNING: Detected " << detected_sample_rate
+                  << " Hz but dual-rate mode only supports base rates (" << baseRate << " Hz)."
+                  << std::endl;
+        std::cerr << "[Rate] Multi-rate support required for " << config.upsampleRatio
+                  << "x upsampling. See Issue #231." << std::endl;
+        // Continue with family switch if needed, but ratio will be incorrect
     }
 
-    // Switch coefficient set (glitch-free via double buffering)
-    if (g_upsampler->switchRateFamily(new_family)) {
-        g_set_rate_family(new_family);
-        g_current_input_rate.store(ConvolutionEngine::getBaseSampleRate(new_family),
-                                   std::memory_order_release);
-        g_current_output_rate.store(ConvolutionEngine::getOutputSampleRate(new_family),
-                                    std::memory_order_release);
+    // Check if family change is needed
+    auto current_family = g_get_rate_family();
+    if (config.inputFamily == current_family && !config.requiresReconfiguration) {
+        // Same family, same output rate - update input rate tracking only
+        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
+        std::cout << "[Rate] Same family, updated input rate to " << detected_sample_rate
+                  << " Hz (ratio: " << config.upsampleRatio << "x)" << std::endl;
         return true;
     }
 
+    // Family change required
+    std::cout << "[Rate] Family change: "
+              << (current_family == ConvolutionEngine::RateFamily::RATE_44K ? "44k" : "48k")
+              << " -> "
+              << (config.inputFamily == ConvolutionEngine::RateFamily::RATE_44K ? "44k" : "48k")
+              << std::endl;
+
+    // Switch coefficient set (glitch-free via double buffering)
+    if (g_upsampler->switchRateFamily(config.inputFamily)) {
+        g_set_rate_family(config.inputFamily);
+        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
+        g_current_output_rate.store(config.outputRate, std::memory_order_release);
+
+        std::cout << "[Rate] Switch complete: " << detected_sample_rate << " Hz -> "
+                  << config.outputRate << " Hz (" << config.upsampleRatio << "x)" << std::endl;
+
+        // TODO (Issue #231): PipeWire stream reconfiguration for output rate change
+        if (config.requiresReconfiguration) {
+            std::cout << "[Rate] NOTE: Output stream reconfiguration may be needed." << std::endl;
+        }
+
+        return true;
+    }
+
+    std::cerr << "[Rate] Failed to switch rate family" << std::endl;
     return false;
 }
 

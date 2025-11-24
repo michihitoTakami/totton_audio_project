@@ -135,6 +135,8 @@ add_executable(gpu_upsampler_daemon
 # Link against core library and PipeWire
 target_link_libraries(gpu_upsampler_daemon
     gpu_upsampler_core
+    auto_negotiation
+    dac_capability
     ${PIPEWIRE_LIBRARIES}
     nlohmann_json::nlohmann_json
 )

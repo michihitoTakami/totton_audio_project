@@ -3,6 +3,7 @@
 > **Related Issues:**
 > - EPIC: [#37 レート自動交渉](https://github.com/michihitoTakami/michy_os/issues/37)
 > - Task: [#218 入力サンプルレート検出とハンドシェイク](https://github.com/michihitoTakami/michy_os/issues/218)
+> - Follow-up: [#231 GPUUpsampler Multi-Rate拡張](https://github.com/michihitoTakami/michy_os/issues/231)
 
 ## 1. 概要
 
@@ -351,9 +352,34 @@ while (g_running) {
 }
 ```
 
-## 7. テスト計画
+## 7. 現在の実装制限
 
-### 7.1 ユニットテスト
+### 7.1 Dual-Rate Mode vs Multi-Rate Mode
+
+現在の実装は **Dual-Rate Mode** のみをサポートしており、以下の制限がある：
+
+| モード | サポート入力レート | 制限事項 |
+|--------|-------------------|----------|
+| **Dual-Rate Mode** (現在) | 44100 Hz, 48000 Hz のみ | 88.2k/96k/176.4k/192k等の高レート入力は警告を出し、ベースレートとして処理 |
+| **Multi-Rate Mode** (将来) | 44100/88200/176400, 48000/96000/192000 Hz | 各レートに対応した係数ファイルが必要 |
+
+### 7.2 制限事項の詳細
+
+1. **GPUUpsampler.switchRateFamily()** はベースレート（44.1k/48k）のみを設定
+2. **非ベースレート入力時**: 正しいファミリに切り替えるが、アップサンプル比率は不正確
+   - 例: 88.2kHz → 705.6kHz は実際には8xだが、44.1kHzとして処理されるため16x処理
+3. **libsoxrリサンプラー**: 入力レートと出力レートを動的に変更する必要がある（未実装）
+
+### 7.3 後続Issue
+
+- **Issue #231**: GPUUpsampler Multi-Rate拡張
+  - `initializeMultiRate()` による8構成係数ロード
+  - `switchRateFamily()` の拡張（具体的入力レート対応）
+  - libsoxrリサンプラーの動的レート変更
+
+## 8. テスト計画
+
+### 8.1 ユニットテスト
 
 | テストケース | 入力 | 期待出力 |
 |-------------|------|---------|
@@ -365,7 +391,7 @@ while (g_running) {
 | 未サポートレート | `negotiate(22050, dacCap)` | `{isValid: false}` |
 | DACレート不足 | `negotiate(44100, dacCap_max384k)` | `{outputRate: 352800}` |
 
-### 7.2 統合テスト (手動)
+### 8.2 統合テスト (手動)
 
 1. **PipeWireレート検出:**
    - 44.1kHzソース再生 → ログで705.6kHz出力確認
@@ -376,12 +402,16 @@ while (g_running) {
    - 成功レスポンス確認
    - ステータスで`currentRateFamily: "48k"`確認
 
-## 8. 実装チェックリスト
+## 9. 実装チェックリスト
 
 - [x] `on_param_changed()` イベントハンドラ追加
 - [x] `g_pending_rate_change` atomic変数追加
 - [x] `handle_rate_change()` の `[[maybe_unused]]` 削除、接続
+- [x] `handle_rate_change()` を `AutoNegotiation::negotiate()` と統合
+- [x] CMakeLists.txt に auto_negotiation, dac_capability リンク追加
+- [x] 非ベースレート入力時の警告メッセージ追加 (Issue #231への参照)
 - [ ] `SWITCH_RATE` ZMQコマンドハンドラ実装 (後続Issue)
 - [ ] `publishRateChanged()` PUB通知実装 (後続Issue)
 - [x] ユニットテスト追加 (`test_auto_negotiation.cpp`)
 - [ ] 統合テスト実行
+- [ ] Multi-Rate対応 (Issue #231)
