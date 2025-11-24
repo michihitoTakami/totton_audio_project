@@ -15,7 +15,7 @@ Overlap-Saveアルゴリズムのオーバーラップバッファ計算に不�
 ### 技術的詳細
 - **入力**: 44.1kHz stereo (PipeWire経由)
 - **出力**: 352.8kHz stereo (8x upsampling, ALSA direct to SMSL D400EX DAC)
-- **フィルタ**: 1,000,000タップ minimum-phase FIR
+- **フィルタ**: 2,000,000タップ minimum-phase FIR
 - **FFTサイズ**: 1,048,576サンプル
 - **オーバーラップサイズ**: 999,999サンプル
 - **有効出力/ブロック**: 48,577サンプル
@@ -219,7 +219,7 @@ WARNING: Clipping detected - 95 samples clipped out of 29163520 (0.000325749%)
    # フィルタ係数の分析
    uv run python -c "
    import numpy as np
-   coeffs = np.fromfile('data/coefficients/filter_1m_min_phase.bin', dtype=np.float32)
+   coeffs = np.fromfile('data/coefficients/filter_44k_2m_min_phase.bin', dtype=np.float32)
    print(f'Sum: {coeffs.sum()}, Max: {coeffs.max()}, Min: {coeffs.min()}')
    print(f'Energy: {(coeffs**2).sum()}')
    "

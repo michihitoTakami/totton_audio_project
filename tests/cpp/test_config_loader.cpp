@@ -159,7 +159,7 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultValues) {
     EXPECT_EQ(config.upsampleRatio, 16);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
-    EXPECT_EQ(config.filterPath, "data/coefficients/filter_1m_min_phase.bin");
+    EXPECT_EQ(config.filterPath, "data/coefficients/filter_44k_2m_min_phase.bin");
     EXPECT_EQ(config.inputSampleRate, 44100);
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
     EXPECT_FALSE(config.eqEnabled);
