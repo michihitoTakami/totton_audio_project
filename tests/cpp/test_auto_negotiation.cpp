@@ -368,3 +368,33 @@ TEST_F(AutoNegotiationTest, IsRateSupported_EmptySupportedRates) {
     EXPECT_FALSE(DacCapability::isRateSupported(dac, 705600));
     EXPECT_FALSE(DacCapability::isRateSupported(dac, 768000));
 }
+
+// ============================================================================
+// Issue #238: 1x Bypass Mode Tests
+// ============================================================================
+
+TEST_F(AutoNegotiationTest, Issue238_Negotiate_BypassMode_705_6kHz) {
+    auto dac = createFullCapabilityDac();
+
+    // 705.6kHz input should result in 1x ratio (bypass)
+    auto config = negotiate(705600, dac);
+    EXPECT_TRUE(config.isValid);
+    EXPECT_EQ(config.outputRate, 705600);
+    EXPECT_EQ(config.upsampleRatio, 1);  // Bypass mode
+}
+
+TEST_F(AutoNegotiationTest, Issue238_Negotiate_BypassMode_768kHz) {
+    auto dac = createFullCapabilityDac();
+
+    // 768kHz input should result in 1x ratio (bypass)
+    auto config = negotiate(768000, dac);
+    EXPECT_TRUE(config.isValid);
+    EXPECT_EQ(config.outputRate, 768000);
+    EXPECT_EQ(config.upsampleRatio, 1);  // Bypass mode
+}
+
+TEST_F(AutoNegotiationTest, Issue238_CalculateUpsampleRatio_BypassRates) {
+    // Bypass: output rate equals input rate
+    EXPECT_EQ(calculateUpsampleRatio(705600, 705600), 1);
+    EXPECT_EQ(calculateUpsampleRatio(768000, 768000), 1);
+}

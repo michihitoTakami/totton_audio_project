@@ -143,6 +143,15 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                                        std::vector<float>& streamInputBuffer,
                                        size_t& streamInputAccumulated) {
     try {
+        // Bypass mode: ratio 1 means input is already at output rate
+        // Skip GPU convolution and just copy input to output
+        if (upsampleRatio_ == 1) {
+            outputData.assign(inputData, inputData + inputFrames);
+            // Clear accumulated buffer to prevent stale data when switching back to normal mode
+            streamInputAccumulated = 0;
+            return true;
+        }
+
         if (!streamInitialized_) {
             std::cerr << "ERROR: Streaming mode not initialized. Call initializeStreaming() first." << std::endl;
             return false;

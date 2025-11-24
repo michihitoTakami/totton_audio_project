@@ -62,3 +62,50 @@ TEST_F(RateFamilyTest, BaseSampleRate48k) {
 TEST_F(RateFamilyTest, BaseSampleRateUnknown) {
     EXPECT_EQ(getBaseSampleRate(RateFamily::RATE_UNKNOWN), 0);
 }
+
+// =============================================================================
+// Issue #238: 1x Bypass support tests
+// =============================================================================
+
+// Test bypass rate (705.6kHz, 768kHz) detection - should return same family
+TEST_F(RateFamilyTest, Issue238_Detect705_6kHz) {
+    EXPECT_EQ(detectRateFamily(705600), RateFamily::RATE_44K);
+}
+
+TEST_F(RateFamilyTest, Issue238_Detect768kHz) {
+    EXPECT_EQ(detectRateFamily(768000), RateFamily::RATE_48K);
+}
+
+// Test getUpsampleRatioForInputRate returns 1 for bypass rates
+TEST_F(RateFamilyTest, Issue238_UpsampleRatio_BypassRates) {
+    EXPECT_EQ(getUpsampleRatioForInputRate(705600), 1);  // 44k family bypass
+    EXPECT_EQ(getUpsampleRatioForInputRate(768000), 1);  // 48k family bypass
+}
+
+// Test findMultiRateConfigIndex for bypass rates
+TEST_F(RateFamilyTest, Issue238_FindConfigIndex_BypassRates) {
+    // 44k family bypass is at index 4 (after 16x,8x,4x,2x)
+    EXPECT_EQ(findMultiRateConfigIndex(705600), 4);
+    // 48k family bypass is at index 9 (after all 44k configs and 48k 16x,8x,4x,2x)
+    EXPECT_EQ(findMultiRateConfigIndex(768000), 9);
+}
+
+// Test MULTI_RATE_CONFIGS structure for bypass entries
+TEST_F(RateFamilyTest, Issue238_MultiRateConfigs_BypassEntries) {
+    // 44k family bypass config (index 4)
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].inputRate, 705600);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].outputRate, 705600);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].ratio, 1);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].family, RateFamily::RATE_44K);
+
+    // 48k family bypass config (index 9)
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].inputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].outputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].ratio, 1);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].family, RateFamily::RATE_48K);
+}
+
+// Test total config count is now 10
+TEST_F(RateFamilyTest, Issue238_MultiRateConfigCount) {
+    EXPECT_EQ(MULTI_RATE_CONFIG_COUNT, 10);
+}
