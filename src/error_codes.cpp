@@ -49,6 +49,9 @@ static const std::unordered_map<ErrorCode, const char*> kErrorCodeStrings = {
     {ErrorCode::VALIDATION_FILE_NOT_FOUND, "VALIDATION_FILE_NOT_FOUND"},
     {ErrorCode::VALIDATION_PROFILE_EXISTS, "VALIDATION_PROFILE_EXISTS"},
     {ErrorCode::VALIDATION_INVALID_HEADPHONE, "VALIDATION_INVALID_HEADPHONE"},
+
+    // Internal
+    {ErrorCode::INTERNAL_UNKNOWN, "INTERNAL_UNKNOWN"},
 };
 
 // Error code to HTTP status mapping
@@ -94,6 +97,57 @@ static const std::unordered_map<ErrorCode, int> kHttpStatusMap = {
     {ErrorCode::VALIDATION_FILE_NOT_FOUND, 404},
     {ErrorCode::VALIDATION_PROFILE_EXISTS, 409},
     {ErrorCode::VALIDATION_INVALID_HEADPHONE, 404},
+
+    // Internal
+    {ErrorCode::INTERNAL_UNKNOWN, 500},
+};
+
+// String to error code mapping (reverse lookup)
+static const std::unordered_map<std::string, ErrorCode> kStringToErrorCode = {
+    {"OK", ErrorCode::OK},
+
+    // Audio Processing
+    {"AUDIO_INVALID_INPUT_RATE", ErrorCode::AUDIO_INVALID_INPUT_RATE},
+    {"AUDIO_INVALID_OUTPUT_RATE", ErrorCode::AUDIO_INVALID_OUTPUT_RATE},
+    {"AUDIO_UNSUPPORTED_FORMAT", ErrorCode::AUDIO_UNSUPPORTED_FORMAT},
+    {"AUDIO_FILTER_NOT_FOUND", ErrorCode::AUDIO_FILTER_NOT_FOUND},
+    {"AUDIO_BUFFER_OVERFLOW", ErrorCode::AUDIO_BUFFER_OVERFLOW},
+    {"AUDIO_XRUN_DETECTED", ErrorCode::AUDIO_XRUN_DETECTED},
+
+    // DAC/ALSA
+    {"DAC_DEVICE_NOT_FOUND", ErrorCode::DAC_DEVICE_NOT_FOUND},
+    {"DAC_OPEN_FAILED", ErrorCode::DAC_OPEN_FAILED},
+    {"DAC_CAPABILITY_SCAN_FAILED", ErrorCode::DAC_CAPABILITY_SCAN_FAILED},
+    {"DAC_RATE_NOT_SUPPORTED", ErrorCode::DAC_RATE_NOT_SUPPORTED},
+    {"DAC_FORMAT_NOT_SUPPORTED", ErrorCode::DAC_FORMAT_NOT_SUPPORTED},
+    {"DAC_BUSY", ErrorCode::DAC_BUSY},
+
+    // IPC/ZeroMQ
+    {"IPC_CONNECTION_FAILED", ErrorCode::IPC_CONNECTION_FAILED},
+    {"IPC_TIMEOUT", ErrorCode::IPC_TIMEOUT},
+    {"IPC_INVALID_COMMAND", ErrorCode::IPC_INVALID_COMMAND},
+    {"IPC_INVALID_PARAMS", ErrorCode::IPC_INVALID_PARAMS},
+    {"IPC_DAEMON_NOT_RUNNING", ErrorCode::IPC_DAEMON_NOT_RUNNING},
+    {"IPC_PROTOCOL_ERROR", ErrorCode::IPC_PROTOCOL_ERROR},
+
+    // GPU/CUDA
+    {"GPU_INIT_FAILED", ErrorCode::GPU_INIT_FAILED},
+    {"GPU_DEVICE_NOT_FOUND", ErrorCode::GPU_DEVICE_NOT_FOUND},
+    {"GPU_MEMORY_ERROR", ErrorCode::GPU_MEMORY_ERROR},
+    {"GPU_KERNEL_LAUNCH_FAILED", ErrorCode::GPU_KERNEL_LAUNCH_FAILED},
+    {"GPU_FILTER_LOAD_FAILED", ErrorCode::GPU_FILTER_LOAD_FAILED},
+    {"GPU_CUFFT_ERROR", ErrorCode::GPU_CUFFT_ERROR},
+
+    // Validation
+    {"VALIDATION_INVALID_CONFIG", ErrorCode::VALIDATION_INVALID_CONFIG},
+    {"VALIDATION_INVALID_PROFILE", ErrorCode::VALIDATION_INVALID_PROFILE},
+    {"VALIDATION_PATH_TRAVERSAL", ErrorCode::VALIDATION_PATH_TRAVERSAL},
+    {"VALIDATION_FILE_NOT_FOUND", ErrorCode::VALIDATION_FILE_NOT_FOUND},
+    {"VALIDATION_PROFILE_EXISTS", ErrorCode::VALIDATION_PROFILE_EXISTS},
+    {"VALIDATION_INVALID_HEADPHONE", ErrorCode::VALIDATION_INVALID_HEADPHONE},
+
+    // Internal
+    {"INTERNAL_UNKNOWN", ErrorCode::INTERNAL_UNKNOWN},
 };
 
 InnerError::InnerError(ErrorCode code, const std::string& message)
@@ -141,6 +195,14 @@ std::string errorCodeToHex(ErrorCode code) {
     std::ostringstream oss;
     oss << "0x" << std::hex << std::setfill('0') << std::setw(4) << static_cast<uint32_t>(code);
     return oss.str();
+}
+
+ErrorCode stringToErrorCode(const std::string& str) {
+    auto it = kStringToErrorCode.find(str);
+    if (it != kStringToErrorCode.end()) {
+        return it->second;
+    }
+    return ErrorCode::INTERNAL_UNKNOWN;
 }
 
 }  // namespace AudioEngine

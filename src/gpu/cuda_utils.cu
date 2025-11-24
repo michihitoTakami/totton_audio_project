@@ -44,6 +44,92 @@ void checkCufftError(cufftResult result, const char* context) {
     }
 }
 
+// =========================================================================
+// ErrorCode-based error handling (Issue #44)
+// =========================================================================
+
+AudioEngine::ErrorCode cudaErrorToErrorCode(cudaError_t error) {
+    if (error == cudaSuccess) {
+        return AudioEngine::ErrorCode::OK;
+    }
+
+    // Map specific CUDA errors to our error codes
+    switch (error) {
+        // Initialization errors
+        case cudaErrorInitializationError:
+        case cudaErrorInsufficientDriver:
+        case cudaErrorIncompatibleDriverContext:
+            return AudioEngine::ErrorCode::GPU_INIT_FAILED;
+
+        // Device errors
+        case cudaErrorNoDevice:
+        case cudaErrorInvalidDevice:
+        case cudaErrorDeviceUninitialized:
+            return AudioEngine::ErrorCode::GPU_DEVICE_NOT_FOUND;
+
+        // Memory errors
+        case cudaErrorMemoryAllocation:
+        case cudaErrorInvalidDevicePointer:
+        case cudaErrorInvalidHostPointer:
+        case cudaErrorHostMemoryAlreadyRegistered:
+        case cudaErrorHostMemoryNotRegistered:
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+
+        // Kernel launch errors
+        case cudaErrorLaunchFailure:
+        case cudaErrorLaunchTimeout:
+        case cudaErrorLaunchOutOfResources:
+        case cudaErrorInvalidConfiguration:
+        case cudaErrorInvalidKernelImage:
+        case cudaErrorInvalidSymbol:
+            return AudioEngine::ErrorCode::GPU_KERNEL_LAUNCH_FAILED;
+
+        // Default to INTERNAL_UNKNOWN for unmapped CUDA errors
+        // This makes debugging easier by distinguishing truly unknown errors
+        default:
+            return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
+    }
+}
+
+AudioEngine::ErrorCode cufftResultToErrorCode(cufftResult result) {
+    if (result == CUFFT_SUCCESS) {
+        return AudioEngine::ErrorCode::OK;
+    }
+    return AudioEngine::ErrorCode::GPU_CUFFT_ERROR;
+}
+
+AudioEngine::ErrorCode checkCudaErrorCode(cudaError_t error, const char* context) {
+    if (error == cudaSuccess) {
+        return AudioEngine::ErrorCode::OK;
+    }
+
+    // Log the error
+    if (context) {
+        std::cerr << "CUDA Error in " << context << ": "
+                  << cudaGetErrorString(error) << std::endl;
+    } else {
+        std::cerr << "CUDA Error: " << cudaGetErrorString(error) << std::endl;
+    }
+
+    return cudaErrorToErrorCode(error);
+}
+
+AudioEngine::ErrorCode checkCufftErrorCode(cufftResult result, const char* context) {
+    if (result == CUFFT_SUCCESS) {
+        return AudioEngine::ErrorCode::OK;
+    }
+
+    // Log the error
+    if (context) {
+        std::cerr << "cuFFT Error in " << context << ": "
+                  << static_cast<int>(result) << std::endl;
+    } else {
+        std::cerr << "cuFFT Error: " << static_cast<int>(result) << std::endl;
+    }
+
+    return AudioEngine::ErrorCode::GPU_CUFFT_ERROR;
+}
+
 double getGPUUtilization() {
 #ifdef HAVE_NVML
     static bool nvmlInitialized = false;

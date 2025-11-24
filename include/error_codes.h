@@ -61,6 +61,10 @@ enum class ErrorCode : uint32_t {
     VALIDATION_FILE_NOT_FOUND = 0x5004,
     VALIDATION_PROFILE_EXISTS = 0x5005,
     VALIDATION_INVALID_HEADPHONE = 0x5006,
+
+    // Internal (0xF000) - Reserved for fallback
+    /** @brief Unknown/unmapped error */
+    INTERNAL_UNKNOWN = 0xF001,
 };
 
 /**
@@ -110,6 +114,13 @@ int toHttpStatus(ErrorCode code);
  */
 std::string errorCodeToHex(ErrorCode code);
 
+/**
+ * @brief Convert string to ErrorCode enum.
+ * @param str Error code string (e.g., "DAC_DEVICE_NOT_FOUND")
+ * @return Corresponding ErrorCode, or INTERNAL_UNKNOWN if not found
+ */
+ErrorCode stringToErrorCode(const std::string& str);
+
 // Category check helpers
 constexpr bool isAudioError(ErrorCode code) {
     return (static_cast<uint32_t>(code) & 0xF000) == 0x1000;
@@ -125,6 +136,24 @@ constexpr bool isGpuError(ErrorCode code) {
 }
 constexpr bool isValidationError(ErrorCode code) {
     return (static_cast<uint32_t>(code) & 0xF000) == 0x5000;
+}
+constexpr bool isInternalError(ErrorCode code) {
+    return (static_cast<uint32_t>(code) & 0xF000) == 0xF000;
+}
+
+/**
+ * @brief Check if error is retryable.
+ * @param code Error code
+ * @return true if operation can be retried
+ *
+ * Retryable errors (503/504 HTTP status):
+ * - IPC_DAEMON_NOT_RUNNING
+ * - IPC_TIMEOUT
+ * - IPC_CONNECTION_FAILED
+ */
+constexpr bool isRetryable(ErrorCode code) {
+    return code == ErrorCode::IPC_DAEMON_NOT_RUNNING || code == ErrorCode::IPC_TIMEOUT ||
+           code == ErrorCode::IPC_CONNECTION_FAILED;
 }
 
 }  // namespace AudioEngine
