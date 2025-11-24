@@ -3,7 +3,6 @@
 > **Related Issues:**
 > - EPIC: [#37 レート自動交渉](https://github.com/michihitoTakami/michy_os/issues/37)
 > - Task: [#218 入力サンプルレート検出とハンドシェイク](https://github.com/michihitoTakami/michy_os/issues/218)
-> - Follow-up: [#231 GPUUpsampler Multi-Rate拡張](https://github.com/michihitoTakami/michy_os/issues/231)
 
 ## 1. 概要
 
@@ -352,34 +351,9 @@ while (g_running) {
 }
 ```
 
-## 7. 現在の実装制限
+## 7. テスト計画
 
-### 7.1 Dual-Rate Mode vs Multi-Rate Mode
-
-現在の実装は **Dual-Rate Mode** のみをサポートしており、以下の制限がある：
-
-| モード | サポート入力レート | 制限事項 |
-|--------|-------------------|----------|
-| **Dual-Rate Mode** (現在) | 44100 Hz, 48000 Hz のみ | 88.2k/96k/176.4k/192k等の高レート入力は警告を出し、ベースレートとして処理 |
-| **Multi-Rate Mode** (将来) | 44100/88200/176400, 48000/96000/192000 Hz | 各レートに対応した係数ファイルが必要 |
-
-### 7.2 制限事項の詳細
-
-1. **GPUUpsampler.switchRateFamily()** はベースレート（44.1k/48k）のみを設定
-2. **非ベースレート入力時**: 正しいファミリに切り替えるが、アップサンプル比率は不正確
-   - 例: 88.2kHz → 705.6kHz は実際には8xだが、44.1kHzとして処理されるため16x処理
-3. **libsoxrリサンプラー**: 入力レートと出力レートを動的に変更する必要がある（未実装）
-
-### 7.3 後続Issue
-
-- **Issue #231**: GPUUpsampler Multi-Rate拡張
-  - `initializeMultiRate()` による8構成係数ロード
-  - `switchRateFamily()` の拡張（具体的入力レート対応）
-  - libsoxrリサンプラーの動的レート変更
-
-## 8. テスト計画
-
-### 8.1 ユニットテスト
+### 7.1 ユニットテスト
 
 | テストケース | 入力 | 期待出力 |
 |-------------|------|---------|
@@ -391,7 +365,7 @@ while (g_running) {
 | 未サポートレート | `negotiate(22050, dacCap)` | `{isValid: false}` |
 | DACレート不足 | `negotiate(44100, dacCap_max384k)` | `{outputRate: 352800}` |
 
-### 8.2 統合テスト (手動)
+### 7.2 統合テスト (手動)
 
 1. **PipeWireレート検出:**
    - 44.1kHzソース再生 → ログで705.6kHz出力確認
@@ -402,16 +376,59 @@ while (g_running) {
    - 成功レスポンス確認
    - ステータスで`currentRateFamily: "48k"`確認
 
-## 9. 実装チェックリスト
+## 8. 実装チェックリスト
 
 - [x] `on_param_changed()` イベントハンドラ追加
 - [x] `g_pending_rate_change` atomic変数追加
 - [x] `handle_rate_change()` の `[[maybe_unused]]` 削除、接続
-- [x] `handle_rate_change()` を `AutoNegotiation::negotiate()` と統合
-- [x] CMakeLists.txt に auto_negotiation, dac_capability リンク追加
-- [x] 非ベースレート入力時の警告メッセージ追加 (Issue #231への参照)
 - [ ] `SWITCH_RATE` ZMQコマンドハンドラ実装 (後続Issue)
 - [ ] `publishRateChanged()` PUB通知実装 (後続Issue)
 - [x] ユニットテスト追加 (`test_auto_negotiation.cpp`)
 - [ ] 統合テスト実行
-- [ ] Multi-Rate対応 (Issue #231)
+
+## 9. 現在の実装制限
+
+> **重要**: 以下の制限は設計上の制約であり、後続Issueで対応予定。
+
+### 9.1 サポートされる入力レート
+
+| 入力レート | サポート状態 | 備考 |
+|-----------|-------------|------|
+| 44100 Hz | ✅ 完全対応 | 16x upsampling → 705.6kHz |
+| 48000 Hz | ✅ 完全対応 | 16x upsampling → 768kHz |
+| 88200 Hz | ⚠️ 検出のみ | 8x係数未実装、WARNING出力 |
+| 96000 Hz | ⚠️ 検出のみ | 8x係数未実装、WARNING出力 |
+| 176400 Hz | ⚠️ 検出のみ | 4x係数未実装、WARNING出力 |
+| 192000 Hz | ⚠️ 検出のみ | 4x係数未実装、WARNING出力 |
+| 352800 Hz | ⚠️ 検出のみ | 2x係数未実装、WARNING出力 |
+| 384000 Hz | ⚠️ 検出のみ | 2x係数未実装、WARNING出力 |
+
+### 9.2 制限の根本原因
+
+現在のシステムには以下の制約がある：
+
+1. **係数ファイルが16x専用**: `filter_44k_16x_*.bin` / `filter_48k_16x_*.bin` のみ存在
+2. **GPUUpsamplerの固定比率**: `loadCoefficients()` は16xアップサンプリングを前提に実装
+3. **PipeWire/ALSAストリーム再構成未実装**: `reconfigureAlsa()` はスケルトンのみ
+
+### 9.3 ハイレゾ入力時の挙動
+
+88.2kHz以上の入力が検出された場合：
+
+1. `handle_rate_change()` は正しいファミリを判定
+2. **警告ログを出力** (`[Rate] WARNING: Hi-res input detected...`)
+3. 実際の入力レートを `g_current_input_rate` に記録
+4. 係数切り替えは実行されるが、**アップサンプル比率は16xのまま**
+
+**結果**:
+- 音声出力は動作するが、ピッチ・再生速度が正しくない可能性あり
+- ユーザーはログを確認して、44.1kHz/48kHzソースを使用すべき
+
+### 9.4 後続Issueで対応予定
+
+| 機能 | 関連Issue | 優先度 |
+|------|----------|--------|
+| 8x/4x/2x係数ファイル生成 | TBD | 高 |
+| GPUUpsampler動的比率切り替え | TBD | 高 |
+| ALSA再構成実装 | TBD | 中 |
+| PipeWireストリーム再構成 | TBD | 中 |
