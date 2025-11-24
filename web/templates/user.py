@@ -401,34 +401,41 @@ def get_embedded_html() -> str:
 
         // Phase Type Functions
         let currentPhaseType = 'minimum';
-        let phaseTypeAvailable = false;
 
         async function fetchPhaseType() {
             const select = document.getElementById('phaseType');
+            const warning = document.getElementById('phaseWarning');
             try {
                 const res = await fetch(API + '/daemon/phase-type');
                 if (!res.ok) {
-                    // Daemon not running or error - disable UI
-                    phaseTypeAvailable = false;
+                    // Daemon not running or error - disable UI and show message
                     select.disabled = true;
+                    warning.classList.remove('visible');
+                    if (res.status === 503) {
+                        showPhaseMessage('Daemon not running - phase type unavailable', false);
+                    }
                     return;
                 }
                 const data = await res.json();
                 currentPhaseType = data.phase_type;
                 select.value = data.phase_type;
-                updatePhaseWarning(data.phase_type);
-                phaseTypeAvailable = true;
                 select.disabled = false;
+                // Use API's latency_warning if provided
+                updatePhaseWarning(data.phase_type, data.latency_warning);
             } catch (e) {
                 console.error('Failed to fetch phase type:', e);
-                phaseTypeAvailable = false;
                 select.disabled = true;
+                warning.classList.remove('visible');
             }
         }
 
-        function updatePhaseWarning(phaseType) {
+        function updatePhaseWarning(phaseType, apiWarning) {
             const warning = document.getElementById('phaseWarning');
             if (phaseType === 'linear') {
+                // Use API warning if provided, otherwise use default
+                if (apiWarning) {
+                    warning.textContent = '⚠️ ' + apiWarning;
+                }
                 warning.classList.add('visible');
             } else {
                 warning.classList.remove('visible');
