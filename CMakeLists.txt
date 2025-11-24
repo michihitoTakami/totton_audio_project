@@ -59,7 +59,14 @@ FetchContent_Declare(
 # Prevent GoogleTest from overriding compiler/linker options
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(nlohmann_json googletest cppzmq)
+# spdlog (structured logging library)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+)
+
+FetchContent_MakeAvailable(nlohmann_json googletest cppzmq spdlog)
 
 # Include directories
 include_directories(
@@ -132,9 +139,10 @@ add_executable(gpu_upsampler_daemon
     src/config_loader.cpp
 )
 
-# Link against core library and PipeWire
+# Link against core library, PipeWire, and Logging
 target_link_libraries(gpu_upsampler_daemon
     gpu_upsampler_core
+    logging
     ${PIPEWIRE_LIBRARIES}
     nlohmann_json::nlohmann_json
 )
@@ -149,12 +157,13 @@ add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
 )
 
-# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, and SoftMute
+# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, SoftMute, and Logging
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
     zeromq_interface
+    logging
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
@@ -194,6 +203,27 @@ target_compile_options(error_codes PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# Logging Library (Issue #43 - structured logging with spdlog)
+add_library(logging STATIC
+    src/logging/logger.cpp
+    src/logging/metrics.cpp
+)
+target_link_libraries(logging PUBLIC
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+)
+target_include_directories(logging PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(logging PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+# Conditionally add NVML support for GPU metrics
+if(HAVE_NVML)
+    target_link_libraries(logging PUBLIC CUDA::nvml)
+    target_compile_definitions(logging PUBLIC HAVE_NVML)
+endif()
+
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/zeromq_interface.cpp
@@ -201,6 +231,7 @@ add_library(zeromq_interface STATIC
 )
 target_link_libraries(zeromq_interface PUBLIC
     error_codes
+    logging
     nlohmann_json::nlohmann_json
     ${ZMQ_LIBRARIES}
 )
@@ -280,6 +311,7 @@ install(TARGETS zeromq_interface DESTINATION lib)
 install(TARGETS dac_capability DESTINATION lib)
 install(TARGETS auto_negotiation DESTINATION lib)
 install(TARGETS soft_mute DESTINATION lib)
+install(TARGETS logging DESTINATION lib)
 install(TARGETS eq_support DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
 

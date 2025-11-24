@@ -6,6 +6,8 @@
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
+#include "logging/logger.h"
+#include "logging/metrics.h"
 #include "soft_mute.h"
 
 #include <algorithm>
@@ -111,8 +113,7 @@ static bool acquire_pid_lock() {
     // Open or create the lock file
     g_pid_lock_fd = open(PID_FILE_PATH, O_RDWR | O_CREAT, 0644);
     if (g_pid_lock_fd < 0) {
-        std::cerr << "Error: Cannot open PID file: " << PID_FILE_PATH << " (" << strerror(errno)
-                  << ")" << std::endl;
+        LOG_ERROR("Cannot open PID file: {} ({})", PID_FILE_PATH, strerror(errno));
         return false;
     }
 
@@ -121,14 +122,14 @@ static bool acquire_pid_lock() {
         if (errno == EWOULDBLOCK) {
             // Another process holds the lock
             pid_t existing_pid = read_pid_from_lockfile();
-            std::cerr << "Error: Another instance is already running";
             if (existing_pid > 0) {
-                std::cerr << " (PID: " << existing_pid << ")";
+                LOG_ERROR("Another instance is already running (PID: {})", existing_pid);
+            } else {
+                LOG_ERROR("Another instance is already running");
             }
-            std::cerr << std::endl;
-            std::cerr << "       Use './scripts/daemon.sh stop' to stop it." << std::endl;
+            LOG_ERROR("Use './scripts/daemon.sh stop' to stop it.");
         } else {
-            std::cerr << "Error: Cannot lock PID file: " << strerror(errno) << std::endl;
+            LOG_ERROR("Cannot lock PID file: {}", strerror(errno));
         }
         close(g_pid_lock_fd);
         g_pid_lock_fd = -1;
@@ -137,7 +138,7 @@ static bool acquire_pid_lock() {
 
     // Lock acquired - write our PID to the file
     if (ftruncate(g_pid_lock_fd, 0) < 0) {
-        std::cerr << "Warning: Cannot truncate PID file" << std::endl;
+        LOG_WARN("Cannot truncate PID file");
     }
     dprintf(g_pid_lock_fd, "%d\n", getpid());
     fsync(g_pid_lock_fd);  // Ensure PID is written to disk
@@ -197,21 +198,22 @@ static void write_stats_file() {
 
 static void print_config_summary(const AppConfig& cfg) {
     int outputRate = cfg.inputSampleRate * cfg.upsampleRatio;
-    std::cout << "Config:" << std::endl;
-    std::cout << "  ALSA device:    " << cfg.alsaDevice << std::endl;
-    std::cout << "  Input rate:     " << cfg.inputSampleRate << " Hz" << std::endl;
-    std::cout << "  Output rate:    " << outputRate << " Hz (" << (outputRate / 1000.0) << " kHz)"
-              << std::endl;
-    std::cout << "  Buffer size:    " << cfg.bufferSize << std::endl;
-    std::cout << "  Period size:    " << cfg.periodSize << std::endl;
-    std::cout << "  Upsample ratio: " << cfg.upsampleRatio << std::endl;
-    std::cout << "  Block size:     " << cfg.blockSize << std::endl;
-    std::cout << "  Gain:           " << cfg.gain << std::endl;
-    std::cout << "  Filter path:    " << cfg.filterPath << std::endl;
-    std::cout << "  EQ enabled:     " << (cfg.eqEnabled ? "yes" : "no") << std::endl;
+    LOG_INFO("Config:");
+    LOG_INFO("  ALSA device:    {}", cfg.alsaDevice);
+    LOG_INFO("  Input rate:     {} Hz", cfg.inputSampleRate);
+    LOG_INFO("  Output rate:    {} Hz ({:.1f} kHz)", outputRate, outputRate / 1000.0);
+    LOG_INFO("  Buffer size:    {}", cfg.bufferSize);
+    LOG_INFO("  Period size:    {}", cfg.periodSize);
+    LOG_INFO("  Upsample ratio: {}", cfg.upsampleRatio);
+    LOG_INFO("  Block size:     {}", cfg.blockSize);
+    LOG_INFO("  Gain:           {}", cfg.gain);
+    LOG_INFO("  Filter path:    {}", cfg.filterPath);
+    LOG_INFO("  EQ enabled:     {}", (cfg.eqEnabled ? "yes" : "no"));
     if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
-        std::cout << "  EQ profile:     " << cfg.eqProfilePath << std::endl;
+        LOG_INFO("  EQ profile:     {}", cfg.eqProfilePath);
     }
+    // Update metrics with audio configuration
+    gpu_upsampler::metrics::setAudioConfig(cfg.inputSampleRate, outputRate, cfg.upsampleRatio);
 }
 
 static void reset_runtime_state() {
@@ -1055,10 +1057,12 @@ void alsa_output_thread() {
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "========================================" << std::endl;
-    std::cout << "  GPU Audio Upsampler - ALSA Direct Output" << std::endl;
-    std::cout << "========================================" << std::endl;
-    std::cout << std::endl;
+    // Initialize logging system from config file
+    gpu_upsampler::logging::initializeFromConfig(CONFIG_FILE_PATH);
+
+    LOG_INFO("========================================");
+    LOG_INFO("  GPU Audio Upsampler - ALSA Direct Output");
+    LOG_INFO("========================================");
 
     // Install signal handlers (SIGHUP for restart, SIGINT/SIGTERM for shutdown)
     std::signal(SIGINT, signal_handler);
@@ -1069,7 +1073,7 @@ int main(int argc, char* argv[]) {
     if (!acquire_pid_lock()) {
         return 1;
     }
-    std::cout << "PID: " << getpid() << " (file: " << PID_FILE_PATH << ")" << std::endl;
+    LOG_INFO("PID: {} (file: {})", getpid(), PID_FILE_PATH);
 
     int exitCode = 0;
 
