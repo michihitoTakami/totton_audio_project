@@ -639,9 +639,9 @@ class TestOpraApi:
         from pathlib import Path
 
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
-        from main import app
+        import main
 
-        return TestClient(app)
+        return TestClient(main.app)
 
     @pytest.fixture
     def sample_eq_id(self, client):
