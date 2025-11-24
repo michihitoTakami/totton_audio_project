@@ -1,6 +1,7 @@
 """Configuration loading and saving."""
 
 import json
+from typing import Any
 
 from ..constants import CONFIG_PATH
 from ..models import Settings
@@ -25,7 +26,7 @@ def load_config() -> Settings:
     return Settings()
 
 
-def load_raw_config() -> dict:
+def load_raw_config() -> dict[str, Any]:
     """Load raw config.json as dictionary, preserving all fields."""
     if CONFIG_PATH.exists():
         try:
