@@ -87,6 +87,7 @@ class FilterConfig:
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
     target_dc_gain: float | None = None
+    max_coefficient_limit: float | None = None
     output_prefix: str | None = None
 
     def __post_init__(self) -> None:
@@ -134,6 +135,12 @@ class FilterConfig:
         if self.target_dc_gain <= 0:
             raise ValueError(
                 f"DCゲインのターゲットは正の値である必要があります: {self.target_dc_gain}"
+            )
+        if self.max_coefficient_limit is None:
+            self.max_coefficient_limit = self.target_dc_gain
+        elif self.max_coefficient_limit <= 0:
+            raise ValueError(
+                "最大係数の上限は正の値である必要があります。Noneの場合は自動設定（target_dc_gain）"
             )
 
     @property
@@ -644,7 +651,9 @@ class FilterGenerator:
 
         # 2. 係数正規化
         h_final, normalization_info = normalize_coefficients(
-            h_final, target_dc_gain=self.config.target_dc_gain
+            h_final,
+            target_dc_gain=self.config.target_dc_gain,
+            max_coefficient_limit=self.config.max_coefficient_limit,
         )
 
         # 3. 仕様検証
@@ -685,6 +694,9 @@ class FilterGenerator:
             "phase_type": self.config.phase_type.value,
             "minimum_phase_method": self.config.minimum_phase_method.value,
             "target_dc_gain": self.config.target_dc_gain,
+            "max_coefficient_limit": self.config.max_coefficient_limit
+            if self.config.max_coefficient_limit is not None
+            else self.config.target_dc_gain,
             "output_basename": self.config.base_name,
             "validation_results": validation_results,
         }
@@ -762,20 +774,21 @@ def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
 
 
 def normalize_coefficients(
-    h: np.ndarray, target_dc_gain: float = 1.0, max_coefficient_limit: float = 1.0
+    h: np.ndarray,
+    target_dc_gain: float = 1.0,
+    max_coefficient_limit: float | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """フィルタ係数を正規化してクリッピングを防止する
 
     Args:
         h: フィルタ係数配列
         target_dc_gain: 目標DCゲイン（アップサンプル比）
-        max_coefficient_limit: 最大係数の上限（クリッピング防止）
+        max_coefficient_limit: 最大係数の上限。Noneの場合はtarget_dc_gainを上限に自動設定
 
     Note:
         アップサンプリングではゼロ挿入によりDCが1/Lに減衰するため、
         フィルタのDCゲイン=Lで補償して元の振幅を維持する。
-        ただし、最大係数が1.0を超えるとトランジェントでクリップするため、
-        max_coefficient_limit=1.0で制限する。
+        係数ピークが極端に大きくなる場合に備え、上限はデフォルトでtarget_dc_gainに設定する。
     """
     if h.size == 0:
         raise ValueError("フィルタ係数が空です。")
@@ -789,6 +802,7 @@ def normalize_coefficients(
         raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
 
     # Step 1: DCゲインを目標値に正規化
+    limit = max_coefficient_limit or target_dc_gain
     scale = target_dc_gain / dc_gain
     h_normalized = h * scale
     max_amplitude = np.max(np.abs(h_normalized))
@@ -796,8 +810,8 @@ def normalize_coefficients(
     # Step 2: 最大係数が上限を超える場合、追加スケーリングで制限
     peak_limited = False
     peak_scale = 1.0
-    if max_amplitude > max_coefficient_limit:
-        peak_scale = max_coefficient_limit / max_amplitude
+    if max_amplitude > limit:
+        peak_scale = limit / max_amplitude
         h_normalized = h_normalized * peak_scale
         max_amplitude = np.max(np.abs(h_normalized))
         peak_limited = True
@@ -810,7 +824,7 @@ def normalize_coefficients(
         "normalized_dc_gain": final_dc_gain,
         "applied_scale": float(scale * peak_scale),
         "max_coefficient_amplitude": float(max_amplitude),
-        "max_coefficient_limit": float(max_coefficient_limit),
+        "max_coefficient_limit": float(limit),
         "peak_limited": peak_limited,
         "normalization_applied": True,
     }
@@ -820,9 +834,7 @@ def normalize_coefficients(
     print(f"  元のDCゲイン: {dc_gain:.6f}")
     print(f"  正規化スケール: {scale:.6f}x")
     if peak_limited:
-        print(
-            f"  ⚠️ ピーク制限適用: {peak_scale:.6f}x (max_coef > {max_coefficient_limit})"
-        )
+        print(f"  ⚠️ ピーク制限適用: {peak_scale:.6f}x (max_coef > {limit})")
     print(f"  最終DCゲイン: {final_dc_gain:.6f}")
     print(f"  最大係数振幅: {max_amplitude:.6f}")
 

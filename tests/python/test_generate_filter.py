@@ -67,6 +67,7 @@ class TestFilterConfig:
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
+        assert config.max_coefficient_limit == config.upsample_ratio
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
@@ -417,6 +418,7 @@ class TestNormalizeCoefficients:
         assert np.isclose(np.sum(h_norm), target, rtol=1e-6)
         assert np.isclose(info["applied_scale"], 2.5)
         assert not info["peak_limited"]
+        assert np.isclose(info["max_coefficient_limit"], target)
 
     def test_peak_limiting_reduces_dc_gain(self):
         """Peak limiting should reduce DC gain when max_coef exceeds limit."""
@@ -424,7 +426,9 @@ class TestNormalizeCoefficients:
 
         h = np.array([1.0, 1.0])  # DC gain = 2.0
         target = 4.0  # After DC norm, max_coef = 2.0 > 1.0, needs limiting
-        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+        h_norm, info = normalize_coefficients(
+            h, target_dc_gain=target, max_coefficient_limit=1.0
+        )
 
         # With peak limiting: max_coef scaled to 1.0, DC gain = 2.0 (not 4.0)
         assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)

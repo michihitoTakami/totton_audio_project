@@ -15,7 +15,7 @@
   "output_basename": "filter_44k_4x_2000000_min_phase",
   "validation_results": {
     "passband_ripple_db": 1.0197620525786988e-08,
-    "stopband_attenuation_db": 166.43020245816632,
+    "stopband_attenuation_db": 166.43020249619622,
     "peak_position": 12,
     "peak_threshold_samples": 20000,
     "energy_ratio_first_to_second_half": 4907029145180.729,
@@ -25,14 +25,15 @@
     "phase_type": "minimum",
     "actual_taps": 2000000,
     "normalization": {
-      "original_dc_gain": 1.0000000143681225,
+      "original_dc_gain": 3.9999999824865853,
       "target_dc_gain": 4.0,
-      "normalized_dc_gain": 4.000000000000002,
-      "applied_scale": 3.999999942527511,
-      "max_coefficient_amplitude": 0.7952168147579388,
-      "max_coefficient_limit": 1.0,
+      "normalized_dc_gain": 3.9999999824865853,
+      "applied_scale": 1.0000000043783537,
+      "max_coefficient_amplitude": 0.7952168022640891,
+      "max_coefficient_limit": 4.0,
       "peak_limited": false,
       "normalization_applied": true
     }
-  }
+  },
+  "max_coefficient_limit": 4.0
 }
