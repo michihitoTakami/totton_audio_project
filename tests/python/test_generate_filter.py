@@ -992,6 +992,31 @@ class TestFilterConfigErrorHandling:
         with pytest.raises(ValueError):
             FilterConfig(passband_end=20000, stopband_start=18000)
 
+    def test_stopband_exceeds_output_nyquist_raises_error(self):
+        """FilterConfig should raise ValueError if stopband >= output Nyquist."""
+        from generate_filter import FilterConfig
+
+        # output_nyquist = 44100 * 16 / 2 = 352800 Hz
+        # stopband_start = 1000000 Hz > 352800 Hz -> エラー
+        with pytest.raises(ValueError, match="出力ナイキスト周波数"):
+            FilterConfig(
+                input_rate=44100,
+                upsample_ratio=16,
+                stopband_start=1_000_000,
+            )
+
+    def test_stopband_at_output_nyquist_raises_error(self):
+        """FilterConfig should raise ValueError if stopband == output Nyquist."""
+        from generate_filter import FilterConfig
+
+        # output_nyquist = 44100 * 16 / 2 = 352800 Hz
+        with pytest.raises(ValueError, match="出力ナイキスト周波数"):
+            FilterConfig(
+                input_rate=44100,
+                upsample_ratio=16,
+                stopband_start=352800,
+            )
+
 
 class TestNormalizeCoefficientsErrorHandling:
     """Tests for error handling in normalize_coefficients."""

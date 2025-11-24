@@ -117,6 +117,13 @@ class FilterConfig:
             raise ValueError(
                 f"ストップバンド開始 ({self.stopband_start} Hz) はパスバンド終端 ({self.passband_end} Hz) より大きい必要があります"
             )
+
+        # ストップバンドが出力ナイキスト以上の場合はエラー
+        output_nyquist = self.input_rate * self.upsample_ratio // 2
+        if self.stopband_start >= output_nyquist:
+            raise ValueError(
+                f"ストップバンド開始 ({self.stopband_start} Hz) は出力ナイキスト周波数 ({output_nyquist} Hz) 未満である必要があります"
+            )
         # 線形位相はfinal_tapsで比率の倍数に調整される
 
     @property
