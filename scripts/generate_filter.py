@@ -86,8 +86,9 @@ class FilterConfig:
     phase_type: PhaseType = PhaseType.MINIMUM
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
+    # ただし、max_coefficient_limit=1.0によりピーク制限が適用される場合は目標値より低くなる
     target_dc_gain: float | None = None
-    max_coefficient_limit: float | None = None
+    max_coefficient_limit: float | None = None  # デフォルト1.0（クリッピング回避優先）
     output_prefix: str | None = None
 
     def __post_init__(self) -> None:
@@ -137,10 +138,10 @@ class FilterConfig:
                 f"DCゲインのターゲットは正の値である必要があります: {self.target_dc_gain}"
             )
         if self.max_coefficient_limit is None:
-            self.max_coefficient_limit = self.target_dc_gain
+            self.max_coefficient_limit = 1.0
         elif self.max_coefficient_limit <= 0:
             raise ValueError(
-                "最大係数の上限は正の値である必要があります。Noneの場合は自動設定（target_dc_gain）"
+                "最大係数の上限は正の値である必要があります。Noneの場合は自動設定（1.0）"
             )
 
     @property
@@ -776,19 +777,23 @@ def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
 def normalize_coefficients(
     h: np.ndarray,
     target_dc_gain: float = 1.0,
-    max_coefficient_limit: float | None = None,
+    max_coefficient_limit: float = 1.0,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """フィルタ係数を正規化してクリッピングを防止する
+    """フィルタ係数を正規化してクリッピングを防止し、最大係数を1.0に統一する
 
     Args:
         h: フィルタ係数配列
         target_dc_gain: 目標DCゲイン（アップサンプル比）
-        max_coefficient_limit: 最大係数の上限。Noneの場合はtarget_dc_gainを上限に自動設定
+        max_coefficient_limit: 最大係数の上限（デフォルト1.0）
 
     Note:
-        アップサンプリングではゼロ挿入によりDCが1/Lに減衰するため、
-        フィルタのDCゲイン=Lで補償して元の振幅を維持する。
-        係数ピークが極端に大きくなる場合に備え、上限はデフォルトでtarget_dc_gainに設定する。
+        正規化は2段階で行われる：
+        1. DCゲインを目標値（アップサンプル比L）に正規化
+           - ゼロ挿入によりDCが1/Lに減衰するため、フィルタのDCゲイン=Lで補償
+        2. 最大係数を1.0に調整（アップスケールまたはダウンスケール）
+           - これにより全フィルタで max_coef=1.0 となり、音量が統一される
+           - 16xフィルタ：ダウンスケール（DC 16.0 → 12.8）
+           - 8x/4x/2xフィルタ：アップスケール（DC 8.0 → 8.4など）
     """
     if h.size == 0:
         raise ValueError("フィルタ係数が空です。")
@@ -802,19 +807,22 @@ def normalize_coefficients(
         raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
 
     # Step 1: DCゲインを目標値に正規化
-    limit = max_coefficient_limit or target_dc_gain
+    limit = max_coefficient_limit
     scale = target_dc_gain / dc_gain
     h_normalized = h * scale
     max_amplitude = np.max(np.abs(h_normalized))
 
-    # Step 2: 最大係数が上限を超える場合、追加スケーリングで制限
-    peak_limited = False
+    # Step 2: 最大係数を上限（1.0）に合わせる（アップスケールまたはダウンスケール）
     peak_scale = 1.0
-    if max_amplitude > limit:
+    scale_direction = "none"
+    if abs(max_amplitude - limit) > 1e-9:  # 1.0でない場合
         peak_scale = limit / max_amplitude
+        if max_amplitude > limit:
+            scale_direction = "down"  # ピーク制限（ダウンスケール）
+        else:
+            scale_direction = "up"  # ブースト（アップスケール）
         h_normalized = h_normalized * peak_scale
         max_amplitude = np.max(np.abs(h_normalized))
-        peak_limited = True
 
     final_dc_gain = float(np.sum(h_normalized))
 
@@ -825,7 +833,8 @@ def normalize_coefficients(
         "applied_scale": float(scale * peak_scale),
         "max_coefficient_amplitude": float(max_amplitude),
         "max_coefficient_limit": float(limit),
-        "peak_limited": peak_limited,
+        "peak_limited": scale_direction == "down",  # 後方互換性のため
+        "scale_direction": scale_direction,
         "normalization_applied": True,
     }
 
@@ -833,8 +842,14 @@ def normalize_coefficients(
     print(f"  目標DCゲイン: {target_dc_gain:.6f}")
     print(f"  元のDCゲイン: {dc_gain:.6f}")
     print(f"  正規化スケール: {scale:.6f}x")
-    if peak_limited:
-        print(f"  ⚠️ ピーク制限適用: {peak_scale:.6f}x (max_coef > {limit})")
+    if scale_direction == "down":
+        print(
+            f"  ⚠️ ピーク制限適用: {peak_scale:.6f}x (max_coef {max_amplitude/peak_scale:.3f} → {limit})"
+        )
+    elif scale_direction == "up":
+        print(
+            f"  📈 振幅ブースト適用: {peak_scale:.6f}x (max_coef {max_amplitude/peak_scale:.3f} → {limit})"
+        )
     print(f"  最終DCゲイン: {final_dc_gain:.6f}")
     print(f"  最大係数振幅: {max_amplitude:.6f}")
 
