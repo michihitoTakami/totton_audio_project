@@ -22,6 +22,18 @@ pkg_check_modules(ALSA REQUIRED alsa)
 # ZeroMQ for IPC communication
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
+# systemd for daemon notification (optional, for Type=notify support)
+# Service file Type is automatically set based on libsystemd availability
+pkg_check_modules(SYSTEMD libsystemd)
+if(SYSTEMD_FOUND)
+    set(HAVE_SYSTEMD TRUE)
+    message(STATUS "libsystemd found - systemd notification enabled (Type=notify)")
+else()
+    set(HAVE_SYSTEMD FALSE)
+    message(STATUS "libsystemd not found - systemd notification disabled (Type=simple)")
+    message(STATUS "  To enable: sudo apt-get install libsystemd-dev && cmake -B build")
+endif()
+
 # NVML for GPU utilization monitoring (optional)
 # On minimal Jetson environments or some container setups, NVML may not be available
 if(TARGET CUDA::nvml)
@@ -154,10 +166,20 @@ target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
+    graceful_shutdown
+    zeromq_interface
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
 )
+
+# Conditionally link libsystemd for Type=notify support
+if(HAVE_SYSTEMD)
+    target_link_libraries(gpu_upsampler_alsa ${SYSTEMD_LIBRARIES})
+    target_compile_definitions(gpu_upsampler_alsa PRIVATE HAVE_SYSTEMD)
+    target_include_directories(gpu_upsampler_alsa PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+endif()
+
 target_include_directories(gpu_upsampler_alsa PRIVATE
     ${ZMQ_INCLUDE_DIRS}
     ${cppzmq_SOURCE_DIR}
@@ -196,6 +218,7 @@ target_compile_options(error_codes PRIVATE
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/zeromq_interface.cpp
+    src/base64.cpp
 )
 target_link_libraries(zeromq_interface PUBLIC
     error_codes
@@ -248,6 +271,17 @@ target_include_directories(soft_mute PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 target_compile_options(soft_mute PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+# Graceful Shutdown Library (CPU-only, for async-signal-safe shutdown)
+add_library(graceful_shutdown STATIC
+    src/graceful_shutdown.cpp
+)
+target_include_directories(graceful_shutdown PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(graceful_shutdown PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
@@ -307,6 +341,17 @@ if(NOT DEFINED SYSTEMD_USER_UNIT_DIR)
     else()
         set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
     endif()
+endif()
+
+# Set systemd service type based on libsystemd availability
+if(HAVE_SYSTEMD)
+    set(SYSTEMD_SERVICE_TYPE "notify")
+    set(SYSTEMD_NOTIFY_ACCESS "NotifyAccess=main")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog: Daemon sends WATCHDOG=1 every 100ms, systemd expects it within 5s\nWatchdogSec=5")
+else()
+    set(SYSTEMD_SERVICE_TYPE "simple")
+    set(SYSTEMD_NOTIFY_ACCESS "# NotifyAccess not needed for Type=simple")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog disabled (libsystemd not available at build time)")
 endif()
 
 # Generate service file with correct install paths
@@ -369,6 +414,16 @@ target_link_libraries(zmq_tests
 )
 gtest_discover_tests(zmq_tests)
 
+# Base64 encoding/decoding tests (CPU-only)
+add_executable(base64_tests
+    tests/cpp/test_base64.cpp
+)
+target_link_libraries(base64_tests
+    GTest::gtest_main
+    zeromq_interface
+)
+gtest_discover_tests(base64_tests)
+
 # Error codes tests (CPU-only)
 add_executable(error_codes_tests
     tests/cpp/test_error_codes.cpp
@@ -409,6 +464,19 @@ target_include_directories(soft_mute_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(soft_mute_tests)
+
+# Graceful Shutdown tests (CPU-only, Issue #215)
+add_executable(graceful_shutdown_tests
+    tests/cpp/test_graceful_shutdown.cpp
+)
+target_link_libraries(graceful_shutdown_tests
+    GTest::gtest_main
+    graceful_shutdown
+)
+target_include_directories(graceful_shutdown_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(graceful_shutdown_tests)
 
 # Audio common utilities tests (AudioRingBuffer, AudioUtils)
 add_executable(audio_common_tests

@@ -15,7 +15,9 @@ class Settings(BaseModel):
 
     alsa_device: str = "default"
     upsample_ratio: int = 8
+    eq_enabled: bool = False
     eq_profile: Optional[str] = None
+    eq_profile_path: Optional[str] = None
     input_rate: int = 44100
     output_rate: int = 352800
 
@@ -25,7 +27,9 @@ class SettingsUpdate(BaseModel):
 
     alsa_device: Optional[str] = None
     upsample_ratio: Optional[int] = None
+    eq_enabled: Optional[bool] = None
     eq_profile: Optional[str] = None
+    eq_profile_path: Optional[str] = None
     input_rate: Optional[int] = None
     output_rate: Optional[int] = None
 

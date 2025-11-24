@@ -1986,6 +1986,11 @@
             "title": "Upsample Ratio",
             "default": 8
           },
+          "eq_enabled": {
+            "type": "boolean",
+            "title": "Eq Enabled",
+            "default": false
+          },
           "eq_profile": {
             "anyOf": [
               {
@@ -1996,6 +2001,17 @@
               }
             ],
             "title": "Eq Profile"
+          },
+          "eq_profile_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eq Profile Path"
           },
           "input_rate": {
             "type": "integer",
@@ -2036,6 +2052,17 @@
             ],
             "title": "Upsample Ratio"
           },
+          "eq_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eq Enabled"
+          },
           "eq_profile": {
             "anyOf": [
               {
@@ -2046,6 +2073,17 @@
               }
             ],
             "title": "Eq Profile"
+          },
+          "eq_profile_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eq Profile Path"
           },
           "input_rate": {
             "anyOf": [

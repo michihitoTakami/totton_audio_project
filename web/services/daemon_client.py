@@ -1,5 +1,6 @@
 """ZeroMQ client for communicating with the C++ audio daemon."""
 
+import base64
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -299,6 +300,121 @@ class DaemonClient:
         if phase_type not in ("minimum", "linear"):
             return False, f"Invalid phase type: {phase_type}"
         return self.send_command(f"PHASE_TYPE_SET:{phase_type}")
+
+    # ========== JSON Command Methods (#150) ==========
+
+    def send_json_command_v2(
+        self, cmd: str, params: dict[str, Any] | None = None
+    ) -> DaemonResponse:
+        """
+        Send a JSON-formatted command to the daemon and return structured response.
+
+        Args:
+            cmd: Command type (e.g., "CROSSFEED_ENABLE")
+            params: Optional parameters dict
+
+        Returns:
+            DaemonResponse with success/data or error details.
+        """
+        try:
+            socket = self._ensure_connected()
+            request: dict[str, Any] = {"cmd": cmd}
+            if params:
+                request["params"] = params
+            socket.send_string(json.dumps(request))
+            response = socket.recv_string()
+            return self._parse_json_response(response)
+
+        except zmq.Again:
+            self.close()
+            error = DaemonError(
+                error_code=ErrorCode.IPC_TIMEOUT.value,
+                message="Daemon not responding (timeout)",
+            )
+            return DaemonResponse(success=False, error=error)
+
+        except zmq.ZMQError as e:
+            self.close()
+            if e.errno == zmq.ECONNREFUSED:
+                error_code = ErrorCode.IPC_DAEMON_NOT_RUNNING.value
+            else:
+                error_code = ErrorCode.IPC_CONNECTION_FAILED.value
+            error = DaemonError(
+                error_code=error_code,
+                message=f"ZeroMQ error: {e}",
+                inner_error={"zmq_errno": e.errno},
+            )
+            return DaemonResponse(success=False, error=error)
+
+    # ========== Crossfeed Commands (#150) ==========
+
+    def crossfeed_enable(self) -> DaemonResponse:
+        """
+        Enable crossfeed (HRTF) processing.
+
+        Returns:
+            DaemonResponse with success/data or error details.
+        """
+        return self.send_json_command_v2("CROSSFEED_ENABLE")
+
+    def crossfeed_disable(self) -> DaemonResponse:
+        """
+        Disable crossfeed processing.
+
+        Returns:
+            DaemonResponse with success/data or error details.
+        """
+        return self.send_json_command_v2("CROSSFEED_DISABLE")
+
+    def crossfeed_set_combined(
+        self,
+        rate_family: str,
+        combined_ll: bytes,
+        combined_lr: bytes,
+        combined_rl: bytes,
+        combined_rr: bytes,
+    ) -> DaemonResponse:
+        """
+        Set combined crossfeed filter coefficients.
+
+        Args:
+            rate_family: "44k" or "48k"
+            combined_ll: Left-to-Left filter (raw bytes, will be Base64 encoded)
+            combined_lr: Left-to-Right filter
+            combined_rl: Right-to-Left filter
+            combined_rr: Right-to-Right filter
+
+        Returns:
+            DaemonResponse with success/data or error details.
+        """
+        if rate_family not in ("44k", "48k"):
+            error = DaemonError(
+                error_code=ErrorCode.IPC_INVALID_PARAMS.value,
+                message=f"Invalid rate family: {rate_family}",
+            )
+            return DaemonResponse(success=False, error=error)
+
+        params = {
+            "rate_family": rate_family,
+            "combined_ll": base64.b64encode(combined_ll).decode("ascii"),
+            "combined_lr": base64.b64encode(combined_lr).decode("ascii"),
+            "combined_rl": base64.b64encode(combined_rl).decode("ascii"),
+            "combined_rr": base64.b64encode(combined_rr).decode("ascii"),
+        }
+        return self.send_json_command_v2("CROSSFEED_SET_COMBINED", params)
+
+    def crossfeed_get_status(self) -> DaemonResponse:
+        """
+        Get crossfeed status.
+
+        Returns:
+            DaemonResponse with data containing:
+                enabled: bool - Whether crossfeed is enabled
+                initialized: bool - Whether HRTF processor is initialized
+                head_size: str - Current head size setting
+                headphone: str - Current headphone model
+        """
+        return self.send_json_command_v2("CROSSFEED_GET_STATUS")
 
 
 def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:

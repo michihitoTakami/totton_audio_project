@@ -1,4 +1,5 @@
 #include "audio_utils.h"
+#include "base64.h"
 #include "config_loader.h"
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <sstream>
@@ -32,6 +34,11 @@
 #include <unistd.h>
 #include <vector>
 #include <zmq.hpp>
+
+// systemd notification support (optional)
+#ifdef HAVE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
 
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
@@ -45,11 +52,18 @@ constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock";
 // Default configuration values (using common constants)
 using namespace DaemonConstants;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
-constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_1m_min_phase.bin";
+constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_2m_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)
 static AppConfig g_config;
+
+// ========== Signal Handling (Async-Signal-Safe) ==========
+// These flags are set by the signal handler and polled by the main loop.
+// Using volatile sig_atomic_t ensures async-signal-safe access.
+static volatile sig_atomic_t g_signal_shutdown = 0;  // SIGTERM, SIGINT
+static volatile sig_atomic_t g_signal_reload = 0;    // SIGHUP
+static volatile sig_atomic_t g_signal_received = 0;  // Last signal number (for logging)
 
 // Global state
 static std::atomic<bool> g_running{true};
@@ -57,7 +71,7 @@ static std::atomic<bool> g_reload_requested{false};
 static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_run() is active
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
-static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
+static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 
 // Statistics (atomic for thread-safe access from stats writer)
 static std::atomic<size_t> g_clip_count{0};
@@ -360,6 +374,227 @@ static void zeromq_listener_thread() {
                 bool initialized = (g_hrtf_processor != nullptr);
                 response = "OK:{\"enabled\":" + std::string(enabled ? "true" : "false") +
                            ",\"initialized\":" + std::string(initialized ? "true" : "false") + "}";
+            }
+            // JSON format commands for crossfeed (#150)
+            else if (cmd.find("{") == 0) {
+                // Parse JSON command
+                try {
+                    nlohmann::json j = nlohmann::json::parse(cmd);
+                    std::string cmdType = j.value("cmd", "");
+
+                    if (cmdType == "CROSSFEED_ENABLE") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        if (g_hrtf_processor) {
+                            g_hrtf_processor->resetStreaming();
+                            g_cf_stream_input_left.clear();
+                            g_cf_stream_input_right.clear();
+                            g_cf_stream_accumulated_left = 0;
+                            g_cf_stream_accumulated_right = 0;
+                            g_hrtf_processor->setEnabled(true);
+                            g_crossfeed_enabled.store(true);
+                            nlohmann::json resp;
+                            resp["status"] = "ok";
+                            resp["message"] = "Crossfeed enabled";
+                            response = resp.dump();
+                        } else {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                            resp["message"] = "HRTF processor not initialized";
+                            response = resp.dump();
+                        }
+                    } else if (cmdType == "CROSSFEED_DISABLE") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        g_crossfeed_enabled.store(false);
+                        if (g_hrtf_processor) {
+                            g_hrtf_processor->setEnabled(false);
+                        }
+                        nlohmann::json resp;
+                        resp["status"] = "ok";
+                        resp["message"] = "Crossfeed disabled";
+                        response = resp.dump();
+                    } else if (cmdType == "CROSSFEED_SET_COMBINED") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        if (!g_hrtf_processor) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                            resp["message"] = "HRTF processor not initialized";
+                            response = resp.dump();
+                        } else if (!j.contains("params")) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params field";
+                            response = resp.dump();
+                        } else {
+                            auto params = j["params"];
+                            std::string rateFamily = params.value("rate_family", "");
+                            std::string combinedLL = params.value("combined_ll", "");
+                            std::string combinedLR = params.value("combined_lr", "");
+                            std::string combinedRL = params.value("combined_rl", "");
+                            std::string combinedRR = params.value("combined_rr", "");
+
+                            if (rateFamily.empty() || combinedLL.empty() || combinedLR.empty() ||
+                                combinedRL.empty() || combinedRR.empty()) {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "IPC_INVALID_PARAMS";
+                                resp["message"] = "Missing required filter data";
+                                response = resp.dump();
+                            } else if (rateFamily != "44k" && rateFamily != "48k") {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "CROSSFEED_INVALID_RATE_FAMILY";
+                                resp["message"] =
+                                    "Invalid rate family: " + rateFamily + " (expected 44k or 48k)";
+                                response = resp.dump();
+                            } else {
+                                // Decode Base64 filter data
+                                auto decodedLL = Base64::decode(combinedLL);
+                                auto decodedLR = Base64::decode(combinedLR);
+                                auto decodedRL = Base64::decode(combinedRL);
+                                auto decodedRR = Base64::decode(combinedRR);
+
+                                if (decodedLL.empty() || decodedLR.empty() || decodedRL.empty() ||
+                                    decodedRR.empty()) {
+                                    nlohmann::json resp;
+                                    resp["status"] = "error";
+                                    resp["error_code"] = "IPC_INVALID_PARAMS";
+                                    resp["message"] = "Failed to decode Base64 filter data";
+                                    response = resp.dump();
+                                } else {
+                                    // Validate filter data size
+                                    // cufftComplex = 2 * sizeof(float) = 8 bytes
+                                    constexpr size_t CUFFT_COMPLEX_SIZE = 8;
+                                    // Max filter size: 256KB per channel (32768 complex values)
+                                    // This supports fftSize up to 65536 (filterFftSize =
+                                    // fftSize/2+1) Typical HRTF: blockSize=8192, filterTaps=2048 →
+                                    // fftSize=16384 → ~64KB High quality: blockSize=8192,
+                                    // filterTaps=8192 → fftSize=32768 → ~128KB
+                                    constexpr size_t MAX_FILTER_BYTES = 256 * 1024;
+
+                                    bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedRL.size() % CUFFT_COMPLEX_SIZE == 0) &&
+                                                     (decodedRR.size() % CUFFT_COMPLEX_SIZE == 0);
+
+                                    bool sizesMatch = (decodedLL.size() == decodedLR.size()) &&
+                                                      (decodedLL.size() == decodedRL.size()) &&
+                                                      (decodedLL.size() == decodedRR.size());
+
+                                    bool withinLimit = (decodedLL.size() <= MAX_FILTER_BYTES);
+
+                                    if (!sizeValid) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "Filter size must be multiple of 8 (cufftComplex)";
+                                        response = resp.dump();
+                                    } else if (!sizesMatch) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "All 4 channel filters must have same size";
+                                        response = resp.dump();
+                                    } else if (!withinLimit) {
+                                        nlohmann::json resp;
+                                        resp["status"] = "error";
+                                        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                        resp["message"] =
+                                            "Filter size exceeds maximum (256KB per channel)";
+                                        response = resp.dump();
+                                    } else {
+                                        // Filter data is valid, apply to HRTFProcessor
+                                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+
+                                        if (!g_hrtf_processor) {
+                                            nlohmann::json resp;
+                                            resp["status"] = "error";
+                                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                                            resp["message"] = "HRTFProcessor not initialized";
+                                            response = resp.dump();
+                                        } else {
+                                            // Convert rate family string to enum
+                                            CrossfeedEngine::RateFamily family =
+                                                (rateFamily == "44k")
+                                                    ? CrossfeedEngine::RateFamily::RATE_44K
+                                                    : CrossfeedEngine::RateFamily::RATE_48K;
+
+                                            // Cast decoded data to cufftComplex pointers
+                                            size_t complexCount =
+                                                decodedLL.size() / CUFFT_COMPLEX_SIZE;
+                                            const cufftComplex* filterLL =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedLL.data());
+                                            const cufftComplex* filterLR =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedLR.data());
+                                            const cufftComplex* filterRL =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedRL.data());
+                                            const cufftComplex* filterRR =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedRR.data());
+
+                                            bool success = g_hrtf_processor->setCombinedFilter(
+                                                family, filterLL, filterLR, filterRL, filterRR,
+                                                complexCount);
+
+                                            nlohmann::json resp;
+                                            if (success) {
+                                                resp["status"] = "ok";
+                                                resp["message"] = "Combined filter applied";
+                                                resp["data"]["rate_family"] = rateFamily;
+                                                resp["data"]["complex_count"] = complexCount;
+                                                std::cout
+                                                    << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
+                                                    << rateFamily << " (" << complexCount
+                                                    << " complex values)" << std::endl;
+                                            } else {
+                                                resp["status"] = "error";
+                                                resp["error_code"] =
+                                                    "CROSSFEED_INVALID_FILTER_SIZE";
+                                                resp["message"] =
+                                                    "Filter size mismatch or application failed";
+                                                resp["data"]["rate_family"] = rateFamily;
+                                                resp["data"]["complex_count"] = complexCount;
+                                                resp["data"]["expected_size"] =
+                                                    g_hrtf_processor->getFilterFftSize();
+                                            }
+                                            response = resp.dump();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if (cmdType == "CROSSFEED_GET_STATUS") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        bool enabled = g_crossfeed_enabled.load();
+                        bool initialized = (g_hrtf_processor != nullptr);
+                        nlohmann::json resp;
+                        resp["status"] = "ok";
+                        resp["data"]["enabled"] = enabled;
+                        resp["data"]["initialized"] = initialized;
+                        // head_size and headphone fields are intentionally omitted
+                        // until HRTFProcessor exposes actual HRTF metadata (#233)
+                        response = resp.dump();
+                    } else {
+                        nlohmann::json resp;
+                        resp["status"] = "error";
+                        resp["error_code"] = "IPC_INVALID_COMMAND";
+                        resp["message"] = "Unknown JSON command: " + cmdType;
+                        response = resp.dump();
+                    }
+                } catch (const nlohmann::json::exception& e) {
+                    nlohmann::json resp;
+                    resp["status"] = "error";
+                    resp["error_code"] = "IPC_PROTOCOL_ERROR";
+                    resp["message"] = std::string("JSON parse error: ") + e.what();
+                    response = resp.dump();
+                }
             } else if (cmd == "PHASE_TYPE_GET") {
                 // Get current phase type
                 if (g_upsampler) {
@@ -447,32 +682,87 @@ static void zeromq_listener_thread() {
 struct Data {
     struct pw_main_loop* loop;
     struct pw_stream* input_stream;
+    struct spa_source* signal_check_timer;  // Timer for checking signal flags
     bool gpu_ready;
 };
 
-// Signal handler for graceful shutdown
+// ========== Async-Signal-Safe Signal Handler ==========
+// This handler ONLY sets flags. All other processing is done in the main loop.
+// POSIX async-signal-safe: only sig_atomic_t writes are safe here.
 static void signal_handler(int sig) {
+    g_signal_received = sig;
     if (sig == SIGHUP) {
-        std::cout << "\nReceived SIGHUP, restarting for config reload..." << std::endl;
-        g_reload_requested = true;
+        g_signal_reload = 1;
     } else {
+        g_signal_shutdown = 1;
+    }
+}
+
+// Process pending signals (called from main loop context, NOT from signal handler)
+// This function is safe to call with non-async-signal-safe code.
+// IMPORTANT: Shutdown (SIGTERM/SIGINT) takes priority over reload (SIGHUP).
+// If both signals arrive in the same cycle, shutdown wins.
+static void process_pending_signals() {
+    // Check for shutdown request FIRST (SIGTERM, SIGINT) - takes priority over reload
+    if (g_signal_shutdown) {
+        g_signal_shutdown = 0;
+        g_signal_reload = 0;  // Clear any pending reload - shutdown takes priority
+        int sig = g_signal_received;
         std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
+
+        // Clear reload flag to ensure clean shutdown (not restart)
+        // This prevents do { ... } while (g_reload_requested) from restarting
+        g_reload_requested = false;
+
+        // Start fade-out for glitch-free shutdown
+        if (g_soft_mute) {
+            g_soft_mute->startFadeOut();
+        }
+
+        // Quit main loop to trigger shutdown sequence
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        } else {
+            g_running = false;
+        }
+        return;  // Don't process reload if shutdown was requested
     }
 
-    // Start fade-out for glitch-free shutdown/restart (safe to call from signal handler)
-    if (g_soft_mute) {
-        g_soft_mute->startFadeOut();
-    }
+    // Check for reload request (SIGHUP) - only if no shutdown pending
+    if (g_signal_reload) {
+        g_signal_reload = 0;
+        int sig = g_signal_received;
+        std::cout << "\nReceived SIGHUP (signal " << sig << "), restarting for config reload..."
+                  << std::endl;
+        g_reload_requested = true;
 
-    // If main loop is running, quit it to trigger clean shutdown sequence
-    // If not yet running (during startup/initialization), set g_running = false
-    // to allow immediate abort
-    if (g_main_loop_running.load() && g_pw_loop) {
-        pw_main_loop_quit(g_pw_loop);
-    } else {
-        // Startup phase - allow immediate abort
-        g_running = false;
+        // Start fade-out for glitch-free reload
+        if (g_soft_mute) {
+            g_soft_mute->startFadeOut();
+        }
+
+        // Quit main loop to trigger reload sequence
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        } else {
+            g_running = false;
+        }
     }
+}
+
+// PipeWire timer callback to check for pending signals
+// Called periodically (every 100ms) from the PipeWire main loop.
+static void on_signal_check_timer(void* userdata, uint64_t expirations) {
+    (void)userdata;
+    (void)expirations;
+
+    // Process any pending signals
+    process_pending_signals();
+
+#ifdef HAVE_SYSTEMD
+    // Send watchdog heartbeat to systemd
+    sd_notify(0, "WATCHDOG=1");
+#endif
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
@@ -897,6 +1187,10 @@ int main(int argc, char* argv[]) {
     do {
         g_running = true;
         g_reload_requested = false;
+        // Reset signal flags for clean restart
+        g_signal_shutdown = 0;
+        g_signal_reload = 0;
+        g_signal_received = 0;
         reset_runtime_state();
 
         // Load configuration from config.json (if exists)
@@ -1197,6 +1491,17 @@ int main(int argc, char* argv[]) {
             static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
             input_params, 1);
 
+        // Add timer to check signal flags periodically (100ms interval)
+        // This enables async-signal-safe shutdown by polling flags from main loop
+        struct timespec interval = {0, 100000000};  // 100ms in nanoseconds
+        data.signal_check_timer = pw_loop_add_timer(loop, on_signal_check_timer, &data);
+        if (data.signal_check_timer) {
+            pw_loop_update_timer(loop, data.signal_check_timer, &interval, &interval, false);
+            std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
+        } else {
+            std::cerr << "Warning: Failed to create signal check timer" << std::endl;
+        }
+
         double outputRateKHz = g_config.inputSampleRate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
         std::cout << "System ready. Audio routing configured:" << std::endl;
@@ -1211,6 +1516,14 @@ int main(int argc, char* argv[]) {
                   << "kHz)' as output device in sound settings." << std::endl;
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
+
+#ifdef HAVE_SYSTEMD
+        // Notify systemd that daemon is ready
+        sd_notify(0,
+                  "READY=1\n"
+                  "STATUS=Processing audio...\n");
+        std::cout << "systemd: Notified READY=1" << std::endl;
+#endif
 
         // Check if RELOAD was requested during startup (before main loop),
         // ZeroMQ bind failed, or signal received during initialization
@@ -1227,37 +1540,58 @@ int main(int argc, char* argv[]) {
             std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
         }
 
-        // Cleanup
+        // ========== Shutdown Sequence ==========
+        // Order: Stop input → Fade out → Flush buffers → Close ALSA → Release resources
         std::cout << "Shutting down..." << std::endl;
 
-        // Wait for soft mute fade-out to complete (with 100ms timeout)
+#ifdef HAVE_SYSTEMD
+        // Notify systemd that we're stopping
+        sd_notify(0, "STOPPING=1\nSTATUS=Shutting down...\n");
+#endif
+
+        // Step 1: Stop signal check timer
+        if (data.signal_check_timer) {
+            pw_loop_destroy_source(loop, data.signal_check_timer);
+            data.signal_check_timer = nullptr;
+        }
+
+        // Step 2: Wait for soft mute fade-out to complete (with 100ms timeout)
         // This ensures glitch-free audio shutdown
         if (g_soft_mute && g_soft_mute->isTransitioning()) {
-            std::cout << "Waiting for fade-out to complete..." << std::endl;
+            std::cout << "  Step 2: Waiting for fade-out to complete..." << std::endl;
             auto fade_start = std::chrono::steady_clock::now();
             while (g_soft_mute->isTransitioning()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 if (std::chrono::steady_clock::now() - fade_start >
                     std::chrono::milliseconds(100)) {
-                    std::cout << "Fade-out timeout, forcing shutdown" << std::endl;
+                    std::cout << "  Step 2: Fade-out timeout, forcing shutdown" << std::endl;
                     break;
                 }
             }
         }
 
+        // Step 3: Destroy PipeWire stream (stops audio input)
         if (data.input_stream) {
+            std::cout << "  Step 3: Destroying PipeWire stream..." << std::endl;
             pw_stream_destroy(data.input_stream);
         }
+
+        // Step 4: Destroy PipeWire main loop
         if (data.loop) {
+            std::cout << "  Step 4: Destroying PipeWire main loop..." << std::endl;
             pw_main_loop_destroy(data.loop);
             g_pw_loop = nullptr;
         }
 
+        // Step 5: Signal worker threads to stop and wait for them
+        std::cout << "  Step 5: Stopping worker threads..." << std::endl;
         g_running = false;
         g_buffer_cv.notify_all();
         zmq_thread.join();
-        alsa_thread.join();
+        alsa_thread.join();  // ALSA thread will call snd_pcm_drain() before exit
 
+        // Step 6: Release audio processing resources
+        std::cout << "  Step 6: Releasing resources..." << std::endl;
         delete g_soft_mute;
         g_soft_mute = nullptr;
         delete g_hrtf_processor;
@@ -1265,6 +1599,8 @@ int main(int argc, char* argv[]) {
         g_crossfeed_enabled.store(false);
         delete g_upsampler;
         g_upsampler = nullptr;
+
+        // Step 7: Deinitialize PipeWire
         pw_deinit();
 
         // Don't reload if ZMQ bind failed - exit completely
