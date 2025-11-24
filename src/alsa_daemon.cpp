@@ -401,7 +401,13 @@ static void zeromq_listener_thread() {
                                 if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
                                     std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
                                               << " phase" << std::endl;
+                                } else {
+                                    std::cerr << "ZeroMQ: Warning - EQ re-apply failed"
+                                              << std::endl;
                                 }
+                            } else {
+                                std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
+                                          << g_config.eqProfilePath << std::endl;
                             }
                         }
                         response = "OK:Phase type set to " + phaseStr;
