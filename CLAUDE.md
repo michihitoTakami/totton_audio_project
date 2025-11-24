@@ -197,8 +197,8 @@ uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
 # Generate 2M-tap linear phase filter
 uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55 --phase-type linear
 
-# Generate all 8 configurations (44k/48k × 2x/4x/8x/16x) for both phase types
-uv run python scripts/generate_filter.py --generate-all
+# Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)
+uv run python scripts/generate_filter.py --generate-all --phase-type minimum
 
 # Output (example for minimum phase, 44.1kHz input, 16x upsample):
 # - data/coefficients/filter_44k_16x_2m_minimum.bin (8 MB binary)
@@ -211,7 +211,7 @@ uv run python scripts/generate_filter.py --generate-all
 |-----------|-----|------|
 | `--phase-type` | `minimum` (default) | 最小位相フィルタを生成 |
 | `--phase-type` | `linear` | 線形位相フィルタを生成 |
-| `--generate-all` | (flag) | 全8構成 × 両位相タイプを一括生成 |
+| `--generate-all` | (flag) | 全8構成（44k/48k × 2x/4x/8x/16x）を一括生成 |
 
 ### Build (C++/CUDA)
 ```bash

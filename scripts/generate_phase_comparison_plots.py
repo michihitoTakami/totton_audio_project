@@ -60,7 +60,7 @@ def generate_comparison_plots(
     designer_min = FilterDesigner(config_min)
     designer_lin = FilterDesigner(config_lin)
 
-    h_min, h_lin_ref = designer_min.design()
+    h_min, _ = designer_min.design()
     h_lin, _ = designer_lin.design()
 
     fs = config_min.output_rate
