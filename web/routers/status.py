@@ -110,12 +110,13 @@ async def update_settings(update: SettingsUpdate):
 
     # Apply eq_enabled after path derivation so that enable without path becomes False
     if eq_enabled_requested is None:
-        current.eq_enabled = bool(current.eq_profile_path) and current.eq_enabled
+        # No explicit change to eq_enabled - preserve existing state
+        pass
     else:
+        # Explicit enable/disable request
         current.eq_enabled = bool(eq_enabled_requested and current.eq_profile_path)
-
-    if not current.eq_enabled:
-        current.eq_profile_path = None
+        if not current.eq_enabled:
+            current.eq_profile_path = None
 
     if save_config(current):
         # Check if daemon needs restart
