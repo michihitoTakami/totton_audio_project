@@ -128,6 +128,14 @@ class DaemonClient:
             # Fallback: treat as legacy text response
             return self._parse_legacy_response(response)
 
+        # Guard: JSON must be a dict with "status" field
+        if not isinstance(data, dict):
+            error = DaemonError(
+                error_code=ErrorCode.IPC_PROTOCOL_ERROR.value,
+                message=f"Expected JSON object, got {type(data).__name__}",
+            )
+            return DaemonResponse(success=False, error=error)
+
         status = data.get("status", "")
 
         if status == "ok":

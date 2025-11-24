@@ -30,15 +30,26 @@ def _restart_daemon() -> bool:
     """Restart the audio daemon if it was running before tests."""
     daemon_script = PROJECT_ROOT / "scripts" / "daemon.sh"
     if not daemon_script.exists():
+        print(f"[conftest] Warning: daemon script not found: {daemon_script}")
         return False
     try:
-        subprocess.run(
+        result = subprocess.run(
             [str(daemon_script), "restart"],
             capture_output=True,
             timeout=30,
         )
+        if result.returncode != 0:
+            print(
+                f"[conftest] Warning: daemon restart failed (exit {result.returncode})"
+            )
+            print(f"[conftest] stderr: {result.stderr.decode()}")
+            return False
         return True
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except subprocess.TimeoutExpired:
+        print("[conftest] Warning: daemon restart timed out")
+        return False
+    except FileNotFoundError:
+        print("[conftest] Warning: daemon script not executable")
         return False
 
 

@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 from web.main import app
+from web.services.daemon_client import DaemonError, DaemonResponse
 
 
 client = TestClient(app)
@@ -19,9 +20,8 @@ class TestPhaseTypeGet:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
-            mock_instance.get_phase_type.return_value = (
-                True,
-                {"phase_type": "minimum"},
+            mock_instance.send_command_v2.return_value = DaemonResponse(
+                success=True, data={"phase_type": "minimum"}
             )
             mock_client.return_value = mock_instance
 
@@ -38,9 +38,8 @@ class TestPhaseTypeGet:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
-            mock_instance.get_phase_type.return_value = (
-                True,
-                {"phase_type": "linear"},
+            mock_instance.send_command_v2.return_value = DaemonResponse(
+                success=True, data={"phase_type": "linear"}
             )
             mock_client.return_value = mock_instance
 
@@ -58,16 +57,19 @@ class TestPhaseTypeGet:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
-            mock_instance.get_phase_type.return_value = (
-                False,
-                "Daemon not responding",
+            mock_instance.send_command_v2.return_value = DaemonResponse(
+                success=False,
+                error=DaemonError(
+                    error_code="IPC_DAEMON_NOT_RUNNING",
+                    message="Daemon not responding",
+                ),
             )
             mock_client.return_value = mock_instance
 
             response = client.get("/daemon/phase-type")
 
             assert response.status_code == 503
-            assert "Failed to get phase type" in response.json()["detail"]
+            assert "Daemon not responding" in response.json()["detail"]
 
 
 class TestPhaseTypeSet:
@@ -79,9 +81,8 @@ class TestPhaseTypeSet:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
-            mock_instance.set_phase_type.return_value = (
-                True,
-                "Phase type set to minimum",
+            mock_instance.send_command_v2.return_value = DaemonResponse(
+                success=True, data={"phase_type": "minimum"}
             )
             mock_client.return_value = mock_instance
 
@@ -101,9 +102,8 @@ class TestPhaseTypeSet:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
-            mock_instance.set_phase_type.return_value = (
-                True,
-                "Phase type set to linear",
+            mock_instance.send_command_v2.return_value = DaemonResponse(
+                success=True, data={"phase_type": "linear"}
             )
             mock_client.return_value = mock_instance
 
@@ -137,9 +137,12 @@ class TestPhaseTypeSet:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
-            mock_instance.set_phase_type.return_value = (
-                False,
-                "Quad-phase mode not enabled",
+            mock_instance.send_command_v2.return_value = DaemonResponse(
+                success=False,
+                error=DaemonError(
+                    error_code="IPC_DAEMON_NOT_RUNNING",
+                    message="Quad-phase mode not enabled",
+                ),
             )
             mock_client.return_value = mock_instance
 
@@ -149,7 +152,7 @@ class TestPhaseTypeSet:
             )
 
             assert response.status_code == 503
-            assert "Failed to set phase type" in response.json()["detail"]
+            assert "Quad-phase mode not enabled" in response.json()["detail"]
 
 
 class TestDaemonClientPhaseType:
