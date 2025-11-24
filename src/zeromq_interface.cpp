@@ -139,9 +139,8 @@ std::string buildErrorResponse(AudioEngine::ErrorCode code, const std::string& m
     } else {
         inner["cpp_code"] = AudioEngine::errorCodeToHex(code);
     }
-    if (!innerError.cpp_message.empty()) {
-        inner["cpp_message"] = innerError.cpp_message;
-    }
+    // cpp_message is always included per design doc §4.2
+    inner["cpp_message"] = innerError.cpp_message;
     if (innerError.alsa_errno.has_value()) {
         inner["alsa_errno"] = innerError.alsa_errno.value();
     } else {
