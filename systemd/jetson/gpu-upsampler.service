@@ -1,0 +1,78 @@
+[Unit]
+Description=GPU Audio Upsampler Engine (Magic Box)
+Documentation=https://github.com/michihitoTakami/gpu_os
+
+# Dependencies
+After=magicbox-gadget.service sound.target
+Requires=magicbox-gadget.service
+
+# If gadget stops, stop this service too
+BindsTo=magicbox-gadget.service
+
+# Hardware requirements
+ConditionPathExists=/dev/nvidia0
+
+[Service]
+Type=notify
+NotifyAccess=main
+
+# Execution
+WorkingDirectory=/opt/magicbox
+ExecStart=/opt/magicbox/bin/gpu_upsampler_alsa
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Watchdog (systemd will restart if no heartbeat within 30s)
+WatchdogSec=30
+WatchdogSignal=SIGABRT
+
+# Graceful shutdown
+TimeoutStopSec=5
+KillSignal=SIGTERM
+FinalKillSignal=SIGKILL
+
+# Restart policy
+Restart=always
+RestartSec=2
+StartLimitInterval=300
+StartLimitBurst=10
+
+# OOM protection (audio is critical)
+OOMPolicy=continue
+OOMScoreAdjust=-900
+
+# Resource limits
+MemoryMax=2G
+MemoryHigh=1.5G
+CPUWeight=200
+IOWeight=200
+
+# Real-time priority for audio processing
+Nice=-10
+LimitRTPRIO=99
+LimitMEMLOCK=infinity
+
+# Security hardening (compatible with CUDA)
+LockPersonality=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+# Required capabilities for audio/GPU
+AmbientCapabilities=CAP_SYS_NICE
+CapabilityBoundingSet=CAP_SYS_NICE CAP_SYS_RESOURCE
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gpu-upsampler
+
+[Install]
+WantedBy=multi-user.target

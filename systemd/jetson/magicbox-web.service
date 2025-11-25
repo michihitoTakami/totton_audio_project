@@ -1,0 +1,49 @@
+[Unit]
+Description=Magic Box Web Control Interface
+Documentation=https://github.com/michihitoTakami/gpu_os
+
+# Dependencies
+After=network.target gpu-upsampler.service
+Requires=gpu-upsampler.service
+
+# If daemon stops, stop web UI too
+BindsTo=gpu-upsampler.service
+PartOf=gpu-upsampler.service
+
+[Service]
+Type=simple
+
+# Run as non-root user
+User=magicbox
+Group=magicbox
+
+# Execution
+WorkingDirectory=/opt/magicbox
+ExecStart=/opt/magicbox/venv/bin/uvicorn web.main:app \
+    --host 0.0.0.0 \
+    --port 80 \
+    --workers 1 \
+    --log-level warning
+
+# Restart policy
+Restart=always
+RestartSec=3
+
+# Resource limits
+MemoryMax=512M
+CPUWeight=50
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/magicbox/data /tmp
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=magicbox-web
+
+[Install]
+WantedBy=multi-user.target
