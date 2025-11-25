@@ -58,7 +58,6 @@ TEST_F(ConfigLoaderTest, LoadNonExistentFileUsesDefaults) {
     EXPECT_EQ(config.upsampleRatio, 16);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
-    EXPECT_EQ(config.inputSampleRate, 44100);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");
 }
@@ -81,7 +80,6 @@ TEST_F(ConfigLoaderTest, LoadFullConfig) {
         "blockSize": 8192,
         "gain": 8.0,
         "filterPath": "custom/filter.bin",
-        "inputSampleRate": 48000,
         "eqEnabled": true,
         "eqProfilePath": "data/EQ/custom.txt"
     })");
@@ -97,7 +95,6 @@ TEST_F(ConfigLoaderTest, LoadFullConfig) {
     EXPECT_EQ(config.blockSize, 8192);
     EXPECT_FLOAT_EQ(config.gain, 8.0f);
     EXPECT_EQ(config.filterPath, "custom/filter.bin");
-    EXPECT_EQ(config.inputSampleRate, 48000);
     EXPECT_TRUE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "data/EQ/custom.txt");
 }
@@ -120,7 +117,6 @@ TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
     EXPECT_EQ(config.periodSize, 32768);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
-    EXPECT_EQ(config.inputSampleRate, 44100);
 }
 
 TEST_F(ConfigLoaderTest, LoadInvalidJsonReturnsFalse) {
@@ -160,7 +156,6 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultValues) {
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
     EXPECT_EQ(config.filterPath, "data/coefficients/filter_44k_2m_min_phase.bin");
-    EXPECT_EQ(config.inputSampleRate, 44100);
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");
