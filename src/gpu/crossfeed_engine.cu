@@ -679,10 +679,39 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         return true;
     }
 
+    // Detect if output buffers are different vector instances from previous call
+    // (e.g., new local variables passed each time). Clear stale tracked pointers
+    // to prevent cudaHostUnregister on memory that no longer belongs to us.
+    if (pinnedStreamOutputL_ != nullptr &&
+        (outputL.empty() || pinnedStreamOutputL_ != outputL.data())) {
+        pinnedStreamOutputL_ = nullptr;
+        pinnedStreamOutputLBytes_ = 0;
+    }
+    if (pinnedStreamOutputR_ != nullptr &&
+        (outputR.empty() || pinnedStreamOutputR_ != outputR.data())) {
+        pinnedStreamOutputR_ = nullptr;
+        pinnedStreamOutputRBytes_ = 0;
+    }
+
     // Accumulate input
+    // Before resize, save old pointers to detect reallocation
     if (streamInputBufferL.size() < streamInputAccumulatedL + inputFrames) {
+        void* oldPtrL = streamInputBufferL.data();
+        void* oldPtrR = streamInputBufferR.data();
+
         streamInputBufferL.resize(streamInputAccumulatedL + inputFrames + streamValidInputPerBlock_);
         streamInputBufferR.resize(streamInputAccumulatedR + inputFrames + streamValidInputPerBlock_);
+
+        // If pointers changed, old memory was freed by vector
+        // Clear tracked pointers to prevent cudaHostUnregister on freed memory
+        if (streamInputBufferL.data() != oldPtrL) {
+            pinnedStreamInputL_ = nullptr;
+            pinnedStreamInputLBytes_ = 0;
+        }
+        if (streamInputBufferR.data() != oldPtrR) {
+            pinnedStreamInputR_ = nullptr;
+            pinnedStreamInputRBytes_ = 0;
+        }
     }
     registerStreamBuffer(streamInputBufferL, &pinnedStreamInputL_, &pinnedStreamInputLBytes_,
                          "cudaHostRegister crossfeed stream input L");
@@ -704,8 +733,25 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     }
 
     // Process one block
-    outputL.resize(validOutputPerBlock_);
-    outputR.resize(validOutputPerBlock_);
+    // Protect output buffers from pointer invalidation on resize
+    {
+        void* oldPtrL = outputL.data();
+        void* oldPtrR = outputR.data();
+
+        outputL.resize(validOutputPerBlock_);
+        outputR.resize(validOutputPerBlock_);
+
+        // If pointers changed, old memory was freed by vector
+        // Clear tracked pointers to prevent cudaHostUnregister on freed memory
+        if (outputL.data() != oldPtrL) {
+            pinnedStreamOutputL_ = nullptr;
+            pinnedStreamOutputLBytes_ = 0;
+        }
+        if (outputR.data() != oldPtrR) {
+            pinnedStreamOutputR_ = nullptr;
+            pinnedStreamOutputRBytes_ = 0;
+        }
+    }
     registerStreamBuffer(outputL, &pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
                          "cudaHostRegister crossfeed stream output L");
     registerStreamBuffer(outputR, &pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
