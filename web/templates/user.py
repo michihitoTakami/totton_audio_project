@@ -100,6 +100,136 @@ def get_embedded_html() -> str:
             display: none;
         }
         .warning-banner.visible { display: block; }
+        /* Crossfeed Toggle Switch */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background: #0f3460;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .toggle-switch.active {
+            background: #00d4ff;
+        }
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #eee;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.3s;
+        }
+        .toggle-switch.active::after {
+            transform: translateX(24px);
+        }
+        .toggle-label {
+            font-size: 13px;
+            color: #aaa;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        /* Head Size Buttons */
+        .head-size-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .head-size-btn {
+            flex: 1;
+            padding: 10px 8px;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #aaa;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .head-size-btn:hover {
+            background: #1a4b7c;
+            border-color: #00d4ff;
+        }
+        .head-size-btn.active {
+            background: #00d4ff;
+            color: #000;
+            border-color: #00d4ff;
+        }
+        .head-size-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        /* Info Text */
+        .info-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 12px;
+            line-height: 1.5;
+        }
+        .info-text .icon {
+            color: #00d4ff;
+            margin-right: 4px;
+        }
+        /* Status Display */
+        .status-display {
+            margin-top: 12px;
+            padding: 10px;
+            background: #0f3460;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        .status-display .label {
+            color: #666;
+            margin-bottom: 4px;
+        }
+        .status-display .value {
+            color: #eee;
+            font-weight: 500;
+        }
+        .status-display .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+            margin-right: 6px;
+        }
+        .status-display .status-indicator.active {
+            background: #00ff88;
+        }
+        /* Loading Indicator */
+        .loading-indicator {
+            display: none;
+            text-align: center;
+            padding: 8px;
+            font-size: 12px;
+            color: #00d4ff;
+        }
+        .loading-indicator.visible {
+            display: block;
+        }
+        .loading-indicator::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
     </style>
 </head>
 <body>
@@ -180,6 +310,38 @@ def get_embedded_html() -> str:
         <div style="font-size:10px; color:#555; margin-top:12px; text-align:center;">
             EQ data: <a href="https://github.com/opra-project/OPRA" target="_blank" style="color:#00d4ff;">OPRA Project</a> (CC BY-SA 4.0)
         </div>
+    </div>
+
+    <h2>🎧 クロスフィード</h2>
+    <div class="card">
+        <div class="toggle-container">
+            <div class="toggle-label">
+                <span>クロスフィード</span>
+            </div>
+            <div class="toggle-switch" id="crossfeedToggle"></div>
+        </div>
+        <div class="form-group" style="margin-top: 16px;">
+            <label>頭のサイズ:</label>
+            <div class="head-size-group">
+                <button type="button" class="head-size-btn" data-size="xs">XS</button>
+                <button type="button" class="head-size-btn" data-size="s">S</button>
+                <button type="button" class="head-size-btn" data-size="m" id="headSizeM">M</button>
+                <button type="button" class="head-size-btn" data-size="l">L</button>
+                <button type="button" class="head-size-btn" data-size="xl">XL</button>
+            </div>
+        </div>
+        <div class="info-text">
+            <span class="icon">ℹ️</span>正三角形配置（±30°）でスピーカーリスニングを再現
+        </div>
+        <div class="loading-indicator" id="crossfeedLoading">適用中</div>
+        <div class="status-display" id="crossfeedStatus" style="display:none;">
+            <div class="label">ステータス:</div>
+            <div class="value">
+                <span class="status-indicator" id="crossfeedStatusIndicator"></span>
+                <span id="crossfeedStatusText">無効</span>
+            </div>
+        </div>
+        <div id="crossfeedMessage" class="message"></div>
     </div>
 
     <script>
@@ -513,12 +675,156 @@ def get_embedded_html() -> str:
             }
         });
 
+        // Crossfeed Functions
+        const crossfeedState = {
+            enabled: false,
+            headSize: 'm',
+            isApplying: false
+        };
+
+        function showCrossfeedMessage(text, success) {
+            const el = document.getElementById('crossfeedMessage');
+            el.textContent = text;
+            el.classList.remove('success', 'error');
+            el.classList.add(success ? 'success' : 'error');
+            setTimeout(() => el.classList.remove('success', 'error'), 4000);
+        }
+
+        function updateCrossfeedToggle(enabled) {
+            const toggle = document.getElementById('crossfeedToggle');
+            crossfeedState.enabled = enabled;
+            if (enabled) {
+                toggle.classList.add('active');
+            } else {
+                toggle.classList.remove('active');
+            }
+            updateCrossfeedStatusDisplay();
+        }
+
+        function updateHeadSizeButtons(headSize) {
+            document.querySelectorAll('.head-size-btn').forEach(btn => {
+                if (btn.dataset.size === headSize) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+            crossfeedState.headSize = headSize;
+        }
+
+        function updateCrossfeedStatusDisplay() {
+            const statusEl = document.getElementById('crossfeedStatus');
+            const indicatorEl = document.getElementById('crossfeedStatusIndicator');
+            const statusTextEl = document.getElementById('crossfeedStatusText');
+            
+            if (crossfeedState.enabled) {
+                statusEl.style.display = 'block';
+                indicatorEl.classList.add('active');
+                statusTextEl.textContent = '有効';
+            } else {
+                statusEl.style.display = 'none';
+                indicatorEl.classList.remove('active');
+                statusTextEl.textContent = '無効';
+            }
+        }
+
+        function setCrossfeedLoading(loading) {
+            const loadingEl = document.getElementById('crossfeedLoading');
+            const toggle = document.getElementById('crossfeedToggle');
+            const headSizeBtns = document.querySelectorAll('.head-size-btn');
+            
+            crossfeedState.isApplying = loading;
+            if (loading) {
+                loadingEl.classList.add('visible');
+                toggle.style.pointerEvents = 'none';
+                headSizeBtns.forEach(btn => btn.disabled = true);
+            } else {
+                loadingEl.classList.remove('visible');
+                toggle.style.pointerEvents = 'auto';
+                headSizeBtns.forEach(btn => btn.disabled = false);
+            }
+        }
+
+        async function fetchCrossfeedStatus() {
+            try {
+                const res = await fetch(API + '/crossfeed/status');
+                if (!res.ok) {
+                    console.error('Failed to fetch crossfeed status:', res.status);
+                    return;
+                }
+                const data = await res.json();
+                updateCrossfeedToggle(data.enabled || false);
+                if (data.headSize) {
+                    updateHeadSizeButtons(data.headSize.toLowerCase());
+                }
+            } catch (e) {
+                console.error('Failed to fetch crossfeed status:', e);
+            }
+        }
+
+        async function toggleCrossfeed() {
+            if (crossfeedState.isApplying) return;
+            
+            const wasEnabled = crossfeedState.enabled;
+            setCrossfeedLoading(true);
+            try {
+                const endpoint = wasEnabled ? '/crossfeed/disable' : '/crossfeed/enable';
+                const res = await fetch(API + endpoint, { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok && data.success) {
+                    await fetchCrossfeedStatus();
+                    // Use API message if available, otherwise use state-based message
+                    const message = data.message || (wasEnabled ? 'クロスフィードを無効化しました' : 'クロスフィードを有効化しました');
+                    showCrossfeedMessage(message, true);
+                } else {
+                    showCrossfeedMessage(data.detail || data.message || 'クロスフィードの切り替えに失敗しました', false);
+                }
+            } catch (e) {
+                showCrossfeedMessage('エラー: ' + e.message, false);
+            } finally {
+                setCrossfeedLoading(false);
+            }
+        }
+
+        async function setHeadSize(size) {
+            if (crossfeedState.isApplying || crossfeedState.headSize === size) return;
+            
+            setCrossfeedLoading(true);
+            try {
+                const res = await fetch(API + '/crossfeed/size/' + encodeURIComponent(size), { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok && data.success) {
+                    updateHeadSizeButtons(data.headSize || size);
+                    showCrossfeedMessage('頭サイズを ' + size.toUpperCase() + ' に変更しました', true);
+                } else {
+                    showCrossfeedMessage(data.detail || data.message || '頭サイズの変更に失敗しました', false);
+                }
+            } catch (e) {
+                showCrossfeedMessage('エラー: ' + e.message, false);
+            } finally {
+                setCrossfeedLoading(false);
+            }
+        }
+
+        // Crossfeed Event Listeners
+        document.getElementById('crossfeedToggle').addEventListener('click', toggleCrossfeed);
+        document.querySelectorAll('.head-size-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const size = btn.dataset.size;
+                setHeadSize(size);
+            });
+        });
+
         // Initial load
         fetchDevices();
         fetchStatus();
         fetchPhaseType();
+        fetchCrossfeedStatus();
         setInterval(fetchStatus, 5000);
         setInterval(fetchPhaseType, 5000);
+        setInterval(fetchCrossfeedStatus, 5000);
     </script>
 </body>
 </html>
