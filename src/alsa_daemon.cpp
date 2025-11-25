@@ -19,6 +19,7 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
+#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -133,6 +134,63 @@ static int g_input_sample_rate = DEFAULT_INPUT_SAMPLE_RATE;
 
 // Soft Mute controller for glitch-free shutdown (50ms fade at output sample rate)
 static SoftMute::Controller* g_soft_mute = nullptr;
+
+// Helper function for soft mute during filter switching (Issue #266)
+// Fade-out: 1.5 seconds, perform filter switch, fade-in: 1.5 seconds
+static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc) {
+    const int FILTER_SWITCH_FADE_MS = 1500;
+    
+    if (!g_soft_mute) {
+        // If soft mute not initialized, perform switch without mute
+        filterSwitchFunc();
+        return;
+    }
+    
+    // Save current fade duration
+    int originalFadeDuration = g_soft_mute->getFadeDuration();
+    int outputSampleRate = g_soft_mute->getSampleRate();
+    
+    // Update fade duration for filter switching
+    g_soft_mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
+    g_soft_mute->setSampleRate(outputSampleRate);
+    
+    std::cout << "[Filter Switch] Starting fade-out (1.5s)..." << std::endl;
+    g_soft_mute->startFadeOut();
+    
+    // Wait for fade-out to complete (approximately 1.5 seconds)
+    auto fade_start = std::chrono::steady_clock::now();
+    while (g_soft_mute->isTransitioning() && 
+           g_soft_mute->getState() == SoftMute::MuteState::FADING_OUT) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // Safety timeout: 2 seconds max
+        auto elapsed = std::chrono::steady_clock::now() - fade_start;
+        if (elapsed > std::chrono::seconds(2)) {
+            std::cerr << "[Filter Switch] Warning: Fade-out timeout, proceeding with switch" << std::endl;
+            break;
+        }
+    }
+    
+    // Ensure we're fully muted before switching
+    if (g_soft_mute->getState() != SoftMute::MuteState::MUTED) {
+        g_soft_mute->setMuted();
+    }
+    
+    // Perform filter switch
+    bool switch_success = filterSwitchFunc();
+    
+    if (switch_success) {
+        // Start fade-in after filter switch
+        std::cout << "[Filter Switch] Starting fade-in (1.5s)..." << std::endl;
+        g_soft_mute->startFadeIn();
+        
+        // Reset fade duration to original after transition completes
+        // This will be done asynchronously - check in audio processing thread
+    } else {
+        // If switch failed, restore original state immediately
+        g_soft_mute->setPlaying();
+        g_soft_mute->setFadeDuration(originalFadeDuration);
+    }
+}
 
 // Audio buffer for thread communication
 static std::mutex g_buffer_mutex;
@@ -682,7 +740,13 @@ static void zeromq_listener_thread() {
                                 response = resp.dump();
                             } else {
                                 CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
-                                if (g_hrtf_processor->switchHeadSize(targetSize)) {
+                                bool switch_success = false;
+                                applySoftMuteForFilterSwitch([&]() {
+                                    switch_success = g_hrtf_processor->switchHeadSize(targetSize);
+                                    return switch_success;
+                                });
+                                
+                                if (switch_success) {
                                     nlohmann::json resp;
                                     resp["status"] = "ok";
                                     resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
@@ -738,33 +802,41 @@ static void zeromq_listener_thread() {
                         response = "OK:Phase type already " + phaseStr;
                     } else {
                         // Switch phase type (changes actual filter FFT in quad-phase mode)
-                        if (!g_upsampler->switchPhaseType(newPhase)) {
-                            response = "ERR:Failed to switch phase type";
-                        } else {
-                            // Re-apply EQ if enabled (switchPhaseType clears eqApplied_)
-                            if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
-                                EQ::EqProfile eqProfile;
-                                if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
-                                    size_t filterFftSize = g_upsampler->getFilterFftSize();
-                                    size_t fullFftSize = g_upsampler->getFullFftSize();
-                                    double outputSampleRate =
-                                        static_cast<double>(g_input_sample_rate) *
-                                        g_config.upsampleRatio;
-                                    auto eqMagnitude = EQ::computeEqMagnitudeForFft(
-                                        filterFftSize, fullFftSize, outputSampleRate, eqProfile);
-                                    if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                                        std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
-                                                  << " phase" << std::endl;
+                        bool switch_success = false;
+                        applySoftMuteForFilterSwitch([&]() {
+                            switch_success = g_upsampler->switchPhaseType(newPhase);
+                            if (switch_success) {
+                                // Re-apply EQ if enabled (switchPhaseType clears eqApplied_)
+                                if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
+                                    EQ::EqProfile eqProfile;
+                                    if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
+                                        size_t filterFftSize = g_upsampler->getFilterFftSize();
+                                        size_t fullFftSize = g_upsampler->getFullFftSize();
+                                        double outputSampleRate =
+                                            static_cast<double>(g_input_sample_rate) *
+                                            g_config.upsampleRatio;
+                                        auto eqMagnitude = EQ::computeEqMagnitudeForFft(
+                                            filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+                                        if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
+                                            std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
+                                                      << " phase" << std::endl;
+                                        } else {
+                                            std::cerr << "ZeroMQ: Warning - EQ re-apply failed"
+                                                      << std::endl;
+                                        }
                                     } else {
-                                        std::cerr << "ZeroMQ: Warning - EQ re-apply failed"
-                                                  << std::endl;
+                                        std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
+                                                  << g_config.eqProfilePath << std::endl;
                                     }
-                                } else {
-                                    std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                                              << g_config.eqProfilePath << std::endl;
                                 }
                             }
+                            return switch_success;
+                        });
+                        
+                        if (switch_success) {
                             response = "OK:Phase type set to " + phaseStr;
+                        } else {
+                            response = "ERR:Failed to switch phase type";
                         }
                     }
                 }
@@ -1163,6 +1235,13 @@ void alsa_output_thread() {
             // Step 2: Apply soft mute for glitch-free shutdown/transitions
             if (g_soft_mute) {
                 g_soft_mute->process(float_buffer.data(), period_size);
+                
+                // Reset fade duration to default (50ms) after filter switch fade-in completes
+                // Check if we just completed a fade-in from filter switching (fade duration > 50ms)
+                if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING && 
+                    g_soft_mute->getFadeDuration() > 50) {
+                    g_soft_mute->setFadeDuration(50);
+                }
             }
 
             // Track peak level after gain & soft mute (pre-clipping)
