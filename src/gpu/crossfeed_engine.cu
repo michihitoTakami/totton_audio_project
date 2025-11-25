@@ -89,6 +89,11 @@ void checkCufftError(cufftResult result, const char* context) {
 void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
                                          size_t* trackedBytes, const char* context) {
     if (buffer.empty()) {
+        if (*trackedPtr) {
+            checkCudaError(cudaHostUnregister(*trackedPtr), "cudaHostUnregister stream buffer");
+            *trackedPtr = nullptr;
+            *trackedBytes = 0;
+        }
         return;
     }
 
