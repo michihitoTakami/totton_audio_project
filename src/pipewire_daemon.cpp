@@ -89,86 +89,45 @@ static void signal_handler(int sig) {
 // Called when input sample rate changes (e.g., from PipeWire param event or ZeroMQ)
 // Connected via on_param_changed() event and processed in main loop.
 // See: https://github.com/michihitoTakami/michy_os/issues/218
-//
-// LIMITATION: Current implementation only supports base rates (44100/48000 Hz).
-// Hi-res rates (88.2k/96k/176.4k/192k) require different filter coefficients
-// with appropriate upsample ratios (8x/4x/2x), which are not yet implemented.
-// See: docs/architecture/rate-negotiation-handshake.md Section 9 (Limitations)
 static bool handle_rate_change(int detected_sample_rate) {
-    if (!g_upsampler || !g_upsampler->isDualRateEnabled()) {
-        return false;  // Dual-rate not enabled
+    if (!g_upsampler) {
+        return false;
     }
 
-    auto new_family = ConvolutionEngine::detectRateFamily(detected_sample_rate);
-    if (new_family == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
-        std::cerr << "[Rate] Unknown rate family for " << detected_sample_rate << " Hz"
+    // Multi-rate mode: use switchToInputRate() for dynamic rate switching
+    if (!g_upsampler->isMultiRateEnabled()) {
+        std::cerr << "[Rate] ERROR: Multi-rate mode not enabled. Rate switching requires multi-rate mode."
                   << std::endl;
         return false;
     }
 
-    // Get expected upsample ratio for this input rate
-    int expected_ratio = ConvolutionEngine::getUpsampleRatioForInputRate(detected_sample_rate);
-    int base_rate = ConvolutionEngine::getBaseSampleRate(new_family);
-
-    // Check if this is a non-base rate (hi-res)
-    if (detected_sample_rate != base_rate) {
-        // LIMITATION: Hi-res rates are detected but not fully supported yet.
-        // The daemon will continue operating at the base rate (44.1k/48k).
-        // This is a known limitation - proper multi-rate support requires
-        // loading appropriate filter coefficients for each upsample ratio.
-        std::cerr << "[Rate] WARNING: Hi-res input detected (" << detected_sample_rate
-                  << " Hz, expected " << expected_ratio << "x upsampling)." << std::endl;
-        std::cerr << "[Rate] WARNING: Current implementation only supports base rates ("
-                  << base_rate << " Hz)." << std::endl;
-        std::cerr << "[Rate] WARNING: Audio may be processed incorrectly. "
-                  << "See docs/architecture/rate-negotiation-handshake.md" << std::endl;
-
-        // Still update internal state to track the actual detected rate
-        // (even though processing will be incorrect)
-        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
-    }
-
-    // Check if family change is needed
-    if (new_family == g_get_rate_family()) {
-        // Same family - update input rate tracking and upsampler ratio
+    if (g_upsampler->switchToInputRate(detected_sample_rate)) {
         g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
 
-        // Update upsampler's internal rate (changes upsample ratio: 16x/8x/4x/2x/1x)
-        g_upsampler->setInputSampleRate(detected_sample_rate);
+        // Output rate is dynamically calculated (input_rate × upsample_ratio)
+        int new_output_rate = g_upsampler->getOutputSampleRate();
+        int current_output_rate = g_current_output_rate.load();
 
-        std::cout << "[Rate] Same family, updated input rate to " << detected_sample_rate << " Hz ("
-                  << expected_ratio << "x upsampling)" << std::endl;
-        return true;
-    }
-
-    // Different family - switch coefficient set (glitch-free via double buffering)
-    std::cout << "[Rate] Switching rate family: "
-              << (g_get_rate_family() == ConvolutionEngine::RateFamily::RATE_44K ? "44k" : "48k")
-              << " -> " << (new_family == ConvolutionEngine::RateFamily::RATE_44K ? "44k" : "48k")
-              << std::endl;
-
-    if (g_upsampler->switchRateFamily(new_family)) {
-        g_set_rate_family(new_family);
-        // Store actual detected rate (not just base rate)
-        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
-        int new_output_rate = ConvolutionEngine::getOutputSampleRate(new_family);
         g_current_output_rate.store(new_output_rate, std::memory_order_release);
 
-        // Update upsampler's internal rate tracking
-        g_upsampler->setInputSampleRate(detected_sample_rate);
-
-        // Signal that output stream needs reconnection with new rate
-        if (g_data) {
+        // Output rate change only requires reconnection if it actually changed
+        // (same-family hi-res switches keep the same output rate)
+        if (g_data && new_output_rate != current_output_rate) {
             g_data->needs_output_reconnect = true;
             g_data->new_output_rate = new_output_rate;
             std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
-                      << " Hz" << std::endl;
+                      << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)"
+                      << std::endl;
+        } else {
+            std::cout << "[Rate] Rate switched to " << detected_sample_rate << " Hz -> "
+                      << new_output_rate << " Hz (" << g_upsampler->getUpsampleRatio()
+                      << "x upsampling)" << std::endl;
         }
-
         return true;
     }
 
-    std::cerr << "[Rate] Failed to switch rate family" << std::endl;
+    std::cerr << "[Rate] Failed to switch to input rate: " << detected_sample_rate << " Hz"
+              << std::endl;
     return false;
 }
 
@@ -339,52 +298,35 @@ int main(int argc, char* argv[]) {
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
-    // Parse filter paths (supports both single and dual-rate modes)
-    // Usage: pipewire_daemon [filter_44k.bin] [filter_48k.bin]
-    //   Single-rate: pipewire_daemon filter.bin
-    //   Dual-rate:   pipewire_daemon filter_44k.bin filter_48k.bin
-    std::string filter_path_44k = "data/coefficients/filter_44k_2m_min_phase.bin";
-    std::string filter_path_48k = "data/coefficients/filter_48k_2m_min_phase.bin";
-    bool use_dual_rate = true;
+    // Parse coefficient directory (multi-rate mode only)
+    // Usage: pipewire_daemon [coefficient_dir]
+    std::string coefficient_dir = "data/coefficients";
 
-    if (argc == 2) {
-        // Single filter path - use legacy single-rate mode
-        filter_path_44k = argv[1];
-        use_dual_rate = false;
-    } else if (argc >= 3) {
-        // Dual filter paths
-        filter_path_44k = argv[1];
-        filter_path_48k = argv[2];
-        use_dual_rate = true;
+    if (argc >= 2) {
+        coefficient_dir = argv[1];
     }
 
     // Install signal handlers
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Initialize GPU upsampler
+    // Initialize GPU upsampler (multi-rate mode only)
     std::cout << "Initializing GPU upsampler..." << std::endl;
     g_upsampler = new ConvolutionEngine::GPUUpsampler();
 
-    bool init_success = false;
-    if (use_dual_rate) {
-        std::cout << "Mode: Dual-Rate (44.1kHz + 48kHz families)" << std::endl;
-        init_success = g_upsampler->initializeDualRate(filter_path_44k, filter_path_48k,
-                                                       DEFAULT_UPSAMPLE_RATIO, DEFAULT_BLOCK_SIZE,
-                                                       ConvolutionEngine::RateFamily::RATE_44K);
-    } else {
-        std::cout << "Mode: Single-Rate (44.1kHz family only)" << std::endl;
-        init_success =
-            g_upsampler->initialize(filter_path_44k, DEFAULT_UPSAMPLE_RATIO, DEFAULT_BLOCK_SIZE);
-    }
+    std::cout << "Mode: Multi-Rate (all supported rates: 44.1k/48k families, 16x/8x/4x/2x)"
+              << std::endl;
+    bool init_success = g_upsampler->initializeMultiRate(
+        coefficient_dir, DEFAULT_BLOCK_SIZE,
+        44100);  // Initial input rate (will be updated by PipeWire detection)
 
     if (!init_success) {
         std::cerr << "Failed to initialize GPU upsampler" << std::endl;
         delete g_upsampler;
         return 1;
     }
-    std::cout << "GPU upsampler ready (16x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)"
-              << std::endl;
+    std::cout << "GPU upsampler ready (" << g_upsampler->getUpsampleRatio()
+              << "x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
 
     // Load config and set phase type (input sample rate is auto-detected from PipeWire)
     AppConfig appConfig;
