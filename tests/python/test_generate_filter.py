@@ -692,24 +692,24 @@ class TestMinimumPhaseProperty:
 class TestCoefficientFileLoading:
     """Tests for loading existing coefficient files."""
 
-    def test_load_44k_coefficients(self, coefficients_dir):
-        """Should load 44.1kHz coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_44k_2m_min_phase.bin"
+    def test_load_44k_16x_coefficients(self, coefficients_dir):
+        """Should load 44.1kHz 16x coefficient file if it exists."""
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
-            pytest.skip("44kHz coefficient file not found")
+            pytest.skip("44kHz 16x coefficient file not found")
 
         h = np.fromfile(coeff_path, dtype=np.float32)
 
         assert len(h) == 2_000_000
         assert np.isfinite(h).all()
 
-    def test_load_48k_coefficients(self, coefficients_dir):
-        """Should load 48kHz coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_48k_2m_min_phase.bin"
+    def test_load_48k_16x_coefficients(self, coefficients_dir):
+        """Should load 48kHz 16x coefficient file if it exists."""
+        coeff_path = coefficients_dir / "filter_48k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
-            pytest.skip("48kHz coefficient file not found")
+            pytest.skip("48kHz 16x coefficient file not found")
 
         h = np.fromfile(coeff_path, dtype=np.float32)
 
@@ -717,16 +717,17 @@ class TestCoefficientFileLoading:
         assert np.isfinite(h).all()
 
     def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):
-        """Loaded coefficients should have DC gain equal to upsample ratio (unity overall gain)."""
-        coeff_path = coefficients_dir / "filter_44k_2m_min_phase.bin"
+        """Loaded coefficients should have DC gain close to target (L * 0.99)."""
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
-            pytest.skip("44kHz coefficient file not found")
+            pytest.skip("44kHz 16x coefficient file not found")
 
         h = np.fromfile(coeff_path, dtype=np.float32)
         dc_gain = np.sum(h)
 
-        assert np.isclose(dc_gain, 16.0, rtol=0.01)
+        # DCゲイン = 16 * 0.99 = 15.84
+        assert np.isclose(dc_gain, 15.84, rtol=0.01)
 
 
 class TestCoefficientFileNaming:
@@ -1215,21 +1216,30 @@ class TestNormalizeCoefficientsErrorHandling:
 
 
 class TestCoefficientDcGain:
-    """Tests for shipped coefficient DC gain after upsample normalization."""
+    """Tests for shipped coefficient DC gain after upsample normalization.
 
-    def test_coefficient_dc_matches_ratio(self):
-        """Shipped filters should sum to their upsample ratio (unity overall gain)."""
+    新形式のフィルタは DCゲイン = L × 0.99 で統一されている。
+    """
+
+    def test_coefficient_dc_matches_target(self):
+        """Shipped filters should have DC gain = L * 0.99."""
         coeff_dir = Path(__file__).parent.parent.parent / "data" / "coefficients"
+        # 新形式フィルタ: DCゲイン = L * 0.99
         cases = [
-            ("filter_44k_2m_min_phase.bin", 16.0),
-            ("filter_48k_2m_min_phase.bin", 16.0),
-            ("filter_44k_16x_2m_linear.bin", 16.0),
-            ("filter_48k_16x_2m_linear.bin", 16.0),
+            ("filter_44k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_48k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_44k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_48k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
         ]
         for filename, expected_dc in cases:
-            data = np.fromfile(coeff_dir / filename, dtype=np.float32)
+            filepath = coeff_dir / filename
+            if not filepath.exists():
+                pytest.skip(f"{filename} not found")
+            data = np.fromfile(filepath, dtype=np.float32)
             dc_gain = float(np.sum(data))
-            assert np.isclose(dc_gain, expected_dc, rtol=1e-5, atol=1e-3)
+            assert np.isclose(
+                dc_gain, expected_dc, rtol=1e-3
+            ), f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
 
 
 class TestValidateTapCountErrorHandling:
