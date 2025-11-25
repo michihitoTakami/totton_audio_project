@@ -17,6 +17,9 @@
 // Configuration (using common constants from daemon_constants.h)
 using namespace DaemonConstants;
 
+// Main loop timeout for rate change checking (non-blocking iteration)
+constexpr int MAIN_LOOP_TIMEOUT_MS = 10;
+
 // Dynamic rate configuration (updated at runtime based on input detection)
 // Using atomic for thread-safety between PipeWire callbacks and main thread
 static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
@@ -40,6 +43,9 @@ static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 // Pending rate change (set by PipeWire callback, processed in main loop)
 // Value: 0 = no change pending, >0 = detected input sample rate
 static std::atomic<int> g_pending_rate_change{0};
+
+// Output device target (DAC name) - stored for reconnection
+static std::string g_output_device_target;
 
 // Forward declaration for Data struct (defined below)
 struct Data;
@@ -89,8 +95,18 @@ static void signal_handler(int sig) {
 // Called when input sample rate changes (e.g., from PipeWire param event or ZeroMQ)
 // Connected via on_param_changed() event and processed in main loop.
 // See: https://github.com/michihitoTakami/michy_os/issues/218
+//
+// Returns:
+//   true if rate switch was successful
+//   false if rate switch failed (current rate is maintained, error logged)
+//
+// Error handling:
+//   - If switchToInputRate() fails, current rate is maintained and error is logged
+//   - If output reconnection is needed but g_data is null, error is logged
+//   - Future: ZMQ PUB notification should be sent on error (see design doc Section 3.2)
 static bool handle_rate_change(int detected_sample_rate) {
     if (!g_upsampler) {
+        std::cerr << "[Rate] ERROR: GPU upsampler not initialized" << std::endl;
         return false;
     }
 
@@ -100,6 +116,10 @@ static bool handle_rate_change(int detected_sample_rate) {
                   << std::endl;
         return false;
     }
+
+    // Store current rate for error recovery
+    int previous_input_rate = g_current_input_rate.load();
+    int previous_output_rate = g_current_output_rate.load();
 
     if (g_upsampler->switchToInputRate(detected_sample_rate)) {
         g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
@@ -112,12 +132,19 @@ static bool handle_rate_change(int detected_sample_rate) {
 
         // Output rate change only requires reconnection if it actually changed
         // (same-family hi-res switches keep the same output rate)
-        if (g_data && new_output_rate != current_output_rate) {
-            g_data->needs_output_reconnect = true;
-            g_data->new_output_rate = new_output_rate;
-            std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
-                      << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)"
-                      << std::endl;
+        if (new_output_rate != current_output_rate) {
+            if (g_data) {
+                g_data->needs_output_reconnect = true;
+                g_data->new_output_rate = new_output_rate;
+                std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
+                          << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)"
+                          << std::endl;
+            } else {
+                std::cerr << "[Rate] WARNING: Output reconnection needed but g_data is null. "
+                          << "Rate changed to " << detected_sample_rate << " Hz -> "
+                          << new_output_rate << " Hz, but output stream may be at wrong rate."
+                          << std::endl;
+            }
         } else {
             std::cout << "[Rate] Rate switched to " << detected_sample_rate << " Hz -> "
                       << new_output_rate << " Hz (" << g_upsampler->getUpsampleRatio()
@@ -126,8 +153,11 @@ static bool handle_rate_change(int detected_sample_rate) {
         return true;
     }
 
-    std::cerr << "[Rate] Failed to switch to input rate: " << detected_sample_rate << " Hz"
-              << std::endl;
+    // Rate switch failed - maintain current rate
+    std::cerr << "[Rate] ERROR: Failed to switch to input rate: " << detected_sample_rate
+              << " Hz. Maintaining current rate: " << previous_input_rate << " Hz -> "
+              << previous_output_rate << " Hz" << std::endl;
+    // Future: Send ZMQ PUB notification with error details (see design doc Section 3.2)
     return false;
 }
 
@@ -408,12 +438,14 @@ int main(int argc, char* argv[]) {
         input_params, 1);
 
     // Create output stream (705.6kHz playback to DAC)
+    // Store output device target for reconnection (can be made configurable in future)
+    g_output_device_target = "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo";
     std::cout << "Creating output stream (705.6kHz)..." << std::endl;
     data.output_stream = pw_stream_new_simple(
         loop, "GPU Upsampler Output",
         pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
                           PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_TARGET,
-                          "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo", "audio.channels",
+                          g_output_device_target.c_str(), "audio.channels",
                           "2", "audio.position", "FL,FR", nullptr),
         &output_stream_events, &data);
 
@@ -468,9 +500,13 @@ int main(int argc, char* argv[]) {
         }
 
         // Handle output stream reconnection after rate family change
+        // This is needed when switching between 44.1k and 48k families (different output rates)
         if (data.needs_output_reconnect && data.new_output_rate > 0) {
             std::cout << "[Main] Reconnecting output stream at " << data.new_output_rate << " Hz..."
                       << std::endl;
+
+            // Store previous rate for error recovery
+            int reconnect_rate = data.new_output_rate;
 
             // Disconnect and destroy old output stream
             if (data.output_stream) {
@@ -484,9 +520,20 @@ int main(int argc, char* argv[]) {
                 loop, "GPU Upsampler Output",
                 pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
                                   PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_TARGET,
-                                  "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo",
+                                  g_output_device_target.c_str(),
                                   "audio.channels", "2", "audio.position", "FL,FR", nullptr),
                 &output_stream_events, &data);
+
+            if (!data.output_stream) {
+                std::cerr << "[Main] ERROR: Failed to create output stream for reconnection"
+                          << std::endl;
+                // Clear flags to prevent retry loop
+                data.needs_output_reconnect = false;
+                data.new_output_rate = 0;
+                // Note: Audio output will be broken, but daemon continues running
+                // Future: Consider reverting to previous rate or sending ZMQ error notification
+                continue;
+            }
 
             // Configure new output format with updated rate
             uint8_t reconnect_buffer[1024];
@@ -495,7 +542,7 @@ int main(int argc, char* argv[]) {
 
             struct spa_audio_info_raw reconnect_info = {};
             reconnect_info.format = SPA_AUDIO_FORMAT_F32;
-            reconnect_info.rate = static_cast<uint32_t>(data.new_output_rate);
+            reconnect_info.rate = static_cast<uint32_t>(reconnect_rate);
             reconnect_info.channels = CHANNELS;
             reconnect_info.position[0] = SPA_AUDIO_CHANNEL_FL;
             reconnect_info.position[1] = SPA_AUDIO_CHANNEL_FR;
@@ -504,24 +551,35 @@ int main(int argc, char* argv[]) {
             reconnect_params[0] = spa_format_audio_raw_build(&reconnect_builder,
                                                              SPA_PARAM_EnumFormat, &reconnect_info);
 
-            pw_stream_connect(data.output_stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
-                              static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
-                                                           PW_STREAM_FLAG_RT_PROCESS |
-                                                           PW_STREAM_FLAG_AUTOCONNECT),
-                              reconnect_params, 1);
+            int err = pw_stream_connect(data.output_stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
+                                        static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
+                                                                     PW_STREAM_FLAG_RT_PROCESS |
+                                                                     PW_STREAM_FLAG_AUTOCONNECT),
+                                        reconnect_params, 1);
 
-            std::cout << "[Main] Output stream reconnected at " << data.new_output_rate << " Hz"
-                      << std::endl;
-
-            // Clear reconnection flag
-            data.needs_output_reconnect = false;
-            data.new_output_rate = 0;
+            if (err < 0) {
+                std::cerr << "[Main] ERROR: Failed to reconnect output stream at "
+                          << reconnect_rate << " Hz (error code: " << err << ")" << std::endl;
+                // Destroy the stream we created
+                pw_stream_destroy(data.output_stream);
+                data.output_stream = nullptr;
+                // Clear flags to prevent retry loop
+                data.needs_output_reconnect = false;
+                data.new_output_rate = 0;
+                // Note: Audio output will be broken, but daemon continues running
+                // Future: Consider reverting to previous rate or sending ZMQ error notification
+            } else {
+                std::cout << "[Main] Output stream reconnected at " << reconnect_rate << " Hz"
+                          << std::endl;
+                // Clear reconnection flag on success
+                data.needs_output_reconnect = false;
+                data.new_output_rate = 0;
+            }
         }
 
         // Process PipeWire events (non-blocking iteration)
-        // timeout_ms = -1 means wait indefinitely, but we use a short timeout
-        // to periodically check g_running and pending rate changes
-        pw_loop_iterate(pw_main_loop_get_loop(data.loop), 10);  // 10ms timeout
+        // Use short timeout to periodically check g_running and pending rate changes
+        pw_loop_iterate(pw_main_loop_get_loop(data.loop), MAIN_LOOP_TIMEOUT_MS);
     }
 
     // Cleanup
