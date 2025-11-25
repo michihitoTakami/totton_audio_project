@@ -20,7 +20,6 @@ struct AppConfig {
     int blockSize = 4096;
     float gain = 1.0f;
     std::string filterPath = "data/coefficients/filter_44k_2m_min_phase.bin";
-    int inputSampleRate = 44100;               // Input sample rate (44100 or 48000)
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 
     // Quad-phase mode: 4 filter paths (2 rate families × 2 phase types)
@@ -33,6 +32,13 @@ struct AppConfig {
     // EQ settings
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)
+
+    // Crossfeed settings (nested struct for clarity)
+    struct CrossfeedConfig {
+        bool enabled = false;
+        std::string headSize = "m";  // "s", "m", "l", "xl"
+        std::string hrtfPath = "data/crossfeed/hrtf/";
+    } crossfeed;
 };
 
 // Convert string to PhaseType (returns Minimum for invalid input)

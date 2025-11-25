@@ -1,6 +1,5 @@
 {
   "alsaDevice": "hw:AUDIO",
-  "inputSampleRate": 44100,
   "bufferSize": 262144,
   "periodSize": 32768,
   "upsampleRatio": 16,
@@ -15,6 +14,11 @@
   "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear.bin",
   "eqEnabled": true,
   "eqProfilePath": "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt",
+  "crossfeed": {
+    "enabled": false,
+    "headSize": "m",
+    "hrtfPath": "data/crossfeed/hrtf/"
+  },
   "logging": {
     "level": "info",
     "filePath": "/var/log/gpu_upsampler/daemon.log",

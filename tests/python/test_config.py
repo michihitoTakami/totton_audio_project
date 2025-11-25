@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 
 from web.services.config import load_config, load_raw_config, save_config
-from web.models import Settings
+from web.models import CrossfeedSettings, Settings
 
 
 class TestLoadRawConfig:
@@ -84,7 +84,6 @@ class TestSaveConfig:
             "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear.bin",
             "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear.bin",
             "phaseType": "minimum",
-            "inputSampleRate": 44100,
             "eqEnabled": True,
             "eqProfilePath": "/path/to/eq.txt",
         }
@@ -97,8 +96,6 @@ class TestSaveConfig:
             eq_enabled=True,
             eq_profile="NewProfile",
             eq_profile_path="/path/to/new_eq.txt",
-            input_rate=48000,
-            output_rate=768000,
         )
 
         with patch("web.services.config.CONFIG_PATH", config_file):
@@ -113,8 +110,6 @@ class TestSaveConfig:
         assert saved_config["alsaDevice"] == "hw:NEW"
         assert saved_config["upsampleRatio"] == 16
         assert saved_config["eqProfile"] == "NewProfile"
-        assert saved_config["inputRate"] == 48000
-        assert saved_config["outputRate"] == 768000
 
         # Non-Settings fields should be preserved
         assert saved_config["quadPhaseEnabled"] is True
@@ -135,9 +130,13 @@ class TestSaveConfig:
             == "data/coefficients/filter_48k_16x_2m_linear.bin"
         )
         assert saved_config["phaseType"] == "minimum"
-        assert saved_config["inputSampleRate"] == 44100
         assert saved_config["eqEnabled"] is True
         assert saved_config["eqProfilePath"] == "/path/to/new_eq.txt"
+
+        # Auto-negotiated fields should be removed
+        assert "inputRate" not in saved_config
+        assert "outputRate" not in saved_config
+        assert "inputSampleRate" not in saved_config
 
     def test_save_creates_new_file(self, tmp_path: Path) -> None:
         """Test that save_config creates a new file if it doesn't exist."""
@@ -191,8 +190,6 @@ class TestLoadConfig:
             "alsaDevice": "hw:AUDIO",
             "upsampleRatio": 16,
             "eqProfile": "MyProfile",
-            "inputRate": 44100,
-            "outputRate": 705600,
         }
         config_file.write_text(json.dumps(config_data))
 
@@ -203,8 +200,6 @@ class TestLoadConfig:
         assert result.alsa_device == "hw:AUDIO"
         assert result.upsample_ratio == 16
         assert result.eq_profile == "MyProfile"
-        assert result.input_rate == 44100
-        assert result.output_rate == 705600
 
     def test_load_config_uses_defaults(self, tmp_path: Path) -> None:
         """Test that load_config uses defaults when file doesn't exist."""
@@ -217,3 +212,152 @@ class TestLoadConfig:
         # Check defaults from Settings model
         assert result.alsa_device == "default"
         assert result.upsample_ratio == 8
+
+
+class TestCrossfeedConfig:
+    """Tests for crossfeed configuration."""
+
+    def test_load_config_crossfeed_defaults(self, tmp_path: Path) -> None:
+        """Test default crossfeed settings when not specified."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{}")
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            settings = load_config()
+
+        assert settings.crossfeed.enabled is False
+        assert settings.crossfeed.head_size == "m"
+        assert settings.crossfeed.hrtf_path == "data/crossfeed/hrtf/"
+
+    def test_load_config_crossfeed_enabled(self, tmp_path: Path) -> None:
+        """Test loading crossfeed settings."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "crossfeed": {
+                        "enabled": True,
+                        "headSize": "l",
+                        "hrtfPath": "custom/hrtf/",
+                    }
+                }
+            )
+        )
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            settings = load_config()
+
+        assert settings.crossfeed.enabled is True
+        assert settings.crossfeed.head_size == "l"
+        assert settings.crossfeed.hrtf_path == "custom/hrtf/"
+
+    def test_load_config_crossfeed_partial(self, tmp_path: Path) -> None:
+        """Test loading partial crossfeed settings (keeps defaults for missing)."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"crossfeed": {"enabled": True}}))
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            settings = load_config()
+
+        assert settings.crossfeed.enabled is True
+        # Missing fields should use defaults
+        assert settings.crossfeed.head_size == "m"
+        assert settings.crossfeed.hrtf_path == "data/crossfeed/hrtf/"
+
+    def test_save_config_preserves_crossfeed(self, tmp_path: Path) -> None:
+        """Test saving crossfeed settings."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{}")
+
+        settings = Settings(
+            crossfeed=CrossfeedSettings(
+                enabled=True,
+                head_size="xl",
+                hrtf_path="my/hrtf/",
+            )
+        )
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            save_config(settings)
+
+        saved = json.loads(config_file.read_text())
+        assert saved["crossfeed"]["enabled"] is True
+        assert saved["crossfeed"]["headSize"] == "xl"
+        assert saved["crossfeed"]["hrtfPath"] == "my/hrtf/"
+
+    def test_save_config_crossfeed_default_values(self, tmp_path: Path) -> None:
+        """Test saving default crossfeed settings."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{}")
+
+        settings = Settings()  # All defaults
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            save_config(settings)
+
+        saved = json.loads(config_file.read_text())
+        assert saved["crossfeed"]["enabled"] is False
+        assert saved["crossfeed"]["headSize"] == "m"
+        assert saved["crossfeed"]["hrtfPath"] == "data/crossfeed/hrtf/"
+
+    def test_roundtrip_crossfeed_settings(self, tmp_path: Path) -> None:
+        """Test saving and loading crossfeed settings (roundtrip)."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{}")
+
+        original_settings = Settings(
+            alsa_device="hw:TEST",
+            crossfeed=CrossfeedSettings(
+                enabled=True,
+                head_size="s",
+                hrtf_path="roundtrip/hrtf/",
+            ),
+        )
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            save_config(original_settings)
+            loaded_settings = load_config()
+
+        assert loaded_settings.crossfeed.enabled is True
+        assert loaded_settings.crossfeed.head_size == "s"
+        assert loaded_settings.crossfeed.hrtf_path == "roundtrip/hrtf/"
+        assert loaded_settings.alsa_device == "hw:TEST"
+
+    def test_load_config_invalid_head_size_returns_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that invalid head_size falls back to defaults."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "crossfeed": {
+                        "enabled": True,
+                        "headSize": "invalid_size",  # Invalid value
+                        "hrtfPath": "some/path/",
+                    }
+                }
+            )
+        )
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            settings = load_config()
+
+        # Should return default Settings due to validation error
+        assert settings.crossfeed.enabled is False
+        assert settings.crossfeed.head_size == "m"
+        assert settings.crossfeed.hrtf_path == "data/crossfeed/hrtf/"
+
+    def test_load_config_crossfeed_not_object_returns_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that crossfeed as non-object returns defaults."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"crossfeed": "not an object"}))
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            settings = load_config()
+
+        # Should use default crossfeed settings
+        assert settings.crossfeed.enabled is False
+        assert settings.crossfeed.head_size == "m"

@@ -2012,16 +2012,6 @@
               }
             ],
             "title": "Eq Profile Path"
-          },
-          "input_rate": {
-            "type": "integer",
-            "title": "Input Rate",
-            "default": 44100
-          },
-          "output_rate": {
-            "type": "integer",
-            "title": "Output Rate",
-            "default": 352800
           }
         },
         "type": "object",
@@ -2084,28 +2074,6 @@
               }
             ],
             "title": "Eq Profile Path"
-          },
-          "input_rate": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Input Rate"
-          },
-          "output_rate": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output Rate"
           }
         },
         "type": "object",

@@ -99,10 +99,6 @@ async def update_settings(update: SettingsUpdate):
         current.eq_profile_path = update.eq_profile_path
     # eq_enabled is applied after we derive path so that enabling without a path does not stick
     eq_enabled_requested = update.eq_enabled
-    if update.input_rate is not None:
-        current.input_rate = update.input_rate
-    if update.output_rate is not None:
-        current.output_rate = update.output_rate
 
     # Keep EQ fields consistent with the daemon expectations
     if current.eq_profile_path is None and current.eq_profile:

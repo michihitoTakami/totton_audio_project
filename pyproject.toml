@@ -16,6 +16,11 @@ dependencies = [
     "pysofaconventions>=0.1.5",
 ]
 
+[project.optional-dependencies]
+gpu = [
+    "cupy-cuda12x>=13.0.0",  # GPU高速化（NVIDIA CUDA 12.x向け）
+]
+
 [dependency-groups]
 dev = [
     "pre-commit>=3.8.0",
