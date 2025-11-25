@@ -2,6 +2,7 @@
 #define AUDIO_UTILS_H
 
 #include <cstddef>
+#include <cmath>
 
 // Common audio utility functions shared between daemons
 // Issue #105: Daemon common code extraction
@@ -31,6 +32,34 @@ inline void interleaveStereoWithGain(const float* left, const float* right, floa
         dst[i * 2] = left[i] * gain;
         dst[i * 2 + 1] = right[i] * gain;
     }
+}
+
+inline void applyInterleavedGain(float* interleaved, size_t frames, float gain) {
+    if (!interleaved || frames == 0) {
+        return;
+    }
+    if (std::fabs(gain - 1.0f) < 1e-6f) {
+        return;
+    }
+    const size_t samples = frames * 2;
+    for (size_t i = 0; i < samples; ++i) {
+        interleaved[i] *= gain;
+    }
+}
+
+inline float computeInterleavedPeak(const float* interleaved, size_t frames) {
+    if (!interleaved || frames == 0) {
+        return 0.0f;
+    }
+    float peak = 0.0f;
+    const size_t samples = frames * 2;
+    for (size_t i = 0; i < samples; ++i) {
+        float value = std::fabs(interleaved[i]);
+        if (value > peak) {
+            peak = value;
+        }
+    }
+    return peak;
 }
 
 }  // namespace AudioUtils

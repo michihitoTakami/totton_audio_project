@@ -19,7 +19,7 @@ struct AppConfig {
     int upsampleRatio = 16;
     int blockSize = 4096;
     float gain = 1.0f;
-    float headroomTarget = 0.97f;  // Target peak level after automatic headroom scaling
+    float headroomTarget = 0.92f;  // Peak target (linear 0-1) for headroom + limiter guard
     std::string filterPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 

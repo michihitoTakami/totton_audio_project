@@ -5,6 +5,8 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 
+#include "daemon_constants.h"
+
 PhaseType parsePhaseType(const std::string& str) {
     if (str == "linear") {
         return PhaseType::Linear;
@@ -147,6 +149,12 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 }
             }
         }
+
+        // Clamp derived floating-point values after parsing (ensures sane bounds)
+        outConfig.gain = std::max(0.0f, outConfig.gain);
+        outConfig.headroomTarget = std::clamp(outConfig.headroomTarget,
+                                              DaemonConstants::MIN_HEADROOM_TARGET,
+                                              DaemonConstants::MAX_HEADROOM_TARGET);
 
         if (verbose) {
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)

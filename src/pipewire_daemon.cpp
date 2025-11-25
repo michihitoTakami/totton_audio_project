@@ -20,6 +20,10 @@
 // Configuration (using common constants from daemon_constants.h)
 using namespace DaemonConstants;
 
+static AppConfig g_config;
+static std::atomic<float> g_limiter_gain{1.0f};
+static std::atomic<float> g_effective_gain{1.0f};
+
 // Dynamic rate configuration (updated at runtime based on input detection)
 // Using atomic for thread-safety between PipeWire callbacks and main thread
 static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
@@ -50,6 +54,26 @@ struct Data;
 
 // Global pointer to Data for use in handle_rate_change
 static Data* g_data = nullptr;
+
+static float apply_output_limiter(float* interleaved, size_t frames) {
+    constexpr float kEpsilon = 1e-6f;
+    if (!interleaved || frames == 0) {
+        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+        g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
+        return 0.0f;
+    }
+    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
+    float limiterGain = 1.0f;
+    const float target = g_config.headroomTarget;
+    if (target > 0.0f && peak > target) {
+        limiterGain = target / (peak + kEpsilon);
+        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
+        peak = target;
+    }
+    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
+    g_effective_gain.store(g_config.gain * limiterGain, std::memory_order_relaxed);
+    return peak;
+}
 
 // Output ring buffers (using common AudioRingBuffer class)
 static AudioRingBuffer g_output_buffer_left;
@@ -103,7 +127,7 @@ static bool handle_rate_change(int detected_sample_rate) {
     if (!g_upsampler->isMultiRateEnabled()) {
         std::cerr
             << "[Rate] ERROR: Multi-rate mode not enabled. Rate switching requires multi-rate mode."
-            << std::endl;
+                  << std::endl;
         return false;
     }
 
@@ -114,24 +138,24 @@ static bool handle_rate_change(int detected_sample_rate) {
     using namespace DaemonConstants;
     int current_output_rate = g_current_output_rate.load();
     int originalFadeDuration = DEFAULT_SOFT_MUTE_FADE_MS;
-
+    
     if (g_soft_mute && current_output_rate > 0) {
         // Save original fade duration for restoration
         originalFadeDuration = g_soft_mute->getFadeDuration();
-
+        
         // Update fade duration for filter switching
         g_soft_mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
         g_soft_mute->setSampleRate(current_output_rate);
-
+        
         std::cout << "[Rate] Starting fade-out for filter switch ("
                   << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
         g_soft_mute->startFadeOut();
-
+        
         // Wait for fade-out to complete (approximately 1.5 seconds)
         // Polling is necessary because fade is processed in audio thread
         auto fade_start = std::chrono::steady_clock::now();
         const auto timeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS);
-        while (g_soft_mute->isTransitioning() &&
+        while (g_soft_mute->isTransitioning() && 
                g_soft_mute->getState() == SoftMute::MuteState::FADING_OUT) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             auto elapsed = std::chrono::steady_clock::now() - fade_start;
@@ -141,7 +165,7 @@ static bool handle_rate_change(int detected_sample_rate) {
                 break;
             }
         }
-
+        
         // Ensure we're fully muted before switching
         if (g_soft_mute->getState() != SoftMute::MuteState::MUTED) {
             g_soft_mute->setMuted();
@@ -150,7 +174,7 @@ static bool handle_rate_change(int detected_sample_rate) {
 
     // Perform filter switch
     bool switch_success = false;
-
+    
     if (g_upsampler->switchToInputRate(detected_sample_rate)) {
         g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
 
@@ -288,19 +312,22 @@ static void on_output_process(void* userdata) {
                 // Interleave output (separate L/R → stereo interleaved)
                 AudioUtils::interleaveStereo(g_output_temp_left.data(), g_output_temp_right.data(),
                                              output_samples, n_frames);
-
+                AudioUtils::applyInterleavedGain(output_samples, n_frames, g_config.gain);
+                
                 // Apply soft mute if transitioning (for filter switching)
                 if (g_soft_mute) {
                     g_soft_mute->process(output_samples, n_frames);
-
+                    
                     // Reset fade duration to default after filter switch fade-in completes
                     // Check if we just completed a fade-in from filter switching
                     using namespace DaemonConstants;
-                    if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING &&
+                    if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING && 
                         g_soft_mute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
                         g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
                     }
                 }
+
+                apply_output_limiter(output_samples, n_frames);
             } else {
                 std::memset(output_samples, 0, n_frames * CHANNELS * sizeof(float));
             }
@@ -425,6 +452,9 @@ int main(int argc, char* argv[]) {
     } else {
         std::cout << "Phase type: minimum (default)" << std::endl;
     }
+    g_config = appConfig;
+    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+    g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
     // Input sample rate will be auto-detected from PipeWire stream
     std::cout << "Input sample rate: auto-detected from PipeWire" << std::endl;
 
@@ -433,7 +463,7 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         return 1;
     }
-
+    
     // Initialize soft mute controller (default fade duration, will be extended for filter
     // switching)
     using namespace DaemonConstants;
@@ -441,7 +471,7 @@ int main(int argc, char* argv[]) {
     g_soft_mute = new SoftMute::Controller(DEFAULT_SOFT_MUTE_FADE_MS, initial_output_rate);
     std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
               << initial_output_rate << "Hz)" << std::endl;
-
+    
     std::cout << std::endl;
 
     // Initialize PipeWire

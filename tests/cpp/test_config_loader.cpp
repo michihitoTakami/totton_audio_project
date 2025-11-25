@@ -4,6 +4,7 @@
  */
 
 #include "config_loader.h"
+#include "daemon_constants.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -58,6 +59,7 @@ TEST_F(ConfigLoaderTest, LoadNonExistentFileUsesDefaults) {
     EXPECT_EQ(config.upsampleRatio, 16);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
+    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::DEFAULT_HEADROOM_TARGET);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");
 }
@@ -79,6 +81,7 @@ TEST_F(ConfigLoaderTest, LoadFullConfig) {
         "upsampleRatio": 8,
         "blockSize": 8192,
         "gain": 8.0,
+        "headroomTarget": 0.95,
         "filterPath": "custom/filter.bin",
         "eqEnabled": true,
         "eqProfilePath": "data/EQ/custom.txt"
@@ -94,9 +97,28 @@ TEST_F(ConfigLoaderTest, LoadFullConfig) {
     EXPECT_EQ(config.upsampleRatio, 8);
     EXPECT_EQ(config.blockSize, 8192);
     EXPECT_FLOAT_EQ(config.gain, 8.0f);
+    EXPECT_FLOAT_EQ(config.headroomTarget, 0.95f);
     EXPECT_EQ(config.filterPath, "custom/filter.bin");
     EXPECT_TRUE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "data/EQ/custom.txt");
+}
+
+TEST_F(ConfigLoaderTest, HeadroomTargetClampedAboveMax) {
+    writeConfig(R"({"headroomTarget": 5.0})");
+
+    AppConfig config;
+    loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::MAX_HEADROOM_TARGET);
+}
+
+TEST_F(ConfigLoaderTest, HeadroomTargetClampedBelowMin) {
+    writeConfig(R"({"headroomTarget": 0.1})");
+
+    AppConfig config;
+    loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::MIN_HEADROOM_TARGET);
 }
 
 TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
@@ -117,6 +139,7 @@ TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
     EXPECT_EQ(config.periodSize, 32768);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
+    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::DEFAULT_HEADROOM_TARGET);
 }
 
 TEST_F(ConfigLoaderTest, LoadInvalidJsonReturnsFalse) {

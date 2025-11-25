@@ -89,6 +89,11 @@ void checkCufftError(cufftResult result, const char* context) {
 void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
                                          size_t* trackedBytes, const char* context) {
     if (buffer.empty()) {
+        if (*trackedPtr) {
+            checkCudaError(cudaHostUnregister(*trackedPtr), "cudaHostUnregister stream buffer");
+            *trackedPtr = nullptr;
+            *trackedBytes = 0;
+        }
         return;
     }
 
@@ -228,6 +233,10 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
     for (int c = 0; c < NUM_CHANNELS; ++c) {
         d_activeFilterFFT_[c] = d_filterFFT_[initialConfig][c];
     }
+
+    // Release CPU-side coefficient memory after GPU transfer (Jetson optimization)
+    // FFT spectra are now on GPU; time-domain coefficients are no longer needed
+    releaseHostCoefficients();
 
     initialized_ = true;
     std::cout << "HRTF Processor initialized successfully!" << std::endl;
@@ -450,6 +459,7 @@ bool HRTFProcessor::switchHeadSize(HeadSize targetSize) {
         d_activeFilterFFT_[c] = d_filterFFT_[targetConfig][c];
     }
     currentHeadSize_ = targetSize;
+    resetStreaming();
 
     std::cout << "Switched to head size: " << headSizeToString(targetSize) << std::endl;
     return true;
@@ -1089,6 +1099,30 @@ void HRTFProcessor::clearCombinedFilter() {
             }
         }
         combinedFilterLoaded_[f] = false;
+    }
+}
+
+void HRTFProcessor::releaseHostCoefficients() {
+    // Release all CPU-side HRTF coefficient vectors to free memory
+    // This is called after GPU FFT transfer is complete
+    // Important for Jetson Unified Memory optimization
+
+    size_t freedBytes = 0;
+
+    for (int i = 0; i < NUM_CONFIGS; ++i) {
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            if (!h_filterCoeffs_[i][c].empty()) {
+                freedBytes += h_filterCoeffs_[i][c].capacity() * sizeof(float);
+                h_filterCoeffs_[i][c].clear();
+                h_filterCoeffs_[i][c].shrink_to_fit();
+            }
+        }
+    }
+
+    if (freedBytes > 0) {
+        std::cout << "  Released HRTF CPU coefficient memory: "
+                  << (freedBytes / 1024) << " KB ("
+                  << freedBytes << " bytes)" << std::endl;
     }
 }
 

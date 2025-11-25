@@ -69,6 +69,8 @@ static std::atomic<float> g_headroom_gain{1.0f};
 static FilterHeadroomCache g_headroom_cache;
 static ConvolutionEngine::RateFamily g_active_rate_family = ConvolutionEngine::RateFamily::RATE_44K;
 static PhaseType g_active_phase_type = PhaseType::Minimum;
+static std::atomic<float> g_limiter_gain{1.0f};
+static std::atomic<float> g_effective_gain{1.0f};
 
 // ========== Signal Handling (Async-Signal-Safe) ==========
 // These flags are set by the signal handler and polled by the main loop.
@@ -118,19 +120,25 @@ static inline float compute_stereo_peak(const float* left, const float* right, s
     return peak;
 }
 
-static inline float compute_interleaved_peak(const float* interleaved, size_t frames) {
+static float apply_output_limiter(float* interleaved, size_t frames) {
+    constexpr float kEpsilon = 1e-6f;
     if (!interleaved || frames == 0) {
+        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+        float baseGain = g_output_gain.load(std::memory_order_relaxed);
+        g_effective_gain.store(baseGain, std::memory_order_relaxed);
         return 0.0f;
     }
-    float peak = 0.0f;
-    for (size_t i = 0; i < frames; ++i) {
-        float l = std::fabs(interleaved[i * 2]);
-        float r = std::fabs(interleaved[i * 2 + 1]);
-        if (l > peak)
-            peak = l;
-        if (r > peak)
-            peak = r;
+    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
+    float limiterGain = 1.0f;
+    const float target = g_config.headroomTarget;
+    if (target > 0.0f && peak > target) {
+        limiterGain = target / (peak + kEpsilon);
+        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
+        peak = target;
     }
+    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
+    float effective = g_output_gain.load(std::memory_order_relaxed) * limiterGain;
+    g_effective_gain.store(effective, std::memory_order_relaxed);
     return peak;
 }
 
@@ -233,6 +241,8 @@ static std::vector<float> g_cf_stream_input_left;
 static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
 static size_t g_cf_stream_accumulated_right = 0;
+static std::vector<float> g_cf_output_left;
+static std::vector<float> g_cf_output_right;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
@@ -240,6 +250,20 @@ static std::vector<float> g_cf_output_buffer_right;
 // Fallback manager (Issue #139)
 static FallbackManager::Manager* g_fallback_manager = nullptr;
 static std::atomic<bool> g_fallback_active{false};  // Atomic for quick check in audio thread
+
+// Resets crossfeed streaming buffers and GPU overlap state.
+// Caller must hold g_crossfeed_mutex.
+static void reset_crossfeed_stream_state_locked() {
+    g_cf_stream_input_left.clear();
+    g_cf_stream_input_right.clear();
+    g_cf_stream_accumulated_left = 0;
+    g_cf_stream_accumulated_right = 0;
+    g_cf_output_left.clear();
+    g_cf_output_right.clear();
+    if (g_hrtf_processor) {
+        g_hrtf_processor->resetStreaming();
+    }
+}
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -384,8 +408,11 @@ static nlohmann::json collect_runtime_stats_json() {
     nlohmann::json gainJson;
     gainJson["user"] = g_config.gain;
     gainJson["headroom"] = g_headroom_gain.load(std::memory_order_relaxed);
-    gainJson["effective"] = g_output_gain.load(std::memory_order_relaxed);
-    gainJson["target_peak"] = g_headroom_cache.getTargetPeak();
+    gainJson["headroom_effective"] = g_output_gain.load(std::memory_order_relaxed);
+    gainJson["limiter"] = g_limiter_gain.load(std::memory_order_relaxed);
+    gainJson["effective"] = g_effective_gain.load(std::memory_order_relaxed);
+    gainJson["target_peak"] = g_config.headroomTarget;
+    gainJson["metadata_peak"] = g_headroom_cache.getTargetPeak();
     stats["gain"] = gainJson;
 
     nlohmann::json peaks;
@@ -527,9 +554,11 @@ static void load_runtime_config() {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
     }
     print_config_summary(g_config);
-
     g_headroom_cache.setTargetPeak(g_config.headroomTarget);
     update_effective_gain(1.0f, "config load (pending filter headroom)");
+    float initialOutput = g_output_gain.load(std::memory_order_relaxed);
+    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+    g_effective_gain.store(initialOutput, std::memory_order_relaxed);
 }
 
 // ========== ZeroMQ Command Listener ==========
@@ -590,13 +619,7 @@ static void zeromq_listener_thread() {
             } else if (cmd == "CROSSFEED_ENABLE") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 if (g_hrtf_processor) {
-                    // Reset streaming state to avoid stale data from previous session
-                    g_hrtf_processor->resetStreaming();
-                    g_cf_stream_input_left.clear();
-                    g_cf_stream_input_right.clear();
-                    g_cf_stream_accumulated_left = 0;
-                    g_cf_stream_accumulated_right = 0;
-
+                    reset_crossfeed_stream_state_locked();
                     g_hrtf_processor->setEnabled(true);
                     g_crossfeed_enabled.store(true);
                     response = "OK:Crossfeed enabled";
@@ -609,6 +632,7 @@ static void zeromq_listener_thread() {
                 if (g_hrtf_processor) {
                     g_hrtf_processor->setEnabled(false);
                 }
+                reset_crossfeed_stream_state_locked();
                 response = "OK:Crossfeed disabled";
             } else if (cmd == "CROSSFEED_STATUS") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -627,11 +651,7 @@ static void zeromq_listener_thread() {
                     if (cmdType == "CROSSFEED_ENABLE") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                         if (g_hrtf_processor) {
-                            g_hrtf_processor->resetStreaming();
-                            g_cf_stream_input_left.clear();
-                            g_cf_stream_input_right.clear();
-                            g_cf_stream_accumulated_left = 0;
-                            g_cf_stream_accumulated_right = 0;
+                            reset_crossfeed_stream_state_locked();
                             g_hrtf_processor->setEnabled(true);
                             g_crossfeed_enabled.store(true);
                             nlohmann::json resp;
@@ -651,6 +671,7 @@ static void zeromq_listener_thread() {
                         if (g_hrtf_processor) {
                             g_hrtf_processor->setEnabled(false);
                         }
+                        reset_crossfeed_stream_state_locked();
                         nlohmann::json resp;
                         resp["status"] = "ok";
                         resp["message"] = "Crossfeed disabled";
@@ -791,6 +812,7 @@ static void zeromq_listener_thread() {
                                                 resp["message"] = "Combined filter applied";
                                                 resp["data"]["rate_family"] = rateFamily;
                                                 resp["data"]["complex_count"] = complexCount;
+                                                reset_crossfeed_stream_state_locked();
                                                 std::cout
                                                     << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
                                                     << rateFamily << " (" << complexCount
@@ -868,6 +890,7 @@ static void zeromq_listener_thread() {
                                     resp["status"] = "ok";
                                     resp["data"]["head_size"] =
                                         CrossfeedEngine::headSizeToString(targetSize);
+                                    reset_crossfeed_stream_state_locked();
                                     response = resp.dump();
                                 } else {
                                     nlohmann::json resp;
@@ -1150,28 +1173,29 @@ static void on_input_process(void* userdata) {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 // Re-check under lock (double-checked locking pattern)
                 if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                    std::vector<float>& cf_output_left = g_cf_output_buffer_left;
-                    std::vector<float>& cf_output_right = g_cf_output_buffer_right;
                     // Use default CUDA stream (0) for crossfeed processing
                     bool cf_generated = g_hrtf_processor->processStreamBlock(
-                        output_left.data(), output_right.data(), output_left.size(), cf_output_left,
-                        cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                        g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
+                        output_left.data(), output_right.data(), output_left.size(),
+                        g_cf_output_left, g_cf_output_right, 0, g_cf_stream_input_left,
+                        g_cf_stream_input_right, g_cf_stream_accumulated_left,
+                        g_cf_stream_accumulated_right);
 
                     if (cf_generated) {
-                        size_t cf_frames = std::min(cf_output_left.size(), cf_output_right.size());
+                        size_t cf_frames =
+                            std::min(g_cf_output_left.size(), g_cf_output_right.size());
                         if (cf_frames > 0) {
-                            float cfPeak = compute_stereo_peak(cf_output_left.data(),
-                                                               cf_output_right.data(), cf_frames);
+                            float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
+                                                               g_cf_output_right.data(), cf_frames);
                             update_peak_level(g_peak_post_crossfeed_level, cfPeak);
                         }
                         // Store crossfeed output for ALSA thread consumption
                         std::lock_guard<std::mutex> lock(g_buffer_mutex);
                         g_output_buffer_left.insert(g_output_buffer_left.end(),
-                                                    cf_output_left.begin(), cf_output_left.end());
+                                                    g_cf_output_left.begin(),
+                                                    g_cf_output_left.end());
                         g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                                     cf_output_right.begin(),
-                                                     cf_output_right.end());
+                                                     g_cf_output_right.begin(),
+                                                     g_cf_output_right.end());
                         g_buffer_cv.notify_one();
                     }
                     // Note: If crossfeed didn't generate output yet (accumulating),
@@ -1405,8 +1429,8 @@ void alsa_output_thread() {
                 }
             }
 
-            // Track peak level after gain & soft mute (pre-clipping)
-            float postGainPeak = compute_interleaved_peak(float_buffer.data(), period_size);
+            // Apply limiter and track peak after gain & soft mute
+            float postGainPeak = apply_output_limiter(float_buffer.data(), period_size);
             update_peak_level(g_peak_post_gain_level, postGainPeak);
 
             // Step 3: Clipping detection, clamping, and float→int32 conversion

@@ -150,6 +150,10 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
     );
     d_activeFilterFFT_ = d_filterFFT_A_;
 
+    // Release CPU-side coefficient memory after GPU transfer (Jetson optimization)
+    // FFT spectra are now on GPU; time-domain coefficients are no longer needed
+    releaseHostCoefficients();
+
     dualRateEnabled_ = true;
     std::cout << "GPU Upsampler (Dual-Rate) initialized successfully!" << std::endl;
     return true;
@@ -225,16 +229,9 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
         "cudaMemcpy update h_originalFilterFft_"
     );
 
-    // Update host coefficients reference (considering phase type in quad-phase mode)
-    if (quadPhaseEnabled_) {
-        if (targetFamily == RateFamily::RATE_44K) {
-            h_filterCoeffs_ = (phaseType_ == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_;
-        } else {
-            h_filterCoeffs_ = (phaseType_ == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_;
-        }
-    } else {
-        h_filterCoeffs_ = (targetFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_;
-    }
+    // Note: h_filterCoeffs_ (time-domain) is no longer updated here.
+    // After initialization, host coefficient vectors are released to save memory.
+    // EQ computation uses h_originalFilterFft_ (FFT spectrum) directly.
 
     // Clear EQ state (EQ needs to be re-applied for new rate family)
     if (eqApplied_) {
@@ -425,6 +422,10 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     );
     d_activeFilterFFT_ = d_filterFFT_A_;
 
+    // Release CPU-side coefficient memory after GPU transfer (Jetson optimization)
+    // FFT spectra are now on GPU; time-domain coefficients are no longer needed
+    releaseHostCoefficients();
+
     multiRateEnabled_ = true;
     std::cout << "GPU Upsampler (Multi-Rate) initialized successfully!" << std::endl;
     return true;
@@ -491,10 +492,9 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
         "cudaMemcpy update h_originalFilterFft_"
     );
 
-    // Update host coefficients - zero-pad to filterTaps_
-    const auto& targetCoeffs = h_filterCoeffsMulti_[targetIndex];
-    h_filterCoeffs_.assign(filterTaps_, 0.0f);
-    std::copy(targetCoeffs.begin(), targetCoeffs.end(), h_filterCoeffs_.begin());
+    // Note: h_filterCoeffs_ and h_filterCoeffsMulti_ (time-domain) are no longer updated here.
+    // After initialization, host coefficient vectors are released to save memory.
+    // EQ computation uses h_originalFilterFft_ (FFT spectrum) directly.
 
     // Update state
     currentMultiRateIndex_ = targetIndex;
@@ -720,6 +720,10 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
                                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
                           "cudaMemcpy to h_originalFilterFft_");
 
+    // Release CPU-side coefficient memory after GPU transfer (Jetson optimization)
+    // FFT spectra are now on GPU; time-domain coefficients are no longer needed
+    releaseHostCoefficients();
+
     quadPhaseEnabled_ = true;
     dualRateEnabled_ = true;  // Quad-phase implies dual-rate support
     std::cout << "GPU Upsampler (Quad-Phase) initialized successfully!" << std::endl;
@@ -774,6 +778,10 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
     Utils::checkCudaError(cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
                                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
                           "cudaMemcpy update h_originalFilterFft_");
+
+    // Note: h_filterCoeffs_ (time-domain) is no longer updated here.
+    // After initialization, host coefficient vectors are released to save memory.
+    // EQ computation uses h_originalFilterFft_ (FFT spectrum) directly.
 
     // Clear EQ state (EQ needs to be re-applied for new phase type)
     if (eqApplied_) {
