@@ -43,11 +43,6 @@ class FallbackManagerTest : public ::testing::Test {
         return manager_;
     }
 
-    // Check if GPU monitoring is available - call this from test body for skip logic
-    bool isMonitoringAvailable() const {
-        return manager_ && manager_->isMonitoringEnabled();
-    }
-
     Manager* manager_ = nullptr;
     std::vector<FallbackState> stateChanges_;
     FallbackState lastState_ = FallbackState::Normal;
