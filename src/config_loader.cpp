@@ -59,8 +59,6 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             outConfig.gain = j["gain"].get<float>();
         if (j.contains("filterPath"))
             outConfig.filterPath = j["filterPath"].get<std::string>();
-        if (j.contains("inputSampleRate"))
-            outConfig.inputSampleRate = j["inputSampleRate"].get<int>();
         if (j.contains("phaseType"))
             outConfig.phaseType = parsePhaseType(j["phaseType"].get<std::string>());
 

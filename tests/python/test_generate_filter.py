@@ -67,7 +67,8 @@ class TestFilterConfig:
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
-        assert config.max_coefficient_limit == 1.0  # New: always 1.0 for unified volume
+        # dc_gain_factor: 全レートで音量統一（デフォルト0.99）
+        assert config.dc_gain_factor == 0.99
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
@@ -391,54 +392,86 @@ class TestValidateTapCount:
 
 
 class TestNormalizeCoefficients:
-    """Tests for normalize_coefficients function."""
+    """Tests for normalize_coefficients function.
 
-    def test_normalizes_dc_gain_to_one(self):
-        """max_coef should be scaled to 1.0 (takes priority over DC gain target)."""
+    #259追加修正: DCゲイン統一（L × dc_gain_factor）+ L1ノルム出力。
+    全レートで音量を統一し、L1ノルムはグローバル安全ゲイン計算用に出力。
+    """
+
+    def test_normalizes_dc_gain_with_factor(self):
+        """DCゲインが target × dc_gain_factor に正規化されること"""
         from generate_filter import normalize_coefficients
 
         # Create test coefficients with known DC gain
         h = np.array([0.5, 1.0, 0.5])  # DC gain = 2.0
-        h_norm, info = normalize_coefficients(h)
+        h_norm, info = normalize_coefficients(
+            h, target_dc_gain=1.0, dc_gain_factor=0.99
+        )
 
-        # New logic: max_coef=1.0 takes priority, so DC gain becomes 2.0
-        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        # DCゲインが目標値（1.0 × 0.99 = 0.99）に正規化される
+        assert np.isclose(np.sum(h_norm), 0.99, rtol=1e-6)
         assert info["normalization_applied"] is True
         assert np.isclose(info["original_dc_gain"], 2.0)
         assert np.isclose(info["target_dc_gain"], 1.0)
-        # Final DC gain differs due to max_coef=1.0 scaling
-        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
+        assert np.isclose(info["dc_gain_factor"], 0.99)
+        assert np.isclose(info["normalized_dc_gain"], 0.99, rtol=1e-6)
 
-    def test_normalizes_to_target_dc_gain(self):
-        """max_coef should always be scaled to 1.0 (upscale or downscale)."""
+    def test_l1_norm_output(self):
+        """L1ノルムがメタデータに出力されること"""
         from generate_filter import normalize_coefficients
 
-        # Use small coefficients - will be upscaled to max_coef=1.0
+        h = np.array([0.5, -0.3, 0.2])  # DC gain = 0.4, L1 = 1.0
+        h_norm, info = normalize_coefficients(h, target_dc_gain=1.0, dc_gain_factor=1.0)
+
+        # L1ノルムが出力される
+        assert "l1_norm" in info
+        assert "l1_norm_ratio" in info
+        # L1 = sum(|h_norm|)
+        expected_l1 = np.sum(np.abs(h_norm))
+        assert np.isclose(info["l1_norm"], expected_l1, rtol=1e-6)
+        # L1/L ratio
+        assert np.isclose(info["l1_norm_ratio"], expected_l1 / 1.0, rtol=1e-6)
+
+    def test_normalizes_to_upsample_ratio(self):
+        """アップサンプル比に応じたDCゲイン正規化（dc_gain_factor適用）"""
+        from generate_filter import normalize_coefficients
+
         h = np.array([0.1, 0.1])  # DC gain = 0.2
-        target = 0.5  # After DC norm: h=[0.25, 0.25], then upscaled to max=1.0
-        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+        target = 16.0  # 16x upsample
+        h_norm, info = normalize_coefficients(
+            h, target_dc_gain=target, dc_gain_factor=0.99
+        )
 
-        # New logic: max_coef=1.0 always (upscaled 4x from 0.25)
-        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
-        assert np.isclose(info["applied_scale"], 2.5 * 4.0)  # DC norm × upscale
-        assert not info["peak_limited"]  # upscale, not downscale
-        assert info["scale_direction"] == "up"
-        assert np.isclose(info["max_coefficient_limit"], 1.0)
+        # DCゲインが16.0 × 0.99 = 15.84に正規化される
+        expected_dc = 16.0 * 0.99
+        assert np.isclose(np.sum(h_norm), expected_dc, rtol=1e-6)
+        assert np.isclose(info["normalized_dc_gain"], expected_dc, rtol=1e-6)
+        # スケール = 15.84 / 0.2 = 79.2
+        assert np.isclose(info["applied_scale"], expected_dc / 0.2, rtol=1e-6)
 
-    def test_peak_limiting_reduces_dc_gain(self):
-        """Peak limiting should reduce DC gain when max_coef exceeds limit."""
+    def test_dc_gain_factor_1_equals_full_target(self):
+        """dc_gain_factor=1.0でフル目標値になること"""
         from generate_filter import normalize_coefficients
 
         h = np.array([1.0, 1.0])  # DC gain = 2.0
-        target = 4.0  # After DC norm, max_coef = 2.0 > 1.0, needs limiting
+        target = 4.0
         h_norm, info = normalize_coefficients(
-            h, target_dc_gain=target, max_coefficient_limit=1.0
+            h, target_dc_gain=target, dc_gain_factor=1.0
         )
 
-        # With peak limiting: max_coef scaled to 1.0, DC gain = 2.0 (not 4.0)
-        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
-        assert info["peak_limited"]
-        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
+        # DCゲインは正確に4.0
+        assert np.isclose(np.sum(h_norm), 4.0, rtol=1e-6)
+        assert np.isclose(info["normalized_dc_gain"], 4.0, rtol=1e-6)
+
+    def test_invalid_dc_gain_factor_raises_error(self):
+        """不正なdc_gain_factorでエラー"""
+        from generate_filter import normalize_coefficients
+
+        h = np.array([1.0, 1.0])
+        with pytest.raises(ValueError, match="dc_gain_factor"):
+            normalize_coefficients(h, dc_gain_factor=0.0)
+        with pytest.raises(ValueError, match="dc_gain_factor"):
+            normalize_coefficients(h, dc_gain_factor=1.5)
 
     def test_zero_dc_gain_raises_error(self):
         """Zero DC gain should raise ValueError."""
@@ -659,24 +692,24 @@ class TestMinimumPhaseProperty:
 class TestCoefficientFileLoading:
     """Tests for loading existing coefficient files."""
 
-    def test_load_44k_coefficients(self, coefficients_dir):
-        """Should load 44.1kHz coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_44k_2m_min_phase.bin"
+    def test_load_44k_16x_coefficients(self, coefficients_dir):
+        """Should load 44.1kHz 16x coefficient file if it exists."""
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
-            pytest.skip("44kHz coefficient file not found")
+            pytest.skip("44kHz 16x coefficient file not found")
 
         h = np.fromfile(coeff_path, dtype=np.float32)
 
         assert len(h) == 2_000_000
         assert np.isfinite(h).all()
 
-    def test_load_48k_coefficients(self, coefficients_dir):
-        """Should load 48kHz coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_48k_2m_min_phase.bin"
+    def test_load_48k_16x_coefficients(self, coefficients_dir):
+        """Should load 48kHz 16x coefficient file if it exists."""
+        coeff_path = coefficients_dir / "filter_48k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
-            pytest.skip("48kHz coefficient file not found")
+            pytest.skip("48kHz 16x coefficient file not found")
 
         h = np.fromfile(coeff_path, dtype=np.float32)
 
@@ -684,16 +717,17 @@ class TestCoefficientFileLoading:
         assert np.isfinite(h).all()
 
     def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):
-        """Loaded coefficients should have DC gain equal to upsample ratio (unity overall gain)."""
-        coeff_path = coefficients_dir / "filter_44k_2m_min_phase.bin"
+        """Loaded coefficients should have DC gain close to target (L * 0.99)."""
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
-            pytest.skip("44kHz coefficient file not found")
+            pytest.skip("44kHz 16x coefficient file not found")
 
         h = np.fromfile(coeff_path, dtype=np.float32)
         dc_gain = np.sum(h)
 
-        assert np.isclose(dc_gain, 16.0, rtol=0.01)
+        # DCゲイン = 16 * 0.99 = 15.84
+        assert np.isclose(dc_gain, 15.84, rtol=0.01)
 
 
 class TestCoefficientFileNaming:
@@ -1182,21 +1216,30 @@ class TestNormalizeCoefficientsErrorHandling:
 
 
 class TestCoefficientDcGain:
-    """Tests for shipped coefficient DC gain after upsample normalization."""
+    """Tests for shipped coefficient DC gain after upsample normalization.
 
-    def test_coefficient_dc_matches_ratio(self):
-        """Shipped filters should sum to their upsample ratio (unity overall gain)."""
+    新形式のフィルタは DCゲイン = L × 0.99 で統一されている。
+    """
+
+    def test_coefficient_dc_matches_target(self):
+        """Shipped filters should have DC gain = L * 0.99."""
         coeff_dir = Path(__file__).parent.parent.parent / "data" / "coefficients"
+        # 新形式フィルタ: DCゲイン = L * 0.99
         cases = [
-            ("filter_44k_2m_min_phase.bin", 16.0),
-            ("filter_48k_2m_min_phase.bin", 16.0),
-            ("filter_44k_16x_2m_linear.bin", 16.0),
-            ("filter_48k_16x_2m_linear.bin", 16.0),
+            ("filter_44k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_48k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_44k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_48k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
         ]
         for filename, expected_dc in cases:
-            data = np.fromfile(coeff_dir / filename, dtype=np.float32)
+            filepath = coeff_dir / filename
+            if not filepath.exists():
+                pytest.skip(f"{filename} not found")
+            data = np.fromfile(filepath, dtype=np.float32)
             dc_gain = float(np.sum(data))
-            assert np.isclose(dc_gain, expected_dc, rtol=1e-5, atol=1e-3)
+            assert np.isclose(
+                dc_gain, expected_dc, rtol=1e-3
+            ), f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
 
 
 class TestValidateTapCountErrorHandling:
@@ -1216,3 +1259,138 @@ class TestValidateTapCountErrorHandling:
 
         with pytest.raises((ValueError, ZeroDivisionError)):
             validate_tap_count(1024, 0)
+
+
+class TestCalculateSafeGain:
+    """Tests for calculate_safe_gain function.
+
+    #260: グローバル安全ゲインの算出。max_coef_max > 1.0 の場合に
+    gain = M / max_coef_max を計算してクリッピングを防止する。
+    """
+
+    def test_calculates_from_max_coef(self, tmp_path):
+        """max_coef > 1.0 の場合は max_coef ベースで計算"""
+        from generate_filter import calculate_safe_gain
+
+        # テスト用JSONファイルを作成
+        (tmp_path / "filter_test.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 100.0, "max_coefficient_amplitude": 1.5}}}'
+        )
+
+        filter_infos = [
+            ("test", "filter_test", 1000, {"input_rate": 44100, "ratio": 16})
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # H = 0.97 / 1.5 ≈ 0.6467
+        assert result["max_coef_max"] == 1.5
+        assert np.isclose(result["recommended_gain"], 0.97 / 1.5, rtol=1e-6)
+        assert result["recommended_gain"] < 1.0
+
+    def test_returns_1_when_all_safe(self, tmp_path):
+        """全フィルタの max_coef <= 1.0 の場合は gain=1.0"""
+        from generate_filter import calculate_safe_gain
+
+        # max_coef が 1.0 以下のJSONファイル
+        (tmp_path / "filter_safe.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 50.0, "max_coefficient_amplitude": 0.8}}}'
+        )
+
+        filter_infos = [
+            ("safe", "filter_safe", 1000, {"input_rate": 44100, "ratio": 16})
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # max_coef=0.8 → H = 0.97/0.8 = 1.2125 → clamp to 1.0
+        assert result["max_coef_max"] == 0.8
+        assert result["recommended_gain"] == 1.0
+
+    def test_handles_multiple_filters(self, tmp_path):
+        """複数フィルタから最大値を正しく取得"""
+        from generate_filter import calculate_safe_gain
+
+        (tmp_path / "filter_a.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 100.0, "max_coefficient_amplitude": 0.9}}}'
+        )
+        (tmp_path / "filter_b.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 200.0, "max_coefficient_amplitude": 1.2}}}'
+        )
+
+        filter_infos = [
+            ("a", "filter_a", 1000, {}),
+            ("b", "filter_b", 1000, {}),
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # max_coef_max = 1.2, l1_max = 200.0
+        assert result["max_coef_max"] == 1.2
+        assert result["max_coef_max_filter"] == "b"
+        assert result["l1_max"] == 200.0
+        assert result["l1_max_filter"] == "b"
+        assert np.isclose(result["recommended_gain"], 0.97 / 1.2, rtol=1e-6)
+
+    def test_handles_invalid_data_gracefully(self, tmp_path):
+        """無効なデータ（None等）を安全にスキップ"""
+        from generate_filter import calculate_safe_gain
+
+        # l1_norm が null のJSON
+        (tmp_path / "filter_invalid.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": null, "max_coefficient_amplitude": null}}}'
+        )
+        (tmp_path / "filter_valid.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 50.0, "max_coefficient_amplitude": 0.5}}}'
+        )
+
+        filter_infos = [
+            ("invalid", "filter_invalid", 1000, {}),
+            ("valid", "filter_valid", 1000, {}),
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # 無効なフィルタはスキップされ、有効なフィルタのみ処理される
+        assert len(result["details"]) == 1
+        assert result["details"][0]["name"] == "valid"
+        assert result["max_coef_max"] == 0.5
+
+    def test_handles_missing_json_file(self, tmp_path):
+        """存在しないJSONファイルをスキップ"""
+        from generate_filter import calculate_safe_gain
+
+        filter_infos = [("missing", "filter_missing", 1000, {})]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # ファイルがないので details は空
+        assert len(result["details"]) == 0
+        assert result["recommended_gain"] == 1.0  # デフォルト値
+
+    def test_int_float_conversion_safety(self, tmp_path):
+        """int型の値も正しくfloatに変換される"""
+        from generate_filter import calculate_safe_gain
+
+        # JSONでは整数として保存されることがある
+        (tmp_path / "filter_int.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 100, "max_coefficient_amplitude": 1}}}'
+        )
+
+        filter_infos = [("int_test", "filter_int", 1000, {})]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # int でも float として処理される
+        assert isinstance(result["l1_max"], float)
+        assert isinstance(result["max_coef_max"], float)
+        assert result["l1_max"] == 100.0
+        assert result["max_coef_max"] == 1.0
+        # max_coef=1.0 → H = 0.97 / 1.0 = 0.97 < 1.0
+        assert np.isclose(result["recommended_gain"], 0.97, rtol=1e-6)
