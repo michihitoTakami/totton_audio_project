@@ -335,9 +335,7 @@ def get_embedded_html() -> str:
         </div>
         <div class="loading-indicator" id="crossfeedLoading">適用中</div>
         <div class="status-display" id="crossfeedStatus" style="display:none;">
-            <div class="label">適用中のEQ:</div>
-            <div class="value" id="crossfeedEqName">-</div>
-            <div class="label" style="margin-top:8px;">ステータス:</div>
+            <div class="label">ステータス:</div>
             <div class="value">
                 <span class="status-indicator" id="crossfeedStatusIndicator"></span>
                 <span id="crossfeedStatusText">無効</span>
@@ -767,15 +765,18 @@ def get_embedded_html() -> str:
         async function toggleCrossfeed() {
             if (crossfeedState.isApplying) return;
             
+            const wasEnabled = crossfeedState.enabled;
             setCrossfeedLoading(true);
             try {
-                const endpoint = crossfeedState.enabled ? '/crossfeed/disable' : '/crossfeed/enable';
+                const endpoint = wasEnabled ? '/crossfeed/disable' : '/crossfeed/enable';
                 const res = await fetch(API + endpoint, { method: 'POST' });
                 const data = await res.json();
                 
                 if (res.ok && data.success) {
                     await fetchCrossfeedStatus();
-                    showCrossfeedMessage(data.message || (crossfeedState.enabled ? 'クロスフィードを無効化しました' : 'クロスフィードを有効化しました'), true);
+                    // Use API message if available, otherwise use state-based message
+                    const message = data.message || (wasEnabled ? 'クロスフィードを無効化しました' : 'クロスフィードを有効化しました');
+                    showCrossfeedMessage(message, true);
                 } else {
                     showCrossfeedMessage(data.detail || data.message || 'クロスフィードの切り替えに失敗しました', false);
                 }
