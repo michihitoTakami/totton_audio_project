@@ -1,6 +1,6 @@
 // Auto-generated multi-rate filter coefficients
 // GPU Audio Upsampler - Multi-Rate Support
-// Generated: 2025-11-25T10:24:13.582102
+// Generated: 2025-11-25T13:29:31.319351
 
 #ifndef FILTER_COEFFICIENTS_H
 #define FILTER_COEFFICIENTS_H

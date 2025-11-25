@@ -99,9 +99,9 @@ class FilterConfig:
     phase_type: PhaseType = PhaseType.MINIMUM
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
-    # ただし、max_coefficient_limit=1.0によりピーク制限が適用される場合は目標値より低くなる
+    # 全レートで音量統一のため target_dc_gain × dc_gain_factor に設定
     target_dc_gain: float | None = None
-    max_coefficient_limit: float | None = None  # デフォルト1.0（クリッピング回避優先）
+    dc_gain_factor: float = 0.99  # 音量統一用係数（-0.09dB）
     output_prefix: str | None = None
 
     def __post_init__(self) -> None:
@@ -150,8 +150,11 @@ class FilterConfig:
             raise ValueError(
                 f"DCゲインのターゲットは正の値である必要があります: {self.target_dc_gain}"
             )
-        # max_coefficient_limit は廃止（後方互換性のため残すが無視される）
-        # ピーク制限は行わず、CUDA側で補正する（#260参照）
+        # dc_gain_factor のバリデーション
+        if not 0 < self.dc_gain_factor <= 1.0:
+            raise ValueError(
+                f"dc_gain_factorは0より大きく1.0以下である必要があります: {self.dc_gain_factor}"
+            )
 
     @property
     def output_rate(self) -> int:
@@ -731,7 +734,7 @@ class FilterGenerator:
         h_final, normalization_info = normalize_coefficients(
             h_final,
             target_dc_gain=self.config.target_dc_gain,
-            max_coefficient_limit=self.config.max_coefficient_limit,
+            dc_gain_factor=self.config.dc_gain_factor,
         )
 
         # 3. 仕様検証
@@ -855,19 +858,18 @@ def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
 def normalize_coefficients(
     h: np.ndarray,
     target_dc_gain: float = 1.0,
-    max_coefficient_limit: float | None = None,  # 廃止：後方互換性のため残すが無視
+    dc_gain_factor: float = 0.99,  # DCゲイン係数（音量統一用）
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """フィルタ係数を正規化する（シンプル版）
+    """フィルタ係数を正規化する（DCゲイン統一 + L1ノルム出力版）
 
     Args:
         h: フィルタ係数配列
         target_dc_gain: 目標DCゲイン（アップサンプル比L）
-        max_coefficient_limit: 廃止（後方互換性のため残すが無視される）
+        dc_gain_factor: DCゲイン係数（デフォルト0.99 = -0.09dB）
 
     Note:
-        阻止帯域特性を最優先にするため、ピーク制限は行わない。
-        DCゲインを目標値（アップサンプル比L）に正規化するのみ。
-        max_coefficient > 1.0 の場合はCUDA側で補正する（#260参照）。
+        全レートで音量を統一するため、DCゲイン = L × dc_gain_factor に設定。
+        L1ノルムはグローバル安全ゲイン計算用にメタデータに出力。
     """
     if h.size == 0:
         raise ValueError("フィルタ係数が空です。")
@@ -875,35 +877,46 @@ def normalize_coefficients(
     if target_dc_gain <= 0:
         raise ValueError("DCゲインのターゲットは正の値である必要があります。")
 
+    if not 0 < dc_gain_factor <= 1.0:
+        raise ValueError("dc_gain_factorは0より大きく1.0以下である必要があります。")
+
     dc_gain = float(np.sum(h))
 
     if abs(dc_gain) < 1e-12:
         raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
 
-    # DCゲインを目標値に正規化（ピーク制限なし）
-    scale = target_dc_gain / dc_gain
+    # DCゲインを target × dc_gain_factor に正規化
+    actual_target = target_dc_gain * dc_gain_factor
+    scale = actual_target / dc_gain
     h_normalized = h * scale
 
     final_dc_gain = float(np.sum(h_normalized))
     max_amplitude = float(np.max(np.abs(h_normalized)))
 
+    # L1ノルム計算（グローバル安全ゲイン計算用）
+    l1_norm = float(np.sum(np.abs(h_normalized)))
+
     info = {
         "original_dc_gain": dc_gain,
         "target_dc_gain": float(target_dc_gain),
+        "dc_gain_factor": dc_gain_factor,
         "normalized_dc_gain": final_dc_gain,
         "applied_scale": float(scale),
+        "l1_norm": l1_norm,
+        "l1_norm_ratio": l1_norm / target_dc_gain,
         "max_coefficient_amplitude": max_amplitude,
         "normalization_applied": True,
     }
 
     print("\n係数正規化:")
-    print(f"  目標DCゲイン: {target_dc_gain:.6f}")
+    print(
+        f"  目標DCゲイン: {target_dc_gain:.6f} × {dc_gain_factor} = {actual_target:.6f}"
+    )
     print(f"  元のDCゲイン: {dc_gain:.6f}")
     print(f"  正規化スケール: {scale:.6f}x")
     print(f"  最終DCゲイン: {final_dc_gain:.6f}")
+    print(f"  L1ノルム: {l1_norm:.6f} (L1/L = {l1_norm / target_dc_gain:.6f})")
     print(f"  最大係数振幅: {max_amplitude:.6f}")
-    if max_amplitude > 1.0:
-        print("  ⚠️ max_coef > 1.0: CUDA側で補正が必要（#260参照）")
 
     return h_normalized, info
 
