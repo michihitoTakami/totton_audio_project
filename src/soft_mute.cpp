@@ -5,8 +5,9 @@
 
 namespace SoftMute {
 
-Controller::Controller(int fadeDurationMs, int sampleRate)
-    : fadeDurationMs_(fadeDurationMs), sampleRate_(sampleRate) {
+Controller::Controller(int fadeDurationMs, int sampleRate) {
+    fadeDurationMs_.store(fadeDurationMs, std::memory_order_relaxed);
+    sampleRate_.store(sampleRate, std::memory_order_relaxed);
     updateFadeSamples();
 }
 
@@ -66,7 +67,8 @@ bool Controller::process(float* buffer, size_t frames) {
         float gain;
         size_t pos = fadePosition_.load(std::memory_order_relaxed);
 
-        if (pos >= fadeSamples_) {
+        size_t fadeSamples = fadeSamples_.load(std::memory_order_relaxed);
+        if (pos >= fadeSamples) {
             // Fade complete
             if (isFadeOut) {
                 state_.store(MuteState::MUTED, std::memory_order_release);
@@ -76,7 +78,7 @@ bool Controller::process(float* buffer, size_t frames) {
                 gain = 1.0f;
             }
         } else {
-            gain = calculateGain(pos, fadeSamples_, isFadeOut);
+            gain = calculateGain(pos, fadeSamples, isFadeOut);
             fadePosition_.fetch_add(1, std::memory_order_relaxed);
         }
 
@@ -110,29 +112,29 @@ bool Controller::isSilent() const {
 }
 
 void Controller::setFadeDuration(int durationMs) {
-    fadeDurationMs_ = std::max(1, durationMs);
+    fadeDurationMs_.store(std::max(1, durationMs), std::memory_order_relaxed);
     updateFadeSamples();
 }
 
 int Controller::getFadeDuration() const {
-    return fadeDurationMs_;
+    return fadeDurationMs_.load(std::memory_order_relaxed);
 }
 
 void Controller::setSampleRate(int sampleRate) {
-    sampleRate_ = std::max(1, sampleRate);
+    sampleRate_.store(std::max(1, sampleRate), std::memory_order_relaxed);
     updateFadeSamples();
 }
 
 int Controller::getSampleRate() const {
-    return sampleRate_;
+    return sampleRate_.load(std::memory_order_relaxed);
 }
 
 void Controller::setFadeCurve(FadeCurve curve) {
-    fadeCurve_ = curve;
+    fadeCurve_.store(curve, std::memory_order_relaxed);
 }
 
 FadeCurve Controller::getFadeCurve() const {
-    return fadeCurve_;
+    return fadeCurve_.load(std::memory_order_relaxed);
 }
 
 float Controller::calculateGain(size_t position, size_t total, bool fadeOut) const {
@@ -144,7 +146,8 @@ float Controller::calculateGain(size_t position, size_t total, bool fadeOut) con
     progress = std::clamp(progress, 0.0f, 1.0f);
 
     float gain;
-    switch (fadeCurve_) {
+    FadeCurve curve = fadeCurve_.load(std::memory_order_relaxed);
+    switch (curve) {
     case FadeCurve::LINEAR:
         // Linear: gain increases linearly with progress
         // For fade-out: start at 1.0, end at 0.0
@@ -172,10 +175,13 @@ float Controller::calculateGain(size_t position, size_t total, bool fadeOut) con
 }
 
 void Controller::updateFadeSamples() {
-    fadeSamples_ = calculateFadeSamples(fadeDurationMs_, sampleRate_);
-    if (fadeSamples_ == 0) {
-        fadeSamples_ = 1;  // Minimum 1 sample
+    int durationMs = fadeDurationMs_.load(std::memory_order_relaxed);
+    int rate = sampleRate_.load(std::memory_order_relaxed);
+    size_t samples = calculateFadeSamples(durationMs, rate);
+    if (samples == 0) {
+        samples = 1;  // Minimum 1 sample
     }
+    fadeSamples_.store(samples, std::memory_order_release);
 }
 
 }  // namespace SoftMute

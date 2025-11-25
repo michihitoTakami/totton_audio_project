@@ -151,9 +151,10 @@ add_executable(gpu_upsampler_daemon
     src/config_loader.cpp
 )
 
-# Link against core library, PipeWire, and Logging
+# Link against core library, PipeWire, SoftMute, and Logging
 target_link_libraries(gpu_upsampler_daemon
     gpu_upsampler_core
+    soft_mute
     logging
     ${PIPEWIRE_LIBRARIES}
     nlohmann_json::nlohmann_json
@@ -169,12 +170,13 @@ add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
 )
 
-# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, SoftMute, and Logging
+# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, SoftMute, FallbackManager, and Logging
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
     graceful_shutdown
+    fallback_manager
     zeromq_interface
     logging
     ${PIPEWIRE_LIBRARIES}
@@ -313,6 +315,20 @@ target_include_directories(graceful_shutdown PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 target_compile_options(graceful_shutdown PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+# Fallback Manager Library (CPU-only, Issue #139)
+add_library(fallback_manager STATIC
+    src/fallback_manager.cpp
+)
+target_link_libraries(fallback_manager PUBLIC
+    logging
+)
+target_include_directories(fallback_manager PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(fallback_manager PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
@@ -509,6 +525,20 @@ target_include_directories(graceful_shutdown_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(graceful_shutdown_tests)
+
+# Fallback Manager tests (CPU-only, Issue #139)
+add_executable(fallback_manager_tests
+    tests/cpp/test_fallback_manager.cpp
+)
+target_link_libraries(fallback_manager_tests
+    GTest::gtest_main
+    fallback_manager
+    logging
+)
+target_include_directories(fallback_manager_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(fallback_manager_tests)
 
 # Audio common utilities tests (AudioRingBuffer, AudioUtils)
 add_executable(audio_common_tests

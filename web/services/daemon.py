@@ -1,12 +1,27 @@
 """Daemon control and monitoring functions."""
 
 import json
+import logging
+import os
 import signal
 import subprocess
+import time
 from typing import Optional
 
-from ..constants import DAEMON_BINARY, PID_FILE_PATH, STATS_FILE_PATH
+from ..constants import (
+    DAEMON_BINARY,
+    PID_FILE_PATH,
+    STATS_FILE_PATH,
+)
 from .config import load_config
+from .pipewire import (
+    restore_default_sink,
+    setup_audio_routing,
+    setup_pipewire_links,
+    wait_for_daemon_node,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def check_daemon_running() -> bool:
@@ -16,8 +31,6 @@ def check_daemon_running() -> bool:
         return False
     try:
         # Check if process exists
-        import os
-
         os.kill(pid, 0)
         return True
     except (OSError, ProcessLookupError):
@@ -36,15 +49,36 @@ def get_daemon_pid() -> Optional[int]:
 
 
 def start_daemon() -> tuple[bool, str]:
-    """Start the daemon process."""
+    """Start the daemon process with full PipeWire setup.
+
+    This function performs the complete startup sequence:
+    1. Setup audio routing (create sink, set default)
+    2. Start daemon process
+    3. Wait for daemon to register with PipeWire
+    4. Setup PipeWire monitor links
+    """
+    logger.info("Starting daemon...")
+
     if check_daemon_running():
+        logger.warning("Daemon is already running")
         return False, "Daemon is already running"
 
     if not DAEMON_BINARY.exists():
+        logger.error("Daemon binary not found: %s", DAEMON_BINARY)
         return False, f"Daemon binary not found: {DAEMON_BINARY}"
+
+    # Step 1: Setup audio routing (create sink, set default)
+    routing_success, routing_msg = setup_audio_routing()
+    if not routing_success:
+        logger.error("Failed to setup audio routing: %s", routing_msg)
+        return False, f"Failed to setup audio routing: {routing_msg}"
 
     config = load_config()
     try:
+        # Step 2: Start daemon process
+        logger.info(
+            "Launching daemon binary: %s -d %s", DAEMON_BINARY, config.alsa_device
+        )
         subprocess.Popen(
             [
                 str(DAEMON_BINARY),
@@ -53,45 +87,87 @@ def start_daemon() -> tuple[bool, str]:
             ],
             start_new_session=True,
         )
-        return True, "Daemon started"
+
+        # Step 3: Wait for daemon to register with PipeWire
+        if not wait_for_daemon_node(timeout_sec=5.0):
+            # Cleanup: stop the daemon we just started
+            logger.error("Daemon failed to register with PipeWire, cleaning up...")
+            _force_stop_daemon()
+            restore_default_sink()
+            return False, "Daemon started but failed to register with PipeWire"
+
+        # Step 4: Setup PipeWire links
+        link_success, link_msg = setup_pipewire_links()
+        if not link_success:
+            # Cleanup: stop the daemon we just started
+            logger.error("Failed to setup PipeWire links: %s, cleaning up...", link_msg)
+            _force_stop_daemon()
+            restore_default_sink()
+            return False, f"Daemon started but link setup failed: {link_msg}"
+
+        logger.info("Daemon started successfully with audio routing configured")
+        return True, "Daemon started with audio routing configured"
     except subprocess.SubprocessError as e:
+        logger.error("Failed to start daemon: %s", e)
+        restore_default_sink()  # Cleanup on failure
         return False, f"Failed to start daemon: {e}"
 
 
-def stop_daemon() -> tuple[bool, str]:
-    """Stop the daemon process."""
+def _force_stop_daemon() -> None:
+    """Force stop daemon process (internal cleanup helper)."""
     pid = get_daemon_pid()
     if pid is None:
+        return
+    try:
+        logger.debug("Sending SIGTERM to daemon (PID: %d)", pid)
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(0.1)
+            if not check_daemon_running():
+                logger.debug("Daemon stopped gracefully")
+                return
+        # Force kill if still running
+        logger.warning("Daemon did not stop gracefully, sending SIGKILL")
+        os.kill(pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def stop_daemon() -> tuple[bool, str]:
+    """Stop the daemon process and restore audio routing."""
+    logger.info("Stopping daemon...")
+    pid = get_daemon_pid()
+    if pid is None:
+        logger.warning("Daemon is not running (no PID file)")
         return False, "Daemon is not running (no PID file)"
 
     try:
-        import os
-
+        logger.info("Sending SIGTERM to daemon (PID: %d)", pid)
         os.kill(pid, signal.SIGTERM)
         # Wait a bit for graceful shutdown
-        import time
-
         for _ in range(10):
             time.sleep(0.1)
             if not check_daemon_running():
                 break
+
+        # Restore default sink after daemon stops
+        restore_default_sink()
+
+        logger.info("Daemon stopped successfully")
         return True, "Daemon stopped"
     except (OSError, ProcessLookupError):
+        logger.error("Daemon process not found")
         return False, "Daemon process not found"
 
 
 def check_pipewire_sink() -> bool:
-    """Check if PipeWire sink is available."""
-    try:
-        result = subprocess.run(
-            ["pw-cli", "list-objects"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        return "gpu_upsampler" in result.stdout.lower()
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
+    """Check if GPU Upsampler daemon is registered with PipeWire.
+
+    More precise check: looks for specific input port rather than
+    generic string match.
+    """
+    # Use wait_for_daemon_node with 0 timeout for immediate check
+    return wait_for_daemon_node(timeout_sec=0)
 
 
 def get_configured_rates() -> tuple[int, int]:
