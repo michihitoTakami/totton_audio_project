@@ -112,6 +112,12 @@ def load_stats() -> dict:
         "total_samples": 0,
         "input_rate": 0,
         "output_rate": 0,
+        "peaks": {
+            "input": {"linear": 0.0, "dbfs": -200.0},
+            "upsampler": {"linear": 0.0, "dbfs": -200.0},
+            "post_mix": {"linear": 0.0, "dbfs": -200.0},
+            "post_gain": {"linear": 0.0, "dbfs": -200.0},
+        },
     }
     if not STATS_FILE_PATH.exists():
         return default_stats
@@ -124,12 +130,27 @@ def load_stats() -> dict:
         clip = data.get("clip_count", 0)
         clip_rate = (clip / total) if total > 0 else 0.0
 
+        peaks = data.get("peaks", {})
+
+        def _stage(name: str) -> dict:
+            stage = peaks.get(name, {})
+            return {
+                "linear": stage.get("linear", 0.0),
+                "dbfs": stage.get("dbfs", -200.0),
+            }
+
         return {
             "clip_rate": clip_rate,
             "clip_count": clip,
             "total_samples": total,
             "input_rate": data.get("input_rate", 0),
             "output_rate": data.get("output_rate", 0),
+            "peaks": {
+                "input": _stage("input"),
+                "upsampler": _stage("upsampler"),
+                "post_mix": _stage("post_mix"),
+                "post_gain": _stage("post_gain"),
+            },
         }
     except (json.JSONDecodeError, IOError):
         return default_stats

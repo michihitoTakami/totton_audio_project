@@ -258,6 +258,28 @@ def get_admin_html() -> str:
         </div>
     </div>
 
+    <h2>Peak Monitor</h2>
+    <div class="card">
+        <div class="stat-grid">
+            <div class="stat-item" id="peakInput">
+                <div class="label">Input Peak</div>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-item" id="peakUpsampler">
+                <div class="label">Upsampler Peak</div>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-item" id="peakPostMix">
+                <div class="label">Post-Mix Peak</div>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-item" id="peakPostGain">
+                <div class="label">Post-Gain Peak</div>
+                <div class="value">-</div>
+            </div>
+        </div>
+    </div>
+
     <h2>Sampling Rate</h2>
     <div class="card">
         <div class="stat-grid">
@@ -384,6 +406,8 @@ def get_admin_html() -> str:
             setStat('inputRate', formatSampleRate(stats.input_rate || 0), '');
             setStat('outputRate', formatSampleRate(stats.output_rate || 0), '');
 
+            updatePeakCards(stats.peaks);
+
             // Daemon running status from WebSocket
             const daemonRunning = stats.daemon_running;
             setStatus('daemonStatus', daemonRunning ? 'Running' : 'Stopped', daemonRunning);
@@ -417,6 +441,8 @@ def get_admin_html() -> str:
                 // Sample rates
                 setStat('inputRate', formatSampleRate(status.input_rate || 0), '');
                 setStat('outputRate', formatSampleRate(status.output_rate || 0), '');
+
+                updatePeakCards(status.peaks);
 
                 // System info
                 document.getElementById('pidFile').textContent = daemon.pid_file || '-';
@@ -457,6 +483,35 @@ def get_admin_html() -> str:
             if (hz <= 0) return '-';
             if (hz >= 1000) return (hz / 1000).toFixed(1) + ' kHz';
             return hz + ' Hz';
+        }
+
+        function formatPeak(stage) {
+            if (!stage) return '-';
+            const linear = typeof stage.linear === 'number' ? stage.linear : 0;
+            const dbfs = typeof stage.dbfs === 'number'
+                ? stage.dbfs
+                : (linear > 0 ? 20 * Math.log10(linear) : -Infinity);
+            if (linear <= 0) return '-∞ dBFS';
+            return dbfs.toFixed(2) + ' dBFS (' + linear.toFixed(4) + ')';
+        }
+
+        function peakSeverity(linear) {
+            if (typeof linear !== 'number' || linear <= 0.9) return '';
+            if (linear < 0.98) return 'warning';
+            return 'error';
+        }
+
+        function updatePeakCards(peaks) {
+            peaks = peaks || {};
+            const inputStage = peaks.input || {};
+            const upsamplerStage = peaks.upsampler || {};
+            const postMixStage = peaks.post_mix || {};
+            const postGainStage = peaks.post_gain || {};
+
+            setStat('peakInput', formatPeak(inputStage), peakSeverity(inputStage.linear));
+            setStat('peakUpsampler', formatPeak(upsamplerStage), peakSeverity(upsamplerStage.linear));
+            setStat('peakPostMix', formatPeak(postMixStage), peakSeverity(postMixStage.linear));
+            setStat('peakPostGain', formatPeak(postGainStage), peakSeverity(postGainStage.linear));
         }
 
         function showMessage(text, success) {
