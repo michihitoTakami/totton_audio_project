@@ -18,7 +18,7 @@ inline constexpr FilterPreset FILTER_PRESET_44K = {
     "2M-tap min-phase FIR for 44.1kHz → 705.6kHz (16x)", 2'000'000};
 
 inline constexpr FilterPreset FILTER_PRESET_48K = {
-    48000, 16, "data/coefficients/filter_48k_2m_min_phase.bin",
+    48000, 16, "data/coefficients/filter_48k_16x_2m_min_phase.bin",
     "2M-tap min-phase FIR for 48kHz → 768kHz (16x)", 2'000'000};
 
 inline constexpr std::array<FilterPreset, 2> FILTER_PRESETS = {FILTER_PRESET_44K,

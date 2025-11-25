@@ -177,7 +177,7 @@ TEST_F(ConvolutionEngineTest, DualRateInitialize) {
     GPUUpsampler upsampler;
 
     const char* coeff44k = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_2m_min_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_min_phase.bin";
 
     // Check if files exist
     FILE* f44 = fopen(coeff44k, "rb");
@@ -201,7 +201,7 @@ TEST_F(ConvolutionEngineTest, SwitchRateFamily) {
     GPUUpsampler upsampler;
 
     const char* coeff44k = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_2m_min_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_min_phase.bin";
 
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
@@ -493,7 +493,7 @@ TEST_F(ConvolutionEngineTest, GetSampleRates) {
     GPUUpsampler upsampler;
 
     const char* coeff44k = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_2m_min_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_min_phase.bin";
 
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
