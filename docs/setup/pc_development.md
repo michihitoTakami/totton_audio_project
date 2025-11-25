@@ -2,7 +2,7 @@
 
 ## 概要
 
-このガイドでは、GPU Audio Upsamplerを使用してPipeWireからの音声を705.6kHz (16x upsampling)でSMSL D400EX DACに出力する方法を説明します。
+このガイドでは、GPU Audio Upsamplerを使用してPipeWireからの音声をマルチレート対応でDACに出力する方法を説明します。システムは入力レートとDAC性能に基づいて自動的に最適なアップサンプリング倍率（2x/4x/8x/16x）を選択します。
 
 ## システム要件
 
@@ -171,9 +171,15 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 2. **フィルタ係数ファイルの確認**:
    ```bash
-   ls -lh data/coefficients/filter_44k_16x_2m_min_phase.bin
+   # マルチレート対応フィルタの確認
+   ls -lh data/coefficients/filter_*_*x_2m_min_phase.bin
    ```
-   約7.6MBのファイルが存在する必要があります。
+   各フィルタファイル（約7.6MB）と対応するメタデータJSONファイルが存在する必要があります。
+   
+   ```bash
+   # メタデータの確認（DCゲイン・レート情報）
+   cat data/coefficients/filter_44k_16x_2m_min_phase.json | jq '.sample_rate_input, .sample_rate_output, .upsample_ratio, .validation_results.normalization.normalized_dc_gain'
+   ```
 
 ## 音声経路
 
@@ -193,8 +199,30 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 ## 技術仕様
 
-- **アップサンプリング比**: 16x (44.1kHz → 705.6kHz)
-- **FIRフィルタ**: 2,000,000タップ minimum-phase
+### マルチレート対応
+
+システムは入力レートとDAC性能に基づいて自動的に最適なアップサンプリング倍率を選択します：
+
+| 入力レート | 出力レート | 倍率 | フィルタファイル |
+|-----------|----------|------|----------------|
+| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_min_phase.bin |
+| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_min_phase.bin |
+| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_min_phase.bin |
+| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_min_phase.bin |
+| 48kHz | 768kHz | 16x | filter_48k_16x_2m_min_phase.bin |
+| 96kHz | 768kHz | 8x | filter_48k_8x_2m_min_phase.bin |
+| 192kHz | 768kHz | 4x | filter_48k_4x_2m_min_phase.bin |
+| 384kHz | 768kHz | 2x | filter_48k_2x_2m_min_phase.bin |
+
+### フィルタとゲイン設定
+
+- **FIRフィルタ**: 2,000,000タップ minimum-phase（各レート・倍率に対応）
+- **DCゲイン**: 各フィルタはアップサンプリング倍率 × 0.99に正規化されており、全レートで音量が統一されています
+- **config.json**: デフォルトゲインは`1.0`に設定されており、全レートで適切に動作します
+- **メタデータ**: 各フィルタには対応する`.json`ファイルがあり、DCゲイン、入力/出力レート、アップサンプリング倍率が記載されています
+
+### 処理パラメータ
+
 - **FFTサイズ**: 1,048,576サンプル
 - **Overlap-Saveアルゴリズム**: オーバーラップ999,999サンプル、有効出力48,577サンプル/ブロック
 - **ALSA出力フォーマット**: S32_LE (32-bit signed integer, little-endian)
