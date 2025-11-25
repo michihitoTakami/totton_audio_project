@@ -448,8 +448,9 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                                             cudaStream_t stream,
                                             std::vector<float>& overlapBuffer) {
     // Bypass mode: ratio 1 means input is already at output rate
-    // Skip GPU convolution and just copy input to output
-    if (upsampleRatio_ == 1) {
+    // Skip GPU convolution ONLY if EQ is not applied
+    // When EQ is applied, we need convolution to apply the EQ filter
+    if (upsampleRatio_ == 1 && !eqApplied_) {
         outputData.assign(inputData, inputData + inputFrames);
         return true;
     }
