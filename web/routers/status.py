@@ -45,6 +45,7 @@ async def get_status():
         total_samples=stats["total_samples"],
         input_rate=stats["input_rate"],
         output_rate=stats["output_rate"],
+        peaks=stats["peaks"],
     )
 
 
@@ -67,6 +68,7 @@ async def websocket_stats(websocket: WebSocket):
                     "total_samples": stats["total_samples"],
                     "input_rate": stats["input_rate"],
                     "output_rate": stats["output_rate"],
+                        "peaks": stats["peaks"],
                 }
             )
 
