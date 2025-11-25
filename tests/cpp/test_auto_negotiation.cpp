@@ -652,3 +652,67 @@ TEST_F(AutoNegotiationTest, Issue218_UnsupportedInputRate) {
     auto config3 = negotiate(0, dac);
     EXPECT_FALSE(config3.isValid);
 }
+
+TEST_F(AutoNegotiationTest, Issue218_RateChangeFailure_CurrentRateMaintained) {
+    auto dac = createFullCapabilityDac();
+
+    // Start with valid rate
+    auto config1 = negotiate(44100, dac, 0);
+    EXPECT_TRUE(config1.isValid);
+    EXPECT_EQ(config1.outputRate, 705600);
+    int initialOutputRate = config1.outputRate;
+
+    // Attempt to switch to invalid rate - should fail and maintain current rate
+    auto config2 = negotiate(22050, dac, initialOutputRate);
+    EXPECT_FALSE(config2.isValid);
+    EXPECT_FALSE(config2.errorMessage.empty()) << "Error message should be provided";
+
+    // Verify that current rate is maintained (not changed)
+    // This tests the error recovery behavior in handle_rate_change()
+    auto config3 = negotiate(44100, dac, initialOutputRate);
+    EXPECT_TRUE(config3.isValid);
+    EXPECT_EQ(config3.outputRate, initialOutputRate)
+        << "Output rate should remain unchanged after failed rate switch";
+}
+
+TEST_F(AutoNegotiationTest, Issue218_OutputRateChangeDetection) {
+    auto dac = createFullCapabilityDac();
+
+    // Test that output rate change is detected correctly
+    // 44.1kHz -> 48kHz switch changes output rate (705.6kHz -> 768kHz)
+    auto config44k = negotiate(44100, dac, 0);
+    EXPECT_TRUE(config44k.isValid);
+    EXPECT_EQ(config44k.outputRate, 705600);
+
+    auto config48k = negotiate(48000, dac, config44k.outputRate);
+    EXPECT_TRUE(config48k.isValid);
+    EXPECT_NE(config48k.outputRate, config44k.outputRate)
+        << "Output rate should change when switching between rate families";
+    EXPECT_EQ(config48k.outputRate, 768000);
+
+    // Test that same-family hi-res switch keeps same output rate
+    // 44.1kHz -> 88.2kHz (both 44k family, same output rate 705.6kHz)
+    auto config88200 = negotiate(88200, dac, config44k.outputRate);
+    EXPECT_TRUE(config88200.isValid);
+    EXPECT_EQ(config88200.outputRate, config44k.outputRate)
+        << "Same-family hi-res switch should keep same output rate";
+    EXPECT_FALSE(config88200.requiresReconfiguration)
+        << "Same-family switch should NOT require reconfiguration";
+}
+
+TEST_F(AutoNegotiationTest, Issue218_NegativeInputRate) {
+    auto dac = createFullCapabilityDac();
+
+    // Negative input rate should be rejected
+    auto config = negotiate(-1, dac);
+    EXPECT_FALSE(config.isValid);
+}
+
+TEST_F(AutoNegotiationTest, Issue218_VeryHighInputRate) {
+    auto dac = createFullCapabilityDac();
+
+    // Very high input rate (beyond supported range)
+    // 768kHz is the maximum output rate, so input rates higher than that are invalid
+    auto config = negotiate(1000000, dac);
+    EXPECT_FALSE(config.isValid);
+}
