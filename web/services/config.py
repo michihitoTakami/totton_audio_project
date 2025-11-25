@@ -47,8 +47,6 @@ def load_config() -> Settings:
                 eq_enabled=bool(eq_enabled and eq_profile_path),
                 eq_profile=eq_profile,
                 eq_profile_path=eq_profile_path,
-                input_rate=data.get("inputRate", 44100),
-                output_rate=data.get("outputRate", 352800),
             )
         except (json.JSONDecodeError, KeyError):
             pass
@@ -95,8 +93,11 @@ def save_config(settings: Settings) -> bool:
         existing["eqEnabled"] = eq_enabled
         existing["eqProfile"] = settings.eq_profile if eq_enabled else None
         existing["eqProfilePath"] = eq_profile_path if eq_enabled else None
-        existing["inputRate"] = settings.input_rate
-        existing["outputRate"] = settings.output_rate
+
+        # Remove deprecated fields if present (inputRate/outputRate are auto-negotiated)
+        existing.pop("inputRate", None)
+        existing.pop("outputRate", None)
+        existing.pop("inputSampleRate", None)
 
         with open(CONFIG_PATH, "w") as f:
             json.dump(existing, f, indent=2)

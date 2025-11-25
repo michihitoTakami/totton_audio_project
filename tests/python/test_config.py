@@ -84,7 +84,6 @@ class TestSaveConfig:
             "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear.bin",
             "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear.bin",
             "phaseType": "minimum",
-            "inputSampleRate": 44100,
             "eqEnabled": True,
             "eqProfilePath": "/path/to/eq.txt",
         }
@@ -97,8 +96,6 @@ class TestSaveConfig:
             eq_enabled=True,
             eq_profile="NewProfile",
             eq_profile_path="/path/to/new_eq.txt",
-            input_rate=48000,
-            output_rate=768000,
         )
 
         with patch("web.services.config.CONFIG_PATH", config_file):
@@ -113,8 +110,6 @@ class TestSaveConfig:
         assert saved_config["alsaDevice"] == "hw:NEW"
         assert saved_config["upsampleRatio"] == 16
         assert saved_config["eqProfile"] == "NewProfile"
-        assert saved_config["inputRate"] == 48000
-        assert saved_config["outputRate"] == 768000
 
         # Non-Settings fields should be preserved
         assert saved_config["quadPhaseEnabled"] is True
@@ -135,9 +130,13 @@ class TestSaveConfig:
             == "data/coefficients/filter_48k_16x_2m_linear.bin"
         )
         assert saved_config["phaseType"] == "minimum"
-        assert saved_config["inputSampleRate"] == 44100
         assert saved_config["eqEnabled"] is True
         assert saved_config["eqProfilePath"] == "/path/to/new_eq.txt"
+
+        # Auto-negotiated fields should be removed
+        assert "inputRate" not in saved_config
+        assert "outputRate" not in saved_config
+        assert "inputSampleRate" not in saved_config
 
     def test_save_creates_new_file(self, tmp_path: Path) -> None:
         """Test that save_config creates a new file if it doesn't exist."""
@@ -191,8 +190,6 @@ class TestLoadConfig:
             "alsaDevice": "hw:AUDIO",
             "upsampleRatio": 16,
             "eqProfile": "MyProfile",
-            "inputRate": 44100,
-            "outputRate": 705600,
         }
         config_file.write_text(json.dumps(config_data))
 
@@ -203,8 +200,6 @@ class TestLoadConfig:
         assert result.alsa_device == "hw:AUDIO"
         assert result.upsample_ratio == 16
         assert result.eq_profile == "MyProfile"
-        assert result.input_rate == 44100
-        assert result.output_rate == 705600
 
     def test_load_config_uses_defaults(self, tmp_path: Path) -> None:
         """Test that load_config uses defaults when file doesn't exist."""

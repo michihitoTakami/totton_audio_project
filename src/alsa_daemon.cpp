@@ -79,6 +79,10 @@ static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 static std::atomic<size_t> g_clip_count{0};
 static std::atomic<size_t> g_total_samples{0};
 
+// Runtime state: Input sample rate (auto-negotiated, not from config)
+// This value is detected from PipeWire stream or set to default (44100 Hz)
+static int g_input_sample_rate = DEFAULT_INPUT_SAMPLE_RATE;
+
 // Soft Mute controller for glitch-free shutdown (50ms fade at output sample rate)
 static SoftMute::Controller* g_soft_mute = nullptr;
 
@@ -183,7 +187,7 @@ static void write_stats_file() {
     auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
 
     // Calculate actual output rate from running config
-    int input_rate = g_config.inputSampleRate;
+    int input_rate = g_input_sample_rate;
     int upsample_ratio = g_config.upsampleRatio;
     int output_rate = input_rate * upsample_ratio;
 
@@ -209,10 +213,10 @@ static void write_stats_file() {
 // ========== Configuration ==========
 
 static void print_config_summary(const AppConfig& cfg) {
-    int outputRate = cfg.inputSampleRate * cfg.upsampleRatio;
+    int outputRate = g_input_sample_rate * cfg.upsampleRatio;
     LOG_INFO("Config:");
     LOG_INFO("  ALSA device:    {}", cfg.alsaDevice);
-    LOG_INFO("  Input rate:     {} Hz", cfg.inputSampleRate);
+    LOG_INFO("  Input rate:     {} Hz (auto-negotiated)", g_input_sample_rate);
     LOG_INFO("  Output rate:    {} Hz ({:.1f} kHz)", outputRate, outputRate / 1000.0);
     LOG_INFO("  Buffer size:    {}", cfg.bufferSize);
     LOG_INFO("  Period size:    {}", cfg.periodSize);
@@ -225,7 +229,7 @@ static void print_config_summary(const AppConfig& cfg) {
         LOG_INFO("  EQ profile:     {}", cfg.eqProfilePath);
     }
     // Update metrics with audio configuration
-    gpu_upsampler::metrics::setAudioConfig(cfg.inputSampleRate, outputRate, cfg.upsampleRatio);
+    gpu_upsampler::metrics::setAudioConfig(g_input_sample_rate, outputRate, cfg.upsampleRatio);
 }
 
 static void reset_runtime_state() {
@@ -261,8 +265,8 @@ static void load_runtime_config() {
         g_config.bufferSize = 262144;
     if (g_config.periodSize <= 0)
         g_config.periodSize = 32768;
-    if (g_config.inputSampleRate != 44100 && g_config.inputSampleRate != 48000) {
-        g_config.inputSampleRate = DEFAULT_INPUT_SAMPLE_RATE;
+    if (g_input_sample_rate != 44100 && g_input_sample_rate != 48000) {
+        g_input_sample_rate = DEFAULT_INPUT_SAMPLE_RATE;
     }
 
     if (!found) {
@@ -294,7 +298,7 @@ static std::string build_stats_json() {
         << "\"clip_rate\":" << clip_rate << ","
         << "\"eq_enabled\":" << (g_config.eqEnabled ? "true" : "false") << ","
         << "\"phase_type\":\"" << phaseTypeStr << "\","
-        << "\"input_rate\":" << g_config.inputSampleRate << ","
+        << "\"input_rate\":" << g_input_sample_rate << ","
         << "\"upsample_ratio\":" << g_config.upsampleRatio << "}";
     return oss.str();
 }
@@ -635,7 +639,7 @@ static void zeromq_listener_thread() {
                                     size_t filterFftSize = g_upsampler->getFilterFftSize();
                                     size_t fullFftSize = g_upsampler->getFullFftSize();
                                     double outputSampleRate =
-                                        static_cast<double>(g_config.inputSampleRate) *
+                                        static_cast<double>(g_input_sample_rate) *
                                         g_config.upsampleRatio;
                                     auto eqMagnitude = EQ::computeEqMagnitudeForFft(
                                         filterFftSize, fullFftSize, outputSampleRate, eqProfile);
@@ -898,7 +902,7 @@ static snd_pcm_t* open_and_configure_pcm() {
     }
 
     // Calculate output sample rate from config
-    unsigned int rate = g_config.inputSampleRate * g_config.upsampleRatio;
+    unsigned int rate = g_input_sample_rate * g_config.upsampleRatio;
     if ((err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0)) < 0) {
         std::cerr << "ALSA: Cannot set sample rate: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
@@ -1226,7 +1230,7 @@ int main(int argc, char* argv[]) {
             size_t dotPos = basePath.rfind('.');
             if (dotPos != std::string::npos) {
                 std::string rateSpecificPath = basePath.substr(0, dotPos) + "_" +
-                                               std::to_string(g_config.inputSampleRate) +
+                                               std::to_string(g_input_sample_rate) +
                                                basePath.substr(dotPos);
                 if (std::filesystem::exists(rateSpecificPath)) {
                     std::cout << "Config: Using sample-rate-specific filter: " << rateSpecificPath
@@ -1237,7 +1241,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Warn if using 44.1kHz filter with 48kHz input
-        if (g_config.inputSampleRate == 48000 &&
+        if (g_input_sample_rate == 48000 &&
             g_config.filterPath.find("44100") == std::string::npos &&
             g_config.filterPath.find("48000") == std::string::npos) {
             std::cout << "Warning: Using generic filter with 48kHz input. "
@@ -1270,7 +1274,7 @@ int main(int argc, char* argv[]) {
 
             // Determine initial rate family from inputSampleRate
             ConvolutionEngine::RateFamily initialFamily =
-                ConvolutionEngine::detectRateFamily(g_config.inputSampleRate);
+                ConvolutionEngine::detectRateFamily(g_input_sample_rate);
             if (initialFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
                 initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
             }
@@ -1312,10 +1316,10 @@ int main(int argc, char* argv[]) {
 
         // Set input sample rate for correct output rate calculation (non-quad-phase mode)
         if (!g_config.quadPhaseEnabled) {
-            g_upsampler->setInputSampleRate(g_config.inputSampleRate);
+            g_upsampler->setInputSampleRate(g_input_sample_rate);
             g_upsampler->setPhaseType(g_config.phaseType);
         }
-        std::cout << "Input sample rate: " << g_config.inputSampleRate << " Hz -> "
+        std::cout << "Input sample rate: " << g_input_sample_rate << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
         std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
 
@@ -1354,7 +1358,7 @@ int main(int argc, char* argv[]) {
                 size_t filterFftSize = g_upsampler->getFilterFftSize();  // N/2+1 (R2C output)
                 size_t fullFftSize = g_upsampler->getFullFftSize();      // N (full FFT)
                 double outputSampleRate =
-                    static_cast<double>(g_config.inputSampleRate) * g_config.upsampleRatio;
+                    static_cast<double>(g_input_sample_rate) * g_config.upsampleRatio;
                 auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
                                                                 outputSampleRate, eqProfile);
 
@@ -1387,7 +1391,7 @@ int main(int argc, char* argv[]) {
             g_hrtf_processor = new CrossfeedEngine::HRTFProcessor();
 
             // Determine rate family based on input sample rate
-            CrossfeedEngine::RateFamily rateFamily = (g_config.inputSampleRate == 48000)
+            CrossfeedEngine::RateFamily rateFamily = (g_input_sample_rate == 48000)
                                                          ? CrossfeedEngine::RateFamily::RATE_48K
                                                          : CrossfeedEngine::RateFamily::RATE_44K;
 
@@ -1445,7 +1449,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Initialize soft mute controller with output sample rate (50ms fade duration)
-        int outputSampleRate = g_config.inputSampleRate * g_config.upsampleRatio;
+        int outputSampleRate = g_input_sample_rate * g_config.upsampleRatio;
         g_soft_mute = new SoftMute::Controller(50, outputSampleRate);
         std::cout << "Soft mute initialized (50ms fade at " << outputSampleRate << "Hz)"
                   << std::endl;
@@ -1487,7 +1491,7 @@ int main(int argc, char* argv[]) {
 
         struct spa_audio_info_raw input_info = {};
         input_info.format = SPA_AUDIO_FORMAT_F32;
-        input_info.rate = g_config.inputSampleRate;
+        input_info.rate = g_input_sample_rate;
         input_info.channels = CHANNELS;
         input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
         input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
@@ -1512,7 +1516,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "Warning: Failed to create signal check timer" << std::endl;
         }
 
-        double outputRateKHz = g_config.inputSampleRate * g_config.upsampleRatio / 1000.0;
+        double outputRateKHz = g_input_sample_rate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
         std::cout << "System ready. Audio routing configured:" << std::endl;
         std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)"

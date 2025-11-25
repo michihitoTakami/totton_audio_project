@@ -18,8 +18,6 @@ class Settings(BaseModel):
     eq_enabled: bool = False
     eq_profile: Optional[str] = None
     eq_profile_path: Optional[str] = None
-    input_rate: int = 44100
-    output_rate: int = 352800
 
 
 class SettingsUpdate(BaseModel):
@@ -30,8 +28,6 @@ class SettingsUpdate(BaseModel):
     eq_enabled: Optional[bool] = None
     eq_profile: Optional[str] = None
     eq_profile_path: Optional[str] = None
-    input_rate: Optional[int] = None
-    output_rate: Optional[int] = None
 
 
 # ============================================================================

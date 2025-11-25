@@ -285,14 +285,9 @@ int main(int argc, char* argv[]) {
     std::cout << "GPU upsampler ready (16x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)"
               << std::endl;
 
-    // Load config and set input sample rate / phase type
+    // Load config and set phase type (input sample rate is auto-detected from PipeWire)
     AppConfig appConfig;
     if (loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false)) {
-        // Set input sample rate for correct output rate calculation
-        g_upsampler->setInputSampleRate(appConfig.inputSampleRate);
-        std::cout << "Input sample rate: " << appConfig.inputSampleRate << " Hz -> "
-                  << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
-
         g_upsampler->setPhaseType(appConfig.phaseType);
         std::cout << "Phase type: " << phaseTypeToString(appConfig.phaseType) << std::endl;
 
@@ -303,9 +298,10 @@ int main(int argc, char* argv[]) {
                       << g_upsampler->getLatencySamples() << " samples)" << std::endl;
         }
     } else {
-        std::cout << "Input sample rate: 44100 Hz (default)" << std::endl;
         std::cout << "Phase type: minimum (default)" << std::endl;
     }
+    // Input sample rate will be auto-detected from PipeWire stream
+    std::cout << "Input sample rate: auto-detected from PipeWire" << std::endl;
 
     if (!g_upsampler->initializeStreaming()) {
         std::cerr << "Failed to initialize streaming mode" << std::endl;

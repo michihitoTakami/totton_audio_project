@@ -50,8 +50,6 @@ def start_daemon() -> tuple[bool, str]:
                 str(DAEMON_BINARY),
                 "-d",
                 config.alsa_device,
-                "-r",
-                str(config.input_rate),
             ],
             start_new_session=True,
         )
@@ -97,9 +95,13 @@ def check_pipewire_sink() -> bool:
 
 
 def get_configured_rates() -> tuple[int, int]:
-    """Get configured input and output rates."""
-    config = load_config()
-    return config.input_rate, config.output_rate
+    """Get configured input and output rates from runtime stats.
+
+    Note: Input/output rates are auto-negotiated at runtime, not from config.
+    This function reads from the daemon's stats file instead.
+    """
+    stats = load_stats()
+    return stats.get("input_rate", 0), stats.get("output_rate", 0)
 
 
 def load_stats() -> dict:
