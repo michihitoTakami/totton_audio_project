@@ -74,6 +74,17 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("eqProfilePath"))
             outConfig.eqProfilePath = j["eqProfilePath"].get<std::string>();
 
+        // Crossfeed settings
+        if (j.contains("crossfeed")) {
+            auto cf = j["crossfeed"];
+            if (cf.contains("enabled"))
+                outConfig.crossfeed.enabled = cf["enabled"].get<bool>();
+            if (cf.contains("headSize"))
+                outConfig.crossfeed.headSize = cf["headSize"].get<std::string>();
+            if (cf.contains("hrtfPath"))
+                outConfig.crossfeed.hrtfPath = cf["hrtfPath"].get<std::string>();
+        }
+
         if (verbose) {
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)
                       << std::endl;

@@ -33,6 +33,13 @@ struct AppConfig {
     // EQ settings
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)
+
+    // Crossfeed settings (nested struct for clarity)
+    struct CrossfeedConfig {
+        bool enabled = false;
+        std::string headSize = "m";  // "s", "m", "l", "xl"
+        std::string hrtfPath = "data/crossfeed/hrtf/";
+    } crossfeed;
 };
 
 // Convert string to PhaseType (returns Minimum for invalid input)
