@@ -147,6 +147,8 @@ static std::vector<float> g_stream_input_left;
 static std::vector<float> g_stream_input_right;
 static size_t g_stream_accumulated_left = 0;
 static size_t g_stream_accumulated_right = 0;
+static std::vector<float> g_upsampler_output_left;
+static std::vector<float> g_upsampler_output_right;
 
 // Crossfeed (HRTF) processor
 static CrossfeedEngine::HRTFProcessor* g_hrtf_processor = nullptr;
@@ -156,6 +158,8 @@ static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
 static size_t g_cf_stream_accumulated_right = 0;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
+static std::vector<float> g_cf_output_buffer_left;
+static std::vector<float> g_cf_output_buffer_right;
 
 // Fallback manager (Issue #139)
 static FallbackManager::Manager* g_fallback_manager = nullptr;
@@ -331,12 +335,16 @@ static void reset_runtime_state() {
     g_stream_input_right.clear();
     g_stream_accumulated_left = 0;
     g_stream_accumulated_right = 0;
+    g_upsampler_output_left.clear();
+    g_upsampler_output_right.clear();
 
     // Reset crossfeed streaming buffers
     g_cf_stream_input_left.clear();
     g_cf_stream_input_right.clear();
     g_cf_stream_accumulated_left = 0;
     g_cf_stream_accumulated_right = 0;
+    g_cf_output_buffer_left.clear();
+    g_cf_output_buffer_right.clear();
 }
 
 static void load_runtime_config() {
@@ -924,7 +932,8 @@ static void on_input_process(void* userdata) {
 
         // Process through GPU upsampler using streaming API
         // This preserves overlap buffer across calls
-        std::vector<float> output_left, output_right;
+        std::vector<float>& output_left = g_upsampler_output_left;
+        std::vector<float>& output_right = g_upsampler_output_right;
 
         // Check if fallback mode is active (Issue #139)
         bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
@@ -975,7 +984,8 @@ static void on_input_process(void* userdata) {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 // Re-check under lock (double-checked locking pattern)
                 if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                    std::vector<float> cf_output_left, cf_output_right;
+                    std::vector<float>& cf_output_left = g_cf_output_buffer_left;
+                    std::vector<float>& cf_output_right = g_cf_output_buffer_right;
                     // Use default CUDA stream (0) for crossfeed processing
                     bool cf_generated = g_hrtf_processor->processStreamBlock(
                         output_left.data(), output_right.data(), output_left.size(), cf_output_left,
@@ -1586,6 +1596,10 @@ int main(int argc, char* argv[]) {
                   << " samples (2x streamValidInputPerBlock)" << std::endl;
         g_stream_accumulated_left = 0;
         g_stream_accumulated_right = 0;
+        size_t upsampler_output_capacity =
+            g_upsampler->getStreamValidInputPerBlock() * g_config.upsampleRatio * 2;
+        g_upsampler_output_left.reserve(upsampler_output_capacity);
+        g_upsampler_output_right.reserve(upsampler_output_capacity);
 
         // Initialize HRTF processor for crossfeed (optional feature)
         // Crossfeed is disabled by default until enabled via ZeroMQ command
@@ -1613,6 +1627,8 @@ int main(int argc, char* argv[]) {
                     g_cf_stream_input_right.resize(cf_buffer_capacity, 0.0f);
                     g_cf_stream_accumulated_left = 0;
                     g_cf_stream_accumulated_right = 0;
+                    g_cf_output_buffer_left.reserve(cf_buffer_capacity);
+                    g_cf_output_buffer_right.reserve(cf_buffer_capacity);
                     std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity << " samples"
                               << std::endl;
 
