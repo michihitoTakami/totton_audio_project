@@ -6,6 +6,7 @@ This module provides functions equivalent to scripts/daemon.sh for:
 - Setting up PipeWire monitor links to daemon input
 """
 
+import logging
 import subprocess
 import time
 from typing import Optional
@@ -15,6 +16,8 @@ from ..constants import (
     GPU_SINK_NAME,
     GPU_UPSAMPLER_INPUT_NODE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_sink() -> Optional[str]:
@@ -95,9 +98,10 @@ def remember_default_sink() -> None:
     if current and current != GPU_SINK_NAME:
         try:
             DEFAULT_SINK_FILE_PATH.write_text(current)
+            logger.debug("Remembered default sink: %s", current)
             return
-        except IOError:
-            pass
+        except IOError as e:
+            logger.warning("Failed to save default sink: %s", e)
 
     # If the default sink is already GPU, remember the first non-GPU sink
     if not DEFAULT_SINK_FILE_PATH.exists():
@@ -105,8 +109,9 @@ def remember_default_sink() -> None:
         if fallback:
             try:
                 DEFAULT_SINK_FILE_PATH.write_text(fallback)
-            except IOError:
-                pass
+                logger.debug("Remembered fallback sink: %s", fallback)
+            except IOError as e:
+                logger.warning("Failed to save fallback sink: %s", e)
 
 
 def move_sink_inputs(target_sink: str) -> None:
@@ -170,8 +175,10 @@ def create_gpu_sink() -> bool:
         True if sink exists or was created, False on failure.
     """
     if sink_exists(GPU_SINK_NAME):
+        logger.debug("GPU sink '%s' already exists", GPU_SINK_NAME)
         return True  # Already exists
 
+    logger.info("Creating GPU sink '%s'...", GPU_SINK_NAME)
     try:
         result = subprocess.run(
             [
@@ -187,9 +194,11 @@ def create_gpu_sink() -> bool:
         )
         if result.returncode == 0:
             time.sleep(0.3)  # Wait for sink to be registered
+            logger.info("GPU sink created successfully")
             return True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
+        logger.error("Failed to create GPU sink: %s", result.stderr.strip())
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        logger.error("Failed to create GPU sink: %s", e)
     return False
 
 
@@ -202,6 +211,12 @@ def wait_for_daemon_node(timeout_sec: float = 5.0) -> bool:
     Returns:
         True if node appeared, False on timeout.
     """
+    if timeout_sec > 0:
+        logger.debug(
+            "Waiting for daemon node '%s' (timeout: %.1fs)...",
+            GPU_UPSAMPLER_INPUT_NODE,
+            timeout_sec,
+        )
     start = time.time()
     while True:
         try:
@@ -212,12 +227,21 @@ def wait_for_daemon_node(timeout_sec: float = 5.0) -> bool:
                 timeout=2,
             )
             if f"{GPU_UPSAMPLER_INPUT_NODE}:input_FL" in result.stdout:
+                elapsed = time.time() - start
+                if timeout_sec > 0:
+                    logger.debug("Daemon node appeared after %.2fs", elapsed)
                 return True
         except (subprocess.SubprocessError, FileNotFoundError):
             pass
 
         # Check timeout after first attempt (allows timeout_sec=0 for immediate check)
         if time.time() - start >= timeout_sec:
+            if timeout_sec > 0:
+                logger.warning(
+                    "Daemon node '%s' did not appear within %.1fs",
+                    GPU_UPSAMPLER_INPUT_NODE,
+                    timeout_sec,
+                )
             return False
         time.sleep(0.3)
 
@@ -232,6 +256,7 @@ def setup_pipewire_links() -> tuple[bool, str]:
     Returns:
         Tuple of (success, message).
     """
+    logger.info("Setting up PipeWire monitor links...")
     links = [
         (f"{GPU_SINK_NAME}:monitor_FL", f"{GPU_UPSAMPLER_INPUT_NODE}:input_FL"),
         (f"{GPU_SINK_NAME}:monitor_FR", f"{GPU_UPSAMPLER_INPUT_NODE}:input_FR"),
@@ -251,12 +276,24 @@ def setup_pipewire_links() -> tuple[bool, str]:
                 stderr_lower = result.stderr.lower()
                 # "already linked" or similar messages are not errors
                 if "already" not in stderr_lower and "exists" not in stderr_lower:
+                    logger.error(
+                        "Failed to create link %s -> %s: %s",
+                        source,
+                        target,
+                        result.stderr.strip(),
+                    )
                     errors.append(f"{source} -> {target}: {result.stderr.strip()}")
+                else:
+                    logger.debug("Link %s -> %s already exists", source, target)
+            else:
+                logger.debug("Created link %s -> %s", source, target)
         except (subprocess.SubprocessError, FileNotFoundError) as e:
+            logger.error("Failed to create link %s -> %s: %s", source, target, e)
             errors.append(f"{source} -> {target}: {e}")
 
     if errors:
         return False, "; ".join(errors)
+    logger.info("PipeWire links configured successfully")
     return True, "Links configured"
 
 
@@ -270,15 +307,23 @@ def restore_default_sink() -> None:
     if DEFAULT_SINK_FILE_PATH.exists():
         try:
             target = DEFAULT_SINK_FILE_PATH.read_text().strip()
-        except IOError:
-            pass
+            logger.debug("Read remembered sink from file: %s", target)
+        except IOError as e:
+            logger.warning("Failed to read remembered sink: %s", e)
 
     # If no remembered sink or it's the GPU sink, use fallback
     if not target or target == GPU_SINK_NAME:
         target = select_fallback_sink()
+        if target:
+            logger.debug("Using fallback sink: %s", target)
 
     if target:
-        set_default_sink(target)
+        if set_default_sink(target):
+            logger.info("Restored default sink to: %s", target)
+        else:
+            logger.warning("Failed to restore default sink to: %s", target)
+    else:
+        logger.warning("No sink available to restore")
 
 
 def setup_audio_routing() -> tuple[bool, str]:
@@ -292,8 +337,11 @@ def setup_audio_routing() -> tuple[bool, str]:
     Returns:
         Tuple of (success, message).
     """
+    logger.info("Setting up audio routing...")
+
     # Step 1: Create sink
     if not create_gpu_sink():
+        logger.error("Failed to create GPU sink")
         return False, f"Failed to create {GPU_SINK_NAME}"
 
     # Step 2: Remember current default
@@ -301,7 +349,9 @@ def setup_audio_routing() -> tuple[bool, str]:
 
     # Step 3: Set as default
     if not set_default_sink(GPU_SINK_NAME):
+        logger.error("Failed to set GPU sink as default")
         return False, f"Failed to set {GPU_SINK_NAME} as default"
 
     current = get_default_sink()
+    logger.info("Audio routing configured: default sink is '%s'", current)
     return True, f"Audio routed to {GPU_SINK_NAME} (default: {current})"
