@@ -1249,3 +1249,138 @@ class TestValidateTapCountErrorHandling:
 
         with pytest.raises((ValueError, ZeroDivisionError)):
             validate_tap_count(1024, 0)
+
+
+class TestCalculateSafeGain:
+    """Tests for calculate_safe_gain function.
+
+    #260: グローバル安全ゲインの算出。max_coef_max > 1.0 の場合に
+    gain = M / max_coef_max を計算してクリッピングを防止する。
+    """
+
+    def test_calculates_from_max_coef(self, tmp_path):
+        """max_coef > 1.0 の場合は max_coef ベースで計算"""
+        from generate_filter import calculate_safe_gain
+
+        # テスト用JSONファイルを作成
+        (tmp_path / "filter_test.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 100.0, "max_coefficient_amplitude": 1.5}}}'
+        )
+
+        filter_infos = [
+            ("test", "filter_test", 1000, {"input_rate": 44100, "ratio": 16})
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # H = 0.97 / 1.5 ≈ 0.6467
+        assert result["max_coef_max"] == 1.5
+        assert np.isclose(result["recommended_gain"], 0.97 / 1.5, rtol=1e-6)
+        assert result["recommended_gain"] < 1.0
+
+    def test_returns_1_when_all_safe(self, tmp_path):
+        """全フィルタの max_coef <= 1.0 の場合は gain=1.0"""
+        from generate_filter import calculate_safe_gain
+
+        # max_coef が 1.0 以下のJSONファイル
+        (tmp_path / "filter_safe.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 50.0, "max_coefficient_amplitude": 0.8}}}'
+        )
+
+        filter_infos = [
+            ("safe", "filter_safe", 1000, {"input_rate": 44100, "ratio": 16})
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # max_coef=0.8 → H = 0.97/0.8 = 1.2125 → clamp to 1.0
+        assert result["max_coef_max"] == 0.8
+        assert result["recommended_gain"] == 1.0
+
+    def test_handles_multiple_filters(self, tmp_path):
+        """複数フィルタから最大値を正しく取得"""
+        from generate_filter import calculate_safe_gain
+
+        (tmp_path / "filter_a.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 100.0, "max_coefficient_amplitude": 0.9}}}'
+        )
+        (tmp_path / "filter_b.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 200.0, "max_coefficient_amplitude": 1.2}}}'
+        )
+
+        filter_infos = [
+            ("a", "filter_a", 1000, {}),
+            ("b", "filter_b", 1000, {}),
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # max_coef_max = 1.2, l1_max = 200.0
+        assert result["max_coef_max"] == 1.2
+        assert result["max_coef_max_filter"] == "b"
+        assert result["l1_max"] == 200.0
+        assert result["l1_max_filter"] == "b"
+        assert np.isclose(result["recommended_gain"], 0.97 / 1.2, rtol=1e-6)
+
+    def test_handles_invalid_data_gracefully(self, tmp_path):
+        """無効なデータ（None等）を安全にスキップ"""
+        from generate_filter import calculate_safe_gain
+
+        # l1_norm が null のJSON
+        (tmp_path / "filter_invalid.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": null, "max_coefficient_amplitude": null}}}'
+        )
+        (tmp_path / "filter_valid.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 50.0, "max_coefficient_amplitude": 0.5}}}'
+        )
+
+        filter_infos = [
+            ("invalid", "filter_invalid", 1000, {}),
+            ("valid", "filter_valid", 1000, {}),
+        ]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # 無効なフィルタはスキップされ、有効なフィルタのみ処理される
+        assert len(result["details"]) == 1
+        assert result["details"][0]["name"] == "valid"
+        assert result["max_coef_max"] == 0.5
+
+    def test_handles_missing_json_file(self, tmp_path):
+        """存在しないJSONファイルをスキップ"""
+        from generate_filter import calculate_safe_gain
+
+        filter_infos = [("missing", "filter_missing", 1000, {})]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # ファイルがないので details は空
+        assert len(result["details"]) == 0
+        assert result["recommended_gain"] == 1.0  # デフォルト値
+
+    def test_int_float_conversion_safety(self, tmp_path):
+        """int型の値も正しくfloatに変換される"""
+        from generate_filter import calculate_safe_gain
+
+        # JSONでは整数として保存されることがある
+        (tmp_path / "filter_int.json").write_text(
+            '{"validation_results": {"normalization": {"l1_norm": 100, "max_coefficient_amplitude": 1}}}'
+        )
+
+        filter_infos = [("int_test", "filter_int", 1000, {})]
+        result = calculate_safe_gain(
+            filter_infos, safety_margin=0.97, coefficients_dir=str(tmp_path)
+        )
+
+        # int でも float として処理される
+        assert isinstance(result["l1_max"], float)
+        assert isinstance(result["max_coef_max"], float)
+        assert result["l1_max"] == 100.0
+        assert result["max_coef_max"] == 1.0
+        # max_coef=1.0 → H = 0.97 / 1.0 = 0.97 < 1.0
+        assert np.isclose(result["recommended_gain"], 0.97, rtol=1e-6)

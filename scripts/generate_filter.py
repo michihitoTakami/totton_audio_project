@@ -1041,6 +1041,126 @@ def generate_multi_rate_header(
     print(f"\nマルチレートヘッダファイル生成: {header_path}")
 
 
+def calculate_safe_gain(
+    filter_infos: list[tuple[str, str, int, dict[str, Any]]],
+    safety_margin: float = 0.97,
+    coefficients_dir: str = "data/coefficients",
+) -> dict[str, Any]:
+    """全フィルタからグローバル安全ゲインを計算する
+
+    Args:
+        filter_infos: [(name, base_name, actual_taps, cfg), ...] のリスト
+        safety_margin: 安全マージン M（デフォルト0.97 = -0.26dB）
+        coefficients_dir: 係数ディレクトリ
+
+    Returns:
+        dict: {
+            "l1_max": float,
+            "l1_max_filter": str,
+            "max_coef_max": float,
+            "max_coef_max_filter": str,
+            "safety_margin": float,
+            "recommended_gain": float,
+            "details": list[dict],
+        }
+    """
+    coeff_path = Path(coefficients_dir)
+    details = []
+    l1_max = 0.0
+    l1_max_filter = ""
+    max_coef_max = 0.0
+    max_coef_max_filter = ""
+
+    for name, base_name, _, _ in filter_infos:
+        json_path = coeff_path / f"{base_name}.json"
+        if not json_path.exists():
+            print(f"  警告: {json_path} が見つかりません。スキップします。")
+            continue
+
+        with open(json_path, encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        norm_info = metadata.get("validation_results", {}).get("normalization", {})
+        l1_norm = norm_info.get("l1_norm")
+        max_coef = norm_info.get("max_coefficient_amplitude")
+
+        # None または無効な値のチェック（安全なFloat変換）
+        if l1_norm is None or not isinstance(l1_norm, (int, float)):
+            print(f"  警告: {name} のL1ノルムが無効です。スキップします。")
+            continue
+        if max_coef is None or not isinstance(max_coef, (int, float)):
+            print(f"  警告: {name} のmax_coefficientが無効です。スキップします。")
+            continue
+
+        # 明示的にfloatに変換（int/float混在対策）
+        l1_norm = float(l1_norm)
+        max_coef = float(max_coef)
+
+        details.append(
+            {
+                "name": name,
+                "l1_norm": l1_norm,
+                "max_coef": max_coef,
+            }
+        )
+
+        if l1_norm > l1_max:
+            l1_max = l1_norm
+            l1_max_filter = name
+        if max_coef > max_coef_max:
+            max_coef_max = max_coef
+            max_coef_max_filter = name
+
+    # 安全ゲイン計算（max_coefベース）
+    # H = M / max_coef_max
+    # これにより max_coef × H ≤ M < 1.0 を保証
+    if max_coef_max > 0:
+        recommended_gain = float(safety_margin / max_coef_max)
+    else:
+        recommended_gain = 1.0
+
+    # gain が 1.0 を超える場合は 1.0 に制限（増幅は不要）
+    if recommended_gain > 1.0:
+        recommended_gain = 1.0
+
+    return {
+        "l1_max": l1_max,
+        "l1_max_filter": l1_max_filter,
+        "max_coef_max": max_coef_max,
+        "max_coef_max_filter": max_coef_max_filter,
+        "safety_margin": float(safety_margin),
+        "recommended_gain": recommended_gain,
+        "details": details,
+    }
+
+
+def print_safe_gain_recommendation(safe_gain_info: dict[str, Any]) -> None:
+    """安全ゲインの推奨値を表示する"""
+    print("\n" + "=" * 70)
+    print("GLOBAL SAFE GAIN RECOMMENDATION")
+    print("=" * 70)
+    print(f"L1_max: {safe_gain_info['l1_max']:.2f} ({safe_gain_info['l1_max_filter']})")
+    print(
+        f"max_coef_max: {safe_gain_info['max_coef_max']:.6f} "
+        f"({safe_gain_info['max_coef_max_filter']})"
+    )
+    print(f"Safety margin M: {safe_gain_info['safety_margin']}")
+    print()
+
+    gain = safe_gain_info["recommended_gain"]
+    if gain < 1.0:
+        print("⚠️  max_coef > 1.0 detected. Gain adjustment required.")
+        print(f"Recommended config.json gain: {gain:.4f}")
+        print()
+        print("To apply, set in config.json:")
+        print(f'  "gain": {gain:.4f}')
+    else:
+        print("✅ All filters have max_coef <= 1.0. No gain adjustment needed.")
+        print('config.json gain can remain at: "gain": 1.0')
+
+    print("=" * 70)
+
+
 # ==============================================================================
 # CLI用関数
 # ==============================================================================
@@ -1218,6 +1338,10 @@ def generate_all_filters(args: argparse.Namespace) -> None:
 
     if filter_infos:
         generate_multi_rate_header(filter_infos)
+
+        # グローバル安全ゲインを計算して推奨値を表示
+        safe_gain_info = calculate_safe_gain(filter_infos)
+        print_safe_gain_recommendation(safe_gain_info)
 
     print("\n" + "=" * 70)
     print("GENERATION SUMMARY")
