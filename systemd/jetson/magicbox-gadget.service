@@ -1,0 +1,30 @@
+[Unit]
+Description=Magic Box USB Composite Gadget (UAC2 + ECM)
+Documentation=https://github.com/michihitoTakami/gpu_os/docs/jetson/usb-gadget/
+
+# Start early in boot sequence, before network
+DefaultDependencies=no
+Before=network-pre.target
+After=local-fs.target systemd-modules-load.service
+Requires=local-fs.target
+
+# Only start if USB Device Controller exists
+ConditionPathExists=/sys/class/udc
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Main commands
+ExecStart=/opt/magicbox/scripts/setup-usb-gadget.sh start
+ExecStop=/opt/magicbox/scripts/setup-usb-gadget.sh stop
+ExecReload=/opt/magicbox/scripts/setup-usb-gadget.sh restart
+
+# Recovery on failure
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target
