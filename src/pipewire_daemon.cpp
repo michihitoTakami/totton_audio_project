@@ -95,40 +95,38 @@ static bool handle_rate_change(int detected_sample_rate) {
     }
 
     // Multi-rate mode: use switchToInputRate() for dynamic rate switching
-    if (g_upsampler->isMultiRateEnabled()) {
-        if (g_upsampler->switchToInputRate(detected_sample_rate)) {
-            g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
-
-            // Output rate is dynamically calculated (input_rate × upsample_ratio)
-            int new_output_rate = g_upsampler->getOutputSampleRate();
-            int current_output_rate = g_current_output_rate.load();
-
-            g_current_output_rate.store(new_output_rate, std::memory_order_release);
-
-            // Output rate change only requires reconnection if it actually changed
-            // (same-family hi-res switches keep the same output rate)
-            if (g_data && new_output_rate != current_output_rate) {
-                g_data->needs_output_reconnect = true;
-                g_data->new_output_rate = new_output_rate;
-                std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
-                          << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)"
-                          << std::endl;
-            } else {
-                std::cout << "[Rate] Rate switched to " << detected_sample_rate << " Hz -> "
-                          << new_output_rate << " Hz (" << g_upsampler->getUpsampleRatio()
-                          << "x upsampling)" << std::endl;
-            }
-            return true;
-        }
-        std::cerr << "[Rate] Failed to switch to input rate: " << detected_sample_rate << " Hz"
+    if (!g_upsampler->isMultiRateEnabled()) {
+        std::cerr << "[Rate] ERROR: Multi-rate mode not enabled. Rate switching requires multi-rate mode."
                   << std::endl;
         return false;
     }
 
-    // Single-rate mode: rate switching not supported
-    std::cerr << "[Rate] WARNING: Rate change detected (" << detected_sample_rate
-              << " Hz) but single-rate mode does not support rate switching." << std::endl;
-    std::cerr << "[Rate] WARNING: Use multi-rate mode (default) for automatic rate switching."
+    if (g_upsampler->switchToInputRate(detected_sample_rate)) {
+        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
+
+        // Output rate is dynamically calculated (input_rate × upsample_ratio)
+        int new_output_rate = g_upsampler->getOutputSampleRate();
+        int current_output_rate = g_current_output_rate.load();
+
+        g_current_output_rate.store(new_output_rate, std::memory_order_release);
+
+        // Output rate change only requires reconnection if it actually changed
+        // (same-family hi-res switches keep the same output rate)
+        if (g_data && new_output_rate != current_output_rate) {
+            g_data->needs_output_reconnect = true;
+            g_data->new_output_rate = new_output_rate;
+            std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
+                      << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)"
+                      << std::endl;
+        } else {
+            std::cout << "[Rate] Rate switched to " << detected_sample_rate << " Hz -> "
+                      << new_output_rate << " Hz (" << g_upsampler->getUpsampleRatio()
+                      << "x upsampling)" << std::endl;
+        }
+        return true;
+    }
+
+    std::cerr << "[Rate] Failed to switch to input rate: " << detected_sample_rate << " Hz"
               << std::endl;
     return false;
 }
@@ -300,24 +298,11 @@ int main(int argc, char* argv[]) {
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
 
-    // Parse filter paths (supports single-rate and multi-rate modes)
-    // Usage:
-    //   Multi-rate (default): pipewire_daemon [coefficient_dir]
-    //   Single-rate:           pipewire_daemon --single-rate filter.bin
-    std::string filter_path_44k = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    // Parse coefficient directory (multi-rate mode only)
+    // Usage: pipewire_daemon [coefficient_dir]
     std::string coefficient_dir = "data/coefficients";
-    bool use_multi_rate = true;  // Default to multi-rate mode
-    bool use_single_rate = false;
 
-    // Parse command line arguments
-    if (argc >= 2 && std::string(argv[1]) == "--single-rate") {
-        use_multi_rate = false;
-        use_single_rate = true;
-        if (argc >= 3) {
-            filter_path_44k = argv[2];
-        }
-    } else if (argc >= 2) {
-        // Coefficient directory specified for multi-rate mode
+    if (argc >= 2) {
         coefficient_dir = argv[1];
     }
 
@@ -325,35 +310,23 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Initialize GPU upsampler
+    // Initialize GPU upsampler (multi-rate mode only)
     std::cout << "Initializing GPU upsampler..." << std::endl;
     g_upsampler = new ConvolutionEngine::GPUUpsampler();
 
-    bool init_success = false;
-    if (use_multi_rate) {
-        std::cout << "Mode: Multi-Rate (all supported rates: 44.1k/48k families, 16x/8x/4x/2x)"
-                  << std::endl;
-        init_success = g_upsampler->initializeMultiRate(coefficient_dir, DEFAULT_BLOCK_SIZE,
-                                                         44100);  // Initial input rate (will be
-                                                                  // updated by PipeWire detection)
-    } else {
-        std::cout << "Mode: Single-Rate (44.1kHz family only, 16x)" << std::endl;
-        init_success =
-            g_upsampler->initialize(filter_path_44k, DEFAULT_UPSAMPLE_RATIO, DEFAULT_BLOCK_SIZE);
-    }
+    std::cout << "Mode: Multi-Rate (all supported rates: 44.1k/48k families, 16x/8x/4x/2x)"
+              << std::endl;
+    bool init_success = g_upsampler->initializeMultiRate(
+        coefficient_dir, DEFAULT_BLOCK_SIZE,
+        44100);  // Initial input rate (will be updated by PipeWire detection)
 
     if (!init_success) {
         std::cerr << "Failed to initialize GPU upsampler" << std::endl;
         delete g_upsampler;
         return 1;
     }
-    if (use_multi_rate) {
-        std::cout << "GPU upsampler ready (" << g_upsampler->getUpsampleRatio()
-                  << "x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
-    } else {
-        std::cout << "GPU upsampler ready (16x upsampling, " << DEFAULT_BLOCK_SIZE
-                  << " samples/block)" << std::endl;
-    }
+    std::cout << "GPU upsampler ready (" << g_upsampler->getUpsampleRatio()
+              << "x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
 
     // Load config and set phase type (input sample rate is auto-detected from PipeWire)
     AppConfig appConfig;
