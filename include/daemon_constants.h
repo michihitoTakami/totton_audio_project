@@ -16,6 +16,11 @@ constexpr int CHANNELS = 2;
 constexpr int DEFAULT_OUTPUT_SAMPLE_RATE =
     DEFAULT_INPUT_SAMPLE_RATE * DEFAULT_UPSAMPLE_RATIO;  // 705600 Hz
 
+// Soft mute constants (Issue #266)
+constexpr int DEFAULT_SOFT_MUTE_FADE_MS = 50;  // Default fade duration for shutdown/reload
+constexpr int FILTER_SWITCH_FADE_MS = 1500;    // Fade duration for filter switching (1.5 seconds)
+constexpr int FILTER_SWITCH_FADE_TIMEOUT_MS = 2250;  // Timeout for fade completion (1.5x fade duration)
+
 }  // namespace DaemonConstants
 
 #endif  // DAEMON_CONSTANTS_H

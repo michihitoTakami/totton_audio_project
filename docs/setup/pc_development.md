@@ -175,7 +175,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
    ls -lh data/coefficients/filter_*_*x_2m_min_phase.bin
    ```
    各フィルタファイル（約7.6MB）と対応するメタデータJSONファイルが存在する必要があります。
-   
+
    ```bash
    # メタデータの確認（DCゲイン・レート情報）
    cat data/coefficients/filter_44k_16x_2m_min_phase.json | jq '.sample_rate_input, .sample_rate_output, .upsample_ratio, .validation_results.normalization.normalized_dc_gain'

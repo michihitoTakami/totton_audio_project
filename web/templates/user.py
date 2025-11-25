@@ -716,7 +716,7 @@ def get_embedded_html() -> str:
             const statusEl = document.getElementById('crossfeedStatus');
             const indicatorEl = document.getElementById('crossfeedStatusIndicator');
             const statusTextEl = document.getElementById('crossfeedStatusText');
-            
+
             if (crossfeedState.enabled) {
                 statusEl.style.display = 'block';
                 indicatorEl.classList.add('active');
@@ -732,7 +732,7 @@ def get_embedded_html() -> str:
             const loadingEl = document.getElementById('crossfeedLoading');
             const toggle = document.getElementById('crossfeedToggle');
             const headSizeBtns = document.querySelectorAll('.head-size-btn');
-            
+
             crossfeedState.isApplying = loading;
             if (loading) {
                 loadingEl.classList.add('visible');
@@ -764,14 +764,14 @@ def get_embedded_html() -> str:
 
         async function toggleCrossfeed() {
             if (crossfeedState.isApplying) return;
-            
+
             const wasEnabled = crossfeedState.enabled;
             setCrossfeedLoading(true);
             try {
                 const endpoint = wasEnabled ? '/crossfeed/disable' : '/crossfeed/enable';
                 const res = await fetch(API + endpoint, { method: 'POST' });
                 const data = await res.json();
-                
+
                 if (res.ok && data.success) {
                     await fetchCrossfeedStatus();
                     // Use API message if available, otherwise use state-based message
@@ -789,12 +789,12 @@ def get_embedded_html() -> str:
 
         async function setHeadSize(size) {
             if (crossfeedState.isApplying || crossfeedState.headSize === size) return;
-            
+
             setCrossfeedLoading(true);
             try {
                 const res = await fetch(API + '/crossfeed/size/' + encodeURIComponent(size), { method: 'POST' });
                 const data = await res.json();
-                
+
                 if (res.ok && data.success) {
                     updateHeadSizeButtons(data.headSize || size);
                     showCrossfeedMessage('頭サイズを ' + size.toUpperCase() + ' に変更しました', true);
