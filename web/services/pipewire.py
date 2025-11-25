@@ -197,13 +197,13 @@ def wait_for_daemon_node(timeout_sec: float = 5.0) -> bool:
     """Wait until GPU Upsampler Input node appears in PipeWire.
 
     Args:
-        timeout_sec: Maximum time to wait in seconds.
+        timeout_sec: Maximum time to wait in seconds. Use 0 for immediate check.
 
     Returns:
         True if node appeared, False on timeout.
     """
     start = time.time()
-    while time.time() - start < timeout_sec:
+    while True:
         try:
             result = subprocess.run(
                 ["pw-link", "-i"],  # List input ports
@@ -215,8 +215,11 @@ def wait_for_daemon_node(timeout_sec: float = 5.0) -> bool:
                 return True
         except (subprocess.SubprocessError, FileNotFoundError):
             pass
+
+        # Check timeout after first attempt (allows timeout_sec=0 for immediate check)
+        if time.time() - start >= timeout_sec:
+            return False
         time.sleep(0.3)
-    return False
 
 
 def setup_pipewire_links() -> tuple[bool, str]:

@@ -9,7 +9,6 @@ from typing import Optional
 
 from ..constants import (
     DAEMON_BINARY,
-    GPU_UPSAMPLER_INPUT_NODE,
     PID_FILE_PATH,
     STATS_FILE_PATH,
 )
@@ -80,17 +79,40 @@ def start_daemon() -> tuple[bool, str]:
 
         # Step 3: Wait for daemon to register with PipeWire
         if not wait_for_daemon_node(timeout_sec=5.0):
+            # Cleanup: stop the daemon we just started
+            _force_stop_daemon()
+            restore_default_sink()
             return False, "Daemon started but failed to register with PipeWire"
 
         # Step 4: Setup PipeWire links
         link_success, link_msg = setup_pipewire_links()
         if not link_success:
+            # Cleanup: stop the daemon we just started
+            _force_stop_daemon()
+            restore_default_sink()
             return False, f"Daemon started but link setup failed: {link_msg}"
 
         return True, "Daemon started with audio routing configured"
     except subprocess.SubprocessError as e:
         restore_default_sink()  # Cleanup on failure
         return False, f"Failed to start daemon: {e}"
+
+
+def _force_stop_daemon() -> None:
+    """Force stop daemon process (internal cleanup helper)."""
+    pid = get_daemon_pid()
+    if pid is None:
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(0.1)
+            if not check_daemon_running():
+                return
+        # Force kill if still running
+        os.kill(pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
 
 
 def stop_daemon() -> tuple[bool, str]:
@@ -121,16 +143,8 @@ def check_pipewire_sink() -> bool:
     More precise check: looks for specific input port rather than
     generic string match.
     """
-    try:
-        result = subprocess.run(
-            ["pw-link", "-i"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        return f"{GPU_UPSAMPLER_INPUT_NODE}:input_FL" in result.stdout
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
+    # Use wait_for_daemon_node with 0 timeout for immediate check
+    return wait_for_daemon_node(timeout_sec=0)
 
 
 def get_configured_rates() -> tuple[int, int]:
