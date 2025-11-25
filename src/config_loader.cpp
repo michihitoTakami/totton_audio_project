@@ -75,6 +75,12 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("filterPath48kLinear"))
             outConfig.filterPath48kLinear = j["filterPath48kLinear"].get<std::string>();
 
+        // Multi-rate mode settings (Issue #219)
+        if (j.contains("multiRateEnabled"))
+            outConfig.multiRateEnabled = j["multiRateEnabled"].get<bool>();
+        if (j.contains("coefficientDir"))
+            outConfig.coefficientDir = j["coefficientDir"].get<std::string>();
+
         // EQ settings
         if (j.contains("eqEnabled"))
             outConfig.eqEnabled = j["eqEnabled"].get<bool>();
@@ -88,13 +94,15 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 if (cf.contains("enabled") && cf["enabled"].is_boolean())
                     outConfig.crossfeed.enabled = cf["enabled"].get<bool>();
                 if (cf.contains("headSize") && cf["headSize"].is_string())
-                    outConfig.crossfeed.headSize = validateHeadSize(cf["headSize"].get<std::string>());
+                    outConfig.crossfeed.headSize =
+                        validateHeadSize(cf["headSize"].get<std::string>());
                 if (cf.contains("hrtfPath") && cf["hrtfPath"].is_string())
                     outConfig.crossfeed.hrtfPath = cf["hrtfPath"].get<std::string>();
             } catch (const std::exception& e) {
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {
-                    std::cerr << "Config: Invalid crossfeed settings, using defaults: " << e.what() << std::endl;
+                    std::cerr << "Config: Invalid crossfeed settings, using defaults: " << e.what()
+                              << std::endl;
                 }
             }
         }
@@ -110,29 +118,36 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 if (fb.contains("gpuThresholdCount") && fb["gpuThresholdCount"].is_number_integer())
                     outConfig.fallback.gpuThresholdCount = fb["gpuThresholdCount"].get<int>();
                 if (fb.contains("gpuRecoveryThreshold") && fb["gpuRecoveryThreshold"].is_number())
-                    outConfig.fallback.gpuRecoveryThreshold = fb["gpuRecoveryThreshold"].get<float>();
+                    outConfig.fallback.gpuRecoveryThreshold =
+                        fb["gpuRecoveryThreshold"].get<float>();
                 if (fb.contains("gpuRecoveryCount") && fb["gpuRecoveryCount"].is_number_integer())
                     outConfig.fallback.gpuRecoveryCount = fb["gpuRecoveryCount"].get<int>();
                 if (fb.contains("xrunTriggersFallback") && fb["xrunTriggersFallback"].is_boolean())
-                    outConfig.fallback.xrunTriggersFallback = fb["xrunTriggersFallback"].get<bool>();
+                    outConfig.fallback.xrunTriggersFallback =
+                        fb["xrunTriggersFallback"].get<bool>();
                 if (fb.contains("monitorIntervalMs") && fb["monitorIntervalMs"].is_number_integer())
                     outConfig.fallback.monitorIntervalMs = fb["monitorIntervalMs"].get<int>();
 
                 // Validate fallback configuration values
                 // GPU threshold: clamp to 0-100%
-                outConfig.fallback.gpuThreshold = std::clamp(outConfig.fallback.gpuThreshold, 0.0f, 100.0f);
+                outConfig.fallback.gpuThreshold =
+                    std::clamp(outConfig.fallback.gpuThreshold, 0.0f, 100.0f);
                 // Recovery threshold: clamp to 0-threshold (must be <= threshold for hysteresis)
-                outConfig.fallback.gpuRecoveryThreshold =
-                    std::clamp(outConfig.fallback.gpuRecoveryThreshold, 0.0f, outConfig.fallback.gpuThreshold);
+                outConfig.fallback.gpuRecoveryThreshold = std::clamp(
+                    outConfig.fallback.gpuRecoveryThreshold, 0.0f, outConfig.fallback.gpuThreshold);
                 // Count values: ensure at least 1
-                outConfig.fallback.gpuThresholdCount = std::max(1, outConfig.fallback.gpuThresholdCount);
-                outConfig.fallback.gpuRecoveryCount = std::max(1, outConfig.fallback.gpuRecoveryCount);
+                outConfig.fallback.gpuThresholdCount =
+                    std::max(1, outConfig.fallback.gpuThresholdCount);
+                outConfig.fallback.gpuRecoveryCount =
+                    std::max(1, outConfig.fallback.gpuRecoveryCount);
                 // Monitor interval: ensure at least 10ms (smaller values cause high CPU load)
-                outConfig.fallback.monitorIntervalMs = std::max(10, outConfig.fallback.monitorIntervalMs);
+                outConfig.fallback.monitorIntervalMs =
+                    std::max(10, outConfig.fallback.monitorIntervalMs);
             } catch (const std::exception& e) {
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {
-                    std::cerr << "Config: Invalid fallback settings, using defaults: " << e.what() << std::endl;
+                    std::cerr << "Config: Invalid fallback settings, using defaults: " << e.what()
+                              << std::endl;
                 }
             }
         }

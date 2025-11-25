@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <iostream>
@@ -14,7 +15,6 @@
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/props.h>
 #include <thread>
-#include <chrono>
 #include <vector>
 
 // Configuration (using common constants from daemon_constants.h)
@@ -101,8 +101,9 @@ static bool handle_rate_change(int detected_sample_rate) {
 
     // Multi-rate mode: use switchToInputRate() for dynamic rate switching
     if (!g_upsampler->isMultiRateEnabled()) {
-        std::cerr << "[Rate] ERROR: Multi-rate mode not enabled. Rate switching requires multi-rate mode."
-                  << std::endl;
+        std::cerr
+            << "[Rate] ERROR: Multi-rate mode not enabled. Rate switching requires multi-rate mode."
+            << std::endl;
         return false;
     }
 
@@ -113,23 +114,24 @@ static bool handle_rate_change(int detected_sample_rate) {
     using namespace DaemonConstants;
     int current_output_rate = g_current_output_rate.load();
     int originalFadeDuration = DEFAULT_SOFT_MUTE_FADE_MS;
-    
+
     if (g_soft_mute && current_output_rate > 0) {
         // Save original fade duration for restoration
         originalFadeDuration = g_soft_mute->getFadeDuration();
-        
+
         // Update fade duration for filter switching
         g_soft_mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
         g_soft_mute->setSampleRate(current_output_rate);
-        
-        std::cout << "[Rate] Starting fade-out for filter switch (" << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
+
+        std::cout << "[Rate] Starting fade-out for filter switch ("
+                  << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
         g_soft_mute->startFadeOut();
-        
+
         // Wait for fade-out to complete (approximately 1.5 seconds)
         // Polling is necessary because fade is processed in audio thread
         auto fade_start = std::chrono::steady_clock::now();
         const auto timeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS);
-        while (g_soft_mute->isTransitioning() && 
+        while (g_soft_mute->isTransitioning() &&
                g_soft_mute->getState() == SoftMute::MuteState::FADING_OUT) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             auto elapsed = std::chrono::steady_clock::now() - fade_start;
@@ -139,22 +141,63 @@ static bool handle_rate_change(int detected_sample_rate) {
                 break;
             }
         }
-        
+
         // Ensure we're fully muted before switching
         if (g_soft_mute->getState() != SoftMute::MuteState::MUTED) {
             g_soft_mute->setMuted();
         }
     }
 
+    // Save previous state for rollback
+    int prev_input_rate = g_current_input_rate.load(std::memory_order_acquire);
+    int prev_output_rate = g_current_output_rate.load(std::memory_order_acquire);
+
     // Perform filter switch
     bool switch_success = false;
-    
+
     if (g_upsampler->switchToInputRate(detected_sample_rate)) {
         g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
 
         // Output rate is dynamically calculated (input_rate × upsample_ratio)
         int new_output_rate = g_upsampler->getOutputSampleRate();
         g_current_output_rate.store(new_output_rate, std::memory_order_release);
+
+        // Re-initialize streaming after rate switch (Issue #219)
+        // switchToInputRate() invalidates streaming buffers, so we must reinitialize
+        if (!g_upsampler->initializeStreaming()) {
+            std::cerr << "[Rate] Failed to reinitialize streaming, rolling back..." << std::endl;
+            // Rollback: switch back to previous rate
+            if (g_upsampler->switchToInputRate(prev_input_rate)) {
+                g_upsampler->initializeStreaming();
+            }
+            g_current_input_rate.store(prev_input_rate, std::memory_order_release);
+            g_current_output_rate.store(prev_output_rate, std::memory_order_release);
+            if (g_soft_mute) {
+                g_soft_mute->setPlaying();
+                g_soft_mute->setFadeDuration(originalFadeDuration);
+            }
+            return false;
+        }
+
+        // Resize streaming input buffers based on new streamValidInputPerBlock (Issue #219)
+        if (g_data) {
+            size_t new_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+            g_data->stream_input_left.resize(new_capacity, 0.0f);
+            g_data->stream_input_right.resize(new_capacity, 0.0f);
+
+            // Clear accumulated samples (old rate data is invalid)
+            g_data->stream_accum_left = 0;
+            g_data->stream_accum_right = 0;
+
+            std::cout << "[Rate] Streaming buffers resized to " << new_capacity
+                      << " samples (streamValidInputPerBlock="
+                      << g_upsampler->getStreamValidInputPerBlock() << ")" << std::endl;
+        }
+
+        // Clear output ring buffers to discard old rate samples (Issue #219)
+        g_output_buffer_left.clear();
+        g_output_buffer_right.clear();
+        std::cout << "[Rate] Output ring buffers cleared" << std::endl;
 
         // Update soft mute sample rate if output rate changed
         if (g_soft_mute && new_output_rate != current_output_rate) {
@@ -167,8 +210,7 @@ static bool handle_rate_change(int detected_sample_rate) {
             g_data->needs_output_reconnect = true;
             g_data->new_output_rate = new_output_rate;
             std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
-                      << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)"
-                      << std::endl;
+                      << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)" << std::endl;
         } else {
             std::cout << "[Rate] Rate switched to " << detected_sample_rate << " Hz -> "
                       << new_output_rate << " Hz (" << g_upsampler->getUpsampleRatio()
@@ -183,9 +225,11 @@ static bool handle_rate_change(int detected_sample_rate) {
     // Start fade-in after filter switch (or restore state on failure)
     if (g_soft_mute) {
         if (switch_success) {
-            std::cout << "[Rate] Starting fade-in after filter switch (" << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
+            std::cout << "[Rate] Starting fade-in after filter switch ("
+                      << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
             g_soft_mute->startFadeIn();
-            // Fade duration will be reset to default in output processing thread when fade-in completes
+            // Fade duration will be reset to default in output processing thread when fade-in
+            // completes
         } else {
             // If switch failed, restore original state immediately
             std::cerr << "[Rate] Switch failed, restoring audio state" << std::endl;
@@ -285,15 +329,15 @@ static void on_output_process(void* userdata) {
                 // Interleave output (separate L/R → stereo interleaved)
                 AudioUtils::interleaveStereo(g_output_temp_left.data(), g_output_temp_right.data(),
                                              output_samples, n_frames);
-                
+
                 // Apply soft mute if transitioning (for filter switching)
                 if (g_soft_mute) {
                     g_soft_mute->process(output_samples, n_frames);
-                    
+
                     // Reset fade duration to default after filter switch fade-in completes
                     // Check if we just completed a fade-in from filter switching
                     using namespace DaemonConstants;
-                    if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING && 
+                    if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING &&
                         g_soft_mute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
                         g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
                     }
@@ -404,8 +448,8 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         return 1;
     }
-    std::cout << "GPU upsampler ready (" << g_upsampler->getUpsampleRatio()
-              << "x upsampling, " << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
+    std::cout << "GPU upsampler ready (" << g_upsampler->getUpsampleRatio() << "x upsampling, "
+              << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
 
     // Load config and set phase type (input sample rate is auto-detected from PipeWire)
     AppConfig appConfig;
@@ -430,13 +474,15 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         return 1;
     }
-    
-    // Initialize soft mute controller (default fade duration, will be extended for filter switching)
+
+    // Initialize soft mute controller (default fade duration, will be extended for filter
+    // switching)
     using namespace DaemonConstants;
     int initial_output_rate = g_upsampler->getOutputSampleRate();
     g_soft_mute = new SoftMute::Controller(DEFAULT_SOFT_MUTE_FADE_MS, initial_output_rate);
-    std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at " << initial_output_rate << "Hz)" << std::endl;
-    
+    std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
+              << initial_output_rate << "Hz)" << std::endl;
+
     std::cout << std::endl;
 
     // Initialize PipeWire

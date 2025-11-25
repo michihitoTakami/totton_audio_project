@@ -29,6 +29,11 @@ struct AppConfig {
     std::string filterPath44kLinear = "data/coefficients/filter_44k_16x_2m_linear.bin";
     std::string filterPath48kLinear = "data/coefficients/filter_48k_16x_2m_linear.bin";
 
+    // Multi-rate mode: 10 filter configurations (2 rate families × 5 ratios: 1x/2x/4x/8x/16x)
+    // Issue #219: Dynamic rate switching with all filters preloaded
+    bool multiRateEnabled = false;  // Enable multi-rate mode with all 10 filter FFTs preloaded
+    std::string coefficientDir = "data/coefficients";  // Directory containing filter files
+
     // EQ settings
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)
@@ -42,13 +47,13 @@ struct AppConfig {
 
     // Fallback settings (Issue #139)
     struct FallbackConfig {
-        bool enabled = true;              // Enable dynamic fallback
-        float gpuThreshold = 80.0f;       // GPU utilization threshold (%)
-        int gpuThresholdCount = 3;        // Consecutive threshold exceedances to trigger
-        float gpuRecoveryThreshold = 70.0f; // Recovery threshold (threshold - 10%)
-        int gpuRecoveryCount = 5;         // Consecutive recovery measurements to return
-        bool xrunTriggersFallback = true; // Whether XRUN triggers immediate fallback
-        int monitorIntervalMs = 100;      // GPU monitoring interval (milliseconds)
+        bool enabled = true;                 // Enable dynamic fallback
+        float gpuThreshold = 80.0f;          // GPU utilization threshold (%)
+        int gpuThresholdCount = 3;           // Consecutive threshold exceedances to trigger
+        float gpuRecoveryThreshold = 70.0f;  // Recovery threshold (threshold - 10%)
+        int gpuRecoveryCount = 5;            // Consecutive recovery measurements to return
+        bool xrunTriggersFallback = true;    // Whether XRUN triggers immediate fallback
+        int monitorIntervalMs = 100;         // GPU monitoring interval (milliseconds)
     } fallback;
 };
 
