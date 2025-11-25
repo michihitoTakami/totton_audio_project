@@ -98,6 +98,32 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             }
         }
 
+        // Fallback settings (Issue #139)
+        if (j.contains("fallback") && j["fallback"].is_object()) {
+            auto fb = j["fallback"];
+            try {
+                if (fb.contains("enabled") && fb["enabled"].is_boolean())
+                    outConfig.fallback.enabled = fb["enabled"].get<bool>();
+                if (fb.contains("gpuThreshold") && fb["gpuThreshold"].is_number())
+                    outConfig.fallback.gpuThreshold = fb["gpuThreshold"].get<float>();
+                if (fb.contains("gpuThresholdCount") && fb["gpuThresholdCount"].is_number_integer())
+                    outConfig.fallback.gpuThresholdCount = fb["gpuThresholdCount"].get<int>();
+                if (fb.contains("gpuRecoveryThreshold") && fb["gpuRecoveryThreshold"].is_number())
+                    outConfig.fallback.gpuRecoveryThreshold = fb["gpuRecoveryThreshold"].get<float>();
+                if (fb.contains("gpuRecoveryCount") && fb["gpuRecoveryCount"].is_number_integer())
+                    outConfig.fallback.gpuRecoveryCount = fb["gpuRecoveryCount"].get<int>();
+                if (fb.contains("xrunTriggersFallback") && fb["xrunTriggersFallback"].is_boolean())
+                    outConfig.fallback.xrunTriggersFallback = fb["xrunTriggersFallback"].get<bool>();
+                if (fb.contains("monitorIntervalMs") && fb["monitorIntervalMs"].is_number_integer())
+                    outConfig.fallback.monitorIntervalMs = fb["monitorIntervalMs"].get<int>();
+            } catch (const std::exception& e) {
+                // On type error, keep defaults (already set in AppConfig{})
+                if (verbose) {
+                    std::cerr << "Config: Invalid fallback settings, using defaults: " << e.what() << std::endl;
+                }
+            }
+        }
+
         if (verbose) {
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)
                       << std::endl;
