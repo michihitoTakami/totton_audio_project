@@ -41,10 +41,11 @@ public:
         std::vector<float> impulse(TEST_TAPS, 0.0f);
         impulse[0] = 1.0f;  // Unit impulse at t=0
 
-        // Generate all 8 coefficient files (minimum phase)
+        // Generate all 10 coefficient files (minimum phase)
+        // Issue #238: Added 1x bypass configs
         const char* configs[] = {
-            "44k_16x", "44k_8x", "44k_4x", "44k_2x",
-            "48k_16x", "48k_8x", "48k_4x", "48k_2x"
+            "44k_16x", "44k_8x", "44k_4x", "44k_2x", "44k_1x",
+            "48k_16x", "48k_8x", "48k_4x", "48k_2x", "48k_1x"
         };
 
         for (const char* config : configs) {
@@ -612,32 +613,38 @@ TEST_F(ConvolutionEngineTest, DefaultInputSampleRate) {
 TEST_F(ConvolutionEngineTest, GetSupportedInputRates) {
     auto rates = GPUUpsampler::getSupportedInputRates();
 
-    // Should return 8 rates (4 for 44k family + 4 for 48k family)
-    EXPECT_EQ(rates.size(), 8u);
+    // Should return 10 rates (5 for 44k family + 5 for 48k family, including 1x bypass)
+    EXPECT_EQ(rates.size(), 10u);
 
-    // Check 44k family rates
+    // Check 44k family rates (including 705600 bypass)
     EXPECT_NE(std::find(rates.begin(), rates.end(), 44100), rates.end());
     EXPECT_NE(std::find(rates.begin(), rates.end(), 88200), rates.end());
     EXPECT_NE(std::find(rates.begin(), rates.end(), 176400), rates.end());
     EXPECT_NE(std::find(rates.begin(), rates.end(), 352800), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 705600), rates.end());  // Bypass
 
-    // Check 48k family rates
+    // Check 48k family rates (including 768000 bypass)
     EXPECT_NE(std::find(rates.begin(), rates.end(), 48000), rates.end());
     EXPECT_NE(std::find(rates.begin(), rates.end(), 96000), rates.end());
     EXPECT_NE(std::find(rates.begin(), rates.end(), 192000), rates.end());
     EXPECT_NE(std::find(rates.begin(), rates.end(), 384000), rates.end());
+    EXPECT_NE(std::find(rates.begin(), rates.end(), 768000), rates.end());  // Bypass
 }
 
 TEST_F(ConvolutionEngineTest, FindMultiRateConfigIndex) {
-    // Test valid rates
+    // Test valid rates - 44k family (0-4)
     EXPECT_EQ(findMultiRateConfigIndex(44100), 0);
     EXPECT_EQ(findMultiRateConfigIndex(88200), 1);
     EXPECT_EQ(findMultiRateConfigIndex(176400), 2);
     EXPECT_EQ(findMultiRateConfigIndex(352800), 3);
-    EXPECT_EQ(findMultiRateConfigIndex(48000), 4);
-    EXPECT_EQ(findMultiRateConfigIndex(96000), 5);
-    EXPECT_EQ(findMultiRateConfigIndex(192000), 6);
-    EXPECT_EQ(findMultiRateConfigIndex(384000), 7);
+    EXPECT_EQ(findMultiRateConfigIndex(705600), 4);  // 1x bypass
+
+    // Test valid rates - 48k family (5-9)
+    EXPECT_EQ(findMultiRateConfigIndex(48000), 5);
+    EXPECT_EQ(findMultiRateConfigIndex(96000), 6);
+    EXPECT_EQ(findMultiRateConfigIndex(192000), 7);
+    EXPECT_EQ(findMultiRateConfigIndex(384000), 8);
+    EXPECT_EQ(findMultiRateConfigIndex(768000), 9);  // 1x bypass
 
     // Test invalid rates
     EXPECT_EQ(findMultiRateConfigIndex(44000), -1);
@@ -646,17 +653,19 @@ TEST_F(ConvolutionEngineTest, FindMultiRateConfigIndex) {
 }
 
 TEST_F(ConvolutionEngineTest, GetUpsampleRatioForInputRate) {
-    // 44k family: 16x, 8x, 4x, 2x
+    // 44k family: 16x, 8x, 4x, 2x, 1x (bypass)
     EXPECT_EQ(getUpsampleRatioForInputRate(44100), 16);
     EXPECT_EQ(getUpsampleRatioForInputRate(88200), 8);
     EXPECT_EQ(getUpsampleRatioForInputRate(176400), 4);
     EXPECT_EQ(getUpsampleRatioForInputRate(352800), 2);
+    EXPECT_EQ(getUpsampleRatioForInputRate(705600), 1);  // Issue #238: bypass
 
-    // 48k family: 16x, 8x, 4x, 2x
+    // 48k family: 16x, 8x, 4x, 2x, 1x (bypass)
     EXPECT_EQ(getUpsampleRatioForInputRate(48000), 16);
     EXPECT_EQ(getUpsampleRatioForInputRate(96000), 8);
     EXPECT_EQ(getUpsampleRatioForInputRate(192000), 4);
     EXPECT_EQ(getUpsampleRatioForInputRate(384000), 2);
+    EXPECT_EQ(getUpsampleRatioForInputRate(768000), 1);  // Issue #238: bypass
 
     // Invalid rate
     EXPECT_EQ(getUpsampleRatioForInputRate(44000), 0);
@@ -664,16 +673,17 @@ TEST_F(ConvolutionEngineTest, GetUpsampleRatioForInputRate) {
 
 TEST_F(ConvolutionEngineTest, MultiRateConfigValues) {
     // Verify MULTI_RATE_CONFIGS values
-    EXPECT_EQ(MULTI_RATE_CONFIG_COUNT, 8);
+    // Issue #238: Added 1x bypass configs, now 10 total (5 per family)
+    EXPECT_EQ(MULTI_RATE_CONFIG_COUNT, 10);
 
-    // 44k family configs (indices 0-3)
-    for (int i = 0; i < 4; ++i) {
+    // 44k family configs (indices 0-4: 16x, 8x, 4x, 2x, 1x)
+    for (int i = 0; i < 5; ++i) {
         EXPECT_EQ(MULTI_RATE_CONFIGS[i].family, RateFamily::RATE_44K);
         EXPECT_EQ(MULTI_RATE_CONFIGS[i].outputRate, 705600);
     }
 
-    // 48k family configs (indices 4-7)
-    for (int i = 4; i < 8; ++i) {
+    // 48k family configs (indices 5-9: 16x, 8x, 4x, 2x, 1x)
+    for (int i = 5; i < 10; ++i) {
         EXPECT_EQ(MULTI_RATE_CONFIGS[i].family, RateFamily::RATE_48K);
         EXPECT_EQ(MULTI_RATE_CONFIGS[i].outputRate, 768000);
     }

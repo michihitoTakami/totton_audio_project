@@ -92,9 +92,8 @@ TEST_F(RateFamilyTest, Issue231_UpsampleRatio_48kFamily) {
 }
 
 TEST_F(RateFamilyTest, Issue231_UpsampleRatio_Unsupported) {
-    EXPECT_EQ(getUpsampleRatioForInputRate(22050), 0);   // Unsupported
-    EXPECT_EQ(getUpsampleRatioForInputRate(32000), 0);   // Unsupported
-    EXPECT_EQ(getUpsampleRatioForInputRate(705600), 0);  // Output rate, not input
+    EXPECT_EQ(getUpsampleRatioForInputRate(22050), 0);  // Unsupported
+    EXPECT_EQ(getUpsampleRatioForInputRate(32000), 0);  // Unsupported
 }
 
 // Test findMultiRateConfigIndex
@@ -104,29 +103,79 @@ TEST_F(RateFamilyTest, Issue231_FindConfigIndex_Valid) {
     EXPECT_EQ(findMultiRateConfigIndex(88200), 1);
     EXPECT_EQ(findMultiRateConfigIndex(176400), 2);
     EXPECT_EQ(findMultiRateConfigIndex(352800), 3);
-    // 48k family indices 4-7
-    EXPECT_EQ(findMultiRateConfigIndex(48000), 4);
-    EXPECT_EQ(findMultiRateConfigIndex(96000), 5);
-    EXPECT_EQ(findMultiRateConfigIndex(192000), 6);
-    EXPECT_EQ(findMultiRateConfigIndex(384000), 7);
+    // 48k family indices 5-8 (after bypass at index 4)
+    EXPECT_EQ(findMultiRateConfigIndex(48000), 5);
+    EXPECT_EQ(findMultiRateConfigIndex(96000), 6);
+    EXPECT_EQ(findMultiRateConfigIndex(192000), 7);
+    EXPECT_EQ(findMultiRateConfigIndex(384000), 8);
 }
 
 TEST_F(RateFamilyTest, Issue231_FindConfigIndex_Invalid) {
     EXPECT_EQ(findMultiRateConfigIndex(22050), -1);
     EXPECT_EQ(findMultiRateConfigIndex(32000), -1);
-    EXPECT_EQ(findMultiRateConfigIndex(705600), -1);
 }
 
 // Test MULTI_RATE_CONFIGS structure
 TEST_F(RateFamilyTest, Issue231_MultiRateConfigs_OutputRate) {
-    // All 44.1k family rates should output 705.6kHz
+    // All 44.1k family rates should output 705.6kHz (indices 0-3)
     EXPECT_EQ(MULTI_RATE_CONFIGS[0].outputRate, 705600);
     EXPECT_EQ(MULTI_RATE_CONFIGS[1].outputRate, 705600);
     EXPECT_EQ(MULTI_RATE_CONFIGS[2].outputRate, 705600);
     EXPECT_EQ(MULTI_RATE_CONFIGS[3].outputRate, 705600);
-    // All 48k family rates should output 768kHz
-    EXPECT_EQ(MULTI_RATE_CONFIGS[4].outputRate, 768000);
+    // 44k bypass at index 4
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].outputRate, 705600);
+    // All 48k family rates should output 768kHz (indices 5-8)
     EXPECT_EQ(MULTI_RATE_CONFIGS[5].outputRate, 768000);
     EXPECT_EQ(MULTI_RATE_CONFIGS[6].outputRate, 768000);
     EXPECT_EQ(MULTI_RATE_CONFIGS[7].outputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[8].outputRate, 768000);
+    // 48k bypass at index 9
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].outputRate, 768000);
+}
+
+// =============================================================================
+// Issue #238: 1x Bypass support tests
+// =============================================================================
+
+// Test bypass rate (705.6kHz, 768kHz) detection - should return same family
+TEST_F(RateFamilyTest, Issue238_Detect705_6kHz) {
+    EXPECT_EQ(detectRateFamily(705600), RateFamily::RATE_44K);
+}
+
+TEST_F(RateFamilyTest, Issue238_Detect768kHz) {
+    EXPECT_EQ(detectRateFamily(768000), RateFamily::RATE_48K);
+}
+
+// Test getUpsampleRatioForInputRate returns 1 for bypass rates
+TEST_F(RateFamilyTest, Issue238_UpsampleRatio_BypassRates) {
+    EXPECT_EQ(getUpsampleRatioForInputRate(705600), 1);  // 44k family bypass
+    EXPECT_EQ(getUpsampleRatioForInputRate(768000), 1);  // 48k family bypass
+}
+
+// Test findMultiRateConfigIndex for bypass rates
+TEST_F(RateFamilyTest, Issue238_FindConfigIndex_BypassRates) {
+    // 44k family bypass is at index 4 (after 16x,8x,4x,2x)
+    EXPECT_EQ(findMultiRateConfigIndex(705600), 4);
+    // 48k family bypass is at index 9 (after all 44k configs and 48k 16x,8x,4x,2x)
+    EXPECT_EQ(findMultiRateConfigIndex(768000), 9);
+}
+
+// Test MULTI_RATE_CONFIGS structure for bypass entries
+TEST_F(RateFamilyTest, Issue238_MultiRateConfigs_BypassEntries) {
+    // 44k family bypass config (index 4)
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].inputRate, 705600);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].outputRate, 705600);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].ratio, 1);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].family, RateFamily::RATE_44K);
+
+    // 48k family bypass config (index 9)
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].inputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].outputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].ratio, 1);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].family, RateFamily::RATE_48K);
+}
+
+// Test total config count is now 10
+TEST_F(RateFamilyTest, Issue238_MultiRateConfigCount) {
+    EXPECT_EQ(MULTI_RATE_CONFIG_COUNT, 10);
 }

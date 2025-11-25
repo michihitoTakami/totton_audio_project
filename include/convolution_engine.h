@@ -60,20 +60,23 @@ struct MultiRateFilterConfig {
     RateFamily family;  // Rate family (44k or 48k)
 };
 
-// Supported multi-rate configurations (8 total: 4 per family)
-// Index mapping: 0-3 for 44k family (16x,8x,4x,2x), 4-7 for 48k family (16x,8x,4x,2x)
-constexpr int MULTI_RATE_CONFIG_COUNT = 8;
+// Supported multi-rate configurations (10 total: 5 per family)
+// Index mapping: 0-4 for 44k family (16x,8x,4x,2x,1x), 5-9 for 48k family (16x,8x,4x,2x,1x)
+// 1x = bypass mode (no upsampling, input already at output rate)
+constexpr int MULTI_RATE_CONFIG_COUNT = 10;
 constexpr MultiRateFilterConfig MULTI_RATE_CONFIGS[MULTI_RATE_CONFIG_COUNT] = {
     // 44.1kHz family -> 705.6kHz output
     {44100, 705600, 16, RateFamily::RATE_44K},
     {88200, 705600, 8, RateFamily::RATE_44K},
     {176400, 705600, 4, RateFamily::RATE_44K},
     {352800, 705600, 2, RateFamily::RATE_44K},
+    {705600, 705600, 1, RateFamily::RATE_44K},  // Bypass: already at output rate
     // 48kHz family -> 768kHz output
     {48000, 768000, 16, RateFamily::RATE_48K},
     {96000, 768000, 8, RateFamily::RATE_48K},
     {192000, 768000, 4, RateFamily::RATE_48K},
     {384000, 768000, 2, RateFamily::RATE_48K},
+    {768000, 768000, 1, RateFamily::RATE_48K},  // Bypass: already at output rate
 };
 
 // Find config index for given input sample rate (-1 if not found)
