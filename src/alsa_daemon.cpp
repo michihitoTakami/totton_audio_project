@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
@@ -24,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <pipewire/pipewire.h>
@@ -78,6 +80,52 @@ static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 // Statistics (atomic for thread-safe access from stats writer)
 static std::atomic<size_t> g_clip_count{0};
 static std::atomic<size_t> g_total_samples{0};
+
+static std::atomic<float> g_peak_input_level{0.0f};
+static std::atomic<float> g_peak_upsampler_level{0.0f};
+static std::atomic<float> g_peak_post_crossfeed_level{0.0f};
+static std::atomic<float> g_peak_post_gain_level{0.0f};
+
+static inline void update_peak_level(std::atomic<float>& peak, float candidate) {
+    float absValue = std::fabs(candidate);
+    float current = peak.load(std::memory_order_relaxed);
+    while (absValue > current &&
+           !peak.compare_exchange_weak(current, absValue, std::memory_order_relaxed,
+                                       std::memory_order_relaxed)) {
+    }
+}
+
+static inline float compute_stereo_peak(const float* left, const float* right, size_t frames) {
+    if (!left || !right || frames == 0) {
+        return 0.0f;
+    }
+    float peak = 0.0f;
+    for (size_t i = 0; i < frames; ++i) {
+        float l = std::fabs(left[i]);
+        float r = std::fabs(right[i]);
+        if (l > peak)
+            peak = l;
+        if (r > peak)
+            peak = r;
+    }
+    return peak;
+}
+
+static inline float compute_interleaved_peak(const float* interleaved, size_t frames) {
+    if (!interleaved || frames == 0) {
+        return 0.0f;
+    }
+    float peak = 0.0f;
+    for (size_t i = 0; i < frames; ++i) {
+        float l = std::fabs(interleaved[i * 2]);
+        float r = std::fabs(interleaved[i * 2 + 1]);
+        if (l > peak)
+            peak = l;
+        if (r > peak)
+            peak = r;
+    }
+    return peak;
+}
 
 // Runtime state: Input sample rate (auto-negotiated, not from config)
 // This value is detected from PipeWire stream or set to default (44100 Hz)
@@ -178,34 +226,72 @@ static void release_pid_lock() {
 
 // ========== Statistics File ==========
 
-// Write statistics to JSON file for Web API consumption
-static void write_stats_file() {
+static constexpr double PEAK_DBFS_FLOOR = -200.0;
+
+static double linear_to_dbfs(double value) {
+    if (value <= 0.0) {
+        return PEAK_DBFS_FLOOR;
+    }
+    return 20.0 * std::log10(static_cast<double>(value));
+}
+
+static nlohmann::json make_peak_json(float linear_value) {
+    nlohmann::json peak_json;
+    peak_json["linear"] = linear_value;
+    peak_json["dbfs"] = linear_to_dbfs(linear_value);
+    return peak_json;
+}
+
+static nlohmann::json collect_runtime_stats_json() {
     size_t clips = g_clip_count.load(std::memory_order_relaxed);
     size_t total = g_total_samples.load(std::memory_order_relaxed);
     double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
-    auto now = std::chrono::system_clock::now();
-    auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
 
-    // Calculate actual output rate from running config
     int input_rate = g_input_sample_rate;
     int upsample_ratio = g_config.upsampleRatio;
     int output_rate = input_rate * upsample_ratio;
 
-    // Write to temp file and rename for atomic update
+    auto now = std::chrono::system_clock::now();
+    auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+    std::string phaseTypeStr = "minimum";
+    if (g_upsampler) {
+        phaseTypeStr = (g_upsampler->getPhaseType() == PhaseType::Minimum) ? "minimum" : "linear";
+    } else {
+        phaseTypeStr = (g_config.phaseType == PhaseType::Minimum) ? "minimum" : "linear";
+    }
+
+    nlohmann::json stats;
+    stats["clip_count"] = clips;
+    stats["total_samples"] = total;
+    stats["clip_rate"] = clip_rate;
+    stats["input_rate"] = input_rate;
+    stats["output_rate"] = output_rate;
+    stats["upsample_ratio"] = upsample_ratio;
+    stats["eq_enabled"] = g_config.eqEnabled;
+    stats["phase_type"] = phaseTypeStr;
+    stats["last_updated"] = epoch;
+
+    nlohmann::json peaks;
+    peaks["input"] = make_peak_json(g_peak_input_level.load(std::memory_order_relaxed));
+    peaks["upsampler"] = make_peak_json(g_peak_upsampler_level.load(std::memory_order_relaxed));
+    peaks["post_mix"] =
+        make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
+    peaks["post_gain"] = make_peak_json(g_peak_post_gain_level.load(std::memory_order_relaxed));
+    stats["peaks"] = peaks;
+
+    return stats;
+}
+
+// Write statistics to JSON file for Web API consumption
+static void write_stats_file() {
+    nlohmann::json stats = collect_runtime_stats_json();
+
     std::string tmp_path = std::string(STATS_FILE_PATH) + ".tmp";
     std::ofstream ofs(tmp_path);
     if (ofs) {
-        ofs << "{\n"
-            << "  \"clip_count\": " << clips << ",\n"
-            << "  \"total_samples\": " << total << ",\n"
-            << "  \"clip_rate\": " << clip_rate << ",\n"
-            << "  \"input_rate\": " << input_rate << ",\n"
-            << "  \"output_rate\": " << output_rate << ",\n"
-            << "  \"upsample_ratio\": " << upsample_ratio << ",\n"
-            << "  \"last_updated\": " << epoch << "\n"
-            << "}\n";
+        ofs << stats.dump(2) << std::endl;
         ofs.close();
-        // Atomic rename
         std::rename(tmp_path.c_str(), STATS_FILE_PATH);
     }
 }
@@ -279,28 +365,7 @@ static void load_runtime_config() {
 
 // Build stats JSON response for ZeroMQ STATS command
 static std::string build_stats_json() {
-    size_t clips = g_clip_count.load(std::memory_order_relaxed);
-    size_t total = g_total_samples.load(std::memory_order_relaxed);
-    double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
-
-    // Get phase type from upsampler (or config default if not initialized)
-    std::string phaseTypeStr = "minimum";
-    if (g_upsampler) {
-        phaseTypeStr = (g_upsampler->getPhaseType() == PhaseType::Minimum) ? "minimum" : "linear";
-    } else {
-        phaseTypeStr = (g_config.phaseType == PhaseType::Minimum) ? "minimum" : "linear";
-    }
-
-    std::ostringstream oss;
-    oss << "{"
-        << "\"clip_count\":" << clips << ","
-        << "\"total_samples\":" << total << ","
-        << "\"clip_rate\":" << clip_rate << ","
-        << "\"eq_enabled\":" << (g_config.eqEnabled ? "true" : "false") << ","
-        << "\"phase_type\":\"" << phaseTypeStr << "\","
-        << "\"input_rate\":" << g_input_sample_rate << ","
-        << "\"upsample_ratio\":" << g_config.upsampleRatio << "}";
-    return oss.str();
+    return collect_runtime_stats_json().dump();
 }
 
 // ZeroMQ listener thread - handles PING, RELOAD, STATS commands from Python/FastAPI
@@ -834,6 +899,8 @@ static void on_input_process(void* userdata) {
         std::vector<float> right(n_frames);
 
         AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
+        float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
+        update_peak_level(g_peak_input_level, inputPeak);
 
         // Process through GPU upsampler using streaming API
         // This preserves overlap buffer across calls
@@ -852,6 +919,12 @@ static void on_input_process(void* userdata) {
         // Only store output if both channels generated output
         // (they should synchronize due to same input size)
         if (left_generated && right_generated) {
+            size_t frames_generated = std::min(output_left.size(), output_right.size());
+            if (frames_generated > 0) {
+                float upsamplerPeak =
+                    compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
+                update_peak_level(g_peak_upsampler_level, upsamplerPeak);
+            }
             // Quick atomic check first to avoid lock overhead when crossfeed is disabled
             if (g_crossfeed_enabled.load()) {
                 // Apply crossfeed (HRTF) - lock protects HRTFProcessor and CF buffers
@@ -866,6 +939,13 @@ static void on_input_process(void* userdata) {
                         g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
 
                     if (cf_generated) {
+                        size_t cf_frames =
+                            std::min(cf_output_left.size(), cf_output_right.size());
+                        if (cf_frames > 0) {
+                            float cfPeak = compute_stereo_peak(
+                                cf_output_left.data(), cf_output_right.data(), cf_frames);
+                            update_peak_level(g_peak_post_crossfeed_level, cfPeak);
+                        }
                         // Store crossfeed output for ALSA thread consumption
                         std::lock_guard<std::mutex> lock(g_buffer_mutex);
                         g_output_buffer_left.insert(g_output_buffer_left.end(),
@@ -885,6 +965,11 @@ static void on_input_process(void* userdata) {
                     g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
                                                  output_right.end());
                     g_buffer_cv.notify_one();
+                    if (frames_generated > 0) {
+                        float postPeak = compute_stereo_peak(output_left.data(), output_right.data(),
+                                                             frames_generated);
+                        update_peak_level(g_peak_post_crossfeed_level, postPeak);
+                    }
                 }
             } else {
                 // Bypass crossfeed - store upsampler output directly
@@ -894,6 +979,11 @@ static void on_input_process(void* userdata) {
                 g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
                                              output_right.end());
                 g_buffer_cv.notify_one();
+                if (frames_generated > 0) {
+                    float postPeak = compute_stereo_peak(output_left.data(), output_right.data(),
+                                                         frames_generated);
+                    update_peak_level(g_peak_post_crossfeed_level, postPeak);
+                }
             }
         }
     }
@@ -1074,6 +1164,10 @@ void alsa_output_thread() {
             if (g_soft_mute) {
                 g_soft_mute->process(float_buffer.data(), period_size);
             }
+
+            // Track peak level after gain & soft mute (pre-clipping)
+            float postGainPeak = compute_interleaved_peak(float_buffer.data(), period_size);
+            update_peak_level(g_peak_post_gain_level, postGainPeak);
 
             // Step 3: Clipping detection, clamping, and float→int32 conversion
             static auto last_stats_write = std::chrono::steady_clock::now();

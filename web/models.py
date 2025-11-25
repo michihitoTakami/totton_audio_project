@@ -60,6 +60,22 @@ class SettingsUpdate(BaseModel):
 # ============================================================================
 
 
+class PeakStage(BaseModel):
+    """Single stage peak measurement."""
+
+    linear: float = 0.0
+    dbfs: float = -200.0
+
+
+class PeakLevels(BaseModel):
+    """Peak levels across pipeline stages."""
+
+    input: PeakStage = Field(default_factory=PeakStage)
+    upsampler: PeakStage = Field(default_factory=PeakStage)
+    post_mix: PeakStage = Field(default_factory=PeakStage)
+    post_gain: PeakStage = Field(default_factory=PeakStage)
+
+
 class Status(BaseModel):
     """System status response model."""
 
@@ -73,6 +89,7 @@ class Status(BaseModel):
     eq_active: bool = False
     input_rate: int = 0
     output_rate: int = 0
+    peaks: PeakLevels = Field(default_factory=PeakLevels)
 
 
 class DaemonStatus(BaseModel):

@@ -47,6 +47,12 @@ def main():
     parser.add_argument(
         "--duration", type=float, default=2.0, help="Duration in seconds (default: 2.0)"
     )
+    parser.add_argument(
+        "--amplitude",
+        type=float,
+        default=0.5,
+        help="Signal amplitude (0-1]. Set close to 1.0 for headroom tests.",
+    )
 
     args = parser.parse_args()
 
@@ -64,36 +70,36 @@ def main():
 
     # 1. Pure tone (1 kHz)
     print("1. Generating 1 kHz sine wave...")
-    sine_1k = generate_sine_wave(1000, duration, sample_rate)
+    sine_1k = generate_sine_wave(1000, duration, sample_rate, amplitude=args.amplitude)
     output_path = output_dir / f"test_sine_1khz_{sample_rate}hz.wav"
     wavfile.write(output_path, sample_rate, sine_1k)
     print(f"   Saved: {output_path}")
 
     # 2. High frequency tone (10 kHz)
     print("2. Generating 10 kHz sine wave...")
-    sine_10k = generate_sine_wave(10000, duration, sample_rate)
+    sine_10k = generate_sine_wave(10000, duration, sample_rate, amplitude=args.amplitude)
     output_path = output_dir / f"test_sine_10khz_{sample_rate}hz.wav"
     wavfile.write(output_path, sample_rate, sine_10k)
     print(f"   Saved: {output_path}")
 
     # 3. Frequency sweep (20 Hz to 20 kHz)
     print("3. Generating frequency sweep (20 Hz - 20 kHz)...")
-    sweep = generate_sweep(20, 20000, duration, sample_rate)
+    sweep = generate_sweep(20, 20000, duration, sample_rate, amplitude=args.amplitude)
     output_path = output_dir / f"test_sweep_{sample_rate}hz.wav"
     wavfile.write(output_path, sample_rate, sweep)
     print(f"   Saved: {output_path}")
 
     # 4. Impulse response test
     print("4. Generating impulse...")
-    impulse = generate_impulse(duration, sample_rate)
+    impulse = generate_impulse(duration, sample_rate, amplitude=args.amplitude)
     output_path = output_dir / f"test_impulse_{sample_rate}hz.wav"
     wavfile.write(output_path, sample_rate, impulse)
     print(f"   Saved: {output_path}")
 
     # 5. Stereo test (L: 1kHz, R: 2kHz)
     print("5. Generating stereo test (L: 1kHz, R: 2kHz)...")
-    left = generate_sine_wave(1000, duration, sample_rate)
-    right = generate_sine_wave(2000, duration, sample_rate)
+    left = generate_sine_wave(1000, duration, sample_rate, amplitude=args.amplitude)
+    right = generate_sine_wave(2000, duration, sample_rate, amplitude=args.amplitude)
     stereo = np.stack([left, right], axis=1)
     output_path = output_dir / f"test_stereo_{sample_rate}hz.wav"
     wavfile.write(output_path, sample_rate, stereo)
