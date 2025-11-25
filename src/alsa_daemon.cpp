@@ -154,7 +154,23 @@ static std::vector<float> g_cf_stream_input_left;
 static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
 static size_t g_cf_stream_accumulated_right = 0;
+static std::vector<float> g_cf_output_left;
+static std::vector<float> g_cf_output_right;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
+
+// Resets crossfeed streaming buffers and GPU overlap state.
+// Caller must hold g_crossfeed_mutex.
+static void reset_crossfeed_stream_state_locked() {
+    g_cf_stream_input_left.clear();
+    g_cf_stream_input_right.clear();
+    g_cf_stream_accumulated_left = 0;
+    g_cf_stream_accumulated_right = 0;
+    g_cf_output_left.clear();
+    g_cf_output_right.clear();
+    if (g_hrtf_processor) {
+        g_hrtf_processor->resetStreaming();
+    }
+}
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -419,13 +435,7 @@ static void zeromq_listener_thread() {
             } else if (cmd == "CROSSFEED_ENABLE") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 if (g_hrtf_processor) {
-                    // Reset streaming state to avoid stale data from previous session
-                    g_hrtf_processor->resetStreaming();
-                    g_cf_stream_input_left.clear();
-                    g_cf_stream_input_right.clear();
-                    g_cf_stream_accumulated_left = 0;
-                    g_cf_stream_accumulated_right = 0;
-
+                    reset_crossfeed_stream_state_locked();
                     g_hrtf_processor->setEnabled(true);
                     g_crossfeed_enabled.store(true);
                     response = "OK:Crossfeed enabled";
@@ -438,6 +448,7 @@ static void zeromq_listener_thread() {
                 if (g_hrtf_processor) {
                     g_hrtf_processor->setEnabled(false);
                 }
+                reset_crossfeed_stream_state_locked();
                 response = "OK:Crossfeed disabled";
             } else if (cmd == "CROSSFEED_STATUS") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -456,11 +467,7 @@ static void zeromq_listener_thread() {
                     if (cmdType == "CROSSFEED_ENABLE") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                         if (g_hrtf_processor) {
-                            g_hrtf_processor->resetStreaming();
-                            g_cf_stream_input_left.clear();
-                            g_cf_stream_input_right.clear();
-                            g_cf_stream_accumulated_left = 0;
-                            g_cf_stream_accumulated_right = 0;
+                            reset_crossfeed_stream_state_locked();
                             g_hrtf_processor->setEnabled(true);
                             g_crossfeed_enabled.store(true);
                             nlohmann::json resp;
@@ -480,6 +487,7 @@ static void zeromq_listener_thread() {
                         if (g_hrtf_processor) {
                             g_hrtf_processor->setEnabled(false);
                         }
+                        reset_crossfeed_stream_state_locked();
                         nlohmann::json resp;
                         resp["status"] = "ok";
                         resp["message"] = "Crossfeed disabled";
@@ -620,6 +628,7 @@ static void zeromq_listener_thread() {
                                                 resp["message"] = "Combined filter applied";
                                                 resp["data"]["rate_family"] = rateFamily;
                                                 resp["data"]["complex_count"] = complexCount;
+                                                reset_crossfeed_stream_state_locked();
                                                 std::cout
                                                     << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
                                                     << rateFamily << " (" << complexCount
@@ -686,6 +695,7 @@ static void zeromq_listener_thread() {
                                     nlohmann::json resp;
                                     resp["status"] = "ok";
                                     resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
+                                reset_crossfeed_stream_state_locked();
                                     response = resp.dump();
                                 } else {
                                     nlohmann::json resp;
@@ -931,28 +941,27 @@ static void on_input_process(void* userdata) {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 // Re-check under lock (double-checked locking pattern)
                 if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                    std::vector<float> cf_output_left, cf_output_right;
                     // Use default CUDA stream (0) for crossfeed processing
                     bool cf_generated = g_hrtf_processor->processStreamBlock(
-                        output_left.data(), output_right.data(), output_left.size(), cf_output_left,
-                        cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
+                        output_left.data(), output_right.data(), output_left.size(), g_cf_output_left,
+                        g_cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
                         g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
 
                     if (cf_generated) {
                         size_t cf_frames =
-                            std::min(cf_output_left.size(), cf_output_right.size());
+                            std::min(g_cf_output_left.size(), g_cf_output_right.size());
                         if (cf_frames > 0) {
                             float cfPeak = compute_stereo_peak(
-                                cf_output_left.data(), cf_output_right.data(), cf_frames);
+                                g_cf_output_left.data(), g_cf_output_right.data(), cf_frames);
                             update_peak_level(g_peak_post_crossfeed_level, cfPeak);
                         }
                         // Store crossfeed output for ALSA thread consumption
                         std::lock_guard<std::mutex> lock(g_buffer_mutex);
                         g_output_buffer_left.insert(g_output_buffer_left.end(),
-                                                    cf_output_left.begin(), cf_output_left.end());
+                                                    g_cf_output_left.begin(), g_cf_output_left.end());
                         g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                                     cf_output_right.begin(),
-                                                     cf_output_right.end());
+                                                     g_cf_output_right.begin(),
+                                                     g_cf_output_right.end());
                         g_buffer_cv.notify_one();
                     }
                     // Note: If crossfeed didn't generate output yet (accumulating),

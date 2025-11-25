@@ -455,6 +455,7 @@ bool HRTFProcessor::switchHeadSize(HeadSize targetSize) {
         d_activeFilterFFT_[c] = d_filterFFT_[targetConfig][c];
     }
     currentHeadSize_ = targetSize;
+    resetStreaming();
 
     std::cout << "Switched to head size: " << headSizeToString(targetSize) << std::endl;
     return true;
@@ -798,6 +799,9 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         cudaMemcpyAsync(d_overlapR_, d_paddedInputR_ + validOutputPerBlock_,
                         overlapSize_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
         "update overlap R");
+
+    // Ensure all async transfers complete before touching host buffers
+    checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize crossfeed block");
 
     // Shift input buffer
     size_t remaining = streamInputAccumulatedL - streamValidInputPerBlock_;
