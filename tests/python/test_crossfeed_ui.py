@@ -291,4 +291,3 @@ class TestCrossfeedUIErrorHandling:
         assert "catch" in html
         assert "res.ok" in html
         assert "data.detail" in html or "data.message" in html
-
