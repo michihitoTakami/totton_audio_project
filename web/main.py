@@ -11,7 +11,14 @@ from fastapi.staticfiles import StaticFiles
 
 from .exceptions import register_exception_handlers
 from .models import ApiResponse
-from .routers import dac_router, daemon_router, eq_router, opra_router, status_router
+from .routers import (
+    crossfeed_router,
+    dac_router,
+    daemon_router,
+    eq_router,
+    opra_router,
+    status_router,
+)
 from .templates import get_admin_html
 
 # OpenAPI tag descriptions
@@ -35,6 +42,10 @@ tags_metadata = [
     {
         "name": "dac",
         "description": "DAC capability detection and sample rate filtering",
+    },
+    {
+        "name": "crossfeed",
+        "description": "Crossfeed (HRTF-based headphone virtualization) control",
     },
     {
         "name": "legacy",
@@ -76,6 +87,7 @@ app.include_router(daemon_router)
 app.include_router(eq_router)
 app.include_router(opra_router)
 app.include_router(dac_router)
+app.include_router(crossfeed_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)

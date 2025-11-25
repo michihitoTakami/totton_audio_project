@@ -584,9 +584,53 @@ static void zeromq_listener_thread() {
                         resp["status"] = "ok";
                         resp["data"]["enabled"] = enabled;
                         resp["data"]["initialized"] = initialized;
-                        // head_size and headphone fields are intentionally omitted
-                        // until HRTFProcessor exposes actual HRTF metadata (#233)
+                        if (g_hrtf_processor != nullptr) {
+                            CrossfeedEngine::HeadSize currentSize = g_hrtf_processor->getCurrentHeadSize();
+                            resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(currentSize);
+                        } else {
+                            resp["data"]["head_size"] = nullptr;
+                        }
+                        // headphone field is omitted until HRTFProcessor exposes actual HRTF metadata (#233)
                         response = resp.dump();
+                    } else if (cmdType == "CROSSFEED_SET_SIZE") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        if (!g_hrtf_processor) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                            resp["message"] = "HRTF processor not initialized";
+                            response = resp.dump();
+                        } else if (!j.contains("params")) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params field";
+                            response = resp.dump();
+                        } else {
+                            auto params = j["params"];
+                            std::string sizeStr = params.value("head_size", "");
+                            if (sizeStr.empty()) {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "IPC_INVALID_PARAMS";
+                                resp["message"] = "Missing head_size parameter";
+                                response = resp.dump();
+                            } else {
+                                CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
+                                if (g_hrtf_processor->switchHeadSize(targetSize)) {
+                                    nlohmann::json resp;
+                                    resp["status"] = "ok";
+                                    resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
+                                    response = resp.dump();
+                                } else {
+                                    nlohmann::json resp;
+                                    resp["status"] = "error";
+                                    resp["error_code"] = "CROSSFEED_SIZE_SWITCH_FAILED";
+                                    resp["message"] = "Failed to switch head size";
+                                    response = resp.dump();
+                                }
+                            }
+                        }
                     } else {
                         nlohmann::json resp;
                         resp["status"] = "error";

@@ -37,6 +37,8 @@ const char* commandTypeToString(CommandType type) {
         return "CROSSFEED_DISABLE";
     case CommandType::CROSSFEED_SET_COMBINED:
         return "CROSSFEED_SET_COMBINED";
+    case CommandType::CROSSFEED_SET_SIZE:
+        return "CROSSFEED_SET_SIZE";
     case CommandType::CROSSFEED_GET_STATUS:
         return "CROSSFEED_GET_STATUS";
     default:
@@ -57,6 +59,7 @@ CommandType stringToCommandType(const std::string& str) {
         {"CROSSFEED_ENABLE", CommandType::CROSSFEED_ENABLE},
         {"CROSSFEED_DISABLE", CommandType::CROSSFEED_DISABLE},
         {"CROSSFEED_SET_COMBINED", CommandType::CROSSFEED_SET_COMBINED},
+        {"CROSSFEED_SET_SIZE", CommandType::CROSSFEED_SET_SIZE},
         {"CROSSFEED_GET_STATUS", CommandType::CROSSFEED_GET_STATUS}};
 
     auto it = lookup.find(str);
@@ -646,6 +649,12 @@ CommandResult ZMQClient::crossfeedSetCombined(const std::string& rateFamily,
     params["combined_rl"] = combinedRL;
     params["combined_rr"] = combinedRR;
     return sendCommand(CommandType::CROSSFEED_SET_COMBINED, params.dump());
+}
+
+CommandResult ZMQClient::crossfeedSetSize(const std::string& headSize) {
+    json params;
+    params["head_size"] = headSize;
+    return sendCommand(CommandType::CROSSFEED_SET_SIZE, params.dump());
 }
 
 CommandResult ZMQClient::crossfeedGetStatus() {

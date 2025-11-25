@@ -384,3 +384,42 @@ class ErrorResponse(BaseModel):
     inner_error: Optional[InnerError] = Field(
         default=None, description="Nested error details from lower layers"
     )
+
+
+# ============================================================================
+# Crossfeed Models
+# ============================================================================
+
+
+class CrossfeedStatus(BaseModel):
+    """Crossfeed status response model."""
+
+    enabled: bool = Field(description="Whether crossfeed is currently enabled")
+    headSize: Optional[str] = Field(
+        default=None, description="Current head size: 'xs', 's', 'm', 'l', or 'xl'"
+    )
+    availableSizes: list[str] = Field(
+        default_factory=lambda: ["xs", "s", "m", "l", "xl"],
+        description="Available head size options",
+    )
+
+
+class CrossfeedEnableResponse(BaseModel):
+    """Crossfeed enable response model."""
+
+    success: bool
+    message: str
+
+
+class CrossfeedDisableResponse(BaseModel):
+    """Crossfeed disable response model."""
+
+    success: bool
+    message: str
+
+
+class CrossfeedSizeResponse(BaseModel):
+    """Crossfeed size change response model."""
+
+    success: bool
+    headSize: str
