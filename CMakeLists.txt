@@ -151,9 +151,10 @@ add_executable(gpu_upsampler_daemon
     src/config_loader.cpp
 )
 
-# Link against core library, PipeWire, and Logging
+# Link against core library, PipeWire, SoftMute, and Logging
 target_link_libraries(gpu_upsampler_daemon
     gpu_upsampler_core
+    soft_mute
     logging
     ${PIPEWIRE_LIBRARIES}
     nlohmann_json::nlohmann_json

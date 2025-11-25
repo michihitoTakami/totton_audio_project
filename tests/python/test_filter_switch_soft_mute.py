@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from web.services.daemon_client import DaemonClient, DaemonError, DaemonResponse
+from web.services.daemon_client import DaemonClient, DaemonResponse
 
 
 class TestPhaseTypeSwitchSoftMute:
@@ -73,34 +73,27 @@ class TestCrossfeedSwitchSoftMute:
 
     def test_crossfeed_size_switch_triggers_soft_mute(self, daemon_client):
         """Test that crossfeed head size switch triggers soft mute sequence."""
-        with patch.object(daemon_client, "send_command_v2") as mock_send:
+        with patch.object(daemon_client, "send_json_command_v2") as mock_send:
             # Mock successful head size switch
             mock_send.return_value = DaemonResponse(
                 success=True, data={"head_size": "m"}
             )
 
-            success, result = daemon_client.crossfeed_set_size("m")
+            response = daemon_client.crossfeed_set_size("m")
 
             # Verify command was sent with correct format
-            assert success is True
-            assert result.get("head_size") == "m"
+            mock_send.assert_called_once_with("CROSSFEED_SET_SIZE", {"head_size": "m"})
+            assert response.success is True
+            assert response.data.get("head_size") == "m"
 
     def test_crossfeed_size_switch_invalid_size(self, daemon_client):
         """Test error handling for invalid head size."""
-        with patch.object(daemon_client, "send_command_v2") as mock_send:
-            # Mock error response
-            mock_send.return_value = DaemonResponse(
-                success=False,
-                error=DaemonError(
-                    error_code="IPC_INVALID_PARAMS",
-                    message="Missing head_size parameter",
-                ),
-            )
+        # Invalid size is validated locally, not sent to daemon
+        response = daemon_client.crossfeed_set_size("invalid")
 
-            success, result = daemon_client.crossfeed_set_size("invalid")
-
-            assert success is False
-            assert "Missing head_size parameter" in result
+        assert response.success is False
+        assert response.error is not None
+        assert "Invalid head size" in response.error.message
 
 
 class TestFilterSwitchSoftMuteIntegration:
@@ -133,17 +126,17 @@ class TestFilterSwitchSoftMuteIntegration:
 
     def test_soft_mute_timing_crossfeed_switch(self, daemon_client):
         """Test that crossfeed switch includes soft mute timing."""
-        with patch.object(daemon_client, "send_command_v2") as mock_send:
+        with patch.object(daemon_client, "send_json_command_v2") as mock_send:
             mock_send.return_value = DaemonResponse(
                 success=True, data={"head_size": "l"}
             )
 
             start_time = time.time()
-            success, _ = daemon_client.crossfeed_set_size("l")
+            response = daemon_client.crossfeed_set_size("l")
             elapsed = time.time() - start_time
 
             # Command should complete quickly (soft mute happens in daemon)
-            assert success is True
+            assert response.success is True
             # Command itself should be fast (< 100ms for IPC)
             assert elapsed < 0.1
 
@@ -198,4 +191,3 @@ class TestFilterSwitchSoftMuteEdgeCases:
             daemon_client.set_phase_type("minimum")
 
             assert mock_send.call_count == 2
-
