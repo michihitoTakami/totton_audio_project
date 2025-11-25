@@ -64,6 +64,76 @@ TEST_F(RateFamilyTest, BaseSampleRateUnknown) {
 }
 
 // =============================================================================
+// Issue #231: Multi-rate support tests
+// =============================================================================
+
+// Test high-res rate detection (352.8kHz, 384kHz - 2x upsampling)
+TEST_F(RateFamilyTest, Issue231_Detect352_8kHz) {
+    EXPECT_EQ(detectRateFamily(352800), RateFamily::RATE_44K);
+}
+
+TEST_F(RateFamilyTest, Issue231_Detect384kHz) {
+    EXPECT_EQ(detectRateFamily(384000), RateFamily::RATE_48K);
+}
+
+// Test getUpsampleRatioForInputRate for all 8 supported rates
+TEST_F(RateFamilyTest, Issue231_UpsampleRatio_44kFamily) {
+    EXPECT_EQ(getUpsampleRatioForInputRate(44100), 16);  // 44.1k → 705.6k
+    EXPECT_EQ(getUpsampleRatioForInputRate(88200), 8);   // 88.2k → 705.6k
+    EXPECT_EQ(getUpsampleRatioForInputRate(176400), 4);  // 176.4k → 705.6k
+    EXPECT_EQ(getUpsampleRatioForInputRate(352800), 2);  // 352.8k → 705.6k
+}
+
+TEST_F(RateFamilyTest, Issue231_UpsampleRatio_48kFamily) {
+    EXPECT_EQ(getUpsampleRatioForInputRate(48000), 16);  // 48k → 768k
+    EXPECT_EQ(getUpsampleRatioForInputRate(96000), 8);   // 96k → 768k
+    EXPECT_EQ(getUpsampleRatioForInputRate(192000), 4);  // 192k → 768k
+    EXPECT_EQ(getUpsampleRatioForInputRate(384000), 2);  // 384k → 768k
+}
+
+TEST_F(RateFamilyTest, Issue231_UpsampleRatio_Unsupported) {
+    EXPECT_EQ(getUpsampleRatioForInputRate(22050), 0);  // Unsupported
+    EXPECT_EQ(getUpsampleRatioForInputRate(32000), 0);  // Unsupported
+}
+
+// Test findMultiRateConfigIndex
+TEST_F(RateFamilyTest, Issue231_FindConfigIndex_Valid) {
+    // 44.1k family indices 0-3
+    EXPECT_EQ(findMultiRateConfigIndex(44100), 0);
+    EXPECT_EQ(findMultiRateConfigIndex(88200), 1);
+    EXPECT_EQ(findMultiRateConfigIndex(176400), 2);
+    EXPECT_EQ(findMultiRateConfigIndex(352800), 3);
+    // 48k family indices 5-8 (after bypass at index 4)
+    EXPECT_EQ(findMultiRateConfigIndex(48000), 5);
+    EXPECT_EQ(findMultiRateConfigIndex(96000), 6);
+    EXPECT_EQ(findMultiRateConfigIndex(192000), 7);
+    EXPECT_EQ(findMultiRateConfigIndex(384000), 8);
+}
+
+TEST_F(RateFamilyTest, Issue231_FindConfigIndex_Invalid) {
+    EXPECT_EQ(findMultiRateConfigIndex(22050), -1);
+    EXPECT_EQ(findMultiRateConfigIndex(32000), -1);
+}
+
+// Test MULTI_RATE_CONFIGS structure
+TEST_F(RateFamilyTest, Issue231_MultiRateConfigs_OutputRate) {
+    // All 44.1k family rates should output 705.6kHz (indices 0-3)
+    EXPECT_EQ(MULTI_RATE_CONFIGS[0].outputRate, 705600);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[1].outputRate, 705600);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[2].outputRate, 705600);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[3].outputRate, 705600);
+    // 44k bypass at index 4
+    EXPECT_EQ(MULTI_RATE_CONFIGS[4].outputRate, 705600);
+    // All 48k family rates should output 768kHz (indices 5-8)
+    EXPECT_EQ(MULTI_RATE_CONFIGS[5].outputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[6].outputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[7].outputRate, 768000);
+    EXPECT_EQ(MULTI_RATE_CONFIGS[8].outputRate, 768000);
+    // 48k bypass at index 9
+    EXPECT_EQ(MULTI_RATE_CONFIGS[9].outputRate, 768000);
+}
+
+// =============================================================================
 // Issue #238: 1x Bypass support tests
 // =============================================================================
 

@@ -22,6 +22,18 @@ pkg_check_modules(ALSA REQUIRED alsa)
 # ZeroMQ for IPC communication
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
+# systemd for daemon notification (optional, for Type=notify support)
+# Service file Type is automatically set based on libsystemd availability
+pkg_check_modules(SYSTEMD libsystemd)
+if(SYSTEMD_FOUND)
+    set(HAVE_SYSTEMD TRUE)
+    message(STATUS "libsystemd found - systemd notification enabled (Type=notify)")
+else()
+    set(HAVE_SYSTEMD FALSE)
+    message(STATUS "libsystemd not found - systemd notification disabled (Type=simple)")
+    message(STATUS "  To enable: sudo apt-get install libsystemd-dev && cmake -B build")
+endif()
+
 # NVML for GPU utilization monitoring (optional)
 # On minimal Jetson environments or some container setups, NVML may not be available
 if(TARGET CUDA::nvml)
@@ -59,7 +71,14 @@ FetchContent_Declare(
 # Prevent GoogleTest from overriding compiler/linker options
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(nlohmann_json googletest cppzmq)
+# spdlog (structured logging library)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+)
+
+FetchContent_MakeAvailable(nlohmann_json googletest cppzmq spdlog)
 
 # Include directories
 include_directories(
@@ -132,9 +151,10 @@ add_executable(gpu_upsampler_daemon
     src/config_loader.cpp
 )
 
-# Link against core library and PipeWire
+# Link against core library, PipeWire, and Logging
 target_link_libraries(gpu_upsampler_daemon
     gpu_upsampler_core
+    logging
     ${PIPEWIRE_LIBRARIES}
     nlohmann_json::nlohmann_json
 )
@@ -149,16 +169,26 @@ add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
 )
 
-# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, and SoftMute
+# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, SoftMute, and Logging
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
+    graceful_shutdown
     zeromq_interface
+    logging
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
 )
+
+# Conditionally link libsystemd for Type=notify support
+if(HAVE_SYSTEMD)
+    target_link_libraries(gpu_upsampler_alsa ${SYSTEMD_LIBRARIES})
+    target_compile_definitions(gpu_upsampler_alsa PRIVATE HAVE_SYSTEMD)
+    target_include_directories(gpu_upsampler_alsa PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+endif()
+
 target_include_directories(gpu_upsampler_alsa PRIVATE
     ${ZMQ_INCLUDE_DIRS}
     ${cppzmq_SOURCE_DIR}
@@ -194,6 +224,27 @@ target_compile_options(error_codes PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# Logging Library (Issue #43 - structured logging with spdlog)
+add_library(logging STATIC
+    src/logging/logger.cpp
+    src/logging/metrics.cpp
+)
+target_link_libraries(logging PUBLIC
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+)
+target_include_directories(logging PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(logging PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+# Conditionally add NVML support for GPU metrics
+if(HAVE_NVML)
+    target_link_libraries(logging PUBLIC CUDA::nvml)
+    target_compile_definitions(logging PUBLIC HAVE_NVML)
+endif()
+
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/zeromq_interface.cpp
@@ -201,6 +252,7 @@ add_library(zeromq_interface STATIC
 )
 target_link_libraries(zeromq_interface PUBLIC
     error_codes
+    logging
     nlohmann_json::nlohmann_json
     ${ZMQ_LIBRARIES}
 )
@@ -253,6 +305,17 @@ target_compile_options(soft_mute PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# Graceful Shutdown Library (CPU-only, for async-signal-safe shutdown)
+add_library(graceful_shutdown STATIC
+    src/graceful_shutdown.cpp
+)
+target_include_directories(graceful_shutdown PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(graceful_shutdown PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # EQ Support Library (CPU-only, Issue #107)
 # Consolidates EQ parsing, FIR generation, and config loading
 # No GPU dependencies - can be used independently of gpu_upsampler_core
@@ -280,6 +343,7 @@ install(TARGETS zeromq_interface DESTINATION lib)
 install(TARGETS dac_capability DESTINATION lib)
 install(TARGETS auto_negotiation DESTINATION lib)
 install(TARGETS soft_mute DESTINATION lib)
+install(TARGETS logging DESTINATION lib)
 install(TARGETS eq_support DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include/gpu_upsampler)
 
@@ -309,6 +373,17 @@ if(NOT DEFINED SYSTEMD_USER_UNIT_DIR)
     else()
         set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
     endif()
+endif()
+
+# Set systemd service type based on libsystemd availability
+if(HAVE_SYSTEMD)
+    set(SYSTEMD_SERVICE_TYPE "notify")
+    set(SYSTEMD_NOTIFY_ACCESS "NotifyAccess=main")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog: Daemon sends WATCHDOG=1 every 100ms, systemd expects it within 5s\nWatchdogSec=5")
+else()
+    set(SYSTEMD_SERVICE_TYPE "simple")
+    set(SYSTEMD_NOTIFY_ACCESS "# NotifyAccess not needed for Type=simple")
+    set(SYSTEMD_WATCHDOG_SEC "# Watchdog disabled (libsystemd not available at build time)")
 endif()
 
 # Generate service file with correct install paths
@@ -421,6 +496,19 @@ target_include_directories(soft_mute_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(soft_mute_tests)
+
+# Graceful Shutdown tests (CPU-only, Issue #215)
+add_executable(graceful_shutdown_tests
+    tests/cpp/test_graceful_shutdown.cpp
+)
+target_link_libraries(graceful_shutdown_tests
+    GTest::gtest_main
+    graceful_shutdown
+)
+target_include_directories(graceful_shutdown_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(graceful_shutdown_tests)
 
 # Audio common utilities tests (AudioRingBuffer, AudioUtils)
 add_executable(audio_common_tests

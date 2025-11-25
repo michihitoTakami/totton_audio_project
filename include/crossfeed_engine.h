@@ -170,6 +170,39 @@ class HRTFProcessor {
         return filterTaps_;
     }
 
+    // Get FFT size for filter (N/2+1 complex values)
+    // Use this to validate filter size before calling setCombinedFilter
+    size_t getFilterFftSize() const {
+        return filterFftSize_;
+    }
+
+    // Set externally computed combined HRTF filters (already FFT'd)
+    //
+    // This allows Python/Control Plane to compute combined filters
+    // (e.g., HRTF + EQ) and send them to the engine.
+    //
+    // Parameters:
+    //   rateFamily: Target rate family (44k or 48k)
+    //   combinedLL, combinedLR, combinedRL, combinedRR: FFT'd filter data (host memory)
+    //   filterComplexCount: Number of cufftComplex elements per channel
+    //                       Must match getFilterFftSize()
+    //
+    // Returns: true on success, false if size mismatch or not initialized
+    //
+    // Thread safety: This method copies data to device memory and updates
+    // active filter pointers atomically. Safe to call during processing.
+    bool setCombinedFilter(RateFamily rateFamily, const cufftComplex* combinedLL,
+                           const cufftComplex* combinedLR, const cufftComplex* combinedRL,
+                           const cufftComplex* combinedRR, size_t filterComplexCount);
+
+    // Check if currently using externally-set combined filter
+    bool isUsingCombinedFilter() const {
+        return usingCombinedFilter_;
+    }
+
+    // Clear combined filter and revert to predefined HRTF
+    void clearCombinedFilter();
+
     // Performance statistics
     struct Stats {
         double totalProcessingTime;
@@ -231,6 +264,14 @@ class HRTFProcessor {
 
     // Device filter FFT: [config][channel]
     cufftComplex* d_filterFFT_[NUM_CONFIGS][NUM_CHANNELS];
+
+    // Combined filter buffers for externally-set filters
+    // [rate_family (0=44k, 1=48k)][channel]
+    static constexpr int NUM_RATE_FAMILIES = 2;
+    cufftComplex* d_combinedFilterFFT_[NUM_RATE_FAMILIES][NUM_CHANNELS];
+    bool combinedFilterLoaded_[NUM_RATE_FAMILIES];  // Track which rate families have combined
+                                                    // filters
+    bool usingCombinedFilter_;                      // Using combined filter vs predefined
 
     // Double-buffered active filter FFT (ping-pong) for glitch-free switching
     // [channel] -> points to either config A or config B

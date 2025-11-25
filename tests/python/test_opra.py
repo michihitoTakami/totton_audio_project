@@ -630,18 +630,9 @@ class TestOpraApi:
     """API layer tests for OPRA endpoints with apply_correction."""
 
     @pytest.fixture
-    def client(self):
-        """Create test client for FastAPI app."""
-        from fastapi.testclient import TestClient
-
-        # Import from web module
-        import sys
-        from pathlib import Path
-
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
-        from main import app
-
-        return TestClient(app)
+    def client(self, web_app):
+        """Use shared web_app fixture from conftest.py."""
+        return web_app
 
     @pytest.fixture
     def sample_eq_id(self, client):
@@ -709,25 +700,32 @@ class TestOpraApi:
     def test_opra_apply_with_correction_filename(self, tmp_path, monkeypatch):
         """Test /opra/apply endpoint generates correct filename suffix.
 
-        Uses monkeypatch to redirect file writes to temp directory,
-        avoiding side effects on shared workspace.
+        Uses monkeypatch to isolate test files from real workspace.
         """
-        from fastapi.testclient import TestClient
-        import sys
-        from pathlib import Path
+        import json
 
-        # Setup temp directories
+        # Setup isolated test directories
         temp_eq_dir = tmp_path / "EQ"
         temp_eq_dir.mkdir()
         temp_config = tmp_path / "config.json"
         temp_config.write_text("{}")
 
-        # Import and patch the web module before creating client
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "web"))
-        import main
+        # Patch the modules that actually USE the constants
+        from web.routers import opra
+        from web.services import config as config_service
 
-        monkeypatch.setattr(main, "EQ_PROFILES_DIR", temp_eq_dir)
-        monkeypatch.setattr(main, "CONFIG_PATH", temp_config)
+        monkeypatch.setattr(opra, "EQ_PROFILES_DIR", temp_eq_dir)
+        monkeypatch.setattr(config_service, "CONFIG_PATH", temp_config)
+
+        # Also need to patch constants for config service to use temp path
+        from web import constants
+
+        monkeypatch.setattr(constants, "CONFIG_PATH", temp_config)
+        monkeypatch.setattr(constants, "EQ_PROFILES_DIR", temp_eq_dir)
+
+        # Create a new client with patched modules
+        from fastapi.testclient import TestClient
+        from web import main
 
         client = TestClient(main.app)
 
@@ -737,21 +735,56 @@ class TestOpraApi:
         data = response.json()
         sample_eq_id = data["results"][0]["eq_profiles"][0]["id"]
 
-        # Test apply endpoint
+        # Test apply endpoint with correction
         response = client.post(f"/opra/apply/{sample_eq_id}?apply_correction=true")
         assert response.status_code == 200
         data = response.json()
 
         assert data["data"]["modern_target_applied"] is True
-        assert "_kb5000_7" in data["data"]["path"]
+        profile_name = data["data"]["profile_name"]
+        assert "_kb5000_7" in profile_name
 
         # Verify file was created in temp directory (not real data/EQ)
         created_files = list(temp_eq_dir.glob("opra_*_kb5000_7.txt"))
         assert len(created_files) == 1
 
-        # Verify config was updated in temp file
-        import json
+        # Verify file content has Modern Target correction
+        content = created_files[0].read_text()
+        assert "KB5000_7" in content
+        assert "5366" in content  # Correction frequency
+        assert "2.8" in content  # Correction gain
 
+        # Verify config was updated in temp file (not real config.json)
         config_data = json.loads(temp_config.read_text())
         assert config_data.get("eqEnabled") is True
         assert "_kb5000_7" in config_data.get("eqProfilePath", "")
+
+
+class TestOpraErrorHandling:
+    """Tests for OPRA error handling when database is not available."""
+
+    def test_database_not_found_raises_error(self, tmp_path):
+        """OpraDatabase should raise FileNotFoundError when DB is missing."""
+        nonexistent_path = tmp_path / "nonexistent" / "database.jsonl"
+        db = OpraDatabase(db_path=nonexistent_path)
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            _ = db.vendor_count  # Triggers _ensure_loaded()
+
+        assert "OPRA database not found" in str(exc_info.value)
+        assert "git submodule update --init" in str(exc_info.value)
+
+    def test_error_message_includes_helpful_instructions(self, tmp_path):
+        """Error message should include helpful instructions for users."""
+        nonexistent_path = tmp_path / "nonexistent" / "database.jsonl"
+        db = OpraDatabase(db_path=nonexistent_path)
+
+        try:
+            _ = db.search("test")
+            assert False, "Expected FileNotFoundError"
+        except FileNotFoundError as e:
+            error_msg = str(e)
+            # Check for essential information
+            assert "OPRA database not found" in error_msg
+            assert "git submodule update --init" in error_msg
+            assert str(nonexistent_path) in error_msg

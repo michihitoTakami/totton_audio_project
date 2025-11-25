@@ -5,6 +5,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
+from ..constants import EQ_PROFILES_DIR
 from ..models import ApiResponse, DevicesResponse, SettingsUpdate, Status
 from ..services import (
     check_daemon_running,
@@ -38,7 +39,7 @@ async def get_status():
         settings=settings,
         daemon_running=daemon_running,
         pipewire_connected=pipewire_connected,
-        eq_active=settings.eq_profile is not None,
+        eq_active=bool(settings.eq_enabled and settings.eq_profile_path),
         clip_rate=stats["clip_rate"],
         clip_count=stats["clip_count"],
         total_samples=stats["total_samples"],
@@ -94,10 +95,27 @@ async def update_settings(update: SettingsUpdate):
         current.upsample_ratio = update.upsample_ratio
     if update.eq_profile is not None:
         current.eq_profile = update.eq_profile
+    if update.eq_profile_path is not None:
+        current.eq_profile_path = update.eq_profile_path
+    # eq_enabled is applied after we derive path so that enabling without a path does not stick
+    eq_enabled_requested = update.eq_enabled
     if update.input_rate is not None:
         current.input_rate = update.input_rate
     if update.output_rate is not None:
         current.output_rate = update.output_rate
+
+    # Keep EQ fields consistent with the daemon expectations
+    if current.eq_profile_path is None and current.eq_profile:
+        current.eq_profile_path = str(EQ_PROFILES_DIR / f"{current.eq_profile}.txt")
+
+    # Apply eq_enabled after path derivation so that enable without path becomes False
+    if eq_enabled_requested is None:
+        current.eq_enabled = bool(current.eq_profile_path) and current.eq_enabled
+    else:
+        current.eq_enabled = bool(eq_enabled_requested and current.eq_profile_path)
+
+    if not current.eq_enabled:
+        current.eq_profile_path = None
 
     if save_config(current):
         # Check if daemon needs restart

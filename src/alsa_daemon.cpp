@@ -6,6 +6,8 @@
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
+#include "logging/logger.h"
+#include "logging/metrics.h"
 #include "soft_mute.h"
 
 #include <algorithm>
@@ -35,6 +37,11 @@
 #include <vector>
 #include <zmq.hpp>
 
+// systemd notification support (optional)
+#ifdef HAVE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
@@ -47,11 +54,18 @@ constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock";
 // Default configuration values (using common constants)
 using namespace DaemonConstants;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
-constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_1m_min_phase.bin";
+constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_2m_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)
 static AppConfig g_config;
+
+// ========== Signal Handling (Async-Signal-Safe) ==========
+// These flags are set by the signal handler and polled by the main loop.
+// Using volatile sig_atomic_t ensures async-signal-safe access.
+static volatile sig_atomic_t g_signal_shutdown = 0;  // SIGTERM, SIGINT
+static volatile sig_atomic_t g_signal_reload = 0;    // SIGHUP
+static volatile sig_atomic_t g_signal_received = 0;  // Last signal number (for logging)
 
 // Global state
 static std::atomic<bool> g_running{true};
@@ -59,7 +73,7 @@ static std::atomic<bool> g_reload_requested{false};
 static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_run() is active
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
-static struct pw_main_loop* g_pw_loop = nullptr;  // For SIGHUP handler
+static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 
 // Statistics (atomic for thread-safe access from stats writer)
 static std::atomic<size_t> g_clip_count{0};
@@ -111,8 +125,7 @@ static bool acquire_pid_lock() {
     // Open or create the lock file
     g_pid_lock_fd = open(PID_FILE_PATH, O_RDWR | O_CREAT, 0644);
     if (g_pid_lock_fd < 0) {
-        std::cerr << "Error: Cannot open PID file: " << PID_FILE_PATH << " (" << strerror(errno)
-                  << ")" << std::endl;
+        LOG_ERROR("Cannot open PID file: {} ({})", PID_FILE_PATH, strerror(errno));
         return false;
     }
 
@@ -121,14 +134,14 @@ static bool acquire_pid_lock() {
         if (errno == EWOULDBLOCK) {
             // Another process holds the lock
             pid_t existing_pid = read_pid_from_lockfile();
-            std::cerr << "Error: Another instance is already running";
             if (existing_pid > 0) {
-                std::cerr << " (PID: " << existing_pid << ")";
+                LOG_ERROR("Another instance is already running (PID: {})", existing_pid);
+            } else {
+                LOG_ERROR("Another instance is already running");
             }
-            std::cerr << std::endl;
-            std::cerr << "       Use './scripts/daemon.sh stop' to stop it." << std::endl;
+            LOG_ERROR("Use './scripts/daemon.sh stop' to stop it.");
         } else {
-            std::cerr << "Error: Cannot lock PID file: " << strerror(errno) << std::endl;
+            LOG_ERROR("Cannot lock PID file: {}", strerror(errno));
         }
         close(g_pid_lock_fd);
         g_pid_lock_fd = -1;
@@ -137,7 +150,7 @@ static bool acquire_pid_lock() {
 
     // Lock acquired - write our PID to the file
     if (ftruncate(g_pid_lock_fd, 0) < 0) {
-        std::cerr << "Warning: Cannot truncate PID file" << std::endl;
+        LOG_WARN("Cannot truncate PID file");
     }
     dprintf(g_pid_lock_fd, "%d\n", getpid());
     fsync(g_pid_lock_fd);  // Ensure PID is written to disk
@@ -197,21 +210,22 @@ static void write_stats_file() {
 
 static void print_config_summary(const AppConfig& cfg) {
     int outputRate = cfg.inputSampleRate * cfg.upsampleRatio;
-    std::cout << "Config:" << std::endl;
-    std::cout << "  ALSA device:    " << cfg.alsaDevice << std::endl;
-    std::cout << "  Input rate:     " << cfg.inputSampleRate << " Hz" << std::endl;
-    std::cout << "  Output rate:    " << outputRate << " Hz (" << (outputRate / 1000.0) << " kHz)"
-              << std::endl;
-    std::cout << "  Buffer size:    " << cfg.bufferSize << std::endl;
-    std::cout << "  Period size:    " << cfg.periodSize << std::endl;
-    std::cout << "  Upsample ratio: " << cfg.upsampleRatio << std::endl;
-    std::cout << "  Block size:     " << cfg.blockSize << std::endl;
-    std::cout << "  Gain:           " << cfg.gain << std::endl;
-    std::cout << "  Filter path:    " << cfg.filterPath << std::endl;
-    std::cout << "  EQ enabled:     " << (cfg.eqEnabled ? "yes" : "no") << std::endl;
+    LOG_INFO("Config:");
+    LOG_INFO("  ALSA device:    {}", cfg.alsaDevice);
+    LOG_INFO("  Input rate:     {} Hz", cfg.inputSampleRate);
+    LOG_INFO("  Output rate:    {} Hz ({:.1f} kHz)", outputRate, outputRate / 1000.0);
+    LOG_INFO("  Buffer size:    {}", cfg.bufferSize);
+    LOG_INFO("  Period size:    {}", cfg.periodSize);
+    LOG_INFO("  Upsample ratio: {}", cfg.upsampleRatio);
+    LOG_INFO("  Block size:     {}", cfg.blockSize);
+    LOG_INFO("  Gain:           {}", cfg.gain);
+    LOG_INFO("  Filter path:    {}", cfg.filterPath);
+    LOG_INFO("  EQ enabled:     {}", (cfg.eqEnabled ? "yes" : "no"));
     if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
-        std::cout << "  EQ profile:     " << cfg.eqProfilePath << std::endl;
+        LOG_INFO("  EQ profile:     {}", cfg.eqProfilePath);
     }
+    // Update metrics with audio configuration
+    gpu_upsampler::metrics::setAudioConfig(cfg.inputSampleRate, outputRate, cfg.upsampleRatio);
 }
 
 static void reset_runtime_state() {
@@ -495,21 +509,65 @@ static void zeromq_listener_thread() {
                                             "Filter size exceeds maximum (256KB per channel)";
                                         response = resp.dump();
                                     } else {
-                                        // Filter data is valid but application not yet implemented
-                                        // See GitHub Issue #233 for HRTFProcessor API extension
-                                        nlohmann::json resp;
-                                        resp["status"] = "error";
-                                        resp["error_code"] = "CROSSFEED_NOT_IMPLEMENTED";
-                                        resp["message"] =
-                                            "Filter application not yet implemented (see #233)";
-                                        resp["data"]["rate_family"] = rateFamily;
-                                        resp["data"]["filter_size"] = decodedLL.size();
-                                        resp["data"]["complex_count"] =
-                                            decodedLL.size() / CUFFT_COMPLEX_SIZE;
-                                        response = resp.dump();
-                                        std::cout << "ZeroMQ: CROSSFEED_SET_COMBINED received for "
-                                                  << rateFamily << " (" << decodedLL.size()
-                                                  << " bytes) - NOT YET IMPLEMENTED" << std::endl;
+                                        // Filter data is valid, apply to HRTFProcessor
+                                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+
+                                        if (!g_hrtf_processor) {
+                                            nlohmann::json resp;
+                                            resp["status"] = "error";
+                                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                                            resp["message"] = "HRTFProcessor not initialized";
+                                            response = resp.dump();
+                                        } else {
+                                            // Convert rate family string to enum
+                                            CrossfeedEngine::RateFamily family =
+                                                (rateFamily == "44k")
+                                                    ? CrossfeedEngine::RateFamily::RATE_44K
+                                                    : CrossfeedEngine::RateFamily::RATE_48K;
+
+                                            // Cast decoded data to cufftComplex pointers
+                                            size_t complexCount =
+                                                decodedLL.size() / CUFFT_COMPLEX_SIZE;
+                                            const cufftComplex* filterLL =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedLL.data());
+                                            const cufftComplex* filterLR =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedLR.data());
+                                            const cufftComplex* filterRL =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedRL.data());
+                                            const cufftComplex* filterRR =
+                                                reinterpret_cast<const cufftComplex*>(
+                                                    decodedRR.data());
+
+                                            bool success = g_hrtf_processor->setCombinedFilter(
+                                                family, filterLL, filterLR, filterRL, filterRR,
+                                                complexCount);
+
+                                            nlohmann::json resp;
+                                            if (success) {
+                                                resp["status"] = "ok";
+                                                resp["message"] = "Combined filter applied";
+                                                resp["data"]["rate_family"] = rateFamily;
+                                                resp["data"]["complex_count"] = complexCount;
+                                                std::cout
+                                                    << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
+                                                    << rateFamily << " (" << complexCount
+                                                    << " complex values)" << std::endl;
+                                            } else {
+                                                resp["status"] = "error";
+                                                resp["error_code"] =
+                                                    "CROSSFEED_INVALID_FILTER_SIZE";
+                                                resp["message"] =
+                                                    "Filter size mismatch or application failed";
+                                                resp["data"]["rate_family"] = rateFamily;
+                                                resp["data"]["complex_count"] = complexCount;
+                                                resp["data"]["expected_size"] =
+                                                    g_hrtf_processor->getFilterFftSize();
+                                            }
+                                            response = resp.dump();
+                                        }
                                     }
                                 }
                             }
@@ -626,32 +684,87 @@ static void zeromq_listener_thread() {
 struct Data {
     struct pw_main_loop* loop;
     struct pw_stream* input_stream;
+    struct spa_source* signal_check_timer;  // Timer for checking signal flags
     bool gpu_ready;
 };
 
-// Signal handler for graceful shutdown
+// ========== Async-Signal-Safe Signal Handler ==========
+// This handler ONLY sets flags. All other processing is done in the main loop.
+// POSIX async-signal-safe: only sig_atomic_t writes are safe here.
 static void signal_handler(int sig) {
+    g_signal_received = sig;
     if (sig == SIGHUP) {
-        std::cout << "\nReceived SIGHUP, restarting for config reload..." << std::endl;
-        g_reload_requested = true;
+        g_signal_reload = 1;
     } else {
+        g_signal_shutdown = 1;
+    }
+}
+
+// Process pending signals (called from main loop context, NOT from signal handler)
+// This function is safe to call with non-async-signal-safe code.
+// IMPORTANT: Shutdown (SIGTERM/SIGINT) takes priority over reload (SIGHUP).
+// If both signals arrive in the same cycle, shutdown wins.
+static void process_pending_signals() {
+    // Check for shutdown request FIRST (SIGTERM, SIGINT) - takes priority over reload
+    if (g_signal_shutdown) {
+        g_signal_shutdown = 0;
+        g_signal_reload = 0;  // Clear any pending reload - shutdown takes priority
+        int sig = g_signal_received;
         std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
+
+        // Clear reload flag to ensure clean shutdown (not restart)
+        // This prevents do { ... } while (g_reload_requested) from restarting
+        g_reload_requested = false;
+
+        // Start fade-out for glitch-free shutdown
+        if (g_soft_mute) {
+            g_soft_mute->startFadeOut();
+        }
+
+        // Quit main loop to trigger shutdown sequence
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        } else {
+            g_running = false;
+        }
+        return;  // Don't process reload if shutdown was requested
     }
 
-    // Start fade-out for glitch-free shutdown/restart (safe to call from signal handler)
-    if (g_soft_mute) {
-        g_soft_mute->startFadeOut();
-    }
+    // Check for reload request (SIGHUP) - only if no shutdown pending
+    if (g_signal_reload) {
+        g_signal_reload = 0;
+        int sig = g_signal_received;
+        std::cout << "\nReceived SIGHUP (signal " << sig << "), restarting for config reload..."
+                  << std::endl;
+        g_reload_requested = true;
 
-    // If main loop is running, quit it to trigger clean shutdown sequence
-    // If not yet running (during startup/initialization), set g_running = false
-    // to allow immediate abort
-    if (g_main_loop_running.load() && g_pw_loop) {
-        pw_main_loop_quit(g_pw_loop);
-    } else {
-        // Startup phase - allow immediate abort
-        g_running = false;
+        // Start fade-out for glitch-free reload
+        if (g_soft_mute) {
+            g_soft_mute->startFadeOut();
+        }
+
+        // Quit main loop to trigger reload sequence
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        } else {
+            g_running = false;
+        }
     }
+}
+
+// PipeWire timer callback to check for pending signals
+// Called periodically (every 100ms) from the PipeWire main loop.
+static void on_signal_check_timer(void* userdata, uint64_t expirations) {
+    (void)userdata;
+    (void)expirations;
+
+    // Process any pending signals
+    process_pending_signals();
+
+#ifdef HAVE_SYSTEMD
+    // Send watchdog heartbeat to systemd
+    sd_notify(0, "WATCHDOG=1");
+#endif
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
@@ -1055,27 +1168,39 @@ void alsa_output_thread() {
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "========================================" << std::endl;
-    std::cout << "  GPU Audio Upsampler - ALSA Direct Output" << std::endl;
-    std::cout << "========================================" << std::endl;
-    std::cout << std::endl;
+    // Early initialization with stderr output only (before PID lock)
+    // This allows logging during PID lock acquisition
+    gpu_upsampler::logging::initializeEarly();
+
+    // Acquire PID file lock (prevent multiple instances)
+    // Note: At this point, logging outputs to stderr only
+    if (!acquire_pid_lock()) {
+        return 1;
+    }
+
+    // Full initialization from config file (after PID lock acquired)
+    // This replaces stderr-only logger with configured logger (file + console)
+    gpu_upsampler::logging::initializeFromConfig(CONFIG_FILE_PATH);
+
+    LOG_INFO("========================================");
+    LOG_INFO("  GPU Audio Upsampler - ALSA Direct Output");
+    LOG_INFO("========================================");
+    LOG_INFO("PID: {} (file: {})", getpid(), PID_FILE_PATH);
 
     // Install signal handlers (SIGHUP for restart, SIGINT/SIGTERM for shutdown)
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGHUP, signal_handler);
 
-    // Acquire PID file lock (prevent multiple instances)
-    if (!acquire_pid_lock()) {
-        return 1;
-    }
-    std::cout << "PID: " << getpid() << " (file: " << PID_FILE_PATH << ")" << std::endl;
-
     int exitCode = 0;
 
     do {
         g_running = true;
         g_reload_requested = false;
+        // Reset signal flags for clean restart
+        g_signal_shutdown = 0;
+        g_signal_reload = 0;
+        g_signal_received = 0;
         reset_runtime_state();
 
         // Load configuration from config.json (if exists)
@@ -1376,6 +1501,17 @@ int main(int argc, char* argv[]) {
             static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
             input_params, 1);
 
+        // Add timer to check signal flags periodically (100ms interval)
+        // This enables async-signal-safe shutdown by polling flags from main loop
+        struct timespec interval = {0, 100000000};  // 100ms in nanoseconds
+        data.signal_check_timer = pw_loop_add_timer(loop, on_signal_check_timer, &data);
+        if (data.signal_check_timer) {
+            pw_loop_update_timer(loop, data.signal_check_timer, &interval, &interval, false);
+            std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
+        } else {
+            std::cerr << "Warning: Failed to create signal check timer" << std::endl;
+        }
+
         double outputRateKHz = g_config.inputSampleRate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
         std::cout << "System ready. Audio routing configured:" << std::endl;
@@ -1390,6 +1526,14 @@ int main(int argc, char* argv[]) {
                   << "kHz)' as output device in sound settings." << std::endl;
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
+
+#ifdef HAVE_SYSTEMD
+        // Notify systemd that daemon is ready
+        sd_notify(0,
+                  "READY=1\n"
+                  "STATUS=Processing audio...\n");
+        std::cout << "systemd: Notified READY=1" << std::endl;
+#endif
 
         // Check if RELOAD was requested during startup (before main loop),
         // ZeroMQ bind failed, or signal received during initialization
@@ -1406,37 +1550,58 @@ int main(int argc, char* argv[]) {
             std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
         }
 
-        // Cleanup
+        // ========== Shutdown Sequence ==========
+        // Order: Stop input → Fade out → Flush buffers → Close ALSA → Release resources
         std::cout << "Shutting down..." << std::endl;
 
-        // Wait for soft mute fade-out to complete (with 100ms timeout)
+#ifdef HAVE_SYSTEMD
+        // Notify systemd that we're stopping
+        sd_notify(0, "STOPPING=1\nSTATUS=Shutting down...\n");
+#endif
+
+        // Step 1: Stop signal check timer
+        if (data.signal_check_timer) {
+            pw_loop_destroy_source(loop, data.signal_check_timer);
+            data.signal_check_timer = nullptr;
+        }
+
+        // Step 2: Wait for soft mute fade-out to complete (with 100ms timeout)
         // This ensures glitch-free audio shutdown
         if (g_soft_mute && g_soft_mute->isTransitioning()) {
-            std::cout << "Waiting for fade-out to complete..." << std::endl;
+            std::cout << "  Step 2: Waiting for fade-out to complete..." << std::endl;
             auto fade_start = std::chrono::steady_clock::now();
             while (g_soft_mute->isTransitioning()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 if (std::chrono::steady_clock::now() - fade_start >
                     std::chrono::milliseconds(100)) {
-                    std::cout << "Fade-out timeout, forcing shutdown" << std::endl;
+                    std::cout << "  Step 2: Fade-out timeout, forcing shutdown" << std::endl;
                     break;
                 }
             }
         }
 
+        // Step 3: Destroy PipeWire stream (stops audio input)
         if (data.input_stream) {
+            std::cout << "  Step 3: Destroying PipeWire stream..." << std::endl;
             pw_stream_destroy(data.input_stream);
         }
+
+        // Step 4: Destroy PipeWire main loop
         if (data.loop) {
+            std::cout << "  Step 4: Destroying PipeWire main loop..." << std::endl;
             pw_main_loop_destroy(data.loop);
             g_pw_loop = nullptr;
         }
 
+        // Step 5: Signal worker threads to stop and wait for them
+        std::cout << "  Step 5: Stopping worker threads..." << std::endl;
         g_running = false;
         g_buffer_cv.notify_all();
         zmq_thread.join();
-        alsa_thread.join();
+        alsa_thread.join();  // ALSA thread will call snd_pcm_drain() before exit
 
+        // Step 6: Release audio processing resources
+        std::cout << "  Step 6: Releasing resources..." << std::endl;
         delete g_soft_mute;
         g_soft_mute = nullptr;
         delete g_hrtf_processor;
@@ -1444,6 +1609,8 @@ int main(int argc, char* argv[]) {
         g_crossfeed_enabled.store(false);
         delete g_upsampler;
         g_upsampler = nullptr;
+
+        // Step 7: Deinitialize PipeWire
         pw_deinit();
 
         // Don't reload if ZMQ bind failed - exit completely

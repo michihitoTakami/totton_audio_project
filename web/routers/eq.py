@@ -1,5 +1,7 @@
 """EQ profile management endpoints."""
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from ..constants import EQ_PROFILES_DIR
@@ -164,7 +166,9 @@ async def activate_eq_profile(name: str):
 
     # Update config
     config = load_config()
+    config.eq_enabled = True
     config.eq_profile = name
+    config.eq_profile_path = str(profile_path)
     if save_config(config):
         return ApiResponse(
             success=True,
@@ -179,7 +183,9 @@ async def activate_eq_profile(name: str):
 async def deactivate_eq():
     """Deactivate current EQ profile."""
     config = load_config()
+    config.eq_enabled = False
     config.eq_profile = None
+    config.eq_profile_path = None
     if save_config(config):
         return ApiResponse(
             success=True, message="EQ deactivated", restart_required=True
@@ -201,7 +207,9 @@ async def delete_eq_profile(name: str):
     # Check if currently active
     config = load_config()
     if config.eq_profile == name:
+        config.eq_enabled = False
         config.eq_profile = None
+        config.eq_profile_path = None
         save_config(config)
 
     try:
@@ -216,7 +224,7 @@ async def get_active_eq():
     """Get the currently active EQ profile with parsed content."""
     config = load_config()
 
-    if not config.eq_profile:
+    if not config.eq_enabled or not config.eq_profile or not config.eq_profile_path:
         return EqActiveResponse(active=False)
 
     # Defense-in-depth: validate profile name from config
@@ -228,7 +236,7 @@ async def get_active_eq():
             error="Invalid profile name in config",
         )
 
-    profile_path = EQ_PROFILES_DIR / f"{config.eq_profile}.txt"
+    profile_path = Path(config.eq_profile_path)
     if not profile_path.exists():
         return EqActiveResponse(
             active=True,

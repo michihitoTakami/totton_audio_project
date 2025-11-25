@@ -369,6 +369,102 @@ TEST_F(AutoNegotiationTest, IsRateSupported_EmptySupportedRates) {
     EXPECT_FALSE(DacCapability::isRateSupported(dac, 768000));
 }
 
+// =============================================================================
+// Issue #231: Multi-rate support - all 8 input rate negotiations
+// =============================================================================
+
+TEST_F(AutoNegotiationTest, Issue231_Negotiate_AllEightRates_44kFamily) {
+    auto dac = createFullCapabilityDac();
+
+    // 44.1kHz -> 705.6kHz (16x)
+    auto config1 = negotiate(44100, dac);
+    EXPECT_TRUE(config1.isValid);
+    EXPECT_EQ(config1.outputRate, 705600);
+    EXPECT_EQ(config1.upsampleRatio, 16);
+
+    // 88.2kHz -> 705.6kHz (8x)
+    auto config2 = negotiate(88200, dac);
+    EXPECT_TRUE(config2.isValid);
+    EXPECT_EQ(config2.outputRate, 705600);
+    EXPECT_EQ(config2.upsampleRatio, 8);
+
+    // 176.4kHz -> 705.6kHz (4x)
+    auto config3 = negotiate(176400, dac);
+    EXPECT_TRUE(config3.isValid);
+    EXPECT_EQ(config3.outputRate, 705600);
+    EXPECT_EQ(config3.upsampleRatio, 4);
+
+    // 352.8kHz -> 705.6kHz (2x)
+    auto config4 = negotiate(352800, dac);
+    EXPECT_TRUE(config4.isValid);
+    EXPECT_EQ(config4.outputRate, 705600);
+    EXPECT_EQ(config4.upsampleRatio, 2);
+}
+
+TEST_F(AutoNegotiationTest, Issue231_Negotiate_AllEightRates_48kFamily) {
+    auto dac = createFullCapabilityDac();
+
+    // 48kHz -> 768kHz (16x)
+    auto config1 = negotiate(48000, dac);
+    EXPECT_TRUE(config1.isValid);
+    EXPECT_EQ(config1.outputRate, 768000);
+    EXPECT_EQ(config1.upsampleRatio, 16);
+
+    // 96kHz -> 768kHz (8x)
+    auto config2 = negotiate(96000, dac);
+    EXPECT_TRUE(config2.isValid);
+    EXPECT_EQ(config2.outputRate, 768000);
+    EXPECT_EQ(config2.upsampleRatio, 8);
+
+    // 192kHz -> 768kHz (4x)
+    auto config3 = negotiate(192000, dac);
+    EXPECT_TRUE(config3.isValid);
+    EXPECT_EQ(config3.outputRate, 768000);
+    EXPECT_EQ(config3.upsampleRatio, 4);
+
+    // 384kHz -> 768kHz (2x)
+    auto config4 = negotiate(384000, dac);
+    EXPECT_TRUE(config4.isValid);
+    EXPECT_EQ(config4.outputRate, 768000);
+    EXPECT_EQ(config4.upsampleRatio, 2);
+}
+
+TEST_F(AutoNegotiationTest, Issue231_SameFamilyDifferentRate_NoReconfiguration) {
+    auto dac = createFullCapabilityDac();
+
+    // Start from 44.1kHz (16x), switch to 88.2kHz (8x) - same family
+    auto config1 = negotiate(44100, dac);
+    EXPECT_TRUE(config1.isValid);
+    EXPECT_EQ(config1.inputFamily, RateFamily::RATE_44K);
+
+    // 88.2kHz with current output at 705.6kHz (same family)
+    auto config2 = negotiate(88200, dac, 705600);
+    EXPECT_TRUE(config2.isValid);
+    EXPECT_EQ(config2.inputFamily, RateFamily::RATE_44K);
+    EXPECT_FALSE(config2.requiresReconfiguration);  // Same output rate
+
+    // 176.4kHz with current output at 705.6kHz (same family)
+    auto config3 = negotiate(176400, dac, 705600);
+    EXPECT_TRUE(config3.isValid);
+    EXPECT_EQ(config3.inputFamily, RateFamily::RATE_44K);
+    EXPECT_FALSE(config3.requiresReconfiguration);
+}
+
+TEST_F(AutoNegotiationTest, Issue231_CrossFamilySwitch_RequiresReconfiguration) {
+    auto dac = createFullCapabilityDac();
+
+    // Start from 96kHz (48k family, output 768kHz)
+    auto config1 = negotiate(96000, dac);
+    EXPECT_TRUE(config1.isValid);
+    EXPECT_EQ(config1.outputRate, 768000);
+
+    // Switch to 88.2kHz (44k family) - requires reconfiguration
+    auto config2 = negotiate(88200, dac, 768000);
+    EXPECT_TRUE(config2.isValid);
+    EXPECT_EQ(config2.outputRate, 705600);
+    EXPECT_TRUE(config2.requiresReconfiguration);  // Different output rate
+}
+
 // ============================================================================
 // Issue #238: 1x Bypass Mode Tests
 // ============================================================================
