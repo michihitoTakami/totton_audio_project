@@ -327,3 +327,42 @@ class TestCrossfeedConfig:
         assert loaded_settings.crossfeed.head_size == "s"
         assert loaded_settings.crossfeed.hrtf_path == "roundtrip/hrtf/"
         assert loaded_settings.alsa_device == "hw:TEST"
+
+    def test_load_config_invalid_head_size_returns_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that invalid head_size falls back to defaults."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "crossfeed": {
+                        "enabled": True,
+                        "headSize": "invalid_size",  # Invalid value
+                        "hrtfPath": "some/path/",
+                    }
+                }
+            )
+        )
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            settings = load_config()
+
+        # Should return default Settings due to validation error
+        assert settings.crossfeed.enabled is False
+        assert settings.crossfeed.head_size == "m"
+        assert settings.crossfeed.hrtf_path == "data/crossfeed/hrtf/"
+
+    def test_load_config_crossfeed_not_object_returns_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that crossfeed as non-object returns defaults."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"crossfeed": "not an object"}))
+
+        with patch("web.services.config.CONFIG_PATH", config_file):
+            settings = load_config()
+
+        # Should use default crossfeed settings
+        assert settings.crossfeed.enabled is False
+        assert settings.crossfeed.head_size == "m"

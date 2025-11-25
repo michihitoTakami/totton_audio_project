@@ -22,6 +22,14 @@ const char* phaseTypeToString(PhaseType type) {
     }
 }
 
+// Validate headSize string, returns default "m" for invalid values
+static std::string validateHeadSize(const std::string& str) {
+    if (str == "s" || str == "m" || str == "l" || str == "xl") {
+        return str;
+    }
+    return "m";  // Default to medium for invalid values
+}
+
 bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig, bool verbose) {
     outConfig = AppConfig{};
 
@@ -74,15 +82,22 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("eqProfilePath"))
             outConfig.eqProfilePath = j["eqProfilePath"].get<std::string>();
 
-        // Crossfeed settings
-        if (j.contains("crossfeed")) {
+        // Crossfeed settings (with type error handling)
+        if (j.contains("crossfeed") && j["crossfeed"].is_object()) {
             auto cf = j["crossfeed"];
-            if (cf.contains("enabled"))
-                outConfig.crossfeed.enabled = cf["enabled"].get<bool>();
-            if (cf.contains("headSize"))
-                outConfig.crossfeed.headSize = cf["headSize"].get<std::string>();
-            if (cf.contains("hrtfPath"))
-                outConfig.crossfeed.hrtfPath = cf["hrtfPath"].get<std::string>();
+            try {
+                if (cf.contains("enabled") && cf["enabled"].is_boolean())
+                    outConfig.crossfeed.enabled = cf["enabled"].get<bool>();
+                if (cf.contains("headSize") && cf["headSize"].is_string())
+                    outConfig.crossfeed.headSize = validateHeadSize(cf["headSize"].get<std::string>());
+                if (cf.contains("hrtfPath") && cf["hrtfPath"].is_string())
+                    outConfig.crossfeed.hrtfPath = cf["hrtfPath"].get<std::string>();
+            } catch (const std::exception& e) {
+                // On type error, keep defaults (already set in AppConfig{})
+                if (verbose) {
+                    std::cerr << "Config: Invalid crossfeed settings, using defaults: " << e.what() << std::endl;
+                }
+            }
         }
 
         if (verbose) {

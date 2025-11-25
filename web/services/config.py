@@ -41,8 +41,10 @@ def load_config() -> Settings:
             if eq_profile is None and eq_profile_path:
                 eq_profile = Path(eq_profile_path).stem
 
-            # Crossfeed settings
+            # Crossfeed settings (ensure crossfeed is a dict)
             crossfeed_data = data.get("crossfeed", {})
+            if not isinstance(crossfeed_data, dict):
+                crossfeed_data = {}
             crossfeed = CrossfeedSettings(
                 enabled=crossfeed_data.get("enabled", False),
                 head_size=crossfeed_data.get("headSize", "m"),
@@ -59,7 +61,8 @@ def load_config() -> Settings:
                 output_rate=data.get("outputRate", 352800),
                 crossfeed=crossfeed,
             )
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, ValueError):
+            # ValueError catches Pydantic validation errors (e.g., invalid head_size)
             pass
     return Settings()
 
