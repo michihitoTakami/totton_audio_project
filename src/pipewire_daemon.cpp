@@ -108,14 +108,15 @@ static bool handle_rate_change(int detected_sample_rate) {
 
     // Apply soft mute during filter switching (Issue #266)
     // Fade-out: 1.5 seconds, switch filter, fade-in: 1.5 seconds
-    // Thread safety: This function is called from main loop thread.
-    // Fade parameter changes are safe here because we wait for fade-out completion.
+    // Thread safety: Configuration changes are atomic inside SoftMute::Controller, and we still
+    // wait for fade-out completion before mutating filter state to avoid artifacts.
     using namespace DaemonConstants;
     int current_output_rate = g_current_output_rate.load();
+    int originalFadeDuration = DEFAULT_SOFT_MUTE_FADE_MS;
     
     if (g_soft_mute && current_output_rate > 0) {
         // Save original fade duration for restoration
-        int originalFadeDuration = g_soft_mute->getFadeDuration();
+        originalFadeDuration = g_soft_mute->getFadeDuration();
         
         // Update fade duration for filter switching
         g_soft_mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
@@ -147,7 +148,6 @@ static bool handle_rate_change(int detected_sample_rate) {
 
     // Perform filter switch
     bool switch_success = false;
-    int originalFadeDuration = (g_soft_mute) ? g_soft_mute->getFadeDuration() : DEFAULT_SOFT_MUTE_FADE_MS;
     
     if (g_upsampler->switchToInputRate(detected_sample_rate)) {
         g_current_input_rate.store(detected_sample_rate, std::memory_order_release);

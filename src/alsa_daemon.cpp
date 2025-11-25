@@ -138,11 +138,8 @@ static SoftMute::Controller* g_soft_mute = nullptr;
 // Helper function for soft mute during filter switching (Issue #266)
 // Fade-out: 1.5 seconds, perform filter switch, fade-in: 1.5 seconds
 // Thread safety: This function is called from ZeroMQ command thread.
-// Fade parameter changes (setFadeDuration/setSampleRate) are NOT thread-safe per soft_mute.h,
-// but they are safe here because:
-// 1. We wait for fade-out to complete before changing parameters
-// 2. Audio thread processes fade in chunks, so parameter changes take effect gradually
-// 3. The worst case is a brief inconsistency in fade calculation, which is acceptable
+// Fade parameter changes leverage the atomic configuration inside SoftMute::Controller, and
+// we still wait for fade-out completion before manipulating filters to avoid artifacts.
 static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc) {
     using namespace DaemonConstants;
     
