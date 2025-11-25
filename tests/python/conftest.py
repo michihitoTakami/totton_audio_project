@@ -84,3 +84,18 @@ def sample_rate_48k():
 def coefficients_dir():
     """Path to filter coefficients directory."""
     return Path(__file__).parent.parent.parent / "data" / "coefficients"
+
+
+@pytest.fixture
+def web_app():
+    """FastAPI test client for web application.
+
+    This fixture provides a properly configured test client that can be used
+    to test API endpoints without import errors.
+    """
+    from fastapi.testclient import TestClient
+
+    # Import web.main as a package (PROJECT_ROOT is in sys.path)
+    from web import main
+
+    return TestClient(main.app)

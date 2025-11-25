@@ -19,7 +19,9 @@ BINARY="$ROOT_DIR/build/gpu_upsampler_alsa"
 CONFIG_FILE="$ROOT_DIR/config.json"
 LOG_FILE="/tmp/gpu_upsampler_alsa.log"
 PID_FILE="/tmp/gpu_upsampler_alsa.pid"
+DEFAULT_SINK_FILE="/tmp/gpu_upsampler_default_sink"
 DAEMON_NAME="gpu_upsampler_alsa"
+GPU_SINK_NAME="gpu_upsampler_sink"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -29,6 +31,94 @@ NC='\033[0m'
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+get_default_sink() {
+    pactl info 2>/dev/null | awk -F': ' '/Default Sink/ {print $2; exit}' || true
+}
+
+select_fallback_sink() {
+    pactl list short sinks 2>/dev/null | awk -v gpu="$GPU_SINK_NAME" '$2 != gpu {print $2; exit}' || true
+}
+
+sink_exists() {
+    local target="$1"
+    pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$target" 2>/dev/null
+}
+
+remember_default_sink() {
+    local current
+    current=$(get_default_sink)
+
+    if [[ -n "$current" && "$current" != "$GPU_SINK_NAME" ]]; then
+        echo "$current" > "$DEFAULT_SINK_FILE"
+        return
+    fi
+
+    # If the default sink is already GPU, remember the first non-GPU sink for fallback
+    if [[ ! -f "$DEFAULT_SINK_FILE" ]]; then
+        local fallback
+        fallback=$(select_fallback_sink)
+        if [[ -n "$fallback" ]]; then
+            echo "$fallback" > "$DEFAULT_SINK_FILE"
+        fi
+    fi
+}
+
+move_sink_inputs() {
+    local target="$1"
+    local inputs
+    inputs=$(pactl list short sink-inputs 2>/dev/null | awk '{print $1}' || true)
+    if [[ -z "$inputs" ]]; then
+        return
+    fi
+    while read -r input_id; do
+        pactl move-sink-input "$input_id" "$target" 2>/dev/null || true
+    done <<< "$inputs"
+}
+
+set_default_sink() {
+    local target="$1"
+    if [[ -z "$target" ]]; then
+        return
+    fi
+
+    if ! sink_exists "$target"; then
+        log_warn "Sink not found: $target (skip switching default sink)"
+        return
+    fi
+
+    local current
+    current=$(get_default_sink)
+    if [[ "$current" != "$target" ]]; then
+        pactl set-default-sink "$target" 2>/dev/null || true
+    fi
+    move_sink_inputs "$target"
+}
+
+restore_default_sink() {
+    # Restore previously remembered sink, or fall back to the first non-GPU sink
+    local target=""
+    if [[ -f "$DEFAULT_SINK_FILE" ]]; then
+        target=$(cat "$DEFAULT_SINK_FILE" 2>/dev/null || true)
+    fi
+    if [[ -z "$target" || "$target" == "$GPU_SINK_NAME" ]]; then
+        target=$(select_fallback_sink)
+    fi
+
+    if [[ -z "$target" ]]; then
+        log_warn "No fallback sink found to restore"
+        return
+    fi
+
+    set_default_sink "$target"
+    local current
+    current=$(get_default_sink)
+    if [[ "$current" == "$target" ]]; then
+        log_info "Audio restored to default sink: $target"
+    else
+        log_warn "Failed to restore default sink to $target (current: ${current:-unknown})"
+    fi
+}
 
 # Verify PID belongs to our daemon (guard against PID reuse)
 # Returns 0 if valid, 1 if not our process
@@ -108,8 +198,8 @@ setup_links() {
         fi
         sleep 0.3
     done
-    pw-link gpu_upsampler_sink:monitor_FL "GPU Upsampler Input:input_FL" 2>/dev/null || true
-    pw-link gpu_upsampler_sink:monitor_FR "GPU Upsampler Input:input_FR" 2>/dev/null || true
+    pw-link "$GPU_SINK_NAME":monitor_FL "GPU Upsampler Input:input_FL" 2>/dev/null || true
+    pw-link "$GPU_SINK_NAME":monitor_FR "GPU Upsampler Input:input_FR" 2>/dev/null || true
     log_info "Links configured"
 }
 
@@ -137,11 +227,17 @@ start_daemon() {
     fi
 
     # Create sink if needed
-    if ! pactl list short sinks 2>/dev/null | grep -q "gpu_upsampler_sink"; then
-        log_info "Creating gpu_upsampler_sink..."
-        pactl load-module module-null-sink sink_name=gpu_upsampler_sink sink_properties=device.description="GPU_Upsampler_Sink" >/dev/null
+    if ! pactl list short sinks 2>/dev/null | grep -q "$GPU_SINK_NAME"; then
+        log_info "Creating $GPU_SINK_NAME..."
+        pactl load-module module-null-sink sink_name="$GPU_SINK_NAME" sink_properties=device.description="GPU_Upsampler_Sink" >/dev/null
         sleep 0.3
     fi
+
+    remember_default_sink
+    set_default_sink "$GPU_SINK_NAME"
+    local current_default
+    current_default=$(get_default_sink)
+    log_info "Audio routed to $GPU_SINK_NAME (default sink: ${current_default:-unknown})"
 
     # Start
     log_info "Starting daemon..."
@@ -181,6 +277,7 @@ start_daemon() {
     if [[ "$ready" != "true" ]] || [[ -z "$pid" ]]; then
         log_error "Daemon failed to start. Log:"
         tail -20 "$LOG_FILE"
+        restore_default_sink
         exit 1
     fi
 
@@ -233,6 +330,7 @@ case "${1:-restart}" in
         ;;
     stop)
         kill_daemon
+        restore_default_sink
         log_info "Daemon stopped"
         ;;
     restart)

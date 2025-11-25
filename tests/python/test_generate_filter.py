@@ -60,11 +60,14 @@ class TestFilterConfig:
         assert config.upsample_ratio == 16
         assert config.passband_end == 20000
         assert config.stopband_start == 22050  # auto-calculated
-        assert config.stopband_attenuation_db == 197
+        assert (
+            config.stopband_attenuation_db == 160
+        )  # Updated: realistic target for min phase
         assert config.kaiser_beta == 55.0
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
+        assert config.max_coefficient_limit == 1.0  # New: always 1.0 for unified volume
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
@@ -102,7 +105,8 @@ class TestFilterConfig:
             upsample_ratio=16,
             phase_type=PhaseType.MINIMUM,
         )
-        assert config.base_name == "filter_44k_16x_2m_minimum"
+        # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
+        assert config.base_name == "filter_44k_16x_2m_min_phase"
 
     def test_base_name_linear_phase(self):
         """base_name should include phase type for linear phase."""
@@ -390,28 +394,51 @@ class TestNormalizeCoefficients:
     """Tests for normalize_coefficients function."""
 
     def test_normalizes_dc_gain_to_one(self):
-        """DC gain should be normalized to 1.0."""
+        """max_coef should be scaled to 1.0 (takes priority over DC gain target)."""
         from generate_filter import normalize_coefficients
 
         # Create test coefficients with known DC gain
         h = np.array([0.5, 1.0, 0.5])  # DC gain = 2.0
         h_norm, info = normalize_coefficients(h)
 
-        assert np.isclose(np.sum(h_norm), 1.0, rtol=1e-6)
+        # New logic: max_coef=1.0 takes priority, so DC gain becomes 2.0
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
         assert info["normalization_applied"] is True
         assert np.isclose(info["original_dc_gain"], 2.0)
         assert np.isclose(info["target_dc_gain"], 1.0)
+        # Final DC gain differs due to max_coef=1.0 scaling
+        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
 
     def test_normalizes_to_target_dc_gain(self):
-        """DC gain should follow requested target."""
+        """max_coef should always be scaled to 1.0 (upscale or downscale)."""
+        from generate_filter import normalize_coefficients
+
+        # Use small coefficients - will be upscaled to max_coef=1.0
+        h = np.array([0.1, 0.1])  # DC gain = 0.2
+        target = 0.5  # After DC norm: h=[0.25, 0.25], then upscaled to max=1.0
+        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+
+        # New logic: max_coef=1.0 always (upscaled 4x from 0.25)
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        assert np.isclose(info["applied_scale"], 2.5 * 4.0)  # DC norm × upscale
+        assert not info["peak_limited"]  # upscale, not downscale
+        assert info["scale_direction"] == "up"
+        assert np.isclose(info["max_coefficient_limit"], 1.0)
+
+    def test_peak_limiting_reduces_dc_gain(self):
+        """Peak limiting should reduce DC gain when max_coef exceeds limit."""
         from generate_filter import normalize_coefficients
 
         h = np.array([1.0, 1.0])  # DC gain = 2.0
-        target = 4.0
-        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
+        target = 4.0  # After DC norm, max_coef = 2.0 > 1.0, needs limiting
+        h_norm, info = normalize_coefficients(
+            h, target_dc_gain=target, max_coefficient_limit=1.0
+        )
 
-        assert np.isclose(np.sum(h_norm), target, rtol=1e-6)
-        assert np.isclose(info["applied_scale"], 2.0)
+        # With peak limiting: max_coef scaled to 1.0, DC gain = 2.0 (not 4.0)
+        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        assert info["peak_limited"]
+        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
 
     def test_zero_dc_gain_raises_error(self):
         """Zero DC gain should raise ValueError."""
@@ -669,6 +696,101 @@ class TestCoefficientFileLoading:
         assert np.isclose(dc_gain, 16.0, rtol=0.01)
 
 
+class TestCoefficientFileNaming:
+    """Tests for coefficient file naming convention (2m format)."""
+
+    # Expected filenames for all 8 multi-rate configurations
+    EXPECTED_FILENAMES = [
+        "filter_44k_16x_2m_min_phase.bin",
+        "filter_44k_8x_2m_min_phase.bin",
+        "filter_44k_4x_2m_min_phase.bin",
+        "filter_44k_2x_2m_min_phase.bin",
+        "filter_48k_16x_2m_min_phase.bin",
+        "filter_48k_8x_2m_min_phase.bin",
+        "filter_48k_4x_2m_min_phase.bin",
+        "filter_48k_2x_2m_min_phase.bin",
+    ]
+
+    def test_all_coefficient_files_exist(self, coefficients_dir):
+        """All 8 coefficient files should exist with 2m naming convention."""
+        missing_files = []
+        for filename in self.EXPECTED_FILENAMES:
+            if not (coefficients_dir / filename).exists():
+                missing_files.append(filename)
+
+        assert not missing_files, f"Missing coefficient files: {missing_files}"
+
+    def test_coefficient_filenames_use_2m_format(self, coefficients_dir):
+        """Coefficient files should use '2m' instead of '2000000' in filenames."""
+        # Check that old naming convention files don't exist
+        old_format_files = list(coefficients_dir.glob("*_2000000_*.bin"))
+        assert not old_format_files, f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
+
+        # Check that new naming convention files exist
+        new_format_files = list(coefficients_dir.glob("*_2m_*.bin"))
+        assert (
+            len(new_format_files) >= 8
+        ), f"Expected at least 8 files with '2m' naming, found {len(new_format_files)}"
+
+    def test_json_metadata_files_match_bin_files(self, coefficients_dir):
+        """Each .bin file should have a corresponding .json metadata file."""
+        for filename in self.EXPECTED_FILENAMES:
+            bin_path = coefficients_dir / filename
+            json_path = coefficients_dir / filename.replace(".bin", ".json")
+
+            if bin_path.exists():
+                assert json_path.exists(), f"Missing JSON metadata for {filename}"
+
+    def test_filter_config_generates_2m_filename(self):
+        """FilterConfig should generate filenames with '2m' for 2M taps."""
+        from generate_filter import FilterConfig, PhaseType
+
+        # Test all 8 configurations
+        test_cases = [
+            (44100, 16, "filter_44k_16x_2m_min_phase"),
+            (88200, 8, "filter_44k_8x_2m_min_phase"),
+            (176400, 4, "filter_44k_4x_2m_min_phase"),
+            (352800, 2, "filter_44k_2x_2m_min_phase"),
+            (48000, 16, "filter_48k_16x_2m_min_phase"),
+            (96000, 8, "filter_48k_8x_2m_min_phase"),
+            (192000, 4, "filter_48k_4x_2m_min_phase"),
+            (384000, 2, "filter_48k_2x_2m_min_phase"),
+        ]
+
+        for input_rate, ratio, expected_basename in test_cases:
+            config = FilterConfig(
+                n_taps=2_000_000,
+                input_rate=input_rate,
+                upsample_ratio=ratio,
+                phase_type=PhaseType.MINIMUM,
+            )
+            assert (
+                config.base_name == expected_basename
+            ), f"Expected {expected_basename}, got {config.base_name}"
+
+    def test_non_2m_taps_use_numeric_format(self):
+        """Non-2M tap counts should use numeric format in filename."""
+        from generate_filter import FilterConfig, PhaseType
+
+        # Test with different tap counts
+        config_1m = FilterConfig(
+            n_taps=1_000_000,
+            input_rate=44100,
+            upsample_ratio=16,
+            phase_type=PhaseType.MINIMUM,
+        )
+        assert "1000000" in config_1m.base_name
+        assert "1m" not in config_1m.base_name
+
+        config_500k = FilterConfig(
+            n_taps=500_000,
+            input_rate=44100,
+            upsample_ratio=16,
+            phase_type=PhaseType.MINIMUM,
+        )
+        assert "500000" in config_500k.base_name
+
+
 class TestMultiRateConfigs:
     """Tests for MULTI_RATE_CONFIGS and multi-rate filter generation."""
 
@@ -767,7 +889,8 @@ class TestMultiRateOutputFilename:
             upsample_ratio=16,
             phase_type=PhaseType.MINIMUM,
         )
-        assert config_min.base_name == "filter_44k_16x_2m_minimum"
+        # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
+        assert config_min.base_name == "filter_44k_16x_2m_min_phase"
 
         # Linear phase (odd taps required)
         config_lin = FilterConfig(
@@ -890,7 +1013,7 @@ class TestLinearPhasePadding:
         # taps_label should be "2000016" (not "2m" since it's not exactly 2M)
         assert config.taps_label == "2000016"
 
-        # For minimum phase with 2M taps
+        # For minimum phase with 2M taps - uses "2m" shorthand
         config_min = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
         assert config_min.taps_label == "2m"
 

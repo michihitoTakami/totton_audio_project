@@ -8,6 +8,20 @@
   "gain": 1.0,
   "phaseType": "minimum",
   "filterPath": "data/coefficients/filter_44k_2m_min_phase.bin",
+  "quadPhaseEnabled": true,
+  "filterPath44kMin": "data/coefficients/filter_44k_2m_min_phase.bin",
+  "filterPath48kMin": "data/coefficients/filter_48k_2m_min_phase.bin",
+  "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear.bin",
+  "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear.bin",
   "eqEnabled": true,
-  "eqProfilePath": "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt"
+  "eqProfilePath": "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt",
+  "logging": {
+    "level": "info",
+    "filePath": "/var/log/gpu_upsampler/daemon.log",
+    "maxFileSize": 10485760,
+    "maxBackups": 5,
+    "consoleOutput": true,
+    "coloredOutput": true
+  },
+  "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }

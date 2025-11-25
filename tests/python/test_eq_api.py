@@ -12,6 +12,7 @@ Tests the following endpoints:
 """
 
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from web.main import app  # noqa: E402
+from web.services.config import load_config  # noqa: E402
 
 
 @pytest.fixture
@@ -57,6 +59,7 @@ def eq_profile_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("web.constants.EQ_PROFILES_DIR", eq_dir)
     monkeypatch.setattr("web.routers.eq.EQ_PROFILES_DIR", eq_dir)
     monkeypatch.setattr("web.routers.opra.EQ_PROFILES_DIR", eq_dir)
+    monkeypatch.setattr("web.services.config.EQ_PROFILES_DIR", eq_dir)
 
     return eq_dir
 
@@ -301,6 +304,125 @@ class TestDeactivateEndpoint:
         data = response.json()
         assert data["success"] is True
         assert data["restart_required"] is True
+
+
+class TestEqConfigPersistence:
+    """Tests ensuring EQ fields are persisted in config for the daemon."""
+
+    def test_activate_sets_eq_enabled_and_path(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Activation should write eqEnabled and eqProfilePath."""
+        (eq_profile_dir / "test.txt").write_text(valid_eq_content)
+
+        response = client.post("/eq/activate/test")
+        assert response.status_code == 200
+
+        config_data = json.loads(config_path.read_text())
+        assert config_data["eqEnabled"] is True
+        assert config_data["eqProfile"] == "test"
+        assert config_data["eqProfilePath"] == str(eq_profile_dir / "test.txt")
+
+    def test_deactivate_clears_eq_fields(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Deactivation should clear eqEnabled/eqProfilePath."""
+        config_path.write_text(
+            json.dumps(
+                {
+                    "alsaDevice": "default",
+                    "upsampleRatio": 8,
+                    "eqEnabled": True,
+                    "eqProfile": "active",
+                    "eqProfilePath": str(eq_profile_dir / "active.txt"),
+                }
+            )
+        )
+
+        response = client.post("/eq/deactivate")
+        assert response.status_code == 200
+
+        config_data = json.loads(config_path.read_text())
+        assert config_data["eqEnabled"] is False
+        assert config_data["eqProfile"] is None
+        assert config_data["eqProfilePath"] is None
+
+    def test_status_eq_active_true_when_enabled_with_path(
+        self, client, eq_profile_dir, config_path
+    ):
+        """Status should show eq_active when enabled and path present."""
+        config_path.write_text(
+            json.dumps(
+                {
+                    "alsaDevice": "default",
+                    "upsampleRatio": 8,
+                    "eqEnabled": True,
+                    "eqProfile": "present",
+                    "eqProfilePath": str(eq_profile_dir / "present.txt"),
+                }
+            )
+        )
+
+        response = client.get("/status")
+        assert response.status_code == 200
+        assert response.json()["eq_active"] is True
+
+    def test_status_eq_active_false_without_path(self, client, config_path):
+        """Status should show eq_active false when path is missing."""
+        config_path.write_text(
+            json.dumps(
+                {
+                    "alsaDevice": "default",
+                    "upsampleRatio": 8,
+                    "eqEnabled": True,
+                    "eqProfile": "no_path",
+                }
+            )
+        )
+
+        response = client.get("/status")
+        assert response.status_code == 200
+        assert response.json()["eq_active"] is False
+
+    def test_get_active_missing_file_returns_error(
+        self, client, eq_profile_dir, config_path
+    ):
+        """Missing profile file should return active with error message."""
+        missing_path = eq_profile_dir / "missing.txt"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "alsaDevice": "default",
+                    "upsampleRatio": 8,
+                    "eqEnabled": True,
+                    "eqProfile": "missing",
+                    "eqProfilePath": str(missing_path),
+                }
+            )
+        )
+
+        response = client.get("/eq/active")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["active"] is True
+        assert "not found" in data["error"].lower()
+
+    def test_load_config_migrates_eq_profile_only(self, eq_profile_dir, config_path):
+        """eqProfile alone should migrate to path and enable flag."""
+        config_path.write_text(
+            json.dumps(
+                {
+                    "alsaDevice": "default",
+                    "upsampleRatio": 8,
+                    "eqProfile": "migrate_me",
+                }
+            )
+        )
+
+        cfg = load_config()
+        assert cfg.eq_profile == "migrate_me"
+        assert cfg.eq_profile_path == str(eq_profile_dir / "migrate_me.txt")
+        assert cfg.eq_enabled is True
 
 
 class TestDeleteEndpoint:

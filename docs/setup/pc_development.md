@@ -171,9 +171,9 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 2. **フィルタ係数ファイルの確認**:
    ```bash
-   ls -lh data/coefficients/filter_1m_min_phase.bin
+   ls -lh data/coefficients/filter_44k_2m_min_phase.bin
    ```
-   約3.8MBのファイルが存在する必要があります。
+   約7.6MBのファイルが存在する必要があります。
 
 ## 音声経路
 
@@ -184,7 +184,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
         ↓ monitor output
 [GPU Upsampler Input] (PipeWire stream capture)
         ↓ (リングバッファ)
-[GPU Processing] (CUDA, 44.1kHz → 705.6kHz, 1M-tap FIR)
+[GPU Processing] (CUDA, 44.1kHz → 705.6kHz, 2M-tap FIR)
         ↓ (ALSA hw:3,0 direct)
 [SMSL D400EX DAC] (705.6kHz, S32_LE)
         ↓ (アナログ出力)
@@ -194,7 +194,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 ## 技術仕様
 
 - **アップサンプリング比**: 16x (44.1kHz → 705.6kHz)
-- **FIRフィルタ**: 1,000,000タップ minimum-phase
+- **FIRフィルタ**: 2,000,000タップ minimum-phase
 - **FFTサイズ**: 1,048,576サンプル
 - **Overlap-Saveアルゴリズム**: オーバーラップ999,999サンプル、有効出力48,577サンプル/ブロック
 - **ALSA出力フォーマット**: S32_LE (32-bit signed integer, little-endian)

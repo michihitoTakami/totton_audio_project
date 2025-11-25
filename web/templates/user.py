@@ -89,6 +89,17 @@ def get_embedded_html() -> str:
         }
         .message.success { background: #00ff8840; display: block; }
         .message.error { background: #ff444440; display: block; }
+        .warning-banner {
+            background: #ffaa0030;
+            border: 1px solid #ffaa00;
+            border-radius: 4px;
+            padding: 8px 12px;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #ffaa00;
+            display: none;
+        }
+        .warning-banner.visible { display: block; }
     </style>
 </head>
 <body>
@@ -125,6 +136,21 @@ def get_embedded_html() -> str:
             </div>
         </form>
         <div id="settingsMessage" class="message"></div>
+    </div>
+
+    <h2>Phase Type</h2>
+    <div class="card">
+        <div class="form-group">
+            <label>Filter Phase</label>
+            <select id="phaseType">
+                <option value="minimum">Minimum Phase (推奨)</option>
+                <option value="linear">Linear Phase</option>
+            </select>
+        </div>
+        <div id="phaseWarning" class="warning-banner">
+            ⚠️ Linear phaseはレイテンシが約1秒あります。リアルタイム用途にはMinimum phaseを推奨します。
+        </div>
+        <div id="phaseMessage" class="message"></div>
     </div>
 
     <h2>Headphone EQ (OPRA)</h2>
@@ -282,10 +308,33 @@ def get_embedded_html() -> str:
             }
             try {
                 const res = await fetch(API + '/opra/search?q=' + encodeURIComponent(query) + '&limit=20');
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+                    const container = document.getElementById('opraResults');
+
+                    if (res.status === 503) {
+                        // Service unavailable - database not initialized
+                        container.innerHTML = '<div style="color:#e74c3c; font-size:12px; padding:8px; line-height:1.5;">' +
+                            '<strong>Headphone database is not available</strong><br>' +
+                            'Please contact the administrator to initialize the database.' +
+                            '</div>';
+                    } else {
+                        // Other errors - safely display message without XSS risk
+                        const errorDiv = document.createElement('div');
+                        errorDiv.style.cssText = 'color:#e74c3c; font-size:12px; padding:8px;';
+                        errorDiv.textContent = 'Error: ' + (errorData.detail || 'Search failed');
+                        container.innerHTML = '';
+                        container.appendChild(errorDiv);
+                    }
+                    console.error('OPRA search failed:', errorData);
+                    return;
+                }
                 const data = await res.json();
                 renderOpraResults(data.results);
             } catch (e) {
                 console.error('OPRA search failed:', e);
+                const container = document.getElementById('opraResults');
+                container.innerHTML = '<div style="color:#e74c3c; font-size:12px; padding:8px;">Network error. Please check the server.</div>';
             }
         }
 
@@ -373,10 +422,103 @@ def get_embedded_html() -> str:
             }
         });
 
+        // Phase Type Functions
+        let currentPhaseType = 'minimum';
+
+        async function fetchPhaseType() {
+            const select = document.getElementById('phaseType');
+            const warning = document.getElementById('phaseWarning');
+            try {
+                const res = await fetch(API + '/daemon/phase-type');
+                if (!res.ok) {
+                    // Daemon not running or error - disable UI and show message
+                    select.disabled = true;
+                    warning.classList.remove('visible');
+                    try {
+                        const err = await res.json();
+                        // RFC 9457: use detail field for error message
+                        showPhaseMessage(err.detail || 'Phase type unavailable', false);
+                    } catch {
+                        showPhaseMessage('Phase type unavailable (HTTP ' + res.status + ')', false);
+                    }
+                    return;
+                }
+                const data = await res.json();
+                currentPhaseType = data.phase_type;
+                select.value = data.phase_type;
+                select.disabled = false;
+                // Use API's latency_warning if provided
+                updatePhaseWarning(data.phase_type, data.latency_warning);
+            } catch (e) {
+                console.error('Failed to fetch phase type:', e);
+                select.disabled = true;
+                warning.classList.remove('visible');
+            }
+        }
+
+        function updatePhaseWarning(phaseType, apiWarning) {
+            const warning = document.getElementById('phaseWarning');
+            if (phaseType === 'linear') {
+                // Use API warning if provided, otherwise use default
+                if (apiWarning) {
+                    warning.textContent = '⚠️ ' + apiWarning;
+                }
+                warning.classList.add('visible');
+            } else {
+                warning.classList.remove('visible');
+            }
+        }
+
+        function showPhaseMessage(text, success) {
+            const el = document.getElementById('phaseMessage');
+            el.textContent = text;
+            el.classList.remove('success', 'error');
+            el.classList.add(success ? 'success' : 'error');
+            setTimeout(() => el.classList.remove('success', 'error'), 4000);
+        }
+
+        document.getElementById('phaseType').addEventListener('change', async (e) => {
+            const newPhaseType = e.target.value;
+            updatePhaseWarning(newPhaseType);
+
+            if (newPhaseType === currentPhaseType) return;
+
+            const select = e.target;
+            select.disabled = true;
+
+            try {
+                const res = await fetch(API + '/daemon/phase-type', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase_type: newPhaseType }),
+                });
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    currentPhaseType = newPhaseType;
+                    showPhaseMessage('Phase type updated to ' + newPhaseType, true);
+                } else {
+                    // Revert selection
+                    select.value = currentPhaseType;
+                    updatePhaseWarning(currentPhaseType);
+                    // RFC 9457: error response has 'detail' field
+                    showPhaseMessage(data.detail || data.message || 'Failed to update phase type', false);
+                }
+            } catch (e) {
+                select.value = currentPhaseType;
+                updatePhaseWarning(currentPhaseType);
+                showPhaseMessage('Error: ' + e.message, false);
+            } finally {
+                select.disabled = false;
+            }
+        });
+
         // Initial load
         fetchDevices();
         fetchStatus();
+        fetchPhaseType();
         setInterval(fetchStatus, 5000);
+        setInterval(fetchPhaseType, 5000);
     </script>
 </body>
 </html>
