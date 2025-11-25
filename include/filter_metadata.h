@@ -14,7 +14,7 @@ struct FilterPreset {
 };
 
 inline constexpr FilterPreset FILTER_PRESET_44K = {
-    44100, 16, "data/coefficients/filter_44k_2m_min_phase.bin",
+    44100, 16, "data/coefficients/filter_44k_16x_2m_min_phase.bin",
     "2M-tap min-phase FIR for 44.1kHz → 705.6kHz (16x)", 2'000'000};
 
 inline constexpr FilterPreset FILTER_PRESET_48K = {

@@ -79,7 +79,7 @@ class TestSaveConfig:
             "alsaDevice": "hw:OLD",
             "upsampleRatio": 8,
             "quadPhaseEnabled": True,
-            "filterPath44kMin": "data/coefficients/filter_44k_2m_min_phase.bin",
+            "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
             "filterPath48kMin": "data/coefficients/filter_48k_2m_min_phase.bin",
             "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear.bin",
             "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear.bin",
@@ -115,7 +115,7 @@ class TestSaveConfig:
         assert saved_config["quadPhaseEnabled"] is True
         assert (
             saved_config["filterPath44kMin"]
-            == "data/coefficients/filter_44k_2m_min_phase.bin"
+            == "data/coefficients/filter_44k_16x_2m_min_phase.bin"
         )
         assert (
             saved_config["filterPath48kMin"]
