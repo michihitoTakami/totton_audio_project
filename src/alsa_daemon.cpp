@@ -54,7 +54,7 @@ constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock";
 // Default configuration values (using common constants)
 using namespace DaemonConstants;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
-constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_2m_min_phase.bin";
+constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)

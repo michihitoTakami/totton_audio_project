@@ -139,7 +139,7 @@ Phase 3: Hardware Integration         [                    ] 0%
 Rate Detection: 48k Family (96000 % 48000 == 0)
   │
   ▼
-Load Coefficients: filter_48k_2m_min_phase.bin
+Load Coefficients: filter_48k_16x_2m_min_phase.bin
   │
   ▼
 Strategy: 96k × 8 = 768k (within DAC capability)

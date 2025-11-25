@@ -171,7 +171,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 2. **フィルタ係数ファイルの確認**:
    ```bash
-   ls -lh data/coefficients/filter_44k_2m_min_phase.bin
+   ls -lh data/coefficients/filter_44k_16x_2m_min_phase.bin
    ```
    約7.6MBのファイルが存在する必要があります。
 

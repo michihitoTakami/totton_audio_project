@@ -15,7 +15,7 @@ void printUsage(const char* programName) {
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --filter <path>    Path to filter coefficients .bin file" << std::endl;
-    std::cout << "                     (default: data/coefficients/filter_44k_2m_min_phase.bin)"
+    std::cout << "                     (default: data/coefficients/filter_44k_16x_2m_min_phase.bin)"
               << std::endl;
     std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << std::endl;
     std::cout << "  --block <size>     Block size for processing (default: 8192)" << std::endl;
@@ -150,7 +150,7 @@ int main(int argc, char* argv[]) {
                 std::cerr << "To generate: "
                           << "python scripts/generate_filter.py --input-rate 48000 "
                           << "--stopband-start 24000 --passband-end 21500 "
-                          << "--output-prefix filter_48k_2m_min_phase" << std::endl;
+                          << "--output-prefix filter_48k_16x_2m_min_phase" << std::endl;
                 if (!applyPreset(FILTER_PRESET_44K)) {
                     std::cerr << "Error: 44.1kHz fallback filter also missing: "
                               << FILTER_PRESET_44K.path << std::endl;
@@ -179,7 +179,7 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Generate it via: "
                           << "python scripts/generate_filter.py --input-rate 48000 "
                           << "--stopband-start 24000 --passband-end 21500 "
-                          << "--output-prefix filter_48k_2m_min_phase" << std::endl;
+                          << "--output-prefix filter_48k_16x_2m_min_phase" << std::endl;
             } else {
                 std::cerr << "Generate it via scripts/generate_filter.py or specify with --filter."
                           << std::endl;
