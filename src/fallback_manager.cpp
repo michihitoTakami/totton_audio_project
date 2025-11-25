@@ -102,42 +102,57 @@ void Manager::checkGpuUtilization() {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(thresholdMutex_);
+    // Determine action under lock, but execute callback outside lock
+    // to prevent blocking and potential deadlock
+    enum class Action { None, TriggerFallback, TriggerRecovery };
+    Action action = Action::None;
 
-    FallbackState currentState = state_.load();
+    {
+        std::lock_guard<std::mutex> lock(thresholdMutex_);
 
-    if (currentState == FallbackState::Normal) {
-        // Check if threshold exceeded
-        if (utilization >= config_.gpuThreshold) {
-            consecutiveThresholdExceedances_++;
-            consecutiveRecoveryMeasurements_ = 0;
+        FallbackState currentState = state_.load();
 
-            if (consecutiveThresholdExceedances_ >= config_.gpuThresholdCount) {
-                LOG_WARN(
-                    "GPU utilization {}% exceeds threshold {}% ({} consecutive) - triggering "
-                    "fallback",
-                    utilization, config_.gpuThreshold, consecutiveThresholdExceedances_);
-                triggerFallback();
+        if (currentState == FallbackState::Normal) {
+            // Check if threshold exceeded
+            if (utilization >= config_.gpuThreshold) {
+                consecutiveThresholdExceedances_++;
+                consecutiveRecoveryMeasurements_ = 0;
+
+                if (consecutiveThresholdExceedances_ >= config_.gpuThresholdCount) {
+                    LOG_WARN(
+                        "GPU utilization {}% exceeds threshold {}% ({} consecutive) - triggering "
+                        "fallback",
+                        utilization, config_.gpuThreshold, consecutiveThresholdExceedances_);
+                    action = Action::TriggerFallback;
+                }
+            } else {
+                consecutiveThresholdExceedances_ = 0;
             }
         } else {
-            consecutiveThresholdExceedances_ = 0;
-        }
-    } else {
-        // In fallback mode - check for recovery
-        if (utilization <= config_.gpuRecoveryThreshold) {
-            consecutiveRecoveryMeasurements_++;
-            consecutiveThresholdExceedances_ = 0;
+            // In fallback mode - check for recovery
+            if (utilization <= config_.gpuRecoveryThreshold) {
+                consecutiveRecoveryMeasurements_++;
+                consecutiveThresholdExceedances_ = 0;
 
-            if (consecutiveRecoveryMeasurements_ >= config_.gpuRecoveryCount) {
-                LOG_INFO(
-                    "GPU utilization {}% below recovery threshold {}% ({} consecutive) - returning "
-                    "to normal",
-                    utilization, config_.gpuRecoveryThreshold, consecutiveRecoveryMeasurements_);
-                triggerRecovery();
+                if (consecutiveRecoveryMeasurements_ >= config_.gpuRecoveryCount) {
+                    LOG_INFO(
+                        "GPU utilization {}% below recovery threshold {}% ({} consecutive) - "
+                        "returning to normal",
+                        utilization, config_.gpuRecoveryThreshold,
+                        consecutiveRecoveryMeasurements_);
+                    action = Action::TriggerRecovery;
+                }
+            } else {
+                consecutiveRecoveryMeasurements_ = 0;
             }
-        } else {
-            consecutiveRecoveryMeasurements_ = 0;
         }
+    }  // Release thresholdMutex_ before calling trigger functions
+
+    // Execute action outside the lock to prevent blocking
+    if (action == Action::TriggerFallback) {
+        triggerFallback();
+    } else if (action == Action::TriggerRecovery) {
+        triggerRecovery();
     }
 }
 
