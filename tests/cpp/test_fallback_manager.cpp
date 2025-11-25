@@ -125,6 +125,7 @@ TEST_F(FallbackManagerTest, NotifyXrun_TriggersFallback_WhenEnabled) {
     config.xrunTriggersFallback = true;
     Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     EXPECT_EQ(mgr->getState(), FallbackState::Normal);
 
     mgr->notifyXrun();
@@ -175,6 +176,7 @@ TEST_F(FallbackManagerTest, GetStats_ReturnsCorrectValues) {
     config.xrunTriggersFallback = true;
     Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     mgr->notifyXrun();  // Triggers fallback
 
     auto stats = mgr->getStats();
@@ -188,6 +190,7 @@ TEST_F(FallbackManagerTest, GetStats_TracksMultipleActivations) {
     config.xrunTriggersFallback = true;
     Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     mgr->notifyXrun();  // First activation
     mgr->notifyXrun();  // Should not count as new activation
 
@@ -218,6 +221,7 @@ TEST_F(FallbackManagerTest, StateCallback_InvokedOnFallback) {
     config.xrunTriggersFallback = true;
     Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     EXPECT_EQ(stateChanges_.size(), 0);
 
     mgr->notifyXrun();
@@ -232,6 +236,7 @@ TEST_F(FallbackManagerTest, StateCallback_NotInvokedOnDuplicateState) {
     config.xrunTriggersFallback = true;
     Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     mgr->notifyXrun();
     EXPECT_EQ(stateChanges_.size(), 1);
     stateChanges_.clear();
@@ -315,6 +320,7 @@ TEST_F(FallbackManagerTest, ConcurrentXrunNotifications_ThreadSafe) {
     config.xrunTriggersFallback = true;
     Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     // Simulate concurrent XRUN notifications
     std::vector<std::thread> threads;
     for (int i = 0; i < 10; ++i) {
@@ -349,4 +355,3 @@ TEST_F(FallbackManagerTest, Integration_WithMetrics_Works) {
     // Manager should still function
     EXPECT_EQ(mgr->getState(), FallbackState::Normal);
 }
-
