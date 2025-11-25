@@ -4,6 +4,7 @@
  */
 
 #include "fallback_manager.h"
+
 #include "logging/logger.h"
 #include "logging/metrics.h"
 
@@ -59,7 +60,8 @@ void Manager::shutdown() {
 void Manager::notifyXrun() {
     xrunCount_.fetch_add(1, std::memory_order_relaxed);
 
-    if (config_.xrunTriggersFallback && state_.load() == FallbackState::Normal) {
+    // Only trigger fallback if manager is initialized and running
+    if (running_.load() && config_.xrunTriggersFallback && state_.load() == FallbackState::Normal) {
         LOG_WARN("XRUN detected - triggering fallback");
         triggerFallback();
     }
@@ -83,8 +85,7 @@ void Manager::monitorThread() {
         checkGpuUtilization();
 
         // Sleep for monitoring interval
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(config_.monitorIntervalMs));
+        std::this_thread::sleep_for(std::chrono::milliseconds(config_.monitorIntervalMs));
     }
 
     LOG_INFO("Fallback monitor thread stopped");
@@ -112,8 +113,10 @@ void Manager::checkGpuUtilization() {
             consecutiveRecoveryMeasurements_ = 0;
 
             if (consecutiveThresholdExceedances_ >= config_.gpuThresholdCount) {
-                LOG_WARN("GPU utilization {}% exceeds threshold {}% ({} consecutive) - triggering fallback",
-                         utilization, config_.gpuThreshold, consecutiveThresholdExceedances_);
+                LOG_WARN(
+                    "GPU utilization {}% exceeds threshold {}% ({} consecutive) - triggering "
+                    "fallback",
+                    utilization, config_.gpuThreshold, consecutiveThresholdExceedances_);
                 triggerFallback();
             }
         } else {
@@ -126,8 +129,10 @@ void Manager::checkGpuUtilization() {
             consecutiveThresholdExceedances_ = 0;
 
             if (consecutiveRecoveryMeasurements_ >= config_.gpuRecoveryCount) {
-                LOG_INFO("GPU utilization {}% below recovery threshold {}% ({} consecutive) - returning to normal",
-                         utilization, config_.gpuRecoveryThreshold, consecutiveRecoveryMeasurements_);
+                LOG_INFO(
+                    "GPU utilization {}% below recovery threshold {}% ({} consecutive) - returning "
+                    "to normal",
+                    utilization, config_.gpuRecoveryThreshold, consecutiveRecoveryMeasurements_);
                 triggerRecovery();
             }
         } else {
@@ -171,4 +176,3 @@ void Manager::triggerRecovery() {
 }
 
 }  // namespace FallbackManager
-

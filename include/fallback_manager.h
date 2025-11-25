@@ -26,20 +26,20 @@ namespace FallbackManager {
  * @brief Fallback state
  */
 enum class FallbackState {
-    Normal,      // Normal operation (GPU processing enabled)
-    Fallback     // Fallback mode (GPU processing disabled/bypassed)
+    Normal,   // Normal operation (GPU processing enabled)
+    Fallback  // Fallback mode (GPU processing disabled/bypassed)
 };
 
 /**
  * @brief Configuration for fallback manager
  */
 struct FallbackConfig {
-    float gpuThreshold{80.0f};        // GPU utilization threshold (%)
-    int gpuThresholdCount{3};        // Consecutive threshold exceedances to trigger fallback
-    float gpuRecoveryThreshold{70.0f}; // Recovery threshold (threshold - 10%)
-    int gpuRecoveryCount{5};          // Consecutive recovery measurements to return to normal
-    bool xrunTriggersFallback{true};  // Whether XRUN should trigger immediate fallback
-    int monitorIntervalMs{100};       // GPU monitoring interval (milliseconds)
+    float gpuThreshold{80.0f};          // GPU utilization threshold (%)
+    int gpuThresholdCount{3};           // Consecutive threshold exceedances to trigger fallback
+    float gpuRecoveryThreshold{70.0f};  // Recovery threshold (threshold - 10%)
+    int gpuRecoveryCount{5};            // Consecutive recovery measurements to return to normal
+    bool xrunTriggersFallback{true};    // Whether XRUN should trigger immediate fallback
+    int monitorIntervalMs{100};         // GPU monitoring interval (milliseconds)
 };
 
 /**
@@ -60,8 +60,7 @@ class Manager {
      * @param stateCallback Callback invoked when fallback state changes
      * @return true if initialization succeeded
      */
-    bool initialize(const FallbackConfig& config,
-                    std::function<void(FallbackState)> stateCallback);
+    bool initialize(const FallbackConfig& config, std::function<void(FallbackState)> stateCallback);
 
     /**
      * @brief Shutdown the fallback manager
@@ -132,10 +131,9 @@ class Manager {
     std::atomic<uint64_t> fallbackRecoveries_{0};
     std::chrono::steady_clock::time_point lastFallbackTime_;
     std::chrono::steady_clock::time_point lastRecoveryTime_;
-    std::mutex statsMutex_;
+    mutable std::mutex statsMutex_;
 
     std::thread monitorThread_;
 };
 
 }  // namespace FallbackManager
-
