@@ -41,6 +41,12 @@ static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 // Value: 0 = no change pending, >0 = detected input sample rate
 static std::atomic<int> g_pending_rate_change{0};
 
+// Forward declaration for Data struct (defined below)
+struct Data;
+
+// Global pointer to Data for use in handle_rate_change
+static Data* g_data = nullptr;
+
 // Output ring buffers (using common AudioRingBuffer class)
 static AudioRingBuffer g_output_buffer_left;
 static AudioRingBuffer g_output_buffer_right;
@@ -67,6 +73,10 @@ struct Data {
     std::vector<float> stream_input_right;
     size_t stream_accum_left = 0;
     size_t stream_accum_right = 0;
+
+    // Flag to indicate output stream needs reconnection after rate family change
+    bool needs_output_reconnect = false;
+    int new_output_rate = 0;
 };
 
 // Signal handler for graceful shutdown
@@ -120,12 +130,14 @@ static bool handle_rate_change(int detected_sample_rate) {
 
     // Check if family change is needed
     if (new_family == g_get_rate_family()) {
-        // Same family - update input rate tracking but no coefficient switch needed
-        if (detected_sample_rate == base_rate) {
-            g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
-            return true;
-        }
-        // Hi-res in same family - already warned above
+        // Same family - update input rate tracking and upsampler ratio
+        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
+
+        // Update upsampler's internal rate (changes upsample ratio: 16x/8x/4x/2x/1x)
+        g_upsampler->setInputSampleRate(detected_sample_rate);
+
+        std::cout << "[Rate] Same family, updated input rate to " << detected_sample_rate << " Hz ("
+                  << expected_ratio << "x upsampling)" << std::endl;
         return true;
     }
 
@@ -139,11 +151,19 @@ static bool handle_rate_change(int detected_sample_rate) {
         g_set_rate_family(new_family);
         // Store actual detected rate (not just base rate)
         g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
-        g_current_output_rate.store(ConvolutionEngine::getOutputSampleRate(new_family),
-                                    std::memory_order_release);
+        int new_output_rate = ConvolutionEngine::getOutputSampleRate(new_family);
+        g_current_output_rate.store(new_output_rate, std::memory_order_release);
 
         // Update upsampler's internal rate tracking
         g_upsampler->setInputSampleRate(detected_sample_rate);
+
+        // Signal that output stream needs reconnection with new rate
+        if (g_data) {
+            g_data->needs_output_reconnect = true;
+            g_data->new_output_rate = new_output_rate;
+            std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
+                      << " Hz" << std::endl;
+        }
 
         return true;
     }
@@ -371,6 +391,17 @@ int main(int argc, char* argv[]) {
     if (loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false)) {
         // Set input sample rate for correct output rate calculation
         g_upsampler->setInputSampleRate(appConfig.inputSampleRate);
+
+        // Update global rate tracking to match config
+        g_current_input_rate.store(appConfig.inputSampleRate, std::memory_order_release);
+        g_current_output_rate.store(g_upsampler->getOutputSampleRate(), std::memory_order_release);
+
+        // Update rate family based on configured input rate
+        auto configFamily = ConvolutionEngine::detectRateFamily(appConfig.inputSampleRate);
+        if (configFamily != ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
+            g_set_rate_family(configFamily);
+        }
+
         std::cout << "Input sample rate: " << appConfig.inputSampleRate << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
 
@@ -403,6 +434,7 @@ int main(int argc, char* argv[]) {
 
     Data data = {};
     data.gpu_ready = true;
+    g_data = &data;  // Set global pointer for handle_rate_change
 
     // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
     // Use 2x safety margin to handle timing variations
@@ -506,6 +538,57 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "[Main] Rate change failed or not supported" << std::endl;
             }
+        }
+
+        // Handle output stream reconnection after rate family change
+        if (data.needs_output_reconnect && data.new_output_rate > 0) {
+            std::cout << "[Main] Reconnecting output stream at " << data.new_output_rate << " Hz..."
+                      << std::endl;
+
+            // Disconnect and destroy old output stream
+            if (data.output_stream) {
+                pw_stream_disconnect(data.output_stream);
+                pw_stream_destroy(data.output_stream);
+                data.output_stream = nullptr;
+            }
+
+            // Create new output stream with updated rate
+            data.output_stream = pw_stream_new_simple(
+                loop, "GPU Upsampler Output",
+                pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
+                                  PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_TARGET,
+                                  "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo",
+                                  "audio.channels", "2", "audio.position", "FL,FR", nullptr),
+                &output_stream_events, &data);
+
+            // Configure new output format with updated rate
+            uint8_t reconnect_buffer[1024];
+            struct spa_pod_builder reconnect_builder =
+                SPA_POD_BUILDER_INIT(reconnect_buffer, sizeof(reconnect_buffer));
+
+            struct spa_audio_info_raw reconnect_info = {};
+            reconnect_info.format = SPA_AUDIO_FORMAT_F32;
+            reconnect_info.rate = static_cast<uint32_t>(data.new_output_rate);
+            reconnect_info.channels = CHANNELS;
+            reconnect_info.position[0] = SPA_AUDIO_CHANNEL_FL;
+            reconnect_info.position[1] = SPA_AUDIO_CHANNEL_FR;
+
+            const struct spa_pod* reconnect_params[1];
+            reconnect_params[0] = spa_format_audio_raw_build(&reconnect_builder,
+                                                             SPA_PARAM_EnumFormat, &reconnect_info);
+
+            pw_stream_connect(data.output_stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
+                              static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
+                                                           PW_STREAM_FLAG_RT_PROCESS |
+                                                           PW_STREAM_FLAG_AUTOCONNECT),
+                              reconnect_params, 1);
+
+            std::cout << "[Main] Output stream reconnected at " << data.new_output_rate << " Hz"
+                      << std::endl;
+
+            // Clear reconnection flag
+            data.needs_output_reconnect = false;
+            data.new_output_rate = 0;
         }
 
         // Process PipeWire events (non-blocking iteration)
