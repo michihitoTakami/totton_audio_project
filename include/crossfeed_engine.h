@@ -249,6 +249,10 @@ class HRTFProcessor {
     // Free all GPU resources
     void cleanup();
 
+    // Release CPU-side HRTF coefficient memory after GPU transfer
+    // This saves memory, especially important for Jetson Unified Memory
+    void releaseHostCoefficients();
+
     void registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr, size_t* trackedBytes,
                               const char* context);
 
