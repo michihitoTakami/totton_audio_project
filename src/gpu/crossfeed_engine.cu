@@ -820,7 +820,7 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(d_outputL_, fftSize_, scale);
     scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(d_outputR_, fftSize_, scale);
 
-    // Copy valid output
+    // Copy valid output (asynchronous, wait before touching host buffers again)
     checkCudaError(
         cudaMemcpyAsync(outputL.data(), d_outputL_ + overlapSize_,
                         validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
@@ -839,6 +839,9 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         cudaMemcpyAsync(d_overlapR_, d_paddedInputR_ + validOutputPerBlock_,
                         overlapSize_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
         "update overlap R");
+
+    // Ensure all device↔host transfers finished before reusing/altering host buffers
+    checkCudaError(cudaStreamSynchronize(stream), "stream sync (crossfeed streaming)");
 
     // Shift input buffer
     size_t remaining = streamInputAccumulatedL - streamValidInputPerBlock_;

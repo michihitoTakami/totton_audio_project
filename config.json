@@ -20,6 +20,15 @@
     "headSize": "m",
     "hrtfPath": "data/crossfeed/hrtf/"
   },
+  "fallback": {
+    "enabled": true,
+    "gpuThreshold": 80.0,
+    "gpuThresholdCount": 3,
+    "gpuRecoveryThreshold": 70.0,
+    "gpuRecoveryCount": 5,
+    "xrunTriggersFallback": true,
+    "monitorIntervalMs": 100
+  },
   "logging": {
     "level": "info",
     "filePath": "/var/log/gpu_upsampler/daemon.log",

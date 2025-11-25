@@ -383,3 +383,155 @@ TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedFieldsWrongTypes) {
     EXPECT_EQ(config.crossfeed.headSize, "m");
     EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
 }
+
+// ============================================================================
+// Fallback Config Tests (Issue #139)
+// ============================================================================
+
+TEST_F(ConfigLoaderTest, FallbackDefaultValues) {
+    AppConfig config;
+    EXPECT_TRUE(config.fallback.enabled);
+    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 80.0f);
+    EXPECT_EQ(config.fallback.gpuThresholdCount, 3);
+    EXPECT_FLOAT_EQ(config.fallback.gpuRecoveryThreshold, 70.0f);
+    EXPECT_EQ(config.fallback.gpuRecoveryCount, 5);
+    EXPECT_TRUE(config.fallback.xrunTriggersFallback);
+    EXPECT_EQ(config.fallback.monitorIntervalMs, 100);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithFallbackEnabled) {
+    writeConfig(R"({
+        "fallback": {
+            "enabled": true,
+            "gpuThreshold": 90.0,
+            "gpuThresholdCount": 5,
+            "gpuRecoveryThreshold": 80.0,
+            "gpuRecoveryCount": 10,
+            "xrunTriggersFallback": false,
+            "monitorIntervalMs": 200
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.fallback.enabled);
+    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 90.0f);
+    EXPECT_EQ(config.fallback.gpuThresholdCount, 5);
+    EXPECT_FLOAT_EQ(config.fallback.gpuRecoveryThreshold, 80.0f);
+    EXPECT_EQ(config.fallback.gpuRecoveryCount, 10);
+    EXPECT_FALSE(config.fallback.xrunTriggersFallback);
+    EXPECT_EQ(config.fallback.monitorIntervalMs, 200);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithFallbackDisabled) {
+    writeConfig(R"({
+        "fallback": {
+            "enabled": false
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(config.fallback.enabled);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithoutFallbackKeepsDefaults) {
+    writeConfig(R"({
+        "alsaDevice": "hw:Test"
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.fallback.enabled);
+    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 80.0f);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_GpuThresholdClamped) {
+    // Test gpuThreshold clamping to 0-100%
+    writeConfig(R"({
+        "fallback": {
+            "gpuThreshold": 150.0
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 100.0f);  // Clamped to 100
+
+    // Test negative value
+    writeConfig(R"({
+        "fallback": {
+            "gpuThreshold": -10.0
+        }
+    })");
+    result = loadAppConfig(testConfigPath, config, false);
+    EXPECT_TRUE(result);
+    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 0.0f);  // Clamped to 0
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_RecoveryThresholdClamped) {
+    // Recovery threshold must be <= gpuThreshold
+    writeConfig(R"({
+        "fallback": {
+            "gpuThreshold": 80.0,
+            "gpuRecoveryThreshold": 90.0
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    // gpuRecoveryThreshold should be clamped to gpuThreshold
+    EXPECT_FLOAT_EQ(config.fallback.gpuRecoveryThreshold, 80.0f);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_CountValuesMin1) {
+    writeConfig(R"({
+        "fallback": {
+            "gpuThresholdCount": 0,
+            "gpuRecoveryCount": -5
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(config.fallback.gpuThresholdCount, 1);  // Min 1
+    EXPECT_EQ(config.fallback.gpuRecoveryCount, 1);   // Min 1
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_MonitorIntervalMin10) {
+    writeConfig(R"({
+        "fallback": {
+            "monitorIntervalMs": 5
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(config.fallback.monitorIntervalMs, 10);  // Min 10ms
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithFallbackWrongTypes) {
+    // Test when fallback is not an object (should be ignored, keep defaults)
+    writeConfig(R"({"fallback": "not an object"})");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.fallback.enabled);
+    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 80.0f);
+}
