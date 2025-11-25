@@ -6,6 +6,7 @@
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
+#include "fallback_manager.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
 #include "soft_mute.h"
@@ -214,6 +215,8 @@ static std::vector<float> g_stream_input_left;
 static std::vector<float> g_stream_input_right;
 static size_t g_stream_accumulated_left = 0;
 static size_t g_stream_accumulated_right = 0;
+static std::vector<float> g_upsampler_output_left;
+static std::vector<float> g_upsampler_output_right;
 
 // Crossfeed (HRTF) processor
 static CrossfeedEngine::HRTFProcessor* g_hrtf_processor = nullptr;
@@ -223,6 +226,12 @@ static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
 static size_t g_cf_stream_accumulated_right = 0;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
+static std::vector<float> g_cf_output_buffer_left;
+static std::vector<float> g_cf_output_buffer_right;
+
+// Fallback manager (Issue #139)
+static FallbackManager::Manager* g_fallback_manager = nullptr;
+static std::atomic<bool> g_fallback_active{false};  // Atomic for quick check in audio thread
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -394,12 +403,16 @@ static void reset_runtime_state() {
     g_stream_input_right.clear();
     g_stream_accumulated_left = 0;
     g_stream_accumulated_right = 0;
+    g_upsampler_output_left.clear();
+    g_upsampler_output_right.clear();
 
     // Reset crossfeed streaming buffers
     g_cf_stream_input_left.clear();
     g_cf_stream_input_right.clear();
     g_cf_stream_accumulated_left = 0;
     g_cf_stream_accumulated_right = 0;
+    g_cf_output_buffer_left.clear();
+    g_cf_output_buffer_right.clear();
 }
 
 static void load_runtime_config() {
@@ -483,7 +496,22 @@ static void zeromq_listener_thread() {
                 }
                 response = "OK";
             } else if (cmd == "STATS") {
-                response = "OK:" + build_stats_json();
+                nlohmann::json stats = collect_runtime_stats_json();
+                // Add fallback status (Issue #139)
+                if (g_fallback_manager) {
+                    stats["fallback"] = nlohmann::json::object();
+                    stats["fallback"]["enabled"] = true;
+                    stats["fallback"]["active"] = g_fallback_manager->isInFallback();
+                    stats["fallback"]["gpu_utilization"] = g_fallback_manager->getGpuUtilization();
+                    auto fbStats = g_fallback_manager->getStats();
+                    stats["fallback"]["xrun_count"] = fbStats.xrunCount;
+                    stats["fallback"]["activations"] = fbStats.fallbackActivations;
+                    stats["fallback"]["recoveries"] = fbStats.fallbackRecoveries;
+                } else {
+                    stats["fallback"] = nlohmann::json::object();
+                    stats["fallback"]["enabled"] = false;
+                }
+                response = "OK:" + stats.dump();
             } else if (cmd == "CROSSFEED_ENABLE") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 if (g_hrtf_processor) {
@@ -986,17 +1014,42 @@ static void on_input_process(void* userdata) {
 
         // Process through GPU upsampler using streaming API
         // This preserves overlap buffer across calls
-        std::vector<float> output_left, output_right;
+        std::vector<float>& output_left = g_upsampler_output_left;
+        std::vector<float>& output_right = g_upsampler_output_right;
 
-        // Process left channel
-        bool left_generated = g_upsampler->processStreamBlock(
-            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
-            g_stream_accumulated_left);
+        // Check if fallback mode is active (Issue #139)
+        bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
+        bool left_generated = false;
+        bool right_generated = false;
 
-        // Process right channel
-        bool right_generated = g_upsampler->processStreamBlock(
-            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
-            g_stream_accumulated_right);
+        if (use_fallback) {
+            // Fallback mode: bypass GPU processing to reduce load
+            // Uses simple zero-padding upsampling (repeats input samples at upsampled positions)
+            // Note: This provides basic functionality but lower quality than GPU FIR filtering.
+            // Quality trade-off is acceptable for stability during GPU overload/XRUN situations.
+            size_t output_frames = n_frames * g_config.upsampleRatio;
+            output_left.resize(output_frames, 0.0f);
+            output_right.resize(output_frames, 0.0f);
+            // Copy input samples at upsampled positions (zero-padding between samples)
+            for (size_t i = 0; i < n_frames; ++i) {
+                output_left[i * g_config.upsampleRatio] = left[i];
+                output_right[i * g_config.upsampleRatio] = right[i];
+            }
+            // Both channels "generated" in fallback mode
+            left_generated = true;
+            right_generated = true;
+        } else {
+            // Normal mode: GPU processing
+            // Process left channel
+            left_generated = g_upsampler->processStreamBlock(
+                left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
+                g_stream_accumulated_left);
+
+            // Process right channel
+            right_generated = g_upsampler->processStreamBlock(
+                right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
+                g_stream_accumulated_right);
+        }
 
         // Only store output if both channels generated output
         // (they should synchronize due to same input size)
@@ -1013,7 +1066,8 @@ static void on_input_process(void* userdata) {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 // Re-check under lock (double-checked locking pattern)
                 if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                    std::vector<float> cf_output_left, cf_output_right;
+                    std::vector<float>& cf_output_left = g_cf_output_buffer_left;
+                    std::vector<float>& cf_output_right = g_cf_output_buffer_right;
                     // Use default CUDA stream (0) for crossfeed processing
                     bool cf_generated = g_hrtf_processor->processStreamBlock(
                         output_left.data(), output_right.data(), output_left.size(), cf_output_left,
@@ -1145,6 +1199,18 @@ static snd_pcm_t* open_and_configure_pcm() {
         std::cerr << "ALSA: Cannot prepare device: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
         return nullptr;
+    }
+
+    // Set software parameters for XRUN detection (Issue #139)
+    snd_pcm_sw_params_t* sw_params;
+    snd_pcm_sw_params_alloca(&sw_params);
+    if (snd_pcm_sw_params_current(pcm_handle, sw_params) == 0) {
+        // Enable XRUN detection
+        snd_pcm_sw_params_set_start_threshold(pcm_handle, sw_params, buffer_size);
+        snd_pcm_sw_params_set_avail_min(pcm_handle, sw_params, period_size);
+        if (snd_pcm_sw_params(pcm_handle, sw_params) < 0) {
+            std::cerr << "ALSA: Warning - Failed to set software parameters" << std::endl;
+        }
     }
 
     std::cout << "ALSA: Output device configured (" << rate << " Hz, 32-bit int, stereo)"
@@ -1321,6 +1387,16 @@ void alsa_output_thread() {
             snd_pcm_sframes_t frames_written =
                 snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
             if (frames_written < 0) {
+                // Check for XRUN (Issue #139)
+                if (frames_written == -EPIPE) {
+                    // XRUN detected - notify fallback manager
+                    if (g_fallback_manager) {
+                        g_fallback_manager->notifyXrun();
+                    }
+                    gpu_upsampler::metrics::recordXrun();
+                    LOG_WARN("ALSA: XRUN detected");
+                }
+
                 // Try standard recovery first
                 snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
                 if (rec < 0) {
@@ -1611,6 +1687,10 @@ int main(int argc, char* argv[]) {
                   << " samples (2x streamValidInputPerBlock)" << std::endl;
         g_stream_accumulated_left = 0;
         g_stream_accumulated_right = 0;
+        size_t upsampler_output_capacity =
+            g_upsampler->getStreamValidInputPerBlock() * g_config.upsampleRatio * 2;
+        g_upsampler_output_left.reserve(upsampler_output_capacity);
+        g_upsampler_output_right.reserve(upsampler_output_capacity);
 
         // Initialize HRTF processor for crossfeed (optional feature)
         // Crossfeed is disabled by default until enabled via ZeroMQ command
@@ -1638,6 +1718,8 @@ int main(int argc, char* argv[]) {
                     g_cf_stream_input_right.resize(cf_buffer_capacity, 0.0f);
                     g_cf_stream_accumulated_left = 0;
                     g_cf_stream_accumulated_right = 0;
+                    g_cf_output_buffer_left.reserve(cf_buffer_capacity);
+                    g_cf_output_buffer_right.reserve(cf_buffer_capacity);
                     std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity << " samples"
                               << std::endl;
 
@@ -1683,6 +1765,40 @@ int main(int argc, char* argv[]) {
         g_soft_mute = new SoftMute::Controller(DEFAULT_SOFT_MUTE_FADE_MS, outputSampleRate);
         std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at " << outputSampleRate << "Hz)"
                   << std::endl;
+
+        // Initialize fallback manager (Issue #139)
+        if (g_config.fallback.enabled) {
+            g_fallback_manager = new FallbackManager::Manager();
+            FallbackManager::FallbackConfig fbConfig;
+            fbConfig.gpuThreshold = g_config.fallback.gpuThreshold;
+            fbConfig.gpuThresholdCount = g_config.fallback.gpuThresholdCount;
+            fbConfig.gpuRecoveryThreshold = g_config.fallback.gpuRecoveryThreshold;
+            fbConfig.gpuRecoveryCount = g_config.fallback.gpuRecoveryCount;
+            fbConfig.xrunTriggersFallback = g_config.fallback.xrunTriggersFallback;
+            fbConfig.monitorIntervalMs = g_config.fallback.monitorIntervalMs;
+
+            // State change callback: update atomic flag and notify via ZeroMQ
+            auto stateCallback = [](FallbackManager::FallbackState state) {
+                bool isFallback = (state == FallbackManager::FallbackState::Fallback);
+                g_fallback_active.store(isFallback, std::memory_order_relaxed);
+
+                // Notify via ZeroMQ (will be sent in zeromq_listener_thread)
+                // Note: ZeroMQ notification is handled by STATS command response
+                LOG_INFO("Fallback state changed: {}", isFallback ? "FALLBACK" : "NORMAL");
+            };
+
+            if (g_fallback_manager->initialize(fbConfig, stateCallback)) {
+                std::cout << "Fallback manager initialized (GPU threshold: " << fbConfig.gpuThreshold
+                          << "%, XRUN fallback: " << (fbConfig.xrunTriggersFallback ? "enabled" : "disabled")
+                          << ")" << std::endl;
+            } else {
+                std::cerr << "Warning: Failed to initialize fallback manager" << std::endl;
+                delete g_fallback_manager;
+                g_fallback_manager = nullptr;
+            }
+        } else {
+            std::cout << "Fallback manager disabled" << std::endl;
+        }
 
         // Start ALSA output thread
         std::cout << "Starting ALSA output thread..." << std::endl;
@@ -1836,6 +1952,11 @@ int main(int argc, char* argv[]) {
 
         // Step 6: Release audio processing resources
         std::cout << "  Step 6: Releasing resources..." << std::endl;
+        if (g_fallback_manager) {
+            g_fallback_manager->shutdown();
+            delete g_fallback_manager;
+            g_fallback_manager = nullptr;
+        }
         delete g_soft_mute;
         g_soft_mute = nullptr;
         delete g_hrtf_processor;
