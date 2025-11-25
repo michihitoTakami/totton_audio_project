@@ -375,6 +375,11 @@ class GPUUpsampler {
     // Free all GPU resources
     void cleanup();
 
+    // Release CPU-side filter coefficient memory after GPU transfer
+    // This saves ~100MB of RAM, especially important for Jetson Unified Memory
+    // Call this after all GPU transfers are complete (FFT pre-computation done)
+    void releaseHostCoefficients();
+
     // Configuration
     int upsampleRatio_;
     int blockSize_;

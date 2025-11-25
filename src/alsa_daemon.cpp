@@ -7,6 +7,7 @@
 #include "eq_parser.h"
 #include "eq_to_fir.h"
 #include "fallback_manager.h"
+#include "filter_headroom.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
 #include "soft_mute.h"
@@ -63,6 +64,13 @@ constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)
 static AppConfig g_config;
+static std::atomic<float> g_output_gain{1.0f};
+static std::atomic<float> g_headroom_gain{1.0f};
+static FilterHeadroomCache g_headroom_cache;
+static ConvolutionEngine::RateFamily g_active_rate_family = ConvolutionEngine::RateFamily::RATE_44K;
+static PhaseType g_active_phase_type = PhaseType::Minimum;
+static std::atomic<float> g_limiter_gain{1.0f};
+static std::atomic<float> g_effective_gain{1.0f};
 
 // ========== Signal Handling (Async-Signal-Safe) ==========
 // These flags are set by the signal handler and polled by the main loop.
@@ -112,19 +120,25 @@ static inline float compute_stereo_peak(const float* left, const float* right, s
     return peak;
 }
 
-static inline float compute_interleaved_peak(const float* interleaved, size_t frames) {
+static float apply_output_limiter(float* interleaved, size_t frames) {
+    constexpr float kEpsilon = 1e-6f;
     if (!interleaved || frames == 0) {
+        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+        float baseGain = g_output_gain.load(std::memory_order_relaxed);
+        g_effective_gain.store(baseGain, std::memory_order_relaxed);
         return 0.0f;
     }
-    float peak = 0.0f;
-    for (size_t i = 0; i < frames; ++i) {
-        float l = std::fabs(interleaved[i * 2]);
-        float r = std::fabs(interleaved[i * 2 + 1]);
-        if (l > peak)
-            peak = l;
-        if (r > peak)
-            peak = r;
+    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
+    float limiterGain = 1.0f;
+    const float target = g_config.headroomTarget;
+    if (target > 0.0f && peak > target) {
+        limiterGain = target / (peak + kEpsilon);
+        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
+        peak = target;
     }
+    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
+    float effective = g_output_gain.load(std::memory_order_relaxed) * limiterGain;
+    g_effective_gain.store(effective, std::memory_order_relaxed);
     return peak;
 }
 
@@ -255,6 +269,8 @@ static std::vector<float> g_cf_stream_input_left;
 static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
 static size_t g_cf_stream_accumulated_right = 0;
+static std::vector<float> g_cf_output_left;
+static std::vector<float> g_cf_output_right;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
@@ -262,6 +278,20 @@ static std::vector<float> g_cf_output_buffer_right;
 // Fallback manager (Issue #139)
 static FallbackManager::Manager* g_fallback_manager = nullptr;
 static std::atomic<bool> g_fallback_active{false};  // Atomic for quick check in audio thread
+
+// Resets crossfeed streaming buffers and GPU overlap state.
+// Caller must hold g_crossfeed_mutex.
+static void reset_crossfeed_stream_state_locked() {
+    g_cf_stream_input_left.clear();
+    g_cf_stream_input_right.clear();
+    g_cf_stream_accumulated_left = 0;
+    g_cf_stream_accumulated_right = 0;
+    g_cf_output_left.clear();
+    g_cf_output_right.clear();
+    if (g_hrtf_processor) {
+        g_hrtf_processor->resetStreaming();
+    }
+}
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -403,6 +433,15 @@ static nlohmann::json collect_runtime_stats_json() {
     stats["eq_enabled"] = g_config.eqEnabled;
     stats["phase_type"] = phaseTypeStr;
     stats["last_updated"] = epoch;
+    nlohmann::json gainJson;
+    gainJson["user"] = g_config.gain;
+    gainJson["headroom"] = g_headroom_gain.load(std::memory_order_relaxed);
+    gainJson["headroom_effective"] = g_output_gain.load(std::memory_order_relaxed);
+    gainJson["limiter"] = g_limiter_gain.load(std::memory_order_relaxed);
+    gainJson["effective"] = g_effective_gain.load(std::memory_order_relaxed);
+    gainJson["target_peak"] = g_config.headroomTarget;
+    gainJson["metadata_peak"] = g_headroom_cache.getTargetPeak();
+    stats["gain"] = gainJson;
 
     nlohmann::json peaks;
     peaks["input"] = make_peak_json(g_peak_input_level.load(std::memory_order_relaxed));
@@ -441,6 +480,7 @@ static void print_config_summary(const AppConfig& cfg) {
     LOG_INFO("  Upsample ratio: {}", cfg.upsampleRatio);
     LOG_INFO("  Block size:     {}", cfg.blockSize);
     LOG_INFO("  Gain:           {}", cfg.gain);
+    LOG_INFO("  Headroom tgt:   {}", cfg.headroomTarget);
     LOG_INFO("  Filter path:    {}", cfg.filterPath);
     LOG_INFO("  EQ enabled:     {}", (cfg.eqEnabled ? "yes" : "no"));
     if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
@@ -448,6 +488,53 @@ static void print_config_summary(const AppConfig& cfg) {
     }
     // Update metrics with audio configuration
     gpu_upsampler::metrics::setAudioConfig(g_input_sample_rate, outputRate, cfg.upsampleRatio);
+}
+
+static std::string resolve_filter_path_for(ConvolutionEngine::RateFamily family, PhaseType phase) {
+    if (phase == PhaseType::Linear) {
+        return (family == ConvolutionEngine::RateFamily::RATE_44K) ? g_config.filterPath44kLinear
+                                                                   : g_config.filterPath48kLinear;
+    }
+    return (family == ConvolutionEngine::RateFamily::RATE_44K) ? g_config.filterPath44kMin
+                                                               : g_config.filterPath48kMin;
+}
+
+static std::string current_filter_path() {
+    if (g_config.quadPhaseEnabled) {
+        return resolve_filter_path_for(g_active_rate_family, g_active_phase_type);
+    }
+    return g_config.filterPath;
+}
+
+static void update_effective_gain(float headroomGain, const std::string& reason) {
+    g_headroom_gain.store(headroomGain, std::memory_order_relaxed);
+    float effective = g_config.gain * headroomGain;
+    g_output_gain.store(effective, std::memory_order_relaxed);
+    LOG_INFO("Gain [{}]: user {:.4f} * headroom {:.4f} = {:.4f}", reason, g_config.gain,
+             headroomGain, effective);
+}
+
+static void apply_headroom_for_path(const std::string& path, const std::string& reason) {
+    if (path.empty()) {
+        LOG_WARN("Headroom [{}]: empty filter path, falling back to unity gain", reason);
+        update_effective_gain(1.0f, reason);
+        return;
+    }
+
+    FilterHeadroomInfo info = g_headroom_cache.get(path);
+    update_effective_gain(info.safeGain, reason);
+
+    if (!info.metadataFound) {
+        LOG_WARN("Headroom [{}]: metadata missing for {} (using safe gain {:.4f})", reason, path,
+                 info.safeGain);
+    } else {
+        LOG_INFO("Headroom [{}]: {} max_coef={:.6f} safeGain={:.4f} target={:.2f}", reason, path,
+                 info.maxCoefficient, info.safeGain, info.targetPeak);
+    }
+}
+
+static void refresh_current_headroom(const std::string& reason) {
+    apply_headroom_for_path(current_filter_path(), reason);
 }
 
 static void reset_runtime_state() {
@@ -495,6 +582,11 @@ static void load_runtime_config() {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
     }
     print_config_summary(g_config);
+    g_headroom_cache.setTargetPeak(g_config.headroomTarget);
+    update_effective_gain(1.0f, "config load (pending filter headroom)");
+    float initialOutput = g_output_gain.load(std::memory_order_relaxed);
+    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+    g_effective_gain.store(initialOutput, std::memory_order_relaxed);
 }
 
 // ========== ZeroMQ Command Listener ==========
@@ -555,13 +647,7 @@ static void zeromq_listener_thread() {
             } else if (cmd == "CROSSFEED_ENABLE") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 if (g_hrtf_processor) {
-                    // Reset streaming state to avoid stale data from previous session
-                    g_hrtf_processor->resetStreaming();
-                    g_cf_stream_input_left.clear();
-                    g_cf_stream_input_right.clear();
-                    g_cf_stream_accumulated_left = 0;
-                    g_cf_stream_accumulated_right = 0;
-
+                    reset_crossfeed_stream_state_locked();
                     g_hrtf_processor->setEnabled(true);
                     g_crossfeed_enabled.store(true);
                     response = "OK:Crossfeed enabled";
@@ -574,6 +660,7 @@ static void zeromq_listener_thread() {
                 if (g_hrtf_processor) {
                     g_hrtf_processor->setEnabled(false);
                 }
+                reset_crossfeed_stream_state_locked();
                 response = "OK:Crossfeed disabled";
             } else if (cmd == "CROSSFEED_STATUS") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -592,11 +679,7 @@ static void zeromq_listener_thread() {
                     if (cmdType == "CROSSFEED_ENABLE") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                         if (g_hrtf_processor) {
-                            g_hrtf_processor->resetStreaming();
-                            g_cf_stream_input_left.clear();
-                            g_cf_stream_input_right.clear();
-                            g_cf_stream_accumulated_left = 0;
-                            g_cf_stream_accumulated_right = 0;
+                            reset_crossfeed_stream_state_locked();
                             g_hrtf_processor->setEnabled(true);
                             g_crossfeed_enabled.store(true);
                             nlohmann::json resp;
@@ -616,6 +699,7 @@ static void zeromq_listener_thread() {
                         if (g_hrtf_processor) {
                             g_hrtf_processor->setEnabled(false);
                         }
+                        reset_crossfeed_stream_state_locked();
                         nlohmann::json resp;
                         resp["status"] = "ok";
                         resp["message"] = "Crossfeed disabled";
@@ -756,6 +840,7 @@ static void zeromq_listener_thread() {
                                                 resp["message"] = "Combined filter applied";
                                                 resp["data"]["rate_family"] = rateFamily;
                                                 resp["data"]["complex_count"] = complexCount;
+                                                reset_crossfeed_stream_state_locked();
                                                 std::cout
                                                     << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
                                                     << rateFamily << " (" << complexCount
@@ -833,6 +918,7 @@ static void zeromq_listener_thread() {
                                     resp["status"] = "ok";
                                     resp["data"]["head_size"] =
                                         CrossfeedEngine::headSizeToString(targetSize);
+                                    reset_crossfeed_stream_state_locked();
                                     response = resp.dump();
                                 } else {
                                     nlohmann::json resp;
@@ -949,6 +1035,8 @@ static void zeromq_listener_thread() {
                         applySoftMuteForFilterSwitch([&]() {
                             switch_success = g_upsampler->switchPhaseType(newPhase);
                             if (switch_success) {
+                                g_active_phase_type = newPhase;
+                                refresh_current_headroom("phase switch");
                                 // Re-apply EQ if enabled (switchPhaseType clears eqApplied_)
                                 if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
                                     EQ::EqProfile eqProfile;
@@ -1173,28 +1261,29 @@ static void on_input_process(void* userdata) {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 // Re-check under lock (double-checked locking pattern)
                 if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                    std::vector<float>& cf_output_left = g_cf_output_buffer_left;
-                    std::vector<float>& cf_output_right = g_cf_output_buffer_right;
                     // Use default CUDA stream (0) for crossfeed processing
                     bool cf_generated = g_hrtf_processor->processStreamBlock(
-                        output_left.data(), output_right.data(), output_left.size(), cf_output_left,
-                        cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                        g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
+                        output_left.data(), output_right.data(), output_left.size(),
+                        g_cf_output_left, g_cf_output_right, 0, g_cf_stream_input_left,
+                        g_cf_stream_input_right, g_cf_stream_accumulated_left,
+                        g_cf_stream_accumulated_right);
 
                     if (cf_generated) {
-                        size_t cf_frames = std::min(cf_output_left.size(), cf_output_right.size());
+                        size_t cf_frames =
+                            std::min(g_cf_output_left.size(), g_cf_output_right.size());
                         if (cf_frames > 0) {
-                            float cfPeak = compute_stereo_peak(cf_output_left.data(),
-                                                               cf_output_right.data(), cf_frames);
+                            float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
+                                                               g_cf_output_right.data(), cf_frames);
                             update_peak_level(g_peak_post_crossfeed_level, cfPeak);
                         }
                         // Store crossfeed output for ALSA thread consumption
                         std::lock_guard<std::mutex> lock(g_buffer_mutex);
                         g_output_buffer_left.insert(g_output_buffer_left.end(),
-                                                    cf_output_left.begin(), cf_output_left.end());
+                                                    g_cf_output_left.begin(),
+                                                    g_cf_output_left.end());
                         g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                                     cf_output_right.begin(),
-                                                     cf_output_right.end());
+                                                     g_cf_output_right.begin(),
+                                                     g_cf_output_right.end());
                         g_buffer_cv.notify_one();
                     }
                     // Note: If crossfeed didn't generate output yet (accumulating),
@@ -1660,7 +1749,7 @@ void alsa_output_thread() {
         size_t available = g_output_buffer_left.size() - g_output_read_pos;
         if (available >= period_size) {
             // Step 1: Interleave L/R channels into float buffer with gain applied
-            const float gain = g_config.gain;
+            const float gain = g_output_gain.load(std::memory_order_relaxed);
             AudioUtils::interleaveStereoWithGain(g_output_buffer_left.data() + g_output_read_pos,
                                                  g_output_buffer_right.data() + g_output_read_pos,
                                                  float_buffer.data(), period_size, gain);
@@ -1679,8 +1768,8 @@ void alsa_output_thread() {
                 }
             }
 
-            // Track peak level after gain & soft mute (pre-clipping)
-            float postGainPeak = compute_interleaved_peak(float_buffer.data(), period_size);
+            // Apply limiter and track peak after gain & soft mute
+            float postGainPeak = apply_output_limiter(float_buffer.data(), period_size);
             update_peak_level(g_peak_post_gain_level, postGainPeak);
 
             // Step 3: Clipping detection, clamping, and float→int32 conversion
@@ -1915,6 +2004,7 @@ int main(int argc, char* argv[]) {
         g_upsampler = new ConvolutionEngine::GPUUpsampler();
 
         bool initSuccess = false;
+        ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
         if (g_config.multiRateEnabled) {
             // Multi-rate mode: load all 10 filter configurations (Issue #219)
             // 2 rate families × 5 ratios (1x/2x/4x/8x/16x)
@@ -1960,8 +2050,7 @@ int main(int argc, char* argv[]) {
             }
 
             // Determine initial rate family from inputSampleRate
-            ConvolutionEngine::RateFamily initialFamily =
-                ConvolutionEngine::detectRateFamily(g_input_sample_rate);
+            initialFamily = ConvolutionEngine::detectRateFamily(g_input_sample_rate);
             if (initialFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
                 initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
             }
@@ -2006,6 +2095,22 @@ int main(int argc, char* argv[]) {
             std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                       << g_config.blockSize << " samples/block)" << std::endl;
         }
+
+        // Set g_active_rate_family and g_active_phase_type for headroom tracking
+        if (g_config.multiRateEnabled) {
+            // Rate family already set during initializeMultiRate()
+            // g_active_rate_family is set via g_set_rate_family() above
+        } else if (g_config.quadPhaseEnabled) {
+            g_active_rate_family = initialFamily;
+        } else {
+            ConvolutionEngine::RateFamily detected =
+                ConvolutionEngine::detectRateFamily(g_input_sample_rate);
+            g_active_rate_family = (detected == ConvolutionEngine::RateFamily::RATE_UNKNOWN)
+                                       ? ConvolutionEngine::RateFamily::RATE_44K
+                                       : detected;
+        }
+        g_active_phase_type = g_config.phaseType;
+        refresh_current_headroom("initial filter load");
 
         // Set input sample rate for correct output rate calculation (non-multi-rate, non-quad-phase
         // mode)

@@ -1,5 +1,7 @@
 #include "config_loader.h"
 
+#include "daemon_constants.h"
+
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -58,6 +60,8 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             outConfig.blockSize = j["blockSize"].get<int>();
         if (j.contains("gain"))
             outConfig.gain = j["gain"].get<float>();
+        if (j.contains("headroomTarget"))
+            outConfig.headroomTarget = j["headroomTarget"].get<float>();
         if (j.contains("filterPath"))
             outConfig.filterPath = j["filterPath"].get<std::string>();
         if (j.contains("phaseType"))
@@ -152,10 +156,20 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             }
         }
 
+        // Clamp derived floating-point values after parsing (ensures sane bounds)
+        outConfig.gain = std::max(0.0f, outConfig.gain);
+        outConfig.headroomTarget =
+            std::clamp(outConfig.headroomTarget, DaemonConstants::MIN_HEADROOM_TARGET,
+                       DaemonConstants::MAX_HEADROOM_TARGET);
+
         if (verbose) {
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)
                       << std::endl;
         }
+
+        // Clamp derived floating-point values after parsing (ensures sane bounds)
+        outConfig.headroomTarget = std::clamp(outConfig.headroomTarget, 0.01f, 1.0f);
+
         return true;
     } catch (const std::exception& e) {
         if (verbose) {

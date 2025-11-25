@@ -84,6 +84,10 @@ bool GPUUpsampler::initialize(const std::string& filterCoeffPath,
         return false;
     }
 
+    // Release CPU-side coefficient memory after GPU transfer (Jetson optimization)
+    // FFT spectra are now on GPU; time-domain coefficients are no longer needed
+    releaseHostCoefficients();
+
     std::cout << "GPU Upsampler initialized successfully!" << std::endl;
     return true;
 }
@@ -796,6 +800,60 @@ void GPUUpsampler::cleanup() {
     validOutputPerBlock_ = 0;
     streamOverlapSize_ = 0;
     streamInitialized_ = false;
+}
+
+void GPUUpsampler::releaseHostCoefficients() {
+    // Release all CPU-side filter coefficient vectors to free memory
+    // This is called after GPU transfer is complete and FFT spectra are on GPU
+    // Important for Jetson Unified Memory optimization (saves ~100MB)
+
+    size_t freedBytes = 0;
+
+    // Single-rate coefficients
+    if (!h_filterCoeffs_.empty()) {
+        freedBytes += h_filterCoeffs_.capacity() * sizeof(float);
+        h_filterCoeffs_.clear();
+        h_filterCoeffs_.shrink_to_fit();
+    }
+
+    // Dual-rate coefficients
+    if (!h_filterCoeffs44k_.empty()) {
+        freedBytes += h_filterCoeffs44k_.capacity() * sizeof(float);
+        h_filterCoeffs44k_.clear();
+        h_filterCoeffs44k_.shrink_to_fit();
+    }
+    if (!h_filterCoeffs48k_.empty()) {
+        freedBytes += h_filterCoeffs48k_.capacity() * sizeof(float);
+        h_filterCoeffs48k_.clear();
+        h_filterCoeffs48k_.shrink_to_fit();
+    }
+
+    // Quad-phase (linear) coefficients
+    if (!h_filterCoeffs44k_linear_.empty()) {
+        freedBytes += h_filterCoeffs44k_linear_.capacity() * sizeof(float);
+        h_filterCoeffs44k_linear_.clear();
+        h_filterCoeffs44k_linear_.shrink_to_fit();
+    }
+    if (!h_filterCoeffs48k_linear_.empty()) {
+        freedBytes += h_filterCoeffs48k_linear_.capacity() * sizeof(float);
+        h_filterCoeffs48k_linear_.clear();
+        h_filterCoeffs48k_linear_.shrink_to_fit();
+    }
+
+    // Multi-rate coefficients (8 configurations)
+    for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {
+        if (!h_filterCoeffsMulti_[i].empty()) {
+            freedBytes += h_filterCoeffsMulti_[i].capacity() * sizeof(float);
+            h_filterCoeffsMulti_[i].clear();
+            h_filterCoeffsMulti_[i].shrink_to_fit();
+        }
+    }
+
+    if (freedBytes > 0) {
+        std::cout << "  Released CPU coefficient memory: "
+                  << (freedBytes / (1024 * 1024)) << " MB ("
+                  << freedBytes << " bytes)" << std::endl;
+    }
 }
 
 }  // namespace ConvolutionEngine
