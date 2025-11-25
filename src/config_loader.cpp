@@ -160,6 +160,10 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)
                       << std::endl;
         }
+
+        // Clamp derived floating-point values after parsing (ensures sane bounds)
+        outConfig.headroomTarget = std::clamp(outConfig.headroomTarget, 0.01f, 1.0f);
+
         return true;
     } catch (const std::exception& e) {
         if (verbose) {

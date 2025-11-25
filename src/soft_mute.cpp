@@ -66,7 +66,6 @@ bool Controller::process(float* buffer, size_t frames) {
     for (size_t frame = 0; frame < frames; ++frame) {
         float gain;
         size_t pos = fadePosition_.load(std::memory_order_relaxed);
-
         size_t fadeSamples = fadeSamples_.load(std::memory_order_relaxed);
         if (pos >= fadeSamples) {
             // Fade complete

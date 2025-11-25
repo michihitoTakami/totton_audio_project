@@ -175,6 +175,7 @@ target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
     soft_mute
+    filter_headroom
     graceful_shutdown
     fallback_manager
     zeromq_interface
@@ -304,6 +305,20 @@ target_include_directories(soft_mute PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 target_compile_options(soft_mute PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+# Filter headroom helpers (CPU-only)
+add_library(filter_headroom STATIC
+    src/filter_headroom.cpp
+)
+target_include_directories(filter_headroom PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_link_libraries(filter_headroom PUBLIC
+    nlohmann_json::nlohmann_json
+)
+target_compile_options(filter_headroom PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
