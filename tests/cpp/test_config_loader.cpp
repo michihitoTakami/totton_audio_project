@@ -229,3 +229,157 @@ TEST_F(ConfigLoaderTest, LoadConfigWithInvalidPhaseTypeDefaultsToMinimum) {
     EXPECT_TRUE(result);
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
 }
+
+// ============================================================
+// Crossfeed settings tests
+// ============================================================
+
+TEST_F(ConfigLoaderTest, CrossfeedDefaultValues) {
+    AppConfig config;
+
+    EXPECT_FALSE(config.crossfeed.enabled);
+    EXPECT_EQ(config.crossfeed.headSize, "m");
+    EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedEnabled) {
+    writeConfig(R"({
+        "crossfeed": {
+            "enabled": true,
+            "headSize": "l",
+            "hrtfPath": "custom/hrtf/"
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.crossfeed.enabled);
+    EXPECT_EQ(config.crossfeed.headSize, "l");
+    EXPECT_EQ(config.crossfeed.hrtfPath, "custom/hrtf/");
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedDisabled) {
+    writeConfig(R"({
+        "crossfeed": {
+            "enabled": false,
+            "headSize": "s"
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(config.crossfeed.enabled);
+    EXPECT_EQ(config.crossfeed.headSize, "s");
+    // hrtfPath should keep default
+    EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithPartialCrossfeedKeepsDefaults) {
+    writeConfig(R"({
+        "crossfeed": {
+            "enabled": true
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.crossfeed.enabled);
+    // headSize and hrtfPath should keep defaults
+    EXPECT_EQ(config.crossfeed.headSize, "m");
+    EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithoutCrossfeedKeepsDefaults) {
+    writeConfig(R"({
+        "alsaDevice": "hw:Test"
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(config.crossfeed.enabled);
+    EXPECT_EQ(config.crossfeed.headSize, "m");
+    EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithAllHeadSizes) {
+    // Test all valid headSize values
+    const char* headSizes[] = {"s", "m", "l", "xl"};
+    for (const char* size : headSizes) {
+        std::string json = R"({"crossfeed": {"headSize": ")" + std::string(size) + R"("}})";
+        writeConfig(json);
+
+        AppConfig config;
+        bool result = loadAppConfig(testConfigPath, config, false);
+
+        EXPECT_TRUE(result) << "Failed for headSize: " << size;
+        EXPECT_EQ(config.crossfeed.headSize, size) << "Wrong headSize for: " << size;
+    }
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithInvalidHeadSizeDefaultsToMedium) {
+    // Test invalid headSize values - should fallback to "m"
+    const char* invalidSizes[] = {"xs", "xxl", "medium", "large", "", "123"};
+    for (const char* size : invalidSizes) {
+        std::string json = R"({"crossfeed": {"headSize": ")" + std::string(size) + R"("}})";
+        writeConfig(json);
+
+        AppConfig config;
+        bool result = loadAppConfig(testConfigPath, config, false);
+
+        EXPECT_TRUE(result) << "Failed for invalid headSize: " << size;
+        EXPECT_EQ(config.crossfeed.headSize, "m") << "Should default to 'm' for: " << size;
+    }
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedWrongTypes) {
+    // Test when crossfeed is not an object (should be ignored, keep defaults)
+    writeConfig(R"({"crossfeed": "not an object"})");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(config.crossfeed.enabled);
+    EXPECT_EQ(config.crossfeed.headSize, "m");
+    EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedArrayType) {
+    // Test when crossfeed is an array (should be ignored, keep defaults)
+    writeConfig(R"({"crossfeed": [1, 2, 3]})");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(config.crossfeed.enabled);
+    EXPECT_EQ(config.crossfeed.headSize, "m");
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedFieldsWrongTypes) {
+    // Test when crossfeed fields have wrong types (should keep defaults for those fields)
+    writeConfig(R"({
+        "crossfeed": {
+            "enabled": "not a bool",
+            "headSize": 123,
+            "hrtfPath": true
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    // All fields should keep defaults due to type mismatch
+    EXPECT_FALSE(config.crossfeed.enabled);
+    EXPECT_EQ(config.crossfeed.headSize, "m");
+    EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
+}

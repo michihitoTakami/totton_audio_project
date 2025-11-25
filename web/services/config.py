@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ..constants import CONFIG_PATH, EQ_PROFILES_DIR
-from ..models import Settings
+from ..models import CrossfeedSettings, Settings
 
 
 def _build_profile_path(profile_name: str | None) -> str | None:
@@ -41,14 +41,28 @@ def load_config() -> Settings:
             if eq_profile is None and eq_profile_path:
                 eq_profile = Path(eq_profile_path).stem
 
+            # Crossfeed settings (ensure crossfeed is a dict)
+            crossfeed_data = data.get("crossfeed", {})
+            if not isinstance(crossfeed_data, dict):
+                crossfeed_data = {}
+            crossfeed = CrossfeedSettings(
+                enabled=crossfeed_data.get("enabled", False),
+                head_size=crossfeed_data.get("headSize", "m"),
+                hrtf_path=crossfeed_data.get("hrtfPath", "data/crossfeed/hrtf/"),
+            )
+
             return Settings(
                 alsa_device=data.get("alsaDevice", "default"),
                 upsample_ratio=data.get("upsampleRatio", 8),
                 eq_enabled=bool(eq_enabled and eq_profile_path),
                 eq_profile=eq_profile,
                 eq_profile_path=eq_profile_path,
+                input_rate=data.get("inputRate", 44100),
+                output_rate=data.get("outputRate", 352800),
+                crossfeed=crossfeed,
             )
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, ValueError):
+            # ValueError catches Pydantic validation errors (e.g., invalid head_size)
             pass
     return Settings()
 
@@ -98,6 +112,13 @@ def save_config(settings: Settings) -> bool:
         existing.pop("inputRate", None)
         existing.pop("outputRate", None)
         existing.pop("inputSampleRate", None)
+
+        # Crossfeed settings (camelCase for JSON)
+        existing["crossfeed"] = {
+            "enabled": settings.crossfeed.enabled,
+            "headSize": settings.crossfeed.head_size,
+            "hrtfPath": settings.crossfeed.hrtf_path,
+        }
 
         with open(CONFIG_PATH, "w") as f:
             json.dump(existing, f, indent=2)

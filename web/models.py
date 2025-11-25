@@ -9,6 +9,25 @@ from pydantic import BaseModel, Field
 # Core Settings Models
 # ============================================================================
 
+# HeadSize type for crossfeed settings (validated by Pydantic)
+HeadSize = Literal["s", "m", "l", "xl"]
+
+
+class CrossfeedSettings(BaseModel):
+    """Crossfeed settings model."""
+
+    enabled: bool = False
+    head_size: HeadSize = "m"
+    hrtf_path: str = "data/crossfeed/hrtf/"
+
+
+class CrossfeedSettingsUpdate(BaseModel):
+    """Crossfeed settings update model (all fields optional)."""
+
+    enabled: Optional[bool] = None
+    head_size: Optional[HeadSize] = None
+    hrtf_path: Optional[str] = None
+
 
 class Settings(BaseModel):
     """Application settings model."""
@@ -18,6 +37,9 @@ class Settings(BaseModel):
     eq_enabled: bool = False
     eq_profile: Optional[str] = None
     eq_profile_path: Optional[str] = None
+    input_rate: int = 44100
+    output_rate: int = 352800
+    crossfeed: CrossfeedSettings = Field(default_factory=CrossfeedSettings)
 
 
 class SettingsUpdate(BaseModel):
@@ -28,6 +50,9 @@ class SettingsUpdate(BaseModel):
     eq_enabled: Optional[bool] = None
     eq_profile: Optional[str] = None
     eq_profile_path: Optional[str] = None
+    input_rate: Optional[int] = None
+    output_rate: Optional[int] = None
+    crossfeed: Optional[CrossfeedSettingsUpdate] = None
 
 
 # ============================================================================
