@@ -19,6 +19,7 @@ struct AppConfig {
     int upsampleRatio = 16;
     int blockSize = 4096;
     float gain = 1.0f;
+    float headroomTarget = 0.97f;  // Target peak level after automatic headroom scaling
     std::string filterPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 
@@ -42,13 +43,13 @@ struct AppConfig {
 
     // Fallback settings (Issue #139)
     struct FallbackConfig {
-        bool enabled = true;              // Enable dynamic fallback
-        float gpuThreshold = 80.0f;       // GPU utilization threshold (%)
-        int gpuThresholdCount = 3;        // Consecutive threshold exceedances to trigger
-        float gpuRecoveryThreshold = 70.0f; // Recovery threshold (threshold - 10%)
-        int gpuRecoveryCount = 5;         // Consecutive recovery measurements to return
-        bool xrunTriggersFallback = true; // Whether XRUN triggers immediate fallback
-        int monitorIntervalMs = 100;      // GPU monitoring interval (milliseconds)
+        bool enabled = true;                 // Enable dynamic fallback
+        float gpuThreshold = 80.0f;          // GPU utilization threshold (%)
+        int gpuThresholdCount = 3;           // Consecutive threshold exceedances to trigger
+        float gpuRecoveryThreshold = 70.0f;  // Recovery threshold (threshold - 10%)
+        int gpuRecoveryCount = 5;            // Consecutive recovery measurements to return
+        bool xrunTriggersFallback = true;    // Whether XRUN triggers immediate fallback
+        int monitorIntervalMs = 100;         // GPU monitoring interval (milliseconds)
     } fallback;
 };
 

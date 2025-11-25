@@ -7,6 +7,7 @@
 #include "eq_parser.h"
 #include "eq_to_fir.h"
 #include "fallback_manager.h"
+#include "filter_headroom.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
 #include "soft_mute.h"
@@ -20,12 +21,12 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
-#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <mutex>
@@ -63,6 +64,11 @@ constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)
 static AppConfig g_config;
+static std::atomic<float> g_output_gain{1.0f};
+static std::atomic<float> g_headroom_gain{1.0f};
+static FilterHeadroomCache g_headroom_cache;
+static ConvolutionEngine::RateFamily g_active_rate_family = ConvolutionEngine::RateFamily::RATE_44K;
+static PhaseType g_active_phase_type = PhaseType::Minimum;
 
 // ========== Signal Handling (Async-Signal-Safe) ==========
 // These flags are set by the signal handler and polled by the main loop.
@@ -93,8 +99,7 @@ static inline void update_peak_level(std::atomic<float>& peak, float candidate) 
     float current = peak.load(std::memory_order_relaxed);
     while (absValue > current &&
            !peak.compare_exchange_weak(current, absValue, std::memory_order_relaxed,
-                                       std::memory_order_relaxed)) {
-    }
+                                       std::memory_order_relaxed)) {}
 }
 
 static inline float compute_stereo_peak(const float* left, const float* right, size_t frames) {
@@ -143,54 +148,57 @@ static SoftMute::Controller* g_soft_mute = nullptr;
 // we still wait for fade-out completion before manipulating filters to avoid artifacts.
 static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc) {
     using namespace DaemonConstants;
-    
+
     if (!g_soft_mute) {
         // If soft mute not initialized, perform switch without mute
         filterSwitchFunc();
         return;
     }
-    
+
     // Save current fade duration for restoration
     int originalFadeDuration = g_soft_mute->getFadeDuration();
     int outputSampleRate = g_soft_mute->getSampleRate();
-    
+
     // Update fade duration for filter switching
     // Note: This is called from command thread, but audio thread may be processing.
     // The fade calculation will use the new duration from the next audio frame.
     g_soft_mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
     g_soft_mute->setSampleRate(outputSampleRate);
-    
-    std::cout << "[Filter Switch] Starting fade-out (" << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
+
+    std::cout << "[Filter Switch] Starting fade-out (" << (FILTER_SWITCH_FADE_MS / 1000.0)
+              << "s)..." << std::endl;
     g_soft_mute->startFadeOut();
-    
+
     // Wait for fade-out to complete (approximately 1.5 seconds)
     // Polling is necessary because fade is processed in audio thread
     auto fade_start = std::chrono::steady_clock::now();
     const auto timeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS);
-    while (g_soft_mute->isTransitioning() && 
+    while (g_soft_mute->isTransitioning() &&
            g_soft_mute->getState() == SoftMute::MuteState::FADING_OUT) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         auto elapsed = std::chrono::steady_clock::now() - fade_start;
         if (elapsed > timeout) {
-            std::cerr << "[Filter Switch] Warning: Fade-out timeout (" << FILTER_SWITCH_FADE_TIMEOUT_MS
-                      << "ms), proceeding with switch" << std::endl;
+            std::cerr << "[Filter Switch] Warning: Fade-out timeout ("
+                      << FILTER_SWITCH_FADE_TIMEOUT_MS << "ms), proceeding with switch"
+                      << std::endl;
             break;
         }
     }
-    
+
     // Ensure we're fully muted before switching
     if (g_soft_mute->getState() != SoftMute::MuteState::MUTED) {
         g_soft_mute->setMuted();
     }
-    
+
     // Perform filter switch
     bool switch_success = filterSwitchFunc();
-    
+
     if (switch_success) {
         // Start fade-in after filter switch
-        std::cout << "[Filter Switch] Starting fade-in (" << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
+        std::cout << "[Filter Switch] Starting fade-in (" << (FILTER_SWITCH_FADE_MS / 1000.0)
+                  << "s)..." << std::endl;
         g_soft_mute->startFadeIn();
-        
+
         // Store original fade duration for reset in audio thread
         // The audio thread will reset fade duration when fade-in completes
         // (see alsa_output_thread() around line 1241)
@@ -373,12 +381,17 @@ static nlohmann::json collect_runtime_stats_json() {
     stats["eq_enabled"] = g_config.eqEnabled;
     stats["phase_type"] = phaseTypeStr;
     stats["last_updated"] = epoch;
+    nlohmann::json gainJson;
+    gainJson["user"] = g_config.gain;
+    gainJson["headroom"] = g_headroom_gain.load(std::memory_order_relaxed);
+    gainJson["effective"] = g_output_gain.load(std::memory_order_relaxed);
+    gainJson["target_peak"] = g_headroom_cache.getTargetPeak();
+    stats["gain"] = gainJson;
 
     nlohmann::json peaks;
     peaks["input"] = make_peak_json(g_peak_input_level.load(std::memory_order_relaxed));
     peaks["upsampler"] = make_peak_json(g_peak_upsampler_level.load(std::memory_order_relaxed));
-    peaks["post_mix"] =
-        make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
+    peaks["post_mix"] = make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
     peaks["post_gain"] = make_peak_json(g_peak_post_gain_level.load(std::memory_order_relaxed));
     stats["peaks"] = peaks;
 
@@ -412,6 +425,7 @@ static void print_config_summary(const AppConfig& cfg) {
     LOG_INFO("  Upsample ratio: {}", cfg.upsampleRatio);
     LOG_INFO("  Block size:     {}", cfg.blockSize);
     LOG_INFO("  Gain:           {}", cfg.gain);
+    LOG_INFO("  Headroom tgt:   {}", cfg.headroomTarget);
     LOG_INFO("  Filter path:    {}", cfg.filterPath);
     LOG_INFO("  EQ enabled:     {}", (cfg.eqEnabled ? "yes" : "no"));
     if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
@@ -419,6 +433,53 @@ static void print_config_summary(const AppConfig& cfg) {
     }
     // Update metrics with audio configuration
     gpu_upsampler::metrics::setAudioConfig(g_input_sample_rate, outputRate, cfg.upsampleRatio);
+}
+
+static std::string resolve_filter_path_for(ConvolutionEngine::RateFamily family, PhaseType phase) {
+    if (phase == PhaseType::Linear) {
+        return (family == ConvolutionEngine::RateFamily::RATE_44K) ? g_config.filterPath44kLinear
+                                                                   : g_config.filterPath48kLinear;
+    }
+    return (family == ConvolutionEngine::RateFamily::RATE_44K) ? g_config.filterPath44kMin
+                                                               : g_config.filterPath48kMin;
+}
+
+static std::string current_filter_path() {
+    if (g_config.quadPhaseEnabled) {
+        return resolve_filter_path_for(g_active_rate_family, g_active_phase_type);
+    }
+    return g_config.filterPath;
+}
+
+static void update_effective_gain(float headroomGain, const std::string& reason) {
+    g_headroom_gain.store(headroomGain, std::memory_order_relaxed);
+    float effective = g_config.gain * headroomGain;
+    g_output_gain.store(effective, std::memory_order_relaxed);
+    LOG_INFO("Gain [{}]: user {:.4f} * headroom {:.4f} = {:.4f}", reason, g_config.gain,
+             headroomGain, effective);
+}
+
+static void apply_headroom_for_path(const std::string& path, const std::string& reason) {
+    if (path.empty()) {
+        LOG_WARN("Headroom [{}]: empty filter path, falling back to unity gain", reason);
+        update_effective_gain(1.0f, reason);
+        return;
+    }
+
+    FilterHeadroomInfo info = g_headroom_cache.get(path);
+    update_effective_gain(info.safeGain, reason);
+
+    if (!info.metadataFound) {
+        LOG_WARN("Headroom [{}]: metadata missing for {} (using safe gain {:.4f})", reason, path,
+                 info.safeGain);
+    } else {
+        LOG_INFO("Headroom [{}]: {} max_coef={:.6f} safeGain={:.4f} target={:.2f}", reason, path,
+                 info.maxCoefficient, info.safeGain, info.targetPeak);
+    }
+}
+
+static void refresh_current_headroom(const std::string& reason) {
+    apply_headroom_for_path(current_filter_path(), reason);
 }
 
 static void reset_runtime_state() {
@@ -466,6 +527,9 @@ static void load_runtime_config() {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
     }
     print_config_summary(g_config);
+
+    g_headroom_cache.setTargetPeak(g_config.headroomTarget);
+    update_effective_gain(1.0f, "config load (pending filter headroom)");
 }
 
 // ========== ZeroMQ Command Listener ==========
@@ -757,12 +821,15 @@ static void zeromq_listener_thread() {
                         resp["data"]["enabled"] = enabled;
                         resp["data"]["initialized"] = initialized;
                         if (g_hrtf_processor != nullptr) {
-                            CrossfeedEngine::HeadSize currentSize = g_hrtf_processor->getCurrentHeadSize();
-                            resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(currentSize);
+                            CrossfeedEngine::HeadSize currentSize =
+                                g_hrtf_processor->getCurrentHeadSize();
+                            resp["data"]["head_size"] =
+                                CrossfeedEngine::headSizeToString(currentSize);
                         } else {
                             resp["data"]["head_size"] = nullptr;
                         }
-                        // headphone field is omitted until HRTFProcessor exposes actual HRTF metadata (#233)
+                        // headphone field is omitted until HRTFProcessor exposes actual HRTF
+                        // metadata (#233)
                         response = resp.dump();
                     } else if (cmdType == "CROSSFEED_SET_SIZE") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -788,17 +855,19 @@ static void zeromq_listener_thread() {
                                 resp["message"] = "Missing head_size parameter";
                                 response = resp.dump();
                             } else {
-                                CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
+                                CrossfeedEngine::HeadSize targetSize =
+                                    CrossfeedEngine::stringToHeadSize(sizeStr);
                                 bool switch_success = false;
                                 applySoftMuteForFilterSwitch([&]() {
                                     switch_success = g_hrtf_processor->switchHeadSize(targetSize);
                                     return switch_success;
                                 });
-                                
+
                                 if (switch_success) {
                                     nlohmann::json resp;
                                     resp["status"] = "ok";
-                                    resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
+                                    resp["data"]["head_size"] =
+                                        CrossfeedEngine::headSizeToString(targetSize);
                                     response = resp.dump();
                                 } else {
                                     nlohmann::json resp;
@@ -855,6 +924,8 @@ static void zeromq_listener_thread() {
                         applySoftMuteForFilterSwitch([&]() {
                             switch_success = g_upsampler->switchPhaseType(newPhase);
                             if (switch_success) {
+                                g_active_phase_type = newPhase;
+                                refresh_current_headroom("phase switch");
                                 // Re-apply EQ if enabled (switchPhaseType clears eqApplied_)
                                 if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
                                     EQ::EqProfile eqProfile;
@@ -865,7 +936,8 @@ static void zeromq_listener_thread() {
                                             static_cast<double>(g_input_sample_rate) *
                                             g_config.upsampleRatio;
                                         auto eqMagnitude = EQ::computeEqMagnitudeForFft(
-                                            filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+                                            filterFftSize, fullFftSize, outputSampleRate,
+                                            eqProfile);
                                         if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
                                             std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
                                                       << " phase" << std::endl;
@@ -874,14 +946,15 @@ static void zeromq_listener_thread() {
                                                       << std::endl;
                                         }
                                     } else {
-                                        std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                                                  << g_config.eqProfilePath << std::endl;
+                                        std::cerr
+                                            << "ZeroMQ: Warning - Failed to parse EQ profile: "
+                                            << g_config.eqProfilePath << std::endl;
                                     }
                                 }
                             }
                             return switch_success;
                         });
-                        
+
                         if (switch_success) {
                             response = "OK:Phase type set to " + phaseStr;
                         } else {
@@ -1058,8 +1131,8 @@ static void on_input_process(void* userdata) {
 
             // Process right channel
             right_generated = g_upsampler->processStreamBlock(
-                right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
-                g_stream_accumulated_right);
+                right.data(), n_frames, output_right, g_upsampler->streamRight_,
+                g_stream_input_right, g_stream_accumulated_right);
         }
 
         // Only store output if both channels generated output
@@ -1086,11 +1159,10 @@ static void on_input_process(void* userdata) {
                         g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
 
                     if (cf_generated) {
-                        size_t cf_frames =
-                            std::min(cf_output_left.size(), cf_output_right.size());
+                        size_t cf_frames = std::min(cf_output_left.size(), cf_output_right.size());
                         if (cf_frames > 0) {
-                            float cfPeak = compute_stereo_peak(
-                                cf_output_left.data(), cf_output_right.data(), cf_frames);
+                            float cfPeak = compute_stereo_peak(cf_output_left.data(),
+                                                               cf_output_right.data(), cf_frames);
                             update_peak_level(g_peak_post_crossfeed_level, cfPeak);
                         }
                         // Store crossfeed output for ALSA thread consumption
@@ -1113,8 +1185,8 @@ static void on_input_process(void* userdata) {
                                                  output_right.end());
                     g_buffer_cv.notify_one();
                     if (frames_generated > 0) {
-                        float postPeak = compute_stereo_peak(output_left.data(), output_right.data(),
-                                                             frames_generated);
+                        float postPeak = compute_stereo_peak(output_left.data(),
+                                                             output_right.data(), frames_generated);
                         update_peak_level(g_peak_post_crossfeed_level, postPeak);
                     }
                 }
@@ -1314,7 +1386,7 @@ void alsa_output_thread() {
         size_t available = g_output_buffer_left.size() - g_output_read_pos;
         if (available >= period_size) {
             // Step 1: Interleave L/R channels into float buffer with gain applied
-            const float gain = g_config.gain;
+            const float gain = g_output_gain.load(std::memory_order_relaxed);
             AudioUtils::interleaveStereoWithGain(g_output_buffer_left.data() + g_output_read_pos,
                                                  g_output_buffer_right.data() + g_output_read_pos,
                                                  float_buffer.data(), period_size, gain);
@@ -1322,12 +1394,12 @@ void alsa_output_thread() {
             // Step 2: Apply soft mute for glitch-free shutdown/transitions
             if (g_soft_mute) {
                 g_soft_mute->process(float_buffer.data(), period_size);
-                
+
                 // Reset fade duration to default after filter switch fade-in completes
                 // Check if we just completed a fade-in from filter switching
                 // (fade duration > default indicates filter switch was in progress)
                 using namespace DaemonConstants;
-                if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING && 
+                if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING &&
                     g_soft_mute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
                     g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
                 }
@@ -1569,6 +1641,7 @@ int main(int argc, char* argv[]) {
         g_upsampler = new ConvolutionEngine::GPUUpsampler();
 
         bool initSuccess = false;
+        ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
         if (g_config.quadPhaseEnabled) {
             // Quad-phase mode: load all 4 filter configurations
             std::cout << "Quad-phase mode enabled" << std::endl;
@@ -1589,8 +1662,7 @@ int main(int argc, char* argv[]) {
             }
 
             // Determine initial rate family from inputSampleRate
-            ConvolutionEngine::RateFamily initialFamily =
-                ConvolutionEngine::detectRateFamily(g_input_sample_rate);
+            initialFamily = ConvolutionEngine::detectRateFamily(g_input_sample_rate);
             if (initialFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
                 initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
             }
@@ -1629,6 +1701,18 @@ int main(int argc, char* argv[]) {
 
         std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                   << g_config.blockSize << " samples/block)" << std::endl;
+
+        if (g_config.quadPhaseEnabled) {
+            g_active_rate_family = initialFamily;
+        } else {
+            ConvolutionEngine::RateFamily detected =
+                ConvolutionEngine::detectRateFamily(g_input_sample_rate);
+            g_active_rate_family = (detected == ConvolutionEngine::RateFamily::RATE_UNKNOWN)
+                                       ? ConvolutionEngine::RateFamily::RATE_44K
+                                       : detected;
+        }
+        g_active_phase_type = g_config.phaseType;
+        refresh_current_headroom("initial filter load");
 
         // Set input sample rate for correct output rate calculation (non-quad-phase mode)
         if (!g_config.quadPhaseEnabled) {
@@ -1774,8 +1858,8 @@ int main(int argc, char* argv[]) {
         using namespace DaemonConstants;
         int outputSampleRate = g_input_sample_rate * g_config.upsampleRatio;
         g_soft_mute = new SoftMute::Controller(DEFAULT_SOFT_MUTE_FADE_MS, outputSampleRate);
-        std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at " << outputSampleRate << "Hz)"
-                  << std::endl;
+        std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
+                  << outputSampleRate << "Hz)" << std::endl;
 
         // Initialize fallback manager (Issue #139)
         if (g_config.fallback.enabled) {
@@ -1799,9 +1883,10 @@ int main(int argc, char* argv[]) {
             };
 
             if (g_fallback_manager->initialize(fbConfig, stateCallback)) {
-                std::cout << "Fallback manager initialized (GPU threshold: " << fbConfig.gpuThreshold
-                          << "%, XRUN fallback: " << (fbConfig.xrunTriggersFallback ? "enabled" : "disabled")
-                          << ")" << std::endl;
+                std::cout << "Fallback manager initialized (GPU threshold: "
+                          << fbConfig.gpuThreshold << "%, XRUN fallback: "
+                          << (fbConfig.xrunTriggersFallback ? "enabled" : "disabled") << ")"
+                          << std::endl;
             } else {
                 std::cerr << "Warning: Failed to initialize fallback manager" << std::endl;
                 delete g_fallback_manager;
