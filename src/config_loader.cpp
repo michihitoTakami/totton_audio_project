@@ -1,5 +1,6 @@
 #include "config_loader.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -116,6 +117,18 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                     outConfig.fallback.xrunTriggersFallback = fb["xrunTriggersFallback"].get<bool>();
                 if (fb.contains("monitorIntervalMs") && fb["monitorIntervalMs"].is_number_integer())
                     outConfig.fallback.monitorIntervalMs = fb["monitorIntervalMs"].get<int>();
+
+                // Validate fallback configuration values
+                // GPU threshold: clamp to 0-100%
+                outConfig.fallback.gpuThreshold = std::clamp(outConfig.fallback.gpuThreshold, 0.0f, 100.0f);
+                // Recovery threshold: clamp to 0-threshold (must be <= threshold for hysteresis)
+                outConfig.fallback.gpuRecoveryThreshold =
+                    std::clamp(outConfig.fallback.gpuRecoveryThreshold, 0.0f, outConfig.fallback.gpuThreshold);
+                // Count values: ensure at least 1
+                outConfig.fallback.gpuThresholdCount = std::max(1, outConfig.fallback.gpuThresholdCount);
+                outConfig.fallback.gpuRecoveryCount = std::max(1, outConfig.fallback.gpuRecoveryCount);
+                // Monitor interval: ensure at least 10ms (smaller values cause high CPU load)
+                outConfig.fallback.monitorIntervalMs = std::max(10, outConfig.fallback.monitorIntervalMs);
             } catch (const std::exception& e) {
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {

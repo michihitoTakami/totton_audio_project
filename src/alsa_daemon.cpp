@@ -932,12 +932,14 @@ static void on_input_process(void* userdata) {
         bool right_generated = false;
 
         if (use_fallback) {
-            // Fallback mode: bypass GPU processing, output input directly (with upsampling ratio)
-            // Simple zero-padding upsampling (not ideal, but safe fallback)
+            // Fallback mode: bypass GPU processing to reduce load
+            // Uses simple zero-padding upsampling (repeats input samples at upsampled positions)
+            // Note: This provides basic functionality but lower quality than GPU FIR filtering.
+            // Quality trade-off is acceptable for stability during GPU overload/XRUN situations.
             size_t output_frames = n_frames * g_config.upsampleRatio;
             output_left.resize(output_frames, 0.0f);
             output_right.resize(output_frames, 0.0f);
-            // Copy input samples at upsampled positions
+            // Copy input samples at upsampled positions (zero-padding between samples)
             for (size_t i = 0; i < n_frames; ++i) {
                 output_left[i * g_config.upsampleRatio] = left[i];
                 output_right[i * g_config.upsampleRatio] = right[i];
