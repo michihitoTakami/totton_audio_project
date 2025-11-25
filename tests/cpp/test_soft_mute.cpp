@@ -269,11 +269,11 @@ TEST_F(SoftMuteTest, IsSilent_WhenPlaying) {
 TEST_F(SoftMuteTest, FilterSwitch_FadeDuration_CanBeChanged) {
     Controller ctrl(50, 44100);  // Initial: 50ms
     EXPECT_EQ(ctrl.getFadeDuration(), 50);
-    
+
     // Change to filter switch duration (1500ms)
     ctrl.setFadeDuration(1500);
     EXPECT_EQ(ctrl.getFadeDuration(), 1500);
-    
+
     // Reset to default
     ctrl.setFadeDuration(50);
     EXPECT_EQ(ctrl.getFadeDuration(), 50);
@@ -282,21 +282,21 @@ TEST_F(SoftMuteTest, FilterSwitch_FadeDuration_CanBeChanged) {
 TEST_F(SoftMuteTest, FilterSwitch_FadeOut_1500ms_Completes) {
     Controller ctrl(1500, 44100);  // 1500ms fade for filter switching
     ctrl.startFadeOut();
-    
+
     EXPECT_EQ(ctrl.getState(), MuteState::FADING_OUT);
-    
+
     // Process enough samples to complete fade-out
     // 1500ms at 44100Hz = 66150 samples
     // Process in chunks to simulate real-time processing
     auto buffer = createTestBuffer(1024);
     size_t totalProcessed = 0;
     const size_t targetSamples = 70000;  // Slightly more than needed
-    
+
     while (totalProcessed < targetSamples && ctrl.isTransitioning()) {
         ctrl.process(buffer.data(), 1024);
         totalProcessed += 1024;
     }
-    
+
     EXPECT_EQ(ctrl.getState(), MuteState::MUTED);
     EXPECT_FLOAT_EQ(ctrl.getCurrentGain(), 0.0f);
 }
@@ -305,26 +305,26 @@ TEST_F(SoftMuteTest, FilterSwitch_FadeIn_1500ms_Completes) {
     Controller ctrl(1500, 44100);  // 1500ms fade for filter switching
     ctrl.setMuted();
     ctrl.startFadeIn();
-    
+
     EXPECT_EQ(ctrl.getState(), MuteState::FADING_IN);
-    
+
     // Process enough samples to complete fade-in
     auto buffer = createTestBuffer(1024);
     size_t totalProcessed = 0;
     const size_t targetSamples = 70000;  // Slightly more than needed
-    
+
     while (totalProcessed < targetSamples && ctrl.isTransitioning()) {
         ctrl.process(buffer.data(), 1024);
         totalProcessed += 1024;
     }
-    
+
     EXPECT_EQ(ctrl.getState(), MuteState::PLAYING);
     EXPECT_FLOAT_EQ(ctrl.getCurrentGain(), 1.0f);
 }
 
 TEST_F(SoftMuteTest, FilterSwitch_CompleteCycle_FadeOutSwitchFadeIn) {
     Controller ctrl(1500, 44100);  // 1500ms fade for filter switching
-    
+
     // Step 1: Fade-out
     ctrl.startFadeOut();
     auto buffer = createTestBuffer(1024);
@@ -334,10 +334,10 @@ TEST_F(SoftMuteTest, FilterSwitch_CompleteCycle_FadeOutSwitchFadeIn) {
         processed += 1024;
     }
     EXPECT_EQ(ctrl.getState(), MuteState::MUTED);
-    
+
     // Step 2: Filter switch would happen here (simulated by staying muted)
     // In real implementation, filter switch happens between fade-out and fade-in
-    
+
     // Step 3: Fade-in
     ctrl.startFadeIn();
     processed = 0;
@@ -351,11 +351,11 @@ TEST_F(SoftMuteTest, FilterSwitch_CompleteCycle_FadeOutSwitchFadeIn) {
 
 TEST_F(SoftMuteTest, FilterSwitch_FadeDuration_ResetAfterCompletion) {
     Controller ctrl(50, 44100);  // Default: 50ms
-    
+
     // Change to filter switch duration
     ctrl.setFadeDuration(1500);
     EXPECT_EQ(ctrl.getFadeDuration(), 1500);
-    
+
     // Perform fade-out and fade-in
     ctrl.startFadeOut();
     auto buffer = createTestBuffer(1024);
@@ -364,18 +364,18 @@ TEST_F(SoftMuteTest, FilterSwitch_FadeDuration_ResetAfterCompletion) {
         ctrl.process(buffer.data(), 1024);
         processed += 1024;
     }
-    
+
     ctrl.startFadeIn();
     processed = 0;
     while (ctrl.isTransitioning() && processed < 70000) {
         ctrl.process(buffer.data(), 1024);
         processed += 1024;
     }
-    
+
     // After completion, fade duration should still be 1500ms
     // (reset happens in audio processing thread, not in controller)
     EXPECT_EQ(ctrl.getFadeDuration(), 1500);
-    
+
     // Manually reset to default (simulating audio thread behavior)
     ctrl.setFadeDuration(50);
     EXPECT_EQ(ctrl.getFadeDuration(), 50);
@@ -383,15 +383,15 @@ TEST_F(SoftMuteTest, FilterSwitch_FadeDuration_ResetAfterCompletion) {
 
 TEST_F(SoftMuteTest, FilterSwitch_SampleRate_UpdateDuringTransition) {
     Controller ctrl(1500, 44100);  // 1500ms fade at 44.1kHz
-    
+
     // Start fade-out
     ctrl.startFadeOut();
     EXPECT_EQ(ctrl.getSampleRate(), 44100);
-    
+
     // Update sample rate (simulating output rate change during filter switch)
     ctrl.setSampleRate(48000);
     EXPECT_EQ(ctrl.getSampleRate(), 48000);
-    
+
     // Fade should continue with new sample rate
     EXPECT_TRUE(ctrl.isTransitioning());
 }
