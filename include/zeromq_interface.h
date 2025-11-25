@@ -27,6 +27,7 @@ enum class CommandType {
     CROSSFEED_ENABLE,        // Enable crossfeed processing
     CROSSFEED_DISABLE,       // Disable crossfeed processing
     CROSSFEED_SET_COMBINED,  // Set combined filter (4ch x 2 rate families, Base64 encoded)
+    CROSSFEED_SET_SIZE,      // Set head size (xs/s/m/l/xl)
     CROSSFEED_GET_STATUS     // Get crossfeed status (enabled, head_size, headphone)
 };
 
@@ -146,6 +147,8 @@ class ZMQClient {
     CommandResult crossfeedSetCombined(const std::string& rateFamily, const std::string& combinedLL,
                                        const std::string& combinedLR, const std::string& combinedRL,
                                        const std::string& combinedRR);
+    // Set head size (xs/s/m/l/xl)
+    CommandResult crossfeedSetSize(const std::string& headSize);
     CommandResult crossfeedGetStatus();
 
     // Subscribe to status updates (async)

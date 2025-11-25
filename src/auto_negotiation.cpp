@@ -134,10 +134,11 @@ NegotiatedConfig negotiate(int inputRate, const DacCapability::Capability& dacCa
     }
 
     // Validate that the ratio is supported by the GPU engine
-    // Only {2, 4, 8, 16} are valid (corresponding to MULTI_RATE_CONFIGS)
-    if (ratio != 2 && ratio != 4 && ratio != 8 && ratio != 16) {
+    // Valid ratios: {1, 2, 4, 8, 16} (corresponding to MULTI_RATE_CONFIGS)
+    // ratio 1 = bypass mode (input already at output rate, no upsampling needed)
+    if (ratio != 1 && ratio != 2 && ratio != 4 && ratio != 8 && ratio != 16) {
         config.errorMessage = "Unsupported input rate: " + std::to_string(inputRate) +
-                              " Hz (ratio " + std::to_string(ratio) + " not in {2, 4, 8, 16})";
+                              " Hz (ratio " + std::to_string(ratio) + " not in {1, 2, 4, 8, 16})";
         return config;
     }
 

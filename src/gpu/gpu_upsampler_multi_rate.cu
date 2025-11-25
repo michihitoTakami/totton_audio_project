@@ -271,15 +271,28 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     std::cout << "  Initial Input Rate: " << initialInputRate << " Hz" << std::endl;
     std::cout << "  Initial Upsample Ratio: " << upsampleRatio_ << "x" << std::endl;
 
-    // Load all 8 filter coefficient files
+    // Load filter coefficient files (skip 1x bypass configs - use Dirac delta)
     int loadedCount = 0;
     int maxTaps = 0;
 
     for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {
         const auto& config = MULTI_RATE_CONFIGS[i];
+        std::string familyStr = (config.family == RateFamily::RATE_44K) ? "44k" : "48k";
+
+        // For 1x bypass mode: generate Dirac delta (passthrough filter)
+        // This allows EQ to still be applied via convolution
+        if (config.ratio == 1) {
+            // Use a minimal Dirac delta - will be zero-padded to maxTaps later
+            // Single impulse at t=0 passes signal through unchanged
+            h_filterCoeffsMulti_[i].resize(1);
+            h_filterCoeffsMulti_[i][0] = 1.0f;  // Unity gain impulse
+            std::cout << "  Generated " << familyStr << "_1x: Dirac delta (passthrough for EQ)"
+                      << std::endl;
+            ++loadedCount;
+            continue;
+        }
 
         // Construct filename: e.g., filter_44k_16x_1024_min_phase.bin
-        std::string familyStr = (config.family == RateFamily::RATE_44K) ? "44k" : "48k";
         std::string filename = coefficientDir + "/filter_" + familyStr + "_" +
                                std::to_string(config.ratio) + "x_";
 

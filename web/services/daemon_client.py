@@ -416,6 +416,26 @@ class DaemonClient:
         """
         return self.send_json_command_v2("CROSSFEED_GET_STATUS")
 
+    def crossfeed_set_size(self, head_size: str) -> DaemonResponse:
+        """
+        Set crossfeed head size.
+
+        Args:
+            head_size: Head size to set ('xs', 's', 'm', 'l', or 'xl')
+
+        Returns:
+            DaemonResponse with success/data or error details.
+        """
+        if head_size.lower() not in ("xs", "s", "m", "l", "xl"):
+            error = DaemonError(
+                error_code=ErrorCode.IPC_INVALID_PARAMS.value,
+                message=f"Invalid head size: {head_size}",
+            )
+            return DaemonResponse(success=False, error=error)
+
+        params = {"head_size": head_size.lower()}
+        return self.send_json_command_v2("CROSSFEED_SET_SIZE", params)
+
 
 def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:
     """
