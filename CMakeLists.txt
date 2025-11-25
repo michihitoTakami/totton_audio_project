@@ -525,6 +525,20 @@ target_include_directories(graceful_shutdown_tests PRIVATE
 )
 gtest_discover_tests(graceful_shutdown_tests)
 
+# Fallback Manager tests (CPU-only, Issue #139)
+add_executable(fallback_manager_tests
+    tests/cpp/test_fallback_manager.cpp
+)
+target_link_libraries(fallback_manager_tests
+    GTest::gtest_main
+    fallback_manager
+    logging
+)
+target_include_directories(fallback_manager_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(fallback_manager_tests)
+
 # Audio common utilities tests (AudioRingBuffer, AudioUtils)
 add_executable(audio_common_tests
     tests/cpp/test_audio_common.cpp
