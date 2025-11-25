@@ -67,7 +67,8 @@ class TestFilterConfig:
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
-        assert config.max_coefficient_limit == 1.0  # New: always 1.0 for unified volume
+        # max_coefficient_limit は廃止（#259）- ピーク制限はCUDA側で行う
+        assert config.max_coefficient_limit is None
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
@@ -391,54 +392,58 @@ class TestValidateTapCount:
 
 
 class TestNormalizeCoefficients:
-    """Tests for normalize_coefficients function."""
+    """Tests for normalize_coefficients function.
 
-    def test_normalizes_dc_gain_to_one(self):
-        """max_coef should be scaled to 1.0 (takes priority over DC gain target)."""
+    #259で変更: ピーク制限は廃止され、DCゲイン正規化のみ行う。
+    max_coef > 1.0 の場合はCUDA側で補正する。
+    """
+
+    def test_normalizes_dc_gain_to_target(self):
+        """DCゲインが目標値に正規化されること（ピーク制限なし）"""
         from generate_filter import normalize_coefficients
 
         # Create test coefficients with known DC gain
         h = np.array([0.5, 1.0, 0.5])  # DC gain = 2.0
-        h_norm, info = normalize_coefficients(h)
+        h_norm, info = normalize_coefficients(h, target_dc_gain=1.0)
 
-        # New logic: max_coef=1.0 takes priority, so DC gain becomes 2.0
-        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
+        # DCゲインが目標値（1.0）に正規化される
+        assert np.isclose(np.sum(h_norm), 1.0, rtol=1e-6)
         assert info["normalization_applied"] is True
         assert np.isclose(info["original_dc_gain"], 2.0)
         assert np.isclose(info["target_dc_gain"], 1.0)
-        # Final DC gain differs due to max_coef=1.0 scaling
-        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
+        assert np.isclose(info["normalized_dc_gain"], 1.0, rtol=1e-6)
+        # max_coef = 0.5 (元の1.0 × 0.5スケール)
+        assert np.isclose(info["max_coefficient_amplitude"], 0.5, rtol=1e-6)
 
-    def test_normalizes_to_target_dc_gain(self):
-        """max_coef should always be scaled to 1.0 (upscale or downscale)."""
+    def test_normalizes_to_upsample_ratio(self):
+        """アップサンプル比に応じたDCゲイン正規化"""
         from generate_filter import normalize_coefficients
 
-        # Use small coefficients - will be upscaled to max_coef=1.0
         h = np.array([0.1, 0.1])  # DC gain = 0.2
-        target = 0.5  # After DC norm: h=[0.25, 0.25], then upscaled to max=1.0
+        target = 16.0  # 16x upsample
         h_norm, info = normalize_coefficients(h, target_dc_gain=target)
 
-        # New logic: max_coef=1.0 always (upscaled 4x from 0.25)
-        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
-        assert np.isclose(info["applied_scale"], 2.5 * 4.0)  # DC norm × upscale
-        assert not info["peak_limited"]  # upscale, not downscale
-        assert info["scale_direction"] == "up"
-        assert np.isclose(info["max_coefficient_limit"], 1.0)
+        # DCゲインが16.0に正規化される
+        assert np.isclose(np.sum(h_norm), 16.0, rtol=1e-6)
+        assert np.isclose(info["normalized_dc_gain"], 16.0, rtol=1e-6)
+        # スケール = 16.0 / 0.2 = 80.0
+        assert np.isclose(info["applied_scale"], 80.0, rtol=1e-6)
 
-    def test_peak_limiting_reduces_dc_gain(self):
-        """Peak limiting should reduce DC gain when max_coef exceeds limit."""
+    def test_no_peak_limiting(self):
+        """ピーク制限は行わない（#259）"""
         from generate_filter import normalize_coefficients
 
         h = np.array([1.0, 1.0])  # DC gain = 2.0
-        target = 4.0  # After DC norm, max_coef = 2.0 > 1.0, needs limiting
-        h_norm, info = normalize_coefficients(
-            h, target_dc_gain=target, max_coefficient_limit=1.0
-        )
+        target = 4.0  # 2xスケールでmax_coef = 2.0 > 1.0
+        h_norm, info = normalize_coefficients(h, target_dc_gain=target)
 
-        # With peak limiting: max_coef scaled to 1.0, DC gain = 2.0 (not 4.0)
-        assert np.isclose(np.max(np.abs(h_norm)), 1.0, rtol=1e-6)
-        assert info["peak_limited"]
-        assert np.isclose(info["normalized_dc_gain"], 2.0, rtol=1e-6)
+        # DCゲインは正確に4.0
+        assert np.isclose(np.sum(h_norm), 4.0, rtol=1e-6)
+        assert np.isclose(info["normalized_dc_gain"], 4.0, rtol=1e-6)
+        # max_coef > 1.0 でもピーク制限しない
+        assert np.isclose(info["max_coefficient_amplitude"], 2.0, rtol=1e-6)
+        # peak_limited フィールドは削除されている
+        assert "peak_limited" not in info
 
     def test_zero_dc_gain_raises_error(self):
         """Zero DC gain should raise ValueError."""

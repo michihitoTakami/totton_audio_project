@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -40,6 +42,17 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import signal
+
+# GPU高速化（CuPy）のオプショナルサポート
+try:
+    import cupy as cp
+    from cupyx.scipy import fft as cp_fft
+
+    CUPY_AVAILABLE = True
+except ImportError:
+    CUPY_AVAILABLE = False
+    cp = None
+    cp_fft = None
 
 
 class PhaseType(Enum):
@@ -137,12 +150,8 @@ class FilterConfig:
             raise ValueError(
                 f"DCゲインのターゲットは正の値である必要があります: {self.target_dc_gain}"
             )
-        if self.max_coefficient_limit is None:
-            self.max_coefficient_limit = 1.0
-        elif self.max_coefficient_limit <= 0:
-            raise ValueError(
-                "最大係数の上限は正の値である必要があります。Noneの場合は自動設定（1.0）"
-            )
+        # max_coefficient_limit は廃止（後方互換性のため残すが無視される）
+        # ピーク制限は行わず、CUDA側で補正する（#260参照）
 
     @property
     def output_rate(self) -> int:
@@ -231,17 +240,33 @@ class FilterDesigner:
         return h_linear
 
     def convert_to_minimum_phase(self, h_linear: np.ndarray) -> np.ndarray:
-        """線形位相フィルタを最小位相フィルタに変換する"""
+        """線形位相フィルタを最小位相フィルタに変換する
+
+        CuPyが利用可能な場合はGPU高速化版を使用する。
+        """
         print("\n最小位相変換中...")
 
         n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 8)))
-        print(
-            f"  警告: FFTサイズ {n_fft:,} は非常に大きいため、処理に時間がかかります（数分～数十分）"
-        )
+        print(f"  FFTサイズ: {n_fft:,}")
 
-        h_min_phase = signal.minimum_phase(
-            h_linear, method=self.config.minimum_phase_method.value, n_fft=n_fft
-        )
+        # GPU高速化（CuPyが利用可能な場合）
+        if (
+            CUPY_AVAILABLE
+            and self.config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
+        ):
+            print("  🚀 GPU高速化（CuPy）を使用")
+            h_min_phase = self._convert_to_minimum_phase_gpu(h_linear, n_fft)
+        else:
+            if not CUPY_AVAILABLE:
+                print("  ⚠️ CuPyが利用できません。CPU版を使用（時間がかかります）")
+            else:
+                print(
+                    f"  CPU版を使用（method={self.config.minimum_phase_method.value}）"
+                )
+
+            h_min_phase = signal.minimum_phase(
+                h_linear, method=self.config.minimum_phase_method.value, n_fft=n_fft
+            )
 
         # 元のタップ数に合わせる
         if len(h_min_phase) > self.config.n_taps:
@@ -252,7 +277,57 @@ class FilterDesigner:
             )
 
         print(f"  最小位相係数タップ数: {len(h_min_phase)}")
-        print(f"  FFTサイズ: {n_fft}")
+        return h_min_phase
+
+    def _convert_to_minimum_phase_gpu(
+        self, h_linear: np.ndarray, n_fft: int
+    ) -> np.ndarray:
+        """CuPyを使用したGPU高速化版の最小位相変換（ホモモルフィック法）
+
+        scipy.signal.minimum_phase のホモモルフィック法をGPU上で実装。
+        """
+        import time
+
+        start_time = time.time()
+
+        # GPU上のメモリに転送
+        h_gpu = cp.asarray(h_linear, dtype=cp.float64)
+        h_padded = cp.zeros(n_fft, dtype=cp.float64)
+        h_padded[: len(h_linear)] = h_gpu
+
+        # 1. FFTで周波数領域へ
+        H = cp_fft.fft(h_padded)
+
+        # 2. 対数マグニチュード（ホモモルフィック法）
+        # 数値安定性のため小さな値を追加
+        eps = cp.finfo(cp.float64).eps
+        log_H = cp.log(cp.maximum(cp.abs(H), eps))
+
+        # 3. ケプストラム（逆FFT）
+        cepstrum = cp_fft.ifft(log_H).real
+
+        # 4. 因果的ケプストラムを作成（最小位相のため）
+        # cepstrum[0] はそのまま、cepstrum[1:n_fft//2] は2倍、cepstrum[n_fft//2+1:] は0
+        causal_cepstrum = cp.zeros_like(cepstrum)
+        causal_cepstrum[0] = cepstrum[0]
+        if n_fft % 2 == 0:
+            causal_cepstrum[1 : n_fft // 2] = 2 * cepstrum[1 : n_fft // 2]
+            causal_cepstrum[n_fft // 2] = cepstrum[n_fft // 2]
+        else:
+            causal_cepstrum[1 : (n_fft + 1) // 2] = 2 * cepstrum[1 : (n_fft + 1) // 2]
+
+        # 5. FFTで周波数領域へ戻り、指数関数で元に戻す
+        H_min = cp.exp(cp_fft.fft(causal_cepstrum))
+
+        # 6. 逆FFTで時間領域へ
+        h_min_phase_gpu = cp_fft.ifft(H_min).real
+
+        # CPU側に転送して半分の長さを返す（scipy.minimum_phaseと同じ）
+        h_min_phase = cp.asnumpy(h_min_phase_gpu[: (len(h_linear) + 1) // 2])
+
+        elapsed = time.time() - start_time
+        print(f"  GPU処理時間: {elapsed:.2f}秒")
+
         return h_min_phase
 
     def design(self) -> tuple[np.ndarray, np.ndarray | None]:
@@ -697,9 +772,6 @@ class FilterGenerator:
             "phase_type": self.config.phase_type.value,
             "minimum_phase_method": self.config.minimum_phase_method.value,
             "target_dc_gain": self.config.target_dc_gain,
-            "max_coefficient_limit": self.config.max_coefficient_limit
-            if self.config.max_coefficient_limit is not None
-            else self.config.target_dc_gain,
             "output_basename": self.config.base_name,
             "validation_results": validation_results,
         }
@@ -728,6 +800,10 @@ class FilterGenerator:
             f"目標DC={normalization_info['target_dc_gain']:.6f}, "
             f"結果DC={normalization_info['normalized_dc_gain']:.6f}"
         )
+        max_coef = normalization_info.get("max_coefficient_amplitude", 0)
+        print(f"最大係数振幅: {max_coef:.6f}")
+        if max_coef > 1.0:
+            print("  ⚠️ CUDA側で補正が必要（#260参照）")
         print(
             f"係数ファイル: data/coefficients/{base_name}.bin ({actual_taps:,} coeffs)"
         )
@@ -779,23 +855,19 @@ def compute_padded_taps(n_taps: int, upsample_ratio: int) -> int:
 def normalize_coefficients(
     h: np.ndarray,
     target_dc_gain: float = 1.0,
-    max_coefficient_limit: float = 1.0,
+    max_coefficient_limit: float | None = None,  # 廃止：後方互換性のため残すが無視
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """フィルタ係数を正規化してクリッピングを防止し、最大係数を1.0に統一する
+    """フィルタ係数を正規化する（シンプル版）
 
     Args:
         h: フィルタ係数配列
-        target_dc_gain: 目標DCゲイン（アップサンプル比）
-        max_coefficient_limit: 最大係数の上限（デフォルト1.0）
+        target_dc_gain: 目標DCゲイン（アップサンプル比L）
+        max_coefficient_limit: 廃止（後方互換性のため残すが無視される）
 
     Note:
-        正規化は2段階で行われる：
-        1. DCゲインを目標値（アップサンプル比L）に正規化
-           - ゼロ挿入によりDCが1/Lに減衰するため、フィルタのDCゲイン=Lで補償
-        2. 最大係数を1.0に調整（アップスケールまたはダウンスケール）
-           - これにより全フィルタで max_coef=1.0 となり、音量が統一される
-           - 16xフィルタ：ダウンスケール（DC 16.0 → 12.8）
-           - 8x/4x/2xフィルタ：アップスケール（DC 8.0 → 8.4など）
+        阻止帯域特性を最優先にするため、ピーク制限は行わない。
+        DCゲインを目標値（アップサンプル比L）に正規化するのみ。
+        max_coefficient > 1.0 の場合はCUDA側で補正する（#260参照）。
     """
     if h.size == 0:
         raise ValueError("フィルタ係数が空です。")
@@ -808,35 +880,19 @@ def normalize_coefficients(
     if abs(dc_gain) < 1e-12:
         raise ValueError("DCゲインが0に近すぎます。フィルター係数が不正です。")
 
-    # Step 1: DCゲインを目標値に正規化
-    limit = max_coefficient_limit
+    # DCゲインを目標値に正規化（ピーク制限なし）
     scale = target_dc_gain / dc_gain
     h_normalized = h * scale
-    max_amplitude = np.max(np.abs(h_normalized))
-
-    # Step 2: 最大係数を上限（1.0）に合わせる（アップスケールまたはダウンスケール）
-    peak_scale = 1.0
-    scale_direction = "none"
-    if abs(max_amplitude - limit) > 1e-9:  # 1.0でない場合
-        peak_scale = limit / max_amplitude
-        if max_amplitude > limit:
-            scale_direction = "down"  # ピーク制限（ダウンスケール）
-        else:
-            scale_direction = "up"  # ブースト（アップスケール）
-        h_normalized = h_normalized * peak_scale
-        max_amplitude = np.max(np.abs(h_normalized))
 
     final_dc_gain = float(np.sum(h_normalized))
+    max_amplitude = float(np.max(np.abs(h_normalized)))
 
     info = {
         "original_dc_gain": dc_gain,
         "target_dc_gain": float(target_dc_gain),
         "normalized_dc_gain": final_dc_gain,
-        "applied_scale": float(scale * peak_scale),
-        "max_coefficient_amplitude": float(max_amplitude),
-        "max_coefficient_limit": float(limit),
-        "peak_limited": scale_direction == "down",  # 後方互換性のため
-        "scale_direction": scale_direction,
+        "applied_scale": float(scale),
+        "max_coefficient_amplitude": max_amplitude,
         "normalization_applied": True,
     }
 
@@ -844,16 +900,10 @@ def normalize_coefficients(
     print(f"  目標DCゲイン: {target_dc_gain:.6f}")
     print(f"  元のDCゲイン: {dc_gain:.6f}")
     print(f"  正規化スケール: {scale:.6f}x")
-    if scale_direction == "down":
-        print(
-            f"  ⚠️ ピーク制限適用: {peak_scale:.6f}x (max_coef {max_amplitude/peak_scale:.3f} → {limit})"
-        )
-    elif scale_direction == "up":
-        print(
-            f"  📈 振幅ブースト適用: {peak_scale:.6f}x (max_coef {max_amplitude/peak_scale:.3f} → {limit})"
-        )
     print(f"  最終DCゲイン: {final_dc_gain:.6f}")
     print(f"  最大係数振幅: {max_amplitude:.6f}")
+    if max_amplitude > 1.0:
+        print("  ⚠️ max_coef > 1.0: CUDA側で補正が必要（#260参照）")
 
     return h_normalized, info
 
@@ -1026,6 +1076,43 @@ def generate_single_filter(
     return generator.generate(filter_name, skip_header)
 
 
+def _generate_filter_worker(
+    worker_args: tuple,
+) -> tuple[str, str, int, dict, str | None]:
+    """並列処理用のワーカー関数
+
+    Args:
+        worker_args: (name, cfg, args_dict) のタプル
+
+    Returns:
+        (name, base_name, actual_taps, cfg, error_message) のタプル
+        成功時は error_message = None
+    """
+
+    name, cfg, args_dict = worker_args
+
+    try:
+        # FilterConfigを直接作成（グローバル変数に依存しない）
+        config = FilterConfig(
+            n_taps=args_dict["taps"],
+            input_rate=cfg["input_rate"],
+            upsample_ratio=cfg["ratio"],
+            passband_end=args_dict["passband_end"],
+            stopband_start=cfg["stopband"],
+            stopband_attenuation_db=args_dict["stopband_attenuation"],
+            kaiser_beta=args_dict["kaiser_beta"],
+            phase_type=PhaseType(args_dict["phase_type"]),
+            minimum_phase_method=MinimumPhaseMethod(args_dict["minimum_phase_method"]),
+            output_prefix=None,
+        )
+
+        generator = FilterGenerator(config)
+        base_name, actual_taps = generator.generate(filter_name=name, skip_header=True)
+        return (name, base_name, actual_taps, cfg, None)
+    except Exception as e:
+        return (name, "", 0, cfg, str(e))
+
+
 def generate_all_filters(args: argparse.Namespace) -> None:
     """全フィルタを一括生成する"""
     import copy
@@ -1041,6 +1128,13 @@ def generate_all_filters(args: argparse.Namespace) -> None:
     print("=" * 70)
     print(f"Multi-Rate Filter Generation - {total} filters")
     print(f"Phase Type: {args.phase_type}")
+    if hasattr(args, "parallel") and args.parallel:
+        workers = (
+            args.workers
+            if hasattr(args, "workers") and args.workers
+            else os.cpu_count()
+        )
+        print(f"Parallel Mode: {workers} workers")
     print("=" * 70)
     print("\nTarget configurations:")
     for name, cfg in configs.items():
@@ -1051,29 +1145,63 @@ def generate_all_filters(args: argparse.Namespace) -> None:
         print("\n注意: --output-prefix は --generate-all 時は無視されます")
     print()
 
+    # argsを辞書に変換（pickleできるようにする）
+    args_dict = {
+        "taps": args.taps,
+        "passband_end": args.passband_end,
+        "stopband_attenuation": args.stopband_attenuation,
+        "kaiser_beta": args.kaiser_beta,
+        "phase_type": args.phase_type,
+        "minimum_phase_method": args.minimum_phase_method,
+    }
+
     results = []
     filter_infos = []
 
-    for i, (name, cfg) in enumerate(configs.items(), 1):
-        print("\n" + "=" * 70)
-        print(f"[{i}/{total}] Generating {name}...")
-        print("=" * 70)
+    # 並列処理の判定
+    use_parallel = hasattr(args, "parallel") and args.parallel
+    workers = (
+        args.workers if hasattr(args, "workers") and args.workers else os.cpu_count()
+    )
 
-        filter_args = copy.copy(args)
-        filter_args.input_rate = cfg["input_rate"]
-        filter_args.upsample_ratio = cfg["ratio"]
-        filter_args.stopband_start = cfg["stopband"]
-        filter_args.output_prefix = None
+    if use_parallel and total > 1:
+        # マルチプロセス並列処理
+        print(f"\n並列処理開始（{workers}ワーカー）...")
+        worker_args_list = [(name, cfg, args_dict) for name, cfg in configs.items()]
 
-        try:
-            base_name, actual_taps = generate_single_filter(
-                filter_args, filter_name=name, skip_header=True
-            )
-            results.append((name, "Success"))
-            filter_infos.append((name, base_name, actual_taps, cfg))
-        except Exception as e:
-            results.append((name, f"Failed: {e}"))
-            print(f"ERROR: {e}")
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for name, base_name, actual_taps, cfg, error in executor.map(
+                _generate_filter_worker, worker_args_list
+            ):
+                if error:
+                    results.append((name, f"Failed: {error}"))
+                    print(f"  ❌ {name}: {error}")
+                else:
+                    results.append((name, "Success"))
+                    filter_infos.append((name, base_name, actual_taps, cfg))
+                    print(f"  ✅ {name}: completed")
+    else:
+        # 逐次処理（GPUが1つの場合はこちらの方が効率的）
+        for i, (name, cfg) in enumerate(configs.items(), 1):
+            print("\n" + "=" * 70)
+            print(f"[{i}/{total}] Generating {name}...")
+            print("=" * 70)
+
+            filter_args = copy.copy(args)
+            filter_args.input_rate = cfg["input_rate"]
+            filter_args.upsample_ratio = cfg["ratio"]
+            filter_args.stopband_start = cfg["stopband"]
+            filter_args.output_prefix = None
+
+            try:
+                base_name, actual_taps = generate_single_filter(
+                    filter_args, filter_name=name, skip_header=True
+                )
+                results.append((name, "Success"))
+                filter_infos.append((name, base_name, actual_taps, cfg))
+            except Exception as e:
+                results.append((name, f"Failed: {e}"))
+                print(f"ERROR: {e}")
 
     if filter_infos:
         generate_multi_rate_header(filter_infos)
@@ -1107,9 +1235,20 @@ Examples:
   # Generate only 44.1kHz family
   %(prog)s --generate-all --family 44k
 
+  # Generate all filters in parallel (CPU multiprocessing)
+  %(prog)s --generate-all --parallel
+
+  # Generate with specific number of workers
+  %(prog)s --generate-all --parallel --workers 4
+
 Phase Types:
   minimum  - No pre-ringing, frequency-dependent delay (RECOMMENDED)
   linear   - Pre-ringing present, constant delay, symmetric
+
+GPU Acceleration:
+  Install CuPy for GPU-accelerated minimum phase conversion:
+    uv pip install cupy-cuda12x  # For CUDA 12.x
+  Or add to pyproject.toml: uv sync --extra gpu
 """,
     )
     parser.add_argument(
@@ -1185,6 +1324,17 @@ Phase Types:
         type=str,
         default=None,
         help="Output file basename (without extension). Default: auto",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Enable parallel processing for --generate-all (CPU multiprocessing)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of worker processes for parallel mode. Default: CPU count",
     )
     return parser.parse_args()
 
