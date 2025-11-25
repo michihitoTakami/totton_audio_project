@@ -1394,3 +1394,66 @@ class TestCalculateSafeGain:
         assert result["max_coef_max"] == 1.0
         # max_coef=1.0 → H = 0.97 / 1.0 = 0.97 < 1.0
         assert np.isclose(result["recommended_gain"], 0.97, rtol=1e-6)
+
+
+class TestCoefficientSafety:
+    """Tests for coefficient safety (max_coefficient_amplitude ≤ 0.97).
+
+    CIで係数ファイルの安全性を検証するためのテスト。
+    unified_peak_scaleが正しく適用されていることを確認。
+    """
+
+    @pytest.fixture
+    def coefficients_dir(self):
+        return Path(__file__).parent.parent.parent / "data" / "coefficients"
+
+    @pytest.mark.skip(reason="#260 係数再生成後に有効化")
+    def test_max_coefficient_within_limit(self, coefficients_dir):
+        """All shipped filters must have max_coefficient_amplitude ≤ 0.97."""
+        import json
+
+        for json_path in coefficients_dir.glob("filter_*.json"):
+            with open(json_path) as f:
+                metadata = json.load(f)
+            norm = metadata.get("validation_results", {}).get("normalization", {})
+            max_coef = norm.get("max_coefficient_amplitude")
+
+            if max_coef is not None:
+                assert (
+                    max_coef <= 0.97
+                ), f"{json_path.name}: max_coefficient_amplitude={max_coef:.4f} > 0.97"
+
+    @pytest.mark.skip(reason="#260 係数再生成後に有効化")
+    def test_unified_peak_scale_applied(self, coefficients_dir):
+        """All shipped filters must have unified_peak_scale_applied=True."""
+        import json
+
+        for json_path in coefficients_dir.glob("filter_*.json"):
+            with open(json_path) as f:
+                metadata = json.load(f)
+            norm = metadata.get("validation_results", {}).get("normalization", {})
+
+            assert (
+                norm.get("unified_peak_scale_applied") is True
+            ), f"{json_path.name}: unified_peak_scale_applied is not True"
+
+    @pytest.mark.skip(reason="#260 係数再生成後に有効化")
+    def test_all_filters_same_volume_reduction(self, coefficients_dir):
+        """All shipped filters must have the same volume_reduction_db."""
+        import json
+
+        volume_reductions = []
+        for json_path in coefficients_dir.glob("filter_*.json"):
+            with open(json_path) as f:
+                metadata = json.load(f)
+            norm = metadata.get("validation_results", {}).get("normalization", {})
+            vol_db = norm.get("volume_reduction_db")
+            if vol_db is not None:
+                volume_reductions.append((json_path.name, vol_db))
+
+        if len(volume_reductions) > 1:
+            first_vol = volume_reductions[0][1]
+            for name, vol in volume_reductions[1:]:
+                assert np.isclose(
+                    vol, first_vol, rtol=1e-6
+                ), f"{name}: volume_reduction_db={vol:.4f} != {first_vol:.4f}"

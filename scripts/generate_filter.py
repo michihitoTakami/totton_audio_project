@@ -1045,6 +1045,7 @@ def calculate_safe_gain(
     filter_infos: list[tuple[str, str, int, dict[str, Any]]],
     safety_margin: float = 0.97,
     coefficients_dir: str = "data/coefficients",
+    include_all_existing: bool = True,
 ) -> dict[str, Any]:
     """全フィルタからグローバル安全ゲインを計算する
 
@@ -1052,6 +1053,7 @@ def calculate_safe_gain(
         filter_infos: [(name, base_name, actual_taps, cfg), ...] のリスト
         safety_margin: 安全マージン M（デフォルト0.97 = -0.26dB）
         coefficients_dir: 係数ディレクトリ
+        include_all_existing: Trueの場合、ディレクトリ内の既存JSONファイルも含める
 
     Returns:
         dict: {
@@ -1070,9 +1072,12 @@ def calculate_safe_gain(
     l1_max_filter = ""
     max_coef_max = 0.0
     max_coef_max_filter = ""
+    processed_files = set()
 
+    # filter_infosから処理
     for name, base_name, _, _ in filter_infos:
         json_path = coeff_path / f"{base_name}.json"
+        processed_files.add(json_path.name)
         if not json_path.exists():
             print(f"  警告: {json_path} が見つかりません。スキップします。")
             continue
@@ -1096,6 +1101,14 @@ def calculate_safe_gain(
         l1_norm = float(l1_norm)
         max_coef = float(max_coef)
 
+        # 既にunified_peak_scaleが適用されている場合は元の値を復元
+        if norm_info.get("unified_peak_scale_applied") and norm_info.get(
+            "unified_peak_scale"
+        ):
+            prev_scale = float(norm_info["unified_peak_scale"])
+            l1_norm = l1_norm / prev_scale
+            max_coef = max_coef / prev_scale
+
         details.append(
             {
                 "name": name,
@@ -1110,6 +1123,59 @@ def calculate_safe_gain(
         if max_coef > max_coef_max:
             max_coef_max = max_coef
             max_coef_max_filter = name
+
+    # 既存のすべてのJSONファイルも含める（両位相タイプのフィルタを考慮）
+    if include_all_existing:
+        for json_path in coeff_path.glob("filter_*.json"):
+            if json_path.name in processed_files:
+                continue  # 既に処理済み
+
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    metadata = json.load(f)
+
+                name = json_path.stem
+                norm_info = metadata.get("validation_results", {}).get(
+                    "normalization", {}
+                )
+                l1_norm = norm_info.get("l1_norm")
+                max_coef = norm_info.get("max_coefficient_amplitude")
+
+                if l1_norm is None or max_coef is None:
+                    continue
+                if not isinstance(l1_norm, (int, float)) or not isinstance(
+                    max_coef, (int, float)
+                ):
+                    continue
+
+                l1_norm = float(l1_norm)
+                max_coef = float(max_coef)
+
+                # 既にunified_peak_scaleが適用されている場合は元の値を復元
+                if norm_info.get("unified_peak_scale_applied") and norm_info.get(
+                    "unified_peak_scale"
+                ):
+                    prev_scale = float(norm_info["unified_peak_scale"])
+                    l1_norm = l1_norm / prev_scale
+                    max_coef = max_coef / prev_scale
+
+                details.append(
+                    {
+                        "name": name,
+                        "l1_norm": l1_norm,
+                        "max_coef": max_coef,
+                        "from_existing": True,
+                    }
+                )
+
+                if l1_norm > l1_max:
+                    l1_max = l1_norm
+                    l1_max_filter = name
+                if max_coef > max_coef_max:
+                    max_coef_max = max_coef
+                    max_coef_max_filter = name
+            except (json.JSONDecodeError, OSError):
+                continue
 
     # 安全ゲイン計算（max_coefベース）
     # H = M / max_coef_max
@@ -1158,6 +1224,103 @@ def print_safe_gain_recommendation(safe_gain_info: dict[str, Any]) -> None:
         print("✅ All filters have max_coef <= 1.0. No gain adjustment needed.")
         print('config.json gain can remain at: "gain": 1.0')
 
+    print("=" * 70)
+
+
+def apply_unified_peak_scale(
+    coefficients_dir: Path,
+    unified_scale: float,
+    global_max_coef: float,
+    safety_margin: float,
+) -> None:
+    """全フィルタに統一スケールを適用して再保存する
+
+    既にスケールが適用されている場合は、まず元に戻してから新しいスケールを適用する。
+
+    Args:
+        coefficients_dir: 係数ファイルのディレクトリ
+        unified_scale: 適用する統一スケール (safety_margin / global_max_coef)
+        global_max_coef: 全フィルタ中の最大ピーク係数
+        safety_margin: 安全マージン（デフォルト0.97）
+    """
+    volume_reduction_db = float(20 * np.log10(unified_scale))
+
+    print("\n" + "=" * 70)
+    print("APPLYING UNIFIED PEAK SCALE")
+    print("=" * 70)
+    print(f"Global max coefficient: {global_max_coef:.6f}")
+    print(f"Safety margin: {safety_margin}")
+    print(f"Unified scale: {unified_scale:.6f}")
+    print(f"Volume reduction: {volume_reduction_db:.2f} dB")
+    print()
+
+    json_files = list(coefficients_dir.glob("filter_*.json"))
+    for json_path in json_files:
+        # メタデータ読み込み
+        with open(json_path, encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        # 係数ファイル読み込み
+        bin_path = json_path.with_suffix(".bin")
+        if not bin_path.exists():
+            print(f"  ⚠️ {bin_path.name} not found, skipping")
+            continue
+
+        coeffs = np.fromfile(bin_path, dtype=np.float32)
+
+        norm = metadata.get("validation_results", {}).get("normalization", {})
+
+        # 既にスケールが適用されている場合は、まず元に戻す
+        previous_scale = norm.get("unified_peak_scale")
+        if previous_scale is not None and norm.get("unified_peak_scale_applied"):
+            # 係数を元に戻す
+            coeffs = coeffs / previous_scale
+            # メタデータも元に戻す
+            if "normalized_dc_gain" in norm:
+                norm["normalized_dc_gain"] = float(
+                    norm["normalized_dc_gain"] / previous_scale
+                )
+            if "max_coefficient_amplitude" in norm:
+                norm["max_coefficient_amplitude"] = float(
+                    norm["max_coefficient_amplitude"] / previous_scale
+                )
+            if "l1_norm" in norm:
+                norm["l1_norm"] = float(norm["l1_norm"] / previous_scale)
+            print(f"  ↩️ {json_path.name}: previous scale {previous_scale:.6f} reverted")
+
+        # 新しいスケール適用
+        coeffs_scaled = coeffs * unified_scale
+
+        # 係数ファイル保存
+        coeffs_scaled.astype(np.float32).tofile(bin_path)
+
+        # メタデータ更新
+        if norm:
+            # 既存値をスケール適用後の値に更新
+            if "normalized_dc_gain" in norm:
+                norm["normalized_dc_gain"] = float(
+                    norm["normalized_dc_gain"] * unified_scale
+                )
+            if "max_coefficient_amplitude" in norm:
+                norm["max_coefficient_amplitude"] = float(
+                    norm["max_coefficient_amplitude"] * unified_scale
+                )
+            if "l1_norm" in norm:
+                norm["l1_norm"] = float(norm["l1_norm"] * unified_scale)
+
+            # 新規フィールド追加
+            norm["unified_peak_scale"] = float(unified_scale)
+            norm["unified_peak_scale_applied"] = True
+            norm["global_max_coefficient"] = float(global_max_coef)
+            norm["volume_reduction_db"] = volume_reduction_db
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+        print(f"  ✅ {json_path.name} updated")
+
+    print()
+    print(f"Applied unified scale to {len(json_files)} filters")
     print("=" * 70)
 
 
@@ -1339,8 +1502,25 @@ def generate_all_filters(args: argparse.Namespace) -> None:
     if filter_infos:
         generate_multi_rate_header(filter_infos)
 
-        # グローバル安全ゲインを計算して推奨値を表示
-        safe_gain_info = calculate_safe_gain(filter_infos)
+        # グローバル安全ゲインを計算
+        safety_margin = getattr(args, "safety_margin", 0.97)
+        safe_gain_info = calculate_safe_gain(filter_infos, safety_margin=safety_margin)
+
+        # max_coef > safety_margin の場合、統一スケールを適用（Pass 2）
+        global_max_coef = safe_gain_info["max_coef_max"]
+        no_unified_scale = getattr(args, "no_unified_scale", False)
+
+        if global_max_coef > safety_margin and not no_unified_scale:
+            unified_scale = safety_margin / global_max_coef
+            coefficients_dir = Path("data/coefficients")
+            apply_unified_peak_scale(
+                coefficients_dir, unified_scale, global_max_coef, safety_margin
+            )
+            # スケール適用後の情報を再計算
+            safe_gain_info = calculate_safe_gain(
+                filter_infos, safety_margin=safety_margin
+            )
+
         print_safe_gain_recommendation(safe_gain_info)
 
     print("\n" + "=" * 70)
@@ -1472,6 +1652,17 @@ GPU Acceleration:
         type=int,
         default=None,
         help="Number of worker processes for parallel mode. Default: CPU count",
+    )
+    parser.add_argument(
+        "--safety-margin",
+        type=float,
+        default=0.97,
+        help="Safety margin for max coefficient (default: 0.97 = -0.26dB headroom)",
+    )
+    parser.add_argument(
+        "--no-unified-scale",
+        action="store_true",
+        help="Skip unified peak scale application (keep original DC normalization only)",
     )
     return parser.parse_args()
 
