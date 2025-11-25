@@ -26,6 +26,12 @@ from .eq import (
     sanitize_filename,
     validate_eq_profile_content,
 )
+from .pipewire import (
+    restore_default_sink,
+    setup_audio_routing,
+    setup_pipewire_links,
+    wait_for_daemon_node,
+)
 
 __all__ = [
     # alsa
@@ -56,4 +62,9 @@ __all__ = [
     "read_and_validate_upload",
     "sanitize_filename",
     "validate_eq_profile_content",
+    # pipewire
+    "restore_default_sink",
+    "setup_audio_routing",
+    "setup_pipewire_links",
+    "wait_for_daemon_node",
 ]
