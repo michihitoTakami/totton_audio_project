@@ -1137,6 +1137,115 @@
         }
       }
     },
+    "/crossfeed/status": {
+      "get": {
+        "tags": [
+          "crossfeed"
+        ],
+        "summary": "Get Crossfeed Status",
+        "description": "Get current crossfeed status.\n\nReturns:\n    CrossfeedStatus with enabled state, current head size, and available sizes.",
+        "operationId": "get_crossfeed_status_crossfeed_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossfeedStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crossfeed/enable": {
+      "post": {
+        "tags": [
+          "crossfeed"
+        ],
+        "summary": "Enable Crossfeed",
+        "description": "Enable crossfeed (HRTF) processing.\n\nReturns:\n    Success response with confirmation message.",
+        "operationId": "enable_crossfeed_crossfeed_enable_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossfeedEnableResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crossfeed/disable": {
+      "post": {
+        "tags": [
+          "crossfeed"
+        ],
+        "summary": "Disable Crossfeed",
+        "description": "Disable crossfeed processing.\n\nReturns:\n    Success response with confirmation message.",
+        "operationId": "disable_crossfeed_crossfeed_disable_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossfeedDisableResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crossfeed/size/{size}": {
+      "post": {
+        "tags": [
+          "crossfeed"
+        ],
+        "summary": "Set Crossfeed Size",
+        "description": "Change crossfeed head size.\n\nArgs:\n    size: Head size to set ('xs', 's', 'm', 'l', or 'xl')\n\nReturns:\n    Success response with new head size.",
+        "operationId": "set_crossfeed_size_crossfeed_size__size__post",
+        "parameters": [
+          {
+            "name": "size",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossfeedSizeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -1275,6 +1384,98 @@
           "file"
         ],
         "title": "Body_validate_eq_profile_eq_validate_post"
+      },
+      "CrossfeedDisableResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "CrossfeedDisableResponse",
+        "description": "Crossfeed disable response model."
+      },
+      "CrossfeedEnableResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "CrossfeedEnableResponse",
+        "description": "Crossfeed enable response model."
+      },
+      "CrossfeedSizeResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "headSize": {
+            "type": "string",
+            "title": "Headsize"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "headSize"
+        ],
+        "title": "CrossfeedSizeResponse",
+        "description": "Crossfeed size change response model."
+      },
+      "CrossfeedStatus": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "Whether crossfeed is currently enabled"
+          },
+          "headSize": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headsize",
+            "description": "Current head size: 'xs', 's', 'm', 'l', or 'xl'"
+          },
+          "availableSizes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Availablesizes",
+            "description": "Available head size options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "CrossfeedStatus",
+        "description": "Crossfeed status response model."
       },
       "DacCapabilityInfo": {
         "properties": {
@@ -2253,6 +2454,10 @@
     {
       "name": "dac",
       "description": "DAC capability detection and sample rate filtering"
+    },
+    {
+      "name": "crossfeed",
+      "description": "Crossfeed (HRTF-based headphone virtualization) control"
     },
     {
       "name": "legacy",

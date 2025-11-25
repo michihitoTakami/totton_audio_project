@@ -2,9 +2,7 @@
 
 from fastapi import APIRouter, HTTPException
 
-from ..exceptions import handle_daemon_error
 from ..models import (
-    ApiResponse,
     CrossfeedDisableResponse,
     CrossfeedEnableResponse,
     CrossfeedSizeResponse,
@@ -31,7 +29,7 @@ async def get_crossfeed_status():
         result = client.crossfeed_get_status()
 
         if not result.success:
-            handle_daemon_error(result.error)
+            raise result.error
 
         # Parse response data
         data = result.data
@@ -64,11 +62,9 @@ async def enable_crossfeed():
         result = client.crossfeed_enable()
 
         if not result.success:
-            handle_daemon_error(result.error)
+            raise result.error
 
-        return CrossfeedEnableResponse(
-            success=True, message="Crossfeed enabled"
-        )
+        return CrossfeedEnableResponse(success=True, message="Crossfeed enabled")
 
 
 @router.post("/disable", response_model=CrossfeedDisableResponse)
@@ -83,11 +79,9 @@ async def disable_crossfeed():
         result = client.crossfeed_disable()
 
         if not result.success:
-            handle_daemon_error(result.error)
+            raise result.error
 
-        return CrossfeedDisableResponse(
-            success=True, message="Crossfeed disabled"
-        )
+        return CrossfeedDisableResponse(success=True, message="Crossfeed disabled")
 
 
 @router.post("/size/{size}", response_model=CrossfeedSizeResponse)
@@ -113,7 +107,7 @@ async def set_crossfeed_size(size: str):
         result = client.crossfeed_set_size(size_lower)
 
         if not result.success:
-            handle_daemon_error(result.error)
+            raise result.error
 
         # Parse response data
         data = result.data
@@ -123,4 +117,3 @@ async def set_crossfeed_size(size: str):
             new_head_size = size_lower
 
         return CrossfeedSizeResponse(success=True, headSize=new_head_size)
-

@@ -121,9 +121,7 @@ class TestCrossfeedStatus:
 
     def test_get_status_daemon_error(self, client, mock_daemon_client):
         """Get status when daemon returns error."""
-        error_response = create_error_response(
-            "IPC_TIMEOUT", "Daemon not responding"
-        )
+        error_response = create_error_response("IPC_TIMEOUT", "Daemon not responding")
         with mock_daemon_client(error_response):
             response = client.get("/crossfeed/status")
 
@@ -152,7 +150,7 @@ class TestCrossfeedEnable:
         with mock_daemon_client(error_response):
             response = client.post("/crossfeed/enable")
 
-        assert response.status_code == 500
+        assert response.status_code == 503
 
 
 class TestCrossfeedDisable:
@@ -171,9 +169,7 @@ class TestCrossfeedDisable:
 
     def test_disable_daemon_error(self, client, mock_daemon_client):
         """Disable crossfeed when daemon returns error."""
-        error_response = create_error_response(
-            "IPC_TIMEOUT", "Daemon not responding"
-        )
+        error_response = create_error_response("IPC_TIMEOUT", "Daemon not responding")
         with mock_daemon_client(error_response):
             response = client.post("/crossfeed/disable")
 
@@ -232,7 +228,7 @@ class TestCrossfeedSetSize:
         with mock_daemon_client(error_response):
             response = client.post("/crossfeed/size/m")
 
-        assert response.status_code == 500
+        assert response.status_code == 503
 
     def test_set_size_switch_failed(self, client, mock_daemon_client):
         """Set head size when switch fails."""
@@ -243,4 +239,3 @@ class TestCrossfeedSetSize:
             response = client.post("/crossfeed/size/xl")
 
         assert response.status_code == 500
-

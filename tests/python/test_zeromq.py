@@ -2,11 +2,12 @@
 Tests for ZeroMQ daemon communication.
 
 These tests verify the Python DaemonClient class and ZeroMQ API endpoints.
-Tests that require the daemon to NOT be running are skipped when daemon is detected.
+Tests that require the daemon to NOT be running will stop daemon if running.
 """
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,24 +21,63 @@ from web.constants import ZEROMQ_IPC_PATH  # noqa: E402
 from web.services.daemon_client import DaemonClient, get_daemon_client  # noqa: E402
 
 
-def is_daemon_running() -> bool:
-    """Check if daemon is running (used for skip conditions)."""
+def get_daemon_pids() -> list[int]:
+    """Get PIDs of running daemon processes."""
     try:
         result = subprocess.run(
             ["pgrep", "-f", "gpu_upsampler_alsa"],
             capture_output=True,
+            text=True,
             timeout=5,
         )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+        if result.returncode == 0:
+            return [int(pid) for pid in result.stdout.strip().split("\n") if pid]
+        return []
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        return []
 
 
-# Skip marker for tests that require daemon to NOT be running
-requires_daemon_not_running = pytest.mark.skipif(
-    is_daemon_running(),
-    reason="Test requires daemon to NOT be running (tests timeout/error behavior)",
-)
+def ensure_daemon_stopped(timeout_seconds: int = 5) -> None:
+    """Stop daemon if running, raise error if not stopped within timeout."""
+    pids = get_daemon_pids()
+    if not pids:
+        return
+
+    # Send SIGTERM to all daemon processes
+    for pid in pids:
+        try:
+            subprocess.run(["kill", "-TERM", str(pid)], timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+
+    # Wait for daemon to stop
+    start_time = time.time()
+    while time.time() - start_time < timeout_seconds:
+        if not get_daemon_pids():
+            return
+        time.sleep(0.1)
+
+    # If still running, try SIGKILL
+    pids = get_daemon_pids()
+    for pid in pids:
+        try:
+            subprocess.run(["kill", "-KILL", str(pid)], timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+
+    # Final check
+    time.sleep(0.5)
+    if get_daemon_pids():
+        raise RuntimeError(
+            f"Failed to stop daemon within {timeout_seconds} seconds. "
+            "Please stop daemon manually before running tests."
+        )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def stop_daemon_before_tests():
+    """Ensure daemon is stopped before running ZeroMQ tests."""
+    ensure_daemon_stopped(timeout_seconds=5)
 
 
 class TestDaemonClient:
@@ -87,7 +127,6 @@ class TestDaemonClient:
         assert client.timeout_ms == 500
         client.close()
 
-    @requires_daemon_not_running
     def test_send_command_timeout_when_daemon_not_running(self):
         """Test that send_command returns timeout error when daemon is not running."""
         client = DaemonClient(timeout_ms=500)  # Short timeout for test
@@ -96,7 +135,6 @@ class TestDaemonClient:
         assert "timeout" in message.lower() or "not responding" in message.lower()
         client.close()
 
-    @requires_daemon_not_running
     def test_reload_config_when_daemon_not_running(self):
         """Test reload_config returns appropriate error when daemon not running."""
         client = DaemonClient(timeout_ms=500)
@@ -104,7 +142,6 @@ class TestDaemonClient:
         assert success is False
         client.close()
 
-    @requires_daemon_not_running
     def test_ping_when_daemon_not_running(self):
         """Test ping returns False when daemon not running."""
         client = DaemonClient(timeout_ms=500)
@@ -112,7 +149,6 @@ class TestDaemonClient:
         assert result is False
         client.close()
 
-    @requires_daemon_not_running
     def test_get_stats_when_daemon_not_running(self):
         """Test get_stats returns error when daemon not running."""
         client = DaemonClient(timeout_ms=500)
@@ -120,7 +156,6 @@ class TestDaemonClient:
         assert success is False
         client.close()
 
-    @requires_daemon_not_running
     def test_context_manager_timeout(self):
         """Test context manager handles timeout correctly."""
         with get_daemon_client(timeout_ms=500) as client:
