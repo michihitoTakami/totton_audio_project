@@ -1423,6 +1423,80 @@
         "title": "CrossfeedEnableResponse",
         "description": "Crossfeed enable response model."
       },
+      "CrossfeedSettings": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "head_size": {
+            "type": "string",
+            "enum": [
+              "s",
+              "m",
+              "l",
+              "xl"
+            ],
+            "title": "Head Size",
+            "default": "m"
+          },
+          "hrtf_path": {
+            "type": "string",
+            "title": "Hrtf Path",
+            "default": "data/crossfeed/hrtf/"
+          }
+        },
+        "type": "object",
+        "title": "CrossfeedSettings",
+        "description": "Crossfeed settings model."
+      },
+      "CrossfeedSettingsUpdate": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "head_size": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "s",
+                  "m",
+                  "l",
+                  "xl"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Size"
+          },
+          "hrtf_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hrtf Path"
+          }
+        },
+        "type": "object",
+        "title": "CrossfeedSettingsUpdate",
+        "description": "Crossfeed settings update model (all fields optional)."
+      },
       "CrossfeedSizeResponse": {
         "properties": {
           "success": {
@@ -2106,6 +2180,42 @@
         "title": "OpraVendorsResponse",
         "description": "OPRA vendors list response model."
       },
+      "PeakLevels": {
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/PeakStage"
+          },
+          "upsampler": {
+            "$ref": "#/components/schemas/PeakStage"
+          },
+          "post_mix": {
+            "$ref": "#/components/schemas/PeakStage"
+          },
+          "post_gain": {
+            "$ref": "#/components/schemas/PeakStage"
+          }
+        },
+        "type": "object",
+        "title": "PeakLevels",
+        "description": "Peak levels across pipeline stages."
+      },
+      "PeakStage": {
+        "properties": {
+          "linear": {
+            "type": "number",
+            "title": "Linear",
+            "default": 0.0
+          },
+          "dbfs": {
+            "type": "number",
+            "title": "Dbfs",
+            "default": -200.0
+          }
+        },
+        "type": "object",
+        "title": "PeakStage",
+        "description": "Single stage peak measurement."
+      },
       "PhaseTypeResponse": {
         "properties": {
           "phase_type": {
@@ -2213,6 +2323,19 @@
               }
             ],
             "title": "Eq Profile Path"
+          },
+          "input_rate": {
+            "type": "integer",
+            "title": "Input Rate",
+            "default": 44100
+          },
+          "output_rate": {
+            "type": "integer",
+            "title": "Output Rate",
+            "default": 352800
+          },
+          "crossfeed": {
+            "$ref": "#/components/schemas/CrossfeedSettings"
           }
         },
         "type": "object",
@@ -2275,6 +2398,38 @@
               }
             ],
             "title": "Eq Profile Path"
+          },
+          "input_rate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Rate"
+          },
+          "output_rate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Rate"
+          },
+          "crossfeed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CrossfeedSettingsUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -2330,6 +2485,9 @@
             "type": "integer",
             "title": "Output Rate",
             "default": 0
+          },
+          "peaks": {
+            "$ref": "#/components/schemas/PeakLevels"
           }
         },
         "type": "object",

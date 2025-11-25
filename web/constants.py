@@ -28,6 +28,14 @@ ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock"
 DAEMON_SERVICE = "gpu_upsampler_alsa"  # systemd service name (if using systemd)
 
 # ============================================================================
+# PipeWire / PulseAudio
+# ============================================================================
+
+GPU_SINK_NAME = "gpu_upsampler_sink"
+GPU_UPSAMPLER_INPUT_NODE = "GPU Upsampler Input"
+DEFAULT_SINK_FILE_PATH = Path("/tmp/gpu_upsampler_default_sink")
+
+# ============================================================================
 # EQ Profile Upload Security Limits
 # ============================================================================
 
