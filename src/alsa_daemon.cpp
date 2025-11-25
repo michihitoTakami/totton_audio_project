@@ -20,12 +20,12 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
-#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <mutex>
@@ -95,8 +95,7 @@ static inline void update_peak_level(std::atomic<float>& peak, float candidate) 
     float current = peak.load(std::memory_order_relaxed);
     while (absValue > current &&
            !peak.compare_exchange_weak(current, absValue, std::memory_order_relaxed,
-                                       std::memory_order_relaxed)) {
-    }
+                                       std::memory_order_relaxed)) {}
 }
 
 static inline float compute_stereo_peak(const float* left, const float* right, size_t frames) {
@@ -149,54 +148,57 @@ static SoftMute::Controller* g_soft_mute = nullptr;
 // we still wait for fade-out completion before manipulating filters to avoid artifacts.
 static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc) {
     using namespace DaemonConstants;
-    
+
     if (!g_soft_mute) {
         // If soft mute not initialized, perform switch without mute
         filterSwitchFunc();
         return;
     }
-    
+
     // Save current fade duration for restoration
     int originalFadeDuration = g_soft_mute->getFadeDuration();
     int outputSampleRate = g_soft_mute->getSampleRate();
-    
+
     // Update fade duration for filter switching
     // Note: This is called from command thread, but audio thread may be processing.
     // The fade calculation will use the new duration from the next audio frame.
     g_soft_mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
     g_soft_mute->setSampleRate(outputSampleRate);
-    
-    std::cout << "[Filter Switch] Starting fade-out (" << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
+
+    std::cout << "[Filter Switch] Starting fade-out (" << (FILTER_SWITCH_FADE_MS / 1000.0)
+              << "s)..." << std::endl;
     g_soft_mute->startFadeOut();
-    
+
     // Wait for fade-out to complete (approximately 1.5 seconds)
     // Polling is necessary because fade is processed in audio thread
     auto fade_start = std::chrono::steady_clock::now();
     const auto timeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS);
-    while (g_soft_mute->isTransitioning() && 
+    while (g_soft_mute->isTransitioning() &&
            g_soft_mute->getState() == SoftMute::MuteState::FADING_OUT) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         auto elapsed = std::chrono::steady_clock::now() - fade_start;
         if (elapsed > timeout) {
-            std::cerr << "[Filter Switch] Warning: Fade-out timeout (" << FILTER_SWITCH_FADE_TIMEOUT_MS
-                      << "ms), proceeding with switch" << std::endl;
+            std::cerr << "[Filter Switch] Warning: Fade-out timeout ("
+                      << FILTER_SWITCH_FADE_TIMEOUT_MS << "ms), proceeding with switch"
+                      << std::endl;
             break;
         }
     }
-    
+
     // Ensure we're fully muted before switching
     if (g_soft_mute->getState() != SoftMute::MuteState::MUTED) {
         g_soft_mute->setMuted();
     }
-    
+
     // Perform filter switch
     bool switch_success = filterSwitchFunc();
-    
+
     if (switch_success) {
         // Start fade-in after filter switch
-        std::cout << "[Filter Switch] Starting fade-in (" << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
+        std::cout << "[Filter Switch] Starting fade-in (" << (FILTER_SWITCH_FADE_MS / 1000.0)
+                  << "s)..." << std::endl;
         g_soft_mute->startFadeIn();
-        
+
         // Store original fade duration for reset in audio thread
         // The audio thread will reset fade duration when fade-in completes
         // (see alsa_output_thread() around line 1241)
@@ -231,6 +233,8 @@ static std::vector<float> g_cf_stream_input_left;
 static std::vector<float> g_cf_stream_input_right;
 static size_t g_cf_stream_accumulated_left = 0;
 static size_t g_cf_stream_accumulated_right = 0;
+static std::vector<float> g_cf_output_left;
+static std::vector<float> g_cf_output_right;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
@@ -238,6 +242,20 @@ static std::vector<float> g_cf_output_buffer_right;
 // Fallback manager (Issue #139)
 static FallbackManager::Manager* g_fallback_manager = nullptr;
 static std::atomic<bool> g_fallback_active{false};  // Atomic for quick check in audio thread
+
+// Resets crossfeed streaming buffers and GPU overlap state.
+// Caller must hold g_crossfeed_mutex.
+static void reset_crossfeed_stream_state_locked() {
+    g_cf_stream_input_left.clear();
+    g_cf_stream_input_right.clear();
+    g_cf_stream_accumulated_left = 0;
+    g_cf_stream_accumulated_right = 0;
+    g_cf_output_left.clear();
+    g_cf_output_right.clear();
+    if (g_hrtf_processor) {
+        g_hrtf_processor->resetStreaming();
+    }
+}
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -326,6 +344,30 @@ static nlohmann::json make_peak_json(float linear_value) {
     return peak_json;
 }
 
+static nlohmann::json make_fallback_stats_json() {
+    nlohmann::json fallback_json = nlohmann::json::object();
+    bool enabled = g_config.fallback.enabled;
+    fallback_json["enabled"] = enabled;
+    fallback_json["active"] = g_fallback_active.load(std::memory_order_relaxed);
+    fallback_json["gpu_utilization"] = 0.0;
+    fallback_json["monitoring_enabled"] =
+        (g_fallback_manager ? g_fallback_manager->isMonitoringEnabled() : false);
+
+    if (enabled && g_fallback_manager) {
+        fallback_json["gpu_utilization"] = g_fallback_manager->getGpuUtilization();
+        auto fbStats = g_fallback_manager->getStats();
+        fallback_json["xrun_count"] = fbStats.xrunCount;
+        fallback_json["activations"] = fbStats.fallbackActivations;
+        fallback_json["recoveries"] = fbStats.fallbackRecoveries;
+    } else {
+        fallback_json["xrun_count"] = 0;
+        fallback_json["activations"] = 0;
+        fallback_json["recoveries"] = 0;
+    }
+
+    return fallback_json;
+}
+
 static nlohmann::json collect_runtime_stats_json() {
     size_t clips = g_clip_count.load(std::memory_order_relaxed);
     size_t total = g_total_samples.load(std::memory_order_relaxed);
@@ -366,10 +408,11 @@ static nlohmann::json collect_runtime_stats_json() {
     nlohmann::json peaks;
     peaks["input"] = make_peak_json(g_peak_input_level.load(std::memory_order_relaxed));
     peaks["upsampler"] = make_peak_json(g_peak_upsampler_level.load(std::memory_order_relaxed));
-    peaks["post_mix"] =
-        make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
+    peaks["post_mix"] = make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
     peaks["post_gain"] = make_peak_json(g_peak_post_gain_level.load(std::memory_order_relaxed));
     stats["peaks"] = peaks;
+
+    stats["fallback"] = make_fallback_stats_json();
 
     return stats;
 }
@@ -512,32 +555,11 @@ static void zeromq_listener_thread() {
                 }
                 response = "OK";
             } else if (cmd == "STATS") {
-                nlohmann::json stats = collect_runtime_stats_json();
-                // Add fallback status (Issue #139)
-                if (g_fallback_manager) {
-                    stats["fallback"] = nlohmann::json::object();
-                    stats["fallback"]["enabled"] = true;
-                    stats["fallback"]["active"] = g_fallback_manager->isInFallback();
-                    stats["fallback"]["gpu_utilization"] = g_fallback_manager->getGpuUtilization();
-                    auto fbStats = g_fallback_manager->getStats();
-                    stats["fallback"]["xrun_count"] = fbStats.xrunCount;
-                    stats["fallback"]["activations"] = fbStats.fallbackActivations;
-                    stats["fallback"]["recoveries"] = fbStats.fallbackRecoveries;
-                } else {
-                    stats["fallback"] = nlohmann::json::object();
-                    stats["fallback"]["enabled"] = false;
-                }
-                response = "OK:" + stats.dump();
+                response = "OK:" + build_stats_json();
             } else if (cmd == "CROSSFEED_ENABLE") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 if (g_hrtf_processor) {
-                    // Reset streaming state to avoid stale data from previous session
-                    g_hrtf_processor->resetStreaming();
-                    g_cf_stream_input_left.clear();
-                    g_cf_stream_input_right.clear();
-                    g_cf_stream_accumulated_left = 0;
-                    g_cf_stream_accumulated_right = 0;
-
+                    reset_crossfeed_stream_state_locked();
                     g_hrtf_processor->setEnabled(true);
                     g_crossfeed_enabled.store(true);
                     response = "OK:Crossfeed enabled";
@@ -550,6 +572,7 @@ static void zeromq_listener_thread() {
                 if (g_hrtf_processor) {
                     g_hrtf_processor->setEnabled(false);
                 }
+                reset_crossfeed_stream_state_locked();
                 response = "OK:Crossfeed disabled";
             } else if (cmd == "CROSSFEED_STATUS") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -568,11 +591,7 @@ static void zeromq_listener_thread() {
                     if (cmdType == "CROSSFEED_ENABLE") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                         if (g_hrtf_processor) {
-                            g_hrtf_processor->resetStreaming();
-                            g_cf_stream_input_left.clear();
-                            g_cf_stream_input_right.clear();
-                            g_cf_stream_accumulated_left = 0;
-                            g_cf_stream_accumulated_right = 0;
+                            reset_crossfeed_stream_state_locked();
                             g_hrtf_processor->setEnabled(true);
                             g_crossfeed_enabled.store(true);
                             nlohmann::json resp;
@@ -592,6 +611,7 @@ static void zeromq_listener_thread() {
                         if (g_hrtf_processor) {
                             g_hrtf_processor->setEnabled(false);
                         }
+                        reset_crossfeed_stream_state_locked();
                         nlohmann::json resp;
                         resp["status"] = "ok";
                         resp["message"] = "Crossfeed disabled";
@@ -732,6 +752,7 @@ static void zeromq_listener_thread() {
                                                 resp["message"] = "Combined filter applied";
                                                 resp["data"]["rate_family"] = rateFamily;
                                                 resp["data"]["complex_count"] = complexCount;
+                                                reset_crossfeed_stream_state_locked();
                                                 std::cout
                                                     << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
                                                     << rateFamily << " (" << complexCount
@@ -762,12 +783,15 @@ static void zeromq_listener_thread() {
                         resp["data"]["enabled"] = enabled;
                         resp["data"]["initialized"] = initialized;
                         if (g_hrtf_processor != nullptr) {
-                            CrossfeedEngine::HeadSize currentSize = g_hrtf_processor->getCurrentHeadSize();
-                            resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(currentSize);
+                            CrossfeedEngine::HeadSize currentSize =
+                                g_hrtf_processor->getCurrentHeadSize();
+                            resp["data"]["head_size"] =
+                                CrossfeedEngine::headSizeToString(currentSize);
                         } else {
                             resp["data"]["head_size"] = nullptr;
                         }
-                        // headphone field is omitted until HRTFProcessor exposes actual HRTF metadata (#233)
+                        // headphone field is omitted until HRTFProcessor exposes actual HRTF
+                        // metadata (#233)
                         response = resp.dump();
                     } else if (cmdType == "CROSSFEED_SET_SIZE") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -793,17 +817,20 @@ static void zeromq_listener_thread() {
                                 resp["message"] = "Missing head_size parameter";
                                 response = resp.dump();
                             } else {
-                                CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
+                                CrossfeedEngine::HeadSize targetSize =
+                                    CrossfeedEngine::stringToHeadSize(sizeStr);
                                 bool switch_success = false;
                                 applySoftMuteForFilterSwitch([&]() {
                                     switch_success = g_hrtf_processor->switchHeadSize(targetSize);
                                     return switch_success;
                                 });
-                                
+
                                 if (switch_success) {
                                     nlohmann::json resp;
                                     resp["status"] = "ok";
-                                    resp["data"]["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
+                                    resp["data"]["head_size"] =
+                                        CrossfeedEngine::headSizeToString(targetSize);
+                                    reset_crossfeed_stream_state_locked();
                                     response = resp.dump();
                                 } else {
                                     nlohmann::json resp;
@@ -870,7 +897,8 @@ static void zeromq_listener_thread() {
                                             static_cast<double>(g_input_sample_rate) *
                                             g_config.upsampleRatio;
                                         auto eqMagnitude = EQ::computeEqMagnitudeForFft(
-                                            filterFftSize, fullFftSize, outputSampleRate, eqProfile);
+                                            filterFftSize, fullFftSize, outputSampleRate,
+                                            eqProfile);
                                         if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
                                             std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
                                                       << " phase" << std::endl;
@@ -879,14 +907,15 @@ static void zeromq_listener_thread() {
                                                       << std::endl;
                                         }
                                     } else {
-                                        std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                                                  << g_config.eqProfilePath << std::endl;
+                                        std::cerr
+                                            << "ZeroMQ: Warning - Failed to parse EQ profile: "
+                                            << g_config.eqProfilePath << std::endl;
                                     }
                                 }
                             }
                             return switch_success;
                         });
-                        
+
                         if (switch_success) {
                             response = "OK:Phase type set to " + phaseStr;
                         } else {
@@ -1063,8 +1092,8 @@ static void on_input_process(void* userdata) {
 
             // Process right channel
             right_generated = g_upsampler->processStreamBlock(
-                right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
-                g_stream_accumulated_right);
+                right.data(), n_frames, output_right, g_upsampler->streamRight_,
+                g_stream_input_right, g_stream_accumulated_right);
         }
 
         // Only store output if both channels generated output
@@ -1082,29 +1111,29 @@ static void on_input_process(void* userdata) {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 // Re-check under lock (double-checked locking pattern)
                 if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                    std::vector<float>& cf_output_left = g_cf_output_buffer_left;
-                    std::vector<float>& cf_output_right = g_cf_output_buffer_right;
                     // Use default CUDA stream (0) for crossfeed processing
                     bool cf_generated = g_hrtf_processor->processStreamBlock(
-                        output_left.data(), output_right.data(), output_left.size(), cf_output_left,
-                        cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                        g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
+                        output_left.data(), output_right.data(), output_left.size(),
+                        g_cf_output_left, g_cf_output_right, 0, g_cf_stream_input_left,
+                        g_cf_stream_input_right, g_cf_stream_accumulated_left,
+                        g_cf_stream_accumulated_right);
 
                     if (cf_generated) {
                         size_t cf_frames =
-                            std::min(cf_output_left.size(), cf_output_right.size());
+                            std::min(g_cf_output_left.size(), g_cf_output_right.size());
                         if (cf_frames > 0) {
-                            float cfPeak = compute_stereo_peak(
-                                cf_output_left.data(), cf_output_right.data(), cf_frames);
+                            float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
+                                                               g_cf_output_right.data(), cf_frames);
                             update_peak_level(g_peak_post_crossfeed_level, cfPeak);
                         }
                         // Store crossfeed output for ALSA thread consumption
                         std::lock_guard<std::mutex> lock(g_buffer_mutex);
                         g_output_buffer_left.insert(g_output_buffer_left.end(),
-                                                    cf_output_left.begin(), cf_output_left.end());
+                                                    g_cf_output_left.begin(),
+                                                    g_cf_output_left.end());
                         g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                                     cf_output_right.begin(),
-                                                     cf_output_right.end());
+                                                     g_cf_output_right.begin(),
+                                                     g_cf_output_right.end());
                         g_buffer_cv.notify_one();
                     }
                     // Note: If crossfeed didn't generate output yet (accumulating),
@@ -1118,8 +1147,8 @@ static void on_input_process(void* userdata) {
                                                  output_right.end());
                     g_buffer_cv.notify_one();
                     if (frames_generated > 0) {
-                        float postPeak = compute_stereo_peak(output_left.data(), output_right.data(),
-                                                             frames_generated);
+                        float postPeak = compute_stereo_peak(output_left.data(),
+                                                             output_right.data(), frames_generated);
                         update_peak_level(g_peak_post_crossfeed_level, postPeak);
                     }
                 }
@@ -1327,12 +1356,12 @@ void alsa_output_thread() {
             // Step 2: Apply soft mute for glitch-free shutdown/transitions
             if (g_soft_mute) {
                 g_soft_mute->process(float_buffer.data(), period_size);
-                
+
                 // Reset fade duration to default after filter switch fade-in completes
                 // Check if we just completed a fade-in from filter switching
                 // (fade duration > default indicates filter switch was in progress)
                 using namespace DaemonConstants;
-                if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING && 
+                if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING &&
                     g_soft_mute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
                     g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
                 }
@@ -1779,8 +1808,8 @@ int main(int argc, char* argv[]) {
         using namespace DaemonConstants;
         int outputSampleRate = g_input_sample_rate * g_config.upsampleRatio;
         g_soft_mute = new SoftMute::Controller(DEFAULT_SOFT_MUTE_FADE_MS, outputSampleRate);
-        std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at " << outputSampleRate << "Hz)"
-                  << std::endl;
+        std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
+                  << outputSampleRate << "Hz)" << std::endl;
 
         // Initialize fallback manager (Issue #139)
         if (g_config.fallback.enabled) {
@@ -1804,16 +1833,19 @@ int main(int argc, char* argv[]) {
             };
 
             if (g_fallback_manager->initialize(fbConfig, stateCallback)) {
-                std::cout << "Fallback manager initialized (GPU threshold: " << fbConfig.gpuThreshold
-                          << "%, XRUN fallback: " << (fbConfig.xrunTriggersFallback ? "enabled" : "disabled")
-                          << ")" << std::endl;
+                std::cout << "Fallback manager initialized (GPU threshold: "
+                          << fbConfig.gpuThreshold << "%, XRUN fallback: "
+                          << (fbConfig.xrunTriggersFallback ? "enabled" : "disabled") << ")"
+                          << std::endl;
             } else {
                 std::cerr << "Warning: Failed to initialize fallback manager" << std::endl;
                 delete g_fallback_manager;
                 g_fallback_manager = nullptr;
+                g_fallback_active.store(false, std::memory_order_relaxed);
             }
         } else {
             std::cout << "Fallback manager disabled" << std::endl;
+            g_fallback_active.store(false, std::memory_order_relaxed);
         }
 
         // Start ALSA output thread
@@ -1972,6 +2004,7 @@ int main(int argc, char* argv[]) {
             g_fallback_manager->shutdown();
             delete g_fallback_manager;
             g_fallback_manager = nullptr;
+            g_fallback_active.store(false, std::memory_order_relaxed);
         }
         delete g_soft_mute;
         g_soft_mute = nullptr;

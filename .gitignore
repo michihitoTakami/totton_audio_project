@@ -67,6 +67,10 @@ Thumbs.db
 *.tmp
 *.log
 
+# Test output files
+test_detail.xml
+*_test_results.xml
+
 worktrees/
 
 # HUTUBS SOFA data (large binary files, CC BY-SA 4.0)
