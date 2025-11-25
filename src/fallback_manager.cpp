@@ -34,7 +34,9 @@ bool Manager::initialize(const FallbackConfig& config,
     }
     gpuMonitoringEnabled_.store(monitoringReady, std::memory_order_relaxed);
     if (!monitoringReady) {
-        LOG_WARN("NVML not available - GPU monitoring disabled, automatic fallback skipped");
+        LOG_WARN(
+            "NVML not available - GPU utilization monitoring disabled (XRUN fallback still "
+            "active)");
     }
 
     running_.store(true);
@@ -62,12 +64,10 @@ void Manager::shutdown() {
 void Manager::notifyXrun() {
     xrunCount_.fetch_add(1, std::memory_order_relaxed);
 
-    // Only trigger fallback if manager is initialized and running
+    // XRUN-triggered fallback works regardless of NVML availability
+    // NVML is only required for GPU utilization-based hysteresis (threshold monitoring)
+    // XRUN detection itself does not depend on NVML
     if (running_.load() && config_.xrunTriggersFallback && state_.load() == FallbackState::Normal) {
-        if (!gpuMonitoringEnabled_.load(std::memory_order_relaxed)) {
-            LOG_WARN("XRUN detected but GPU monitoring unavailable - skipping fallback");
-            return;
-        }
         LOG_WARN("XRUN detected - triggering fallback");
         triggerFallback();
     }

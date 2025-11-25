@@ -32,19 +32,20 @@ class FallbackManagerTest : public ::testing::Test {
         }
     }
 
-    // Create manager with test callback. If requireMonitoring is true and GPU monitoring
-    // is unavailable (e.g., NVML missing), the test will be skipped.
-    Manager* createManager(const FallbackConfig& config, bool requireMonitoring = false) {
+    // Create manager with test callback
+    Manager* createManager(const FallbackConfig& config) {
         manager_ = new Manager();
         auto callback = [this](FallbackState state) {
             stateChanges_.push_back(state);
             lastState_ = state;
         };
         manager_->initialize(config, callback);
-        if (requireMonitoring && manager_ && !manager_->isMonitoringEnabled()) {
-            GTEST_SKIP() << "GPU monitoring unavailable - skipping fallback-dependent test";
-        }
         return manager_;
+    }
+
+    // Check if GPU monitoring is available - call this from test body for skip logic
+    bool isMonitoringAvailable() const {
+        return manager_ && manager_->isMonitoringEnabled();
     }
 
     Manager* manager_ = nullptr;
@@ -127,8 +128,9 @@ TEST_F(FallbackManagerTest, NotifyXrun_IncrementsCount) {
 TEST_F(FallbackManagerTest, NotifyXrun_TriggersFallback_WhenEnabled) {
     FallbackConfig config;
     config.xrunTriggersFallback = true;
-    Manager* mgr = createManager(config, true);
+    Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     EXPECT_EQ(mgr->getState(), FallbackState::Normal);
 
     mgr->notifyXrun();
@@ -177,8 +179,9 @@ TEST_F(FallbackManagerTest, NotifyXrun_DoesNotTriggerFallback_WhenAlreadyInFallb
 TEST_F(FallbackManagerTest, GetStats_ReturnsCorrectValues) {
     FallbackConfig config;
     config.xrunTriggersFallback = true;
-    Manager* mgr = createManager(config, true);
+    Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     mgr->notifyXrun();  // Triggers fallback
 
     auto stats = mgr->getStats();
@@ -190,8 +193,9 @@ TEST_F(FallbackManagerTest, GetStats_ReturnsCorrectValues) {
 TEST_F(FallbackManagerTest, GetStats_TracksMultipleActivations) {
     FallbackConfig config;
     config.xrunTriggersFallback = true;
-    Manager* mgr = createManager(config, true);
+    Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     mgr->notifyXrun();  // First activation
     mgr->notifyXrun();  // Should not count as new activation
 
@@ -220,8 +224,9 @@ TEST_F(FallbackManagerTest, GetGpuUtilization_ReturnsValue) {
 TEST_F(FallbackManagerTest, StateCallback_InvokedOnFallback) {
     FallbackConfig config;
     config.xrunTriggersFallback = true;
-    Manager* mgr = createManager(config, true);
+    Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     EXPECT_EQ(stateChanges_.size(), 0);
 
     mgr->notifyXrun();
@@ -234,8 +239,9 @@ TEST_F(FallbackManagerTest, StateCallback_InvokedOnFallback) {
 TEST_F(FallbackManagerTest, StateCallback_NotInvokedOnDuplicateState) {
     FallbackConfig config;
     config.xrunTriggersFallback = true;
-    Manager* mgr = createManager(config, true);
+    Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     mgr->notifyXrun();
     EXPECT_EQ(stateChanges_.size(), 1);
     stateChanges_.clear();
@@ -317,8 +323,9 @@ TEST_F(FallbackManagerTest, MultipleShutdowns_DoesNotCrash) {
 TEST_F(FallbackManagerTest, ConcurrentXrunNotifications_ThreadSafe) {
     FallbackConfig config;
     config.xrunTriggersFallback = true;
-    Manager* mgr = createManager(config, true);
+    Manager* mgr = createManager(config);
 
+    // XRUN-triggered fallback works regardless of NVML availability
     // Simulate concurrent XRUN notifications
     std::vector<std::thread> threads;
     for (int i = 0; i < 10; ++i) {
@@ -353,4 +360,3 @@ TEST_F(FallbackManagerTest, Integration_WithMetrics_Works) {
     // Manager should still function
     EXPECT_EQ(mgr->getState(), FallbackState::Normal);
 }
-
