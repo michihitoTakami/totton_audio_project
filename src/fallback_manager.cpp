@@ -28,11 +28,13 @@ bool Manager::initialize(const FallbackConfig& config,
     config_ = config;
     stateCallback_ = std::move(stateCallback);
 
-    // Initialize NVML if available
-    if (!gpu_upsampler::metrics::isNvmlAvailable()) {
-        if (!gpu_upsampler::metrics::initializeNvml()) {
-            LOG_WARN("NVML not available - GPU monitoring disabled");
-        }
+    bool monitoringReady = gpu_upsampler::metrics::isNvmlAvailable();
+    if (!monitoringReady) {
+        monitoringReady = gpu_upsampler::metrics::initializeNvml();
+    }
+    gpuMonitoringEnabled_.store(monitoringReady, std::memory_order_relaxed);
+    if (!monitoringReady) {
+        LOG_WARN("NVML not available - GPU monitoring disabled, automatic fallback skipped");
     }
 
     running_.store(true);
@@ -62,6 +64,10 @@ void Manager::notifyXrun() {
 
     // Only trigger fallback if manager is initialized and running
     if (running_.load() && config_.xrunTriggersFallback && state_.load() == FallbackState::Normal) {
+        if (!gpuMonitoringEnabled_.load(std::memory_order_relaxed)) {
+            LOG_WARN("XRUN detected but GPU monitoring unavailable - skipping fallback");
+            return;
+        }
         LOG_WARN("XRUN detected - triggering fallback");
         triggerFallback();
     }
@@ -79,7 +85,11 @@ FallbackManager::Manager::Stats Manager::getStats() const {
 }
 
 void Manager::monitorThread() {
-    LOG_INFO("Fallback monitor thread started");
+    if (!gpuMonitoringEnabled_.load(std::memory_order_relaxed)) {
+        LOG_INFO("Fallback monitor thread started (GPU monitoring disabled)");
+    } else {
+        LOG_INFO("Fallback monitor thread started");
+    }
 
     while (running_.load()) {
         checkGpuUtilization();
@@ -92,6 +102,10 @@ void Manager::monitorThread() {
 }
 
 void Manager::checkGpuUtilization() {
+    if (!gpuMonitoringEnabled_.load(std::memory_order_relaxed)) {
+        return;
+    }
+
     // Get current GPU utilization
     auto gpuMetrics = gpu_upsampler::metrics::getGpuMetrics();
     float utilization = gpuMetrics.utilization;

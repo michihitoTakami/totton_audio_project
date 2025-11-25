@@ -248,6 +248,30 @@ static nlohmann::json make_peak_json(float linear_value) {
     return peak_json;
 }
 
+static nlohmann::json make_fallback_stats_json() {
+    nlohmann::json fallback_json = nlohmann::json::object();
+    bool enabled = g_config.fallback.enabled;
+    fallback_json["enabled"] = enabled;
+    fallback_json["active"] = g_fallback_active.load(std::memory_order_relaxed);
+    fallback_json["gpu_utilization"] = 0.0;
+    fallback_json["monitoring_enabled"] =
+        (g_fallback_manager ? g_fallback_manager->isMonitoringEnabled() : false);
+
+    if (enabled && g_fallback_manager) {
+        fallback_json["gpu_utilization"] = g_fallback_manager->getGpuUtilization();
+        auto fbStats = g_fallback_manager->getStats();
+        fallback_json["xrun_count"] = fbStats.xrunCount;
+        fallback_json["activations"] = fbStats.fallbackActivations;
+        fallback_json["recoveries"] = fbStats.fallbackRecoveries;
+    } else {
+        fallback_json["xrun_count"] = 0;
+        fallback_json["activations"] = 0;
+        fallback_json["recoveries"] = 0;
+    }
+
+    return fallback_json;
+}
+
 static nlohmann::json collect_runtime_stats_json() {
     size_t clips = g_clip_count.load(std::memory_order_relaxed);
     size_t total = g_total_samples.load(std::memory_order_relaxed);
@@ -285,6 +309,8 @@ static nlohmann::json collect_runtime_stats_json() {
         make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
     peaks["post_gain"] = make_peak_json(g_peak_post_gain_level.load(std::memory_order_relaxed));
     stats["peaks"] = peaks;
+
+    stats["fallback"] = make_fallback_stats_json();
 
     return stats;
 }
@@ -420,22 +446,7 @@ static void zeromq_listener_thread() {
                 }
                 response = "OK";
             } else if (cmd == "STATS") {
-                nlohmann::json stats = collect_runtime_stats_json();
-                // Add fallback status (Issue #139)
-                if (g_fallback_manager) {
-                    stats["fallback"] = nlohmann::json::object();
-                    stats["fallback"]["enabled"] = true;
-                    stats["fallback"]["active"] = g_fallback_manager->isInFallback();
-                    stats["fallback"]["gpu_utilization"] = g_fallback_manager->getGpuUtilization();
-                    auto fbStats = g_fallback_manager->getStats();
-                    stats["fallback"]["xrun_count"] = fbStats.xrunCount;
-                    stats["fallback"]["activations"] = fbStats.fallbackActivations;
-                    stats["fallback"]["recoveries"] = fbStats.fallbackRecoveries;
-                } else {
-                    stats["fallback"] = nlohmann::json::object();
-                    stats["fallback"]["enabled"] = false;
-                }
-                response = "OK:" + stats.dump();
+                response = "OK:" + build_stats_json();
             } else if (cmd == "CROSSFEED_ENABLE") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                 if (g_hrtf_processor) {
@@ -1687,9 +1698,11 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Warning: Failed to initialize fallback manager" << std::endl;
                 delete g_fallback_manager;
                 g_fallback_manager = nullptr;
+                g_fallback_active.store(false, std::memory_order_relaxed);
             }
         } else {
             std::cout << "Fallback manager disabled" << std::endl;
+            g_fallback_active.store(false, std::memory_order_relaxed);
         }
 
         // Start ALSA output thread
@@ -1848,6 +1861,7 @@ int main(int argc, char* argv[]) {
             g_fallback_manager->shutdown();
             delete g_fallback_manager;
             g_fallback_manager = nullptr;
+            g_fallback_active.store(false, std::memory_order_relaxed);
         }
         delete g_soft_mute;
         g_soft_mute = nullptr;

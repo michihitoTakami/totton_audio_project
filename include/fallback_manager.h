@@ -82,6 +82,13 @@ class Manager {
     }
 
     /**
+     * @brief Return true if GPU monitoring (NVML) is available
+     */
+    bool isMonitoringEnabled() const {
+        return gpuMonitoringEnabled_.load(std::memory_order_relaxed);
+    }
+
+    /**
      * @brief Notify manager of an XRUN event
      *
      * Thread-safe, can be called from ALSA callback.
@@ -119,6 +126,7 @@ class Manager {
     std::atomic<FallbackState> state_{FallbackState::Normal};
     std::atomic<float> gpuUtilization_{0.0f};
     std::atomic<bool> running_{false};
+    std::atomic<bool> gpuMonitoringEnabled_{false};
 
     // GPU threshold tracking
     int consecutiveThresholdExceedances_{0};
