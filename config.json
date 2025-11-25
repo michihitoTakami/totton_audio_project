@@ -5,6 +5,7 @@
   "upsampleRatio": 16,
   "blockSize": 4096,
   "gain": 1.0,
+  "headroomTarget": 0.92,
   "phaseType": "minimum",
   "filterPath": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
   "quadPhaseEnabled": true,

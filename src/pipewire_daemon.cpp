@@ -20,6 +20,10 @@
 // Configuration (using common constants from daemon_constants.h)
 using namespace DaemonConstants;
 
+static AppConfig g_config;
+static std::atomic<float> g_limiter_gain{1.0f};
+static std::atomic<float> g_effective_gain{1.0f};
+
 // Dynamic rate configuration (updated at runtime based on input detection)
 // Using atomic for thread-safety between PipeWire callbacks and main thread
 static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
@@ -50,6 +54,26 @@ struct Data;
 
 // Global pointer to Data for use in handle_rate_change
 static Data* g_data = nullptr;
+
+static float apply_output_limiter(float* interleaved, size_t frames) {
+    constexpr float kEpsilon = 1e-6f;
+    if (!interleaved || frames == 0) {
+        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+        g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
+        return 0.0f;
+    }
+    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
+    float limiterGain = 1.0f;
+    const float target = g_config.headroomTarget;
+    if (target > 0.0f && peak > target) {
+        limiterGain = target / (peak + kEpsilon);
+        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
+        peak = target;
+    }
+    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
+    g_effective_gain.store(g_config.gain * limiterGain, std::memory_order_relaxed);
+    return peak;
+}
 
 // Output ring buffers (using common AudioRingBuffer class)
 static AudioRingBuffer g_output_buffer_left;
@@ -285,6 +309,7 @@ static void on_output_process(void* userdata) {
                 // Interleave output (separate L/R → stereo interleaved)
                 AudioUtils::interleaveStereo(g_output_temp_left.data(), g_output_temp_right.data(),
                                              output_samples, n_frames);
+                AudioUtils::applyInterleavedGain(output_samples, n_frames, g_config.gain);
                 
                 // Apply soft mute if transitioning (for filter switching)
                 if (g_soft_mute) {
@@ -298,6 +323,8 @@ static void on_output_process(void* userdata) {
                         g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
                     }
                 }
+
+                apply_output_limiter(output_samples, n_frames);
             } else {
                 std::memset(output_samples, 0, n_frames * CHANNELS * sizeof(float));
             }
@@ -422,6 +449,9 @@ int main(int argc, char* argv[]) {
     } else {
         std::cout << "Phase type: minimum (default)" << std::endl;
     }
+    g_config = appConfig;
+    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+    g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
     // Input sample rate will be auto-detected from PipeWire stream
     std::cout << "Input sample rate: auto-detected from PipeWire" << std::endl;
 

@@ -63,6 +63,8 @@ constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)
 static AppConfig g_config;
+static std::atomic<float> g_limiter_gain{1.0f};
+static std::atomic<float> g_effective_gain{1.0f};
 
 // ========== Signal Handling (Async-Signal-Safe) ==========
 // These flags are set by the signal handler and polled by the main loop.
@@ -113,19 +115,23 @@ static inline float compute_stereo_peak(const float* left, const float* right, s
     return peak;
 }
 
-static inline float compute_interleaved_peak(const float* interleaved, size_t frames) {
+static float apply_output_limiter(float* interleaved, size_t frames) {
+    constexpr float kEpsilon = 1e-6f;
     if (!interleaved || frames == 0) {
+        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+        g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
         return 0.0f;
     }
-    float peak = 0.0f;
-    for (size_t i = 0; i < frames; ++i) {
-        float l = std::fabs(interleaved[i * 2]);
-        float r = std::fabs(interleaved[i * 2 + 1]);
-        if (l > peak)
-            peak = l;
-        if (r > peak)
-            peak = r;
+    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
+    float limiterGain = 1.0f;
+    const float target = g_config.headroomTarget;
+    if (target > 0.0f && peak > target) {
+        limiterGain = target / (peak + kEpsilon);
+        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
+        peak = target;
     }
+    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
+    g_effective_gain.store(g_config.gain * limiterGain, std::memory_order_relaxed);
     return peak;
 }
 
@@ -350,6 +356,13 @@ static nlohmann::json collect_runtime_stats_json() {
     stats["phase_type"] = phaseTypeStr;
     stats["last_updated"] = epoch;
 
+    nlohmann::json gainJson;
+    gainJson["user"] = g_config.gain;
+    gainJson["limiter"] = g_limiter_gain.load(std::memory_order_relaxed);
+    gainJson["effective"] = g_effective_gain.load(std::memory_order_relaxed);
+    gainJson["target_peak"] = g_config.headroomTarget;
+    stats["gain"] = gainJson;
+
     nlohmann::json peaks;
     peaks["input"] = make_peak_json(g_peak_input_level.load(std::memory_order_relaxed));
     peaks["upsampler"] = make_peak_json(g_peak_upsampler_level.load(std::memory_order_relaxed));
@@ -386,6 +399,7 @@ static void print_config_summary(const AppConfig& cfg) {
     LOG_INFO("  Upsample ratio: {}", cfg.upsampleRatio);
     LOG_INFO("  Block size:     {}", cfg.blockSize);
     LOG_INFO("  Gain:           {}", cfg.gain);
+    LOG_INFO("  Headroom tgt:   {}", cfg.headroomTarget);
     LOG_INFO("  Filter path:    {}", cfg.filterPath);
     LOG_INFO("  EQ enabled:     {}", (cfg.eqEnabled ? "yes" : "no"));
     if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
@@ -440,6 +454,8 @@ static void load_runtime_config() {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
     }
     print_config_summary(g_config);
+    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+    g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
 }
 
 // ========== ZeroMQ Command Listener ==========
@@ -1322,8 +1338,8 @@ void alsa_output_thread() {
                 }
             }
 
-            // Track peak level after gain & soft mute (pre-clipping)
-            float postGainPeak = compute_interleaved_peak(float_buffer.data(), period_size);
+            // Apply limiter and track peak after gain & soft mute
+            float postGainPeak = apply_output_limiter(float_buffer.data(), period_size);
             update_peak_level(g_peak_post_gain_level, postGainPeak);
 
             // Step 3: Clipping detection, clamping, and float→int32 conversion
