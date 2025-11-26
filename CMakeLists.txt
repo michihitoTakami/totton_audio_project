@@ -44,6 +44,16 @@ else()
     message(STATUS "NVML not found - GPU utilization monitoring disabled (stub)")
 endif()
 
+# Detect platform: Jetson vs PC
+# Jetson Orin Nano = SM 8.7 (Ampere), RTX 2070 Super = SM 7.5 (Turing)
+if(EXISTS "/etc/nv_tegra_release")
+    set(GPU_CUDA_ARCH "87")
+    message(STATUS "Detected Jetson platform - CUDA arch ${GPU_CUDA_ARCH}")
+else()
+    set(GPU_CUDA_ARCH "75")
+    message(STATUS "Detected PC platform - CUDA arch ${GPU_CUDA_ARCH}")
+endif()
+
 # Fetch dependencies
 include(FetchContent)
 
@@ -104,10 +114,10 @@ add_library(gpu_upsampler_core STATIC
     src/hrtf/woodworth_model.cpp
 )
 
-# CUDA architecture (RTX 2070 Super = Compute Capability 7.5)
+# CUDA architecture (auto-detected: Jetson=87, PC=75)
 set_target_properties(gpu_upsampler_core PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "75"
+    CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
     POSITION_INDEPENDENT_CODE ON
 )
 
@@ -466,7 +476,7 @@ target_include_directories(gpu_tests PRIVATE
 )
 set_target_properties(gpu_tests PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "75"
+    CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
 )
 gtest_discover_tests(gpu_tests)
 
@@ -584,6 +594,6 @@ target_include_directories(crossfeed_tests PRIVATE
 )
 set_target_properties(crossfeed_tests PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "75"
+    CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
 )
 gtest_discover_tests(crossfeed_tests)
