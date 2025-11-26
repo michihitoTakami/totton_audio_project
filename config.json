@@ -15,7 +15,7 @@
   "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear.bin",
   "_comment": "Multi-rate filter paths: System automatically selects appropriate filter based on input rate and DAC capability. Available filters: 44k/48k × 2x/4x/8x/16x × min_phase/linear. Default gain 1.0 is suitable for all rates.",
   "eqEnabled": true,
-  "eqProfilePath": "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt",
+  "eqProfilePath": "data/EQ/Sample_EQ.txt",
   "crossfeed": {
     "enabled": false,
     "headSize": "m",
