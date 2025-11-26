@@ -518,6 +518,20 @@ target_include_directories(auto_negotiation_tests PRIVATE
 )
 gtest_discover_tests(auto_negotiation_tests)
 
+# Rate Switch E2E tests (Issue #221)
+add_executable(rate_switch_e2e_tests
+    tests/cpp/test_rate_switch_e2e.cpp
+)
+target_link_libraries(rate_switch_e2e_tests
+    GTest::gtest_main
+    auto_negotiation
+    gpu_upsampler_core
+)
+target_include_directories(rate_switch_e2e_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(rate_switch_e2e_tests)
+
 # Soft Mute tests (CPU-only)
 add_executable(soft_mute_tests
     tests/cpp/test_soft_mute.cpp
