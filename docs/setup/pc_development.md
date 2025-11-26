@@ -16,9 +16,9 @@
 ### 1. ビルド
 
 ```bash
-cd /home/michihito/Working/gpu_os
+# プロジェクトルートで実行
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j8
+cmake --build build -j$(nproc)
 ```
 
 ### 2. PipeWire Null Sinkの作成
@@ -160,7 +160,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 - **src/convolution_engine.cu:576-586**: CUDA streamの明示的な同期
 - **src/alsa_daemon.cpp:240-244**: Float→Int32変換のオーバーフロー修正
 
-詳細は `/home/michihito/Working/gpu_os/docs/crackling_noise_investigation.md` を参照してください。
+詳細は [クラックリングノイズ調査報告](../investigations/crackling_noise_investigation.md) を参照してください。
 
 ### デーモンが起動しない
 
@@ -261,8 +261,8 @@ After=pipewire.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/michihito/Working/gpu_os
-ExecStart=/home/michihito/Working/gpu_os/build/gpu_upsampler_alsa
+WorkingDirectory=/path/to/gpu_os
+ExecStart=/path/to/gpu_os/build/gpu_upsampler_alsa
 Restart=on-failure
 RestartSec=5
 
@@ -280,9 +280,6 @@ systemctl --user enable --now gpu-upsampler.service
 
 ## 関連ドキュメント
 
-- [クラックリングノイズ調査報告](crackling_noise_investigation.md)
-- [Phase 1 実装報告](phase1_implementation_report.md)
-
-## 作成日時
-
-2025-11-21
+- [クラックリングノイズ調査報告](../investigations/crackling_noise_investigation.md)
+- [ビルド手順](build.md)
+- [Web UI セットアップ](web_ui.md)
