@@ -1,0 +1,157 @@
+# Dockerfile for Magic Box - Jetson Orin Nano Super
+#
+# This Dockerfile is designed to run NATIVELY on Jetson Orin (ARM64).
+# Do NOT try to build this on x86_64 without cross-compilation setup.
+#
+# Base Image: NVIDIA L4T CUDA (JetPack 6.1 / L4T r36.4)
+# Target: Jetson Orin Nano Super (SM 8.7 Ampere, 1024 CUDA cores)
+#
+# Build on Jetson:
+#   docker build -f docker/Dockerfile.jetson -t magicbox:latest .
+#
+# Run:
+#   docker run --runtime=nvidia --device /dev/snd -p 80:80 magicbox:latest
+#
+
+# =============================================================================
+# Stage 1: Builder
+# =============================================================================
+FROM nvcr.io/nvidia/l4t-cuda:12.6.68-devel AS builder
+
+LABEL maintainer="Magic Box Project"
+LABEL stage="builder"
+
+# Environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Tokyo
+
+# CUDA environment (Jetson Orin = SM 8.7)
+ENV CUDA_ARCHITECTURES=87
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build tools
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    git \
+    # Audio libraries
+    libasound2-dev \
+    libpipewire-0.3-dev \
+    libsndfile1-dev \
+    # ZeroMQ for IPC
+    libzmq3-dev \
+    # Systemd development (for Type=notify)
+    libsystemd-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create build directory
+WORKDIR /build
+
+# Copy project files
+COPY CMakeLists.txt ./
+COPY include/ include/
+COPY src/ src/
+COPY tests/ tests/
+COPY systemd/ systemd/
+
+# Build C++/CUDA components
+RUN cmake -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_ARCHITECTURES=87 \
+    -DCMAKE_INSTALL_PREFIX=/opt/magicbox \
+    -G Ninja \
+    && cmake --build build --parallel $(nproc) \
+    && cmake --install build
+
+# =============================================================================
+# Stage 2: Runtime
+# =============================================================================
+FROM nvcr.io/nvidia/l4t-cuda:12.6.68-runtime AS runtime
+
+LABEL maintainer="Magic Box Project"
+LABEL description="Magic Box Audio Processor for Jetson Orin Nano Super"
+LABEL version="0.1.0"
+
+# Environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Tokyo
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+# CUDA runtime paths
+ENV PATH=/usr/local/cuda/bin:/opt/magicbox/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/magicbox/lib:${LD_LIBRARY_PATH}
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Audio runtime libraries
+    libasound2 \
+    libpipewire-0.3-0 \
+    libsndfile1 \
+    # ZeroMQ runtime
+    libzmq5 \
+    # Systemd runtime (for sd_notify)
+    libsystemd0 \
+    # Python for Control Plane
+    python3 \
+    python3-pip \
+    python3-venv \
+    # Utilities
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries from builder stage
+COPY --from=builder /opt/magicbox /opt/magicbox
+
+# Create app directory
+WORKDIR /opt/magicbox
+
+# Copy data files (filter coefficients)
+COPY data/coefficients/ data/coefficients/
+COPY config.json ./
+
+# Copy Python Control Plane
+COPY web/ web/
+COPY pyproject.toml ./
+
+# Setup Python environment for Control Plane
+RUN python3 -m venv /opt/magicbox/venv \
+    && /opt/magicbox/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/magicbox/venv/bin/pip install --no-cache-dir \
+        fastapi \
+        uvicorn[standard] \
+        httpx \
+        pydantic \
+        numpy \
+        scipy \
+        pyzmq
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash -G audio magicbox
+
+# Set ownership
+RUN chown -R magicbox:magicbox /opt/magicbox
+
+# Expose ports
+# 80: Web UI (HTTP)
+EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -sf http://localhost/status || exit 1
+
+# Default: run as root for audio device access
+# For production, consider mapping audio group properly
+# USER magicbox
+
+# Entry point script
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["web"]

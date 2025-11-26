@@ -1,0 +1,104 @@
+# Docker Compose for Magic Box - Jetson Orin Nano Super
+#
+# Production deployment configuration.
+#
+# Usage:
+#   cd docker
+#   docker compose up -d
+#
+# Logs:
+#   docker compose logs -f
+#
+# Stop:
+#   docker compose down
+#
+
+services:
+  # ==========================================================================
+  # Audio Processing Daemon (Data Plane)
+  # ==========================================================================
+  audio-daemon:
+    image: magicbox:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.jetson
+    container_name: magicbox-audio
+    command: daemon
+    restart: unless-stopped
+
+    # NVIDIA runtime for GPU access
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+    # Audio device access
+    devices:
+      - /dev/snd:/dev/snd
+
+    # Shared memory for audio buffers
+    shm_size: '256m'
+
+    # IPC socket for communication with web
+    volumes:
+      - zmq-socket:/tmp
+
+    # Real-time priority (requires privileged or CAP_SYS_NICE)
+    cap_add:
+      - SYS_NICE
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "gpu_upsampler_alsa"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # Web UI (Control Plane)
+  # ==========================================================================
+  web-ui:
+    image: magicbox:latest
+    container_name: magicbox-web
+    command: web
+    restart: unless-stopped
+    depends_on:
+      audio-daemon:
+        condition: service_healthy
+
+    # Port mapping
+    ports:
+      - "80:80"
+
+    # IPC socket for communication with daemon
+    volumes:
+      - zmq-socket:/tmp
+
+    # Environment
+    environment:
+      - ZMQ_ENDPOINT=ipc:///tmp/gpu_os.sock
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Shared volume for ZeroMQ IPC socket
+volumes:
+  zmq-socket:
