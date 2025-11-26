@@ -8,8 +8,8 @@
 
 | プラットフォーム | アーキテクチャ | 対応 |
 |-----------------|---------------|------|
-| Jetson Orin Nano | ARM64 (aarch64) | ✅ ネイティブビルド |
-| x86_64 PC | AMD64 | ❌ クロスコンパイル要 |
+| Jetson Orin Nano | ARM64 (aarch64) | ✅ デフォルト |
+| x86_64 PC | AMD64 | ✅ `--build-arg`でx86 CUDAベースを指定 |
 
 ### 係数binファイルの互換性
 
@@ -18,6 +18,8 @@ FIRフィルタ係数（`data/coefficients/*.bin`）は**両アーキテクチ�
 - 形式: IEEE 754 float32
 - エンディアン: リトルエンディアン（両環境共通）
 - 変換不要でそのまま使用可能
+
+EQプロファイル（`data/EQ/*.txt`）もイメージ内へ同梱しているため、`config.json`で相対パス指定するだけで使用できます。
 
 ## 前提条件
 
@@ -43,14 +45,19 @@ docker build -f docker/Dockerfile.jetson -t magicbox:latest .
 
 ビルド時間目安: 約15-30分（初回）
 
-### x86からのクロスコンパイル（上級者向け）
+### x86ホストでのビルド
 
-NVIDIAの[JetPack Cross Compilation container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/jetpack-linux-aarch64-crosscompile-x86)を使用：
+Jetson用JetPackイメージはARM64専用のため、x86では`nvidia/cuda`ベースに切り替えてビルドします。
 
 ```bash
-# x86ホストで実行（約37.5GBのイメージをダウンロード）
-docker pull nvcr.io/nvidia/jetpack-linux-aarch64-crosscompile-x86:jp61
+docker build \
+  --build-arg BASE_IMAGE_DEVEL=nvidia/cuda:12.6.2-devel-ubuntu22.04 \
+  --build-arg BASE_IMAGE_RUNTIME=nvidia/cuda:12.6.2-runtime-ubuntu22.04 \
+  -f docker/Dockerfile.jetson \
+  -t magicbox:x86 .
 ```
+
+> NOTE: 生成されるバイナリはx86向けですが、FIR係数や設定ファイルはARM64と共通です。
 
 ## 実行
 
@@ -72,15 +79,24 @@ docker run --runtime=nvidia -it magicbox:latest bash
 
 ### Docker Compose（本番環境推奨）
 
+Jetson向けとx86ローカル向けでComposeファイルを分けています。間違ったベースイメージでビルドする事故を防ぐため、目的に合わせて`-f`で明示的に選択してください。
+
+#### Jetson Orin (ARM64)
+
 ```bash
 cd docker
-docker compose up -d
+docker compose -f docker-compose.jetson.yml up -d
+docker compose -f docker-compose.jetson.yml logs -f
+docker compose -f docker-compose.jetson.yml down
+```
 
-# ログ確認
-docker compose logs -f
+#### x86_64ローカル検証
 
-# 停止
-docker compose down
+```bash
+cd docker
+docker compose -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.local.yml logs -f
+docker compose -f docker-compose.local.yml down
 ```
 
 ## ポート一覧

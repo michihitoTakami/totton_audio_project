@@ -36,12 +36,35 @@ log_error() {
 
 # Check NVIDIA runtime
 check_nvidia() {
-    if ! nvidia-smi > /dev/null 2>&1; then
-        log_error "NVIDIA runtime not available!"
-        log_error "Make sure to run with: --runtime=nvidia"
-        exit 1
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        local gpu_name
+        gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
+        log_info "NVIDIA GPU detected via nvidia-smi: ${gpu_name:-unknown}"
+        return
     fi
-    log_info "NVIDIA GPU detected: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+
+    if command -v nvidia-container-cli >/dev/null 2>&1; then
+        local runtime_ver
+        runtime_ver=$(nvidia-container-cli --version 2>/dev/null | head -1)
+        log_info "NVIDIA container runtime detected: ${runtime_ver:-unknown}"
+        return
+    fi
+
+    if [ -f /proc/device-tree/gpu/compatible ]; then
+        local jetson_gpu
+        jetson_gpu=$(tr -d '\0' < /proc/device-tree/gpu/compatible 2>/dev/null)
+        log_info "Jetson GPU detected: ${jetson_gpu:-unknown}"
+        return
+    fi
+
+    if command -v tegrastats >/dev/null 2>&1; then
+        log_info "Jetson tegrastats available - assuming GPU runtime is ready"
+        return
+    fi
+
+    log_error "NVIDIA runtime not available!"
+    log_error "Ensure --runtime=nvidia (or Jetson default runtime) is configured."
+    exit 1
 }
 
 # Check audio devices

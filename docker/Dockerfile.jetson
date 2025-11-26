@@ -14,9 +14,15 @@
 #
 
 # =============================================================================
+# Base image selection (override via --build-arg for x86 testing)
+# =============================================================================
+ARG BASE_IMAGE_DEVEL=nvcr.io/nvidia/l4t-cuda:12.6.68-devel
+ARG BASE_IMAGE_RUNTIME=nvcr.io/nvidia/l4t-cuda:12.6.68-runtime
+
+# =============================================================================
 # Stage 1: Builder
 # =============================================================================
-FROM nvcr.io/nvidia/l4t-cuda:12.6.68-devel AS builder
+FROM ${BASE_IMAGE_DEVEL} AS builder
 
 LABEL maintainer="Magic Box Project"
 LABEL stage="builder"
@@ -70,7 +76,7 @@ RUN cmake -B build \
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
-FROM nvcr.io/nvidia/l4t-cuda:12.6.68-runtime AS runtime
+FROM ${BASE_IMAGE_RUNTIME} AS runtime
 
 LABEL maintainer="Magic Box Project"
 LABEL description="Magic Box Audio Processor for Jetson Orin Nano Super"
@@ -111,8 +117,9 @@ COPY --from=builder /opt/magicbox /opt/magicbox
 # Create app directory
 WORKDIR /opt/magicbox
 
-# Copy data files (filter coefficients)
+# Copy data files (filter coefficients + EQ)
 COPY data/coefficients/ data/coefficients/
+COPY data/EQ/ data/EQ/
 COPY config.json ./
 
 # Copy Python Control Plane

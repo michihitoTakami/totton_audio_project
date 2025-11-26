@@ -22,6 +22,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.jetson
+      args:
+        BASE_IMAGE_DEVEL: ${BASE_IMAGE_DEVEL:-nvcr.io/nvidia/l4t-cuda:12.6.68-devel}
+        BASE_IMAGE_RUNTIME: ${BASE_IMAGE_RUNTIME:-nvcr.io/nvidia/l4t-cuda:12.6.68-runtime}
     container_name: magicbox-audio
     command: daemon
     restart: unless-stopped
