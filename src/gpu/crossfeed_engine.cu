@@ -1169,16 +1169,21 @@ bool HRTFProcessor::generateWoodworthProfile(RateFamily rateFamily, float azimut
         auto convertChannel = [&](const std::vector<float>& timeDomain,
                                   std::vector<cufftComplex>& freqDomain,
                                   const char* context) {
-            checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)),
-                           "cudaMemset woodworth temp");
+            cudaStream_t workStream = stream_ ? stream_ : nullptr;
+            size_t copyBytes =
+                std::min(static_cast<size_t>(filterTaps_), timeDomain.size()) * sizeof(float);
             checkCudaError(
-                cudaMemcpy(d_temp, timeDomain.data(),
-                           std::min(static_cast<size_t>(filterTaps_), timeDomain.size()) * sizeof(float),
-                           cudaMemcpyHostToDevice),
-                "cudaMemcpy woodworth temp");
-            checkCufftError(cufftSetStream(fftPlanForward_, 0), "cufftSetStream woodworth");
-            checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_fftTemp),
-                            context);
+                cudaMemsetAsync(d_temp, 0, fftSize_ * sizeof(float), workStream),
+                "cudaMemsetAsync woodworth temp");
+            if (copyBytes > 0) {
+                checkCudaError(
+                    cudaMemcpyAsync(d_temp, timeDomain.data(), copyBytes, cudaMemcpyHostToDevice,
+                                    workStream),
+                    "cudaMemcpyAsync woodworth temp");
+            }
+            checkCufftError(cufftSetStream(fftPlanForward_, workStream), "cufftSetStream woodworth");
+            checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_fftTemp), context);
+            checkCudaError(cudaStreamSynchronize(workStream), "cudaStreamSynchronize woodworth");
             freqDomain.resize(filterFftSize_);
             checkCudaError(
                 cudaMemcpy(freqDomain.data(), d_fftTemp,

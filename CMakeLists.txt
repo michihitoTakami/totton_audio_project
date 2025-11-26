@@ -441,6 +441,7 @@ add_executable(cpu_tests
     tests/cpp/test_eq_parser.cpp
     tests/cpp/test_eq_to_fir.cpp
     tests/cpp/test_config_loader.cpp
+    tests/cpp/test_phase_alignment.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
