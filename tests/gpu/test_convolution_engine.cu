@@ -15,7 +15,7 @@
 using namespace ConvolutionEngine;
 
 // Helper function to prepare streaming input buffer with appropriate size
-static void prepareStreamInputBuffer(GPUUpsampler& upsampler, std::vector<float>& buffer) {
+static void prepareStreamInputBuffer(GPUUpsampler& upsampler, StreamFloatVector& buffer) {
     // Use 2x the required size for safety margin as recommended in convolution_engine.h
     size_t requiredSize = upsampler.getStreamValidInputPerBlock() * 2;
     buffer.resize(requiredSize, 0.0f);
@@ -1251,8 +1251,8 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_ResetsStreamingState) {
     // Process some data to populate streaming buffers
     const size_t inputFrames = 1000;
     std::vector<float> input(inputFrames, 0.1f);
-    std::vector<float> output;
-    std::vector<float> streamInputBuffer;
+    StreamFloatVector output;
+    StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
 
@@ -1293,8 +1293,8 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_ReinitializeStreaming) 
     // Verify streaming works after re-initialization
     const size_t inputFrames = 1000;
     std::vector<float> input(inputFrames, 0.1f);
-    std::vector<float> output;
-    std::vector<float> streamInputBuffer;
+    StreamFloatVector output;
+    StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
 
@@ -1405,8 +1405,8 @@ TEST_F(ConvolutionEngineTest, Issue219_RateSwitchWithStreamingActive) {
     // Process some data
     const size_t inputFrames = 1000;
     std::vector<float> input(inputFrames, 0.1f);
-    std::vector<float> output;
-    std::vector<float> streamInputBuffer;
+    StreamFloatVector output;
+    StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
 
@@ -1517,8 +1517,8 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_RequiresStreamingReinit
     // Verify streaming works after re-initialization
     const size_t inputFrames = 1000;
     std::vector<float> input(inputFrames, 0.1f);
-    std::vector<float> output;
-    std::vector<float> streamInputBuffer;
+    StreamFloatVector output;
+    StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
 
@@ -1553,8 +1553,8 @@ TEST_F(ConvolutionEngineTest, Issue219_MultipleRateSwitchesWithStreaming) {
         // Verify streaming works
         const size_t inputFrames = 1000;
         std::vector<float> input(inputFrames, 0.1f);
-        std::vector<float> output;
-        std::vector<float> streamInputBuffer;
+        StreamFloatVector output;
+        StreamFloatVector streamInputBuffer;
         size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
 
@@ -1579,8 +1579,8 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_CallsResetStreaming) {
     // Process some data to populate overlap buffers
     const size_t inputFrames = 1000;
     std::vector<float> input(inputFrames, 0.1f);
-    std::vector<float> output;
-    std::vector<float> streamInputBuffer;
+    StreamFloatVector output;
+    StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
 

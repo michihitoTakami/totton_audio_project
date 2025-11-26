@@ -130,20 +130,23 @@ bool GPUUpsampler::setupGPUResources() {
         std::cout << "Setting up GPU resources..." << std::endl;
 
         // Create CUDA streams (one for mono, two for stereo parallel processing)
-        Utils::checkCudaError(
-            cudaStreamCreate(&stream_),
-            "cudaStreamCreate primary"
-        );
+        bool highPriorityPrimary = false;
+        stream_ = Utils::createPrioritizedStream("cudaStreamCreate primary",
+                                                 cudaStreamNonBlocking, &highPriorityPrimary);
 
-        Utils::checkCudaError(
-            cudaStreamCreate(&streamLeft_),
-            "cudaStreamCreate left"
-        );
+        bool highPriorityLeft = false;
+        streamLeft_ = Utils::createPrioritizedStream("cudaStreamCreate left",
+                                                     cudaStreamNonBlocking, &highPriorityLeft);
 
-        Utils::checkCudaError(
-            cudaStreamCreate(&streamRight_),
-            "cudaStreamCreate right"
-        );
+        bool highPriorityRight = false;
+        streamRight_ = Utils::createPrioritizedStream("cudaStreamCreate right",
+                                                      cudaStreamNonBlocking, &highPriorityRight);
+
+        if (highPriorityPrimary || highPriorityLeft || highPriorityRight) {
+            std::cout << "  CUDA streams configured with high priority scheduling" << std::endl;
+        } else {
+            std::cout << "  CUDA streams using default priority" << std::endl;
+        }
 
         // Calculate FFT sizes for Overlap-Save
         // For Overlap-Save: FFT size = block size + filter taps - 1
@@ -329,7 +332,7 @@ void GPUUpsampler::removePinnedHostBuffer(void* ptr) {
     );
 }
 
-void GPUUpsampler::registerStreamInputBuffer(std::vector<float>& buffer, cudaStream_t stream) {
+void GPUUpsampler::registerStreamInputBuffer(StreamFloatVector& buffer, cudaStream_t stream) {
     if (buffer.empty()) {
         return;
     }
@@ -340,37 +343,26 @@ void GPUUpsampler::registerStreamInputBuffer(std::vector<float>& buffer, cudaStr
     // Track per-stream host buffers to avoid duplicate registrations when vectors reallocate
     void** trackedPtr = nullptr;
     size_t* trackedBytes = nullptr;
-    const char* context = nullptr;
-
     if (stream == streamLeft_) {
         trackedPtr = &pinnedStreamInputLeft_;
         trackedBytes = &pinnedStreamInputLeftBytes_;
-        context = "cudaHostRegister streaming input buffer (L)";
     } else if (stream == streamRight_) {
         trackedPtr = &pinnedStreamInputRight_;
         trackedBytes = &pinnedStreamInputRightBytes_;
-        context = "cudaHostRegister streaming input buffer (R)";
     } else {
         trackedPtr = &pinnedStreamInputMono_;
         trackedBytes = &pinnedStreamInputMonoBytes_;
-        context = "cudaHostRegister streaming input buffer (mono)";
     }
 
     if (*trackedPtr == ptr && *trackedBytes == bytes) {
-        return;  // Already registered for this stream
+        return;  // Already prepared for this stream
     }
 
-    if (*trackedPtr) {
-        cudaHostUnregister(*trackedPtr);
-        removePinnedHostBuffer(*trackedPtr);
-    }
-
-    registerHostBuffer(ptr, bytes, context);
     *trackedPtr = ptr;
     *trackedBytes = bytes;
 }
 
-void GPUUpsampler::registerStreamOutputBuffer(std::vector<float>& buffer, cudaStream_t stream) {
+void GPUUpsampler::registerStreamOutputBuffer(StreamFloatVector& buffer, cudaStream_t stream) {
     if (buffer.empty()) {
         return;
     }
@@ -380,32 +372,21 @@ void GPUUpsampler::registerStreamOutputBuffer(std::vector<float>& buffer, cudaSt
 
     void** trackedPtr = nullptr;
     size_t* trackedBytes = nullptr;
-    const char* context = nullptr;
-
     if (stream == streamLeft_) {
         trackedPtr = &pinnedStreamOutputLeft_;
         trackedBytes = &pinnedStreamOutputLeftBytes_;
-        context = "cudaHostRegister streaming output buffer (L)";
     } else if (stream == streamRight_) {
         trackedPtr = &pinnedStreamOutputRight_;
         trackedBytes = &pinnedStreamOutputRightBytes_;
-        context = "cudaHostRegister streaming output buffer (R)";
     } else {
         trackedPtr = &pinnedStreamOutputMono_;
         trackedBytes = &pinnedStreamOutputMonoBytes_;
-        context = "cudaHostRegister streaming output buffer (mono)";
     }
 
     if (*trackedPtr == ptr && *trackedBytes == bytes) {
-        return;  // Already registered
+        return;  // Already prepared
     }
 
-    if (*trackedPtr) {
-        cudaHostUnregister(*trackedPtr);
-        removePinnedHostBuffer(*trackedPtr);
-    }
-
-    registerHostBuffer(ptr, bytes, context);
     *trackedPtr = ptr;
     *trackedBytes = bytes;
 }

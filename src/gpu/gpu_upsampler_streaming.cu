@@ -168,9 +168,9 @@ void GPUUpsampler::freeStreamingBuffers() {
 
 bool GPUUpsampler::processStreamBlock(const float* inputData,
                                        size_t inputFrames,
-                                       std::vector<float>& outputData,
+                                       StreamFloatVector& outputData,
                                        cudaStream_t stream,
-                                       std::vector<float>& streamInputBuffer,
+                                       StreamFloatVector& streamInputBuffer,
                                        size_t& streamInputAccumulated) {
     try {
         // Bypass mode: ratio 1 means input is already at output rate

@@ -31,6 +31,21 @@ void checkCudaError(cudaError_t error, const char* context);
 // Check cuFFT errors
 void checkCufftError(cufftResult result, const char* context);
 
+/**
+ * @brief Create a CUDA stream with the highest available priority.
+ *        Falls back to default priority if the device does not support priorities.
+ *
+ * @param context Human-readable context string for logging.
+ * @param flags cudaStream flags (default: cudaStreamNonBlocking).
+ * @param usedHighPriority Optional pointer that reports whether high priority was granted.
+ * @return cudaStream_t Newly created CUDA stream.
+ *
+ * @throws std::runtime_error if stream creation fails.
+ */
+cudaStream_t createPrioritizedStream(const char* context,
+                                     unsigned int flags = cudaStreamNonBlocking,
+                                     bool* usedHighPriority = nullptr);
+
 // Measure GPU utilization (requires nvidia-ml)
 double getGPUUtilization();
 
