@@ -75,7 +75,7 @@ services:
 
     # Port mapping
     ports:
-      - "80:80"
+      - "11881:11881"
 
     # IPC socket for communication with daemon
     volumes:
@@ -87,7 +87,7 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost/status"]
+      test: ["CMD", "curl", "-sf", "http://localhost:11881/status"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -55,8 +55,8 @@ check_audio() {
 
 # Start Web UI (FastAPI)
 start_web() {
-    log_info "Starting Web UI on port 80..."
-    exec $UVICORN web.main:app --host 0.0.0.0 --port 80
+    log_info "Starting Web UI on port 11881..."
+    exec "$UVICORN" web.main:app --host 0.0.0.0 --port 11881
 }
 
 # Start Audio Daemon
@@ -66,7 +66,7 @@ start_daemon() {
         log_error "Config file not found: $CONFIG"
         exit 1
     fi
-    exec $DAEMON --config "$CONFIG"
+    exec "$DAEMON" --config "$CONFIG"
 }
 
 # Start both services (production mode)
@@ -75,14 +75,14 @@ start_all() {
 
     # Start daemon in background
     log_info "Starting Audio Daemon in background..."
-    $DAEMON --config "$CONFIG" &
+    "$DAEMON" --config "$CONFIG" &
     DAEMON_PID=$!
 
     # Wait a bit for daemon to initialize
     sleep 2
 
     # Check if daemon is running
-    if ! kill -0 $DAEMON_PID 2>/dev/null; then
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
         log_error "Audio Daemon failed to start!"
         exit 1
     fi
@@ -91,25 +91,25 @@ start_all() {
 
     # Start Web UI in foreground
     log_info "Starting Web UI..."
-    $UVICORN web.main:app --host 0.0.0.0 --port 80 &
+    "$UVICORN" web.main:app --host 0.0.0.0 --port 11881 &
     WEB_PID=$!
 
     # Trap signals for graceful shutdown
-    trap 'log_info "Shutting down..."; kill $DAEMON_PID $WEB_PID 2>/dev/null; exit 0' SIGTERM SIGINT
+    trap 'log_info "Shutting down..."; kill "$DAEMON_PID" "$WEB_PID" 2>/dev/null; exit 0' SIGTERM SIGINT
 
     # Wait for either process to exit
-    wait -n $DAEMON_PID $WEB_PID
+    wait -n "$DAEMON_PID" "$WEB_PID"
     EXIT_CODE=$?
 
     log_warn "A process exited with code $EXIT_CODE"
-    kill $DAEMON_PID $WEB_PID 2>/dev/null || true
-    exit $EXIT_CODE
+    kill "$DAEMON_PID" "$WEB_PID" 2>/dev/null || true
+    exit "$EXIT_CODE"
 }
 
 # Main
 case "${1:-web}" in
     web)
-        check_nvidia
+        # Web UI doesn't require GPU, skip nvidia check
         start_web
         ;;
     daemon)

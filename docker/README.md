@@ -58,13 +58,13 @@ docker pull nvcr.io/nvidia/jetpack-linux-aarch64-crosscompile-x86:jp61
 
 ```bash
 # Web UIのみ起動
-docker run --runtime=nvidia -p 80:80 magicbox:latest web
+docker run --runtime=nvidia -p 11881:11881 magicbox:latest web
 
 # Audio Daemonのみ起動（オーディオデバイス必要）
 docker run --runtime=nvidia --device /dev/snd magicbox:latest daemon
 
 # 両方起動
-docker run --runtime=nvidia --device /dev/snd -p 80:80 magicbox:latest all
+docker run --runtime=nvidia --device /dev/snd -p 11881:11881 magicbox:latest all
 
 # インタラクティブシェル
 docker run --runtime=nvidia -it magicbox:latest bash
@@ -87,7 +87,7 @@ docker compose down
 
 | ポート | 用途 |
 |--------|------|
-| 80 | Web UI (HTTP) |
+| 11881 | Web UI (HTTP) |
 
 ## ボリューム
 

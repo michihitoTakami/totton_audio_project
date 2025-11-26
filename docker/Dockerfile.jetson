@@ -10,7 +10,7 @@
 #   docker build -f docker/Dockerfile.jetson -t magicbox:latest .
 #
 # Run:
-#   docker run --runtime=nvidia --device /dev/snd -p 80:80 magicbox:latest
+#   docker run --runtime=nvidia --device /dev/snd -p 11881:11881 magicbox:latest
 #
 
 # =============================================================================
@@ -138,12 +138,12 @@ RUN useradd -m -s /bin/bash -G audio magicbox
 RUN chown -R magicbox:magicbox /opt/magicbox
 
 # Expose ports
-# 80: Web UI (HTTP)
-EXPOSE 80
+# 11881: Web UI (HTTP)
+EXPOSE 11881
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost/status || exit 1
+    CMD curl -sf http://localhost:11881/status || exit 1
 
 # Default: run as root for audio device access
 # For production, consider mapping audio group properly
