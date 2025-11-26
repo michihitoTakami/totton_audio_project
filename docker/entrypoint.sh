@@ -55,8 +55,8 @@ check_audio() {
 
 # Start Web UI (FastAPI)
 start_web() {
-    log_info "Starting Web UI on port 11881..."
-    exec "$UVICORN" web.main:app --host 0.0.0.0 --port 11881
+    log_info "Starting Web UI on port 80..."
+    exec "$UVICORN" web.main:app --host 0.0.0.0 --port 80
 }
 
 # Start Audio Daemon
@@ -91,7 +91,7 @@ start_all() {
 
     # Start Web UI in foreground
     log_info "Starting Web UI..."
-    "$UVICORN" web.main:app --host 0.0.0.0 --port 11881 &
+    "$UVICORN" web.main:app --host 0.0.0.0 --port 80 &
     WEB_PID=$!
 
     # Trap signals for graceful shutdown
