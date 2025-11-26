@@ -24,11 +24,12 @@ enum class CommandType {
     SHUTDOWN,     // Shutdown daemon
 
     // Crossfeed commands (#150)
-    CROSSFEED_ENABLE,        // Enable crossfeed processing
-    CROSSFEED_DISABLE,       // Disable crossfeed processing
-    CROSSFEED_SET_COMBINED,  // Set combined filter (4ch x 2 rate families, Base64 encoded)
-    CROSSFEED_SET_SIZE,      // Set head size (xs/s/m/l/xl)
-    CROSSFEED_GET_STATUS     // Get crossfeed status (enabled, head_size, headphone)
+    CROSSFEED_ENABLE,            // Enable crossfeed processing
+    CROSSFEED_DISABLE,           // Disable crossfeed processing
+    CROSSFEED_SET_COMBINED,      // Set combined filter (4ch x 2 rate families, Base64 encoded)
+    CROSSFEED_SET_SIZE,          // Set head size (xs/s/m/l/xl)
+    CROSSFEED_GET_STATUS,        // Get crossfeed status (enabled, head_size, headphone)
+    CROSSFEED_GENERATE_WOODWORTH // Procedurally generate Woodworth HRTF
 };
 
 // Response status
@@ -150,6 +151,11 @@ class ZMQClient {
     // Set head size (xs/s/m/l/xl)
     CommandResult crossfeedSetSize(const std::string& headSize);
     CommandResult crossfeedGetStatus();
+    CommandResult crossfeedGenerateWoodworth(const std::string& rateFamily, float azimuthDeg,
+                                             float headRadiusMeters = 0.09f,
+                                             float earSpacingMeters = 0.18f,
+                                             float farEarShadowDb = -8.0f,
+                                             float diffuseFieldTiltDb = -2.0f);
 
     // Subscribe to status updates (async)
     bool subscribeStatus(const std::string& pubEndpoint, StatusCallback callback);

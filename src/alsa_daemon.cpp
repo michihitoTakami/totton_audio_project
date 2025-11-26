@@ -834,6 +834,66 @@ static void zeromq_listener_thread() {
                                 }
                             }
                         }
+                    } else if (cmdType == "CROSSFEED_GENERATE_WOODWORTH") {
+                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                        nlohmann::json resp;
+                        if (!g_hrtf_processor) {
+                            resp["status"] = "error";
+                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                            resp["message"] = "HRTF processor not initialized";
+                        } else if (!j.contains("params") || !j["params"].is_object()) {
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params field";
+                        } else {
+                            auto params = j["params"];
+                            std::string rateFamily = params.value("rate_family", "");
+                            double azimuth = params.value("azimuth_deg", 30.0);
+
+                            if (rateFamily != "44k" && rateFamily != "48k") {
+                                resp["status"] = "error";
+                                resp["error_code"] = "CROSSFEED_INVALID_RATE_FAMILY";
+                                resp["message"] = "Invalid rate family: " + rateFamily;
+                            } else {
+                                HRTF::WoodworthParams modelParams;
+                                if (params.contains("model") && params["model"].is_object()) {
+                                    auto model = params["model"];
+                                    modelParams.headRadiusMeters =
+                                        model.value("head_radius_m", modelParams.headRadiusMeters);
+                                    modelParams.earSpacingMeters =
+                                        model.value("ear_spacing_m", modelParams.earSpacingMeters);
+                                    modelParams.farEarShadowDb =
+                                        model.value("far_shadow_db", modelParams.farEarShadowDb);
+                                    modelParams.diffuseFieldTiltDb =
+                                        model.value("diffuse_tilt_db", modelParams.diffuseFieldTiltDb);
+                                }
+
+                                CrossfeedEngine::RateFamily family =
+                                    (rateFamily == "44k") ? CrossfeedEngine::RateFamily::RATE_44K
+                                                          : CrossfeedEngine::RateFamily::RATE_48K;
+                                bool success = g_hrtf_processor->generateWoodworthProfile(
+                                    family, static_cast<float>(azimuth), modelParams);
+
+                                if (success) {
+                                    reset_crossfeed_stream_state_locked();
+                                    resp["status"] = "ok";
+                                    resp["message"] = "Woodworth profile generated";
+                                    resp["data"]["rate_family"] = rateFamily;
+                                    resp["data"]["azimuth_deg"] = azimuth;
+                                    resp["data"]["head_radius_m"] = modelParams.headRadiusMeters;
+                                    resp["data"]["ear_spacing_m"] = modelParams.earSpacingMeters;
+                                    resp["data"]["far_shadow_db"] = modelParams.farEarShadowDb;
+                                    resp["data"]["diffuse_tilt_db"] = modelParams.diffuseFieldTiltDb;
+                                    std::cout << "ZeroMQ: Generated Woodworth HRTF (" << rateFamily
+                                              << ", az=" << azimuth << " deg)" << std::endl;
+                                } else {
+                                    resp["status"] = "error";
+                                    resp["error_code"] = "CROSSFEED_WOODWORTH_FAILED";
+                                    resp["message"] = "Failed to generate Woodworth profile";
+                                }
+                            }
+                        }
+                        response = resp.dump();
                     } else if (cmdType == "CROSSFEED_GET_STATUS") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                         bool enabled = g_crossfeed_enabled.load();

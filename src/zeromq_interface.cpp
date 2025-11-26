@@ -41,6 +41,8 @@ const char* commandTypeToString(CommandType type) {
         return "CROSSFEED_SET_SIZE";
     case CommandType::CROSSFEED_GET_STATUS:
         return "CROSSFEED_GET_STATUS";
+    case CommandType::CROSSFEED_GENERATE_WOODWORTH:
+        return "CROSSFEED_GENERATE_WOODWORTH";
     default:
         return "UNKNOWN";
     }
@@ -60,7 +62,8 @@ CommandType stringToCommandType(const std::string& str) {
         {"CROSSFEED_DISABLE", CommandType::CROSSFEED_DISABLE},
         {"CROSSFEED_SET_COMBINED", CommandType::CROSSFEED_SET_COMBINED},
         {"CROSSFEED_SET_SIZE", CommandType::CROSSFEED_SET_SIZE},
-        {"CROSSFEED_GET_STATUS", CommandType::CROSSFEED_GET_STATUS}};
+        {"CROSSFEED_GET_STATUS", CommandType::CROSSFEED_GET_STATUS},
+        {"CROSSFEED_GENERATE_WOODWORTH", CommandType::CROSSFEED_GENERATE_WOODWORTH}};
 
     auto it = lookup.find(str);
     if (it != lookup.end()) {
@@ -659,6 +662,21 @@ CommandResult ZMQClient::crossfeedSetSize(const std::string& headSize) {
 
 CommandResult ZMQClient::crossfeedGetStatus() {
     return sendCommand(CommandType::CROSSFEED_GET_STATUS);
+}
+
+CommandResult ZMQClient::crossfeedGenerateWoodworth(const std::string& rateFamily, float azimuthDeg,
+                                                    float headRadiusMeters, float earSpacingMeters,
+                                                    float farEarShadowDb, float diffuseFieldTiltDb) {
+    json params;
+    params["rate_family"] = rateFamily;
+    params["azimuth_deg"] = azimuthDeg;
+    json model;
+    model["head_radius_m"] = headRadiusMeters;
+    model["ear_spacing_m"] = earSpacingMeters;
+    model["far_shadow_db"] = farEarShadowDb;
+    model["diffuse_tilt_db"] = diffuseFieldTiltDb;
+    params["model"] = model;
+    return sendCommand(CommandType::CROSSFEED_GENERATE_WOODWORTH, params.dump());
 }
 
 bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, StatusCallback callback) {

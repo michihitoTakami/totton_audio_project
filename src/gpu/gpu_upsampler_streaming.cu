@@ -14,6 +14,8 @@ bool GPUUpsampler::initializeStreaming() {
         return false;
     }
 
+    cancelPhaseAlignedCrossfade();
+
     // Free existing streaming buffers if re-initializing (prevents memory leak on rate switch)
     if (streamInitialized_) {
         fprintf(stderr, "[Streaming] Re-initializing: freeing existing buffers\n");
@@ -33,9 +35,17 @@ bool GPUUpsampler::initializeStreaming() {
             cudaFree(d_streamInputFFT_);
             d_streamInputFFT_ = nullptr;
         }
+        if (d_streamInputFFTBackup_) {
+            cudaFree(d_streamInputFFTBackup_);
+            d_streamInputFFTBackup_ = nullptr;
+        }
         if (d_streamConvResult_) {
             cudaFree(d_streamConvResult_);
             d_streamConvResult_ = nullptr;
+        }
+        if (d_streamConvResultOld_) {
+            cudaFree(d_streamConvResultOld_);
+            d_streamConvResultOld_ = nullptr;
         }
         if (d_overlapLeft_) {
             cudaFree(d_overlapLeft_);
@@ -87,10 +97,18 @@ bool GPUUpsampler::initializeStreaming() {
         cudaMalloc(&d_streamInputFFT_, fftComplexSize * sizeof(cufftComplex)),
         "cudaMalloc streaming FFT buffer"
     );
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamInputFFTBackup_, fftComplexSize * sizeof(cufftComplex)),
+        "cudaMalloc streaming FFT backup buffer"
+    );
 
     Utils::checkCudaError(
         cudaMalloc(&d_streamConvResult_, fftSize_ * sizeof(float)),
         "cudaMalloc streaming conv result buffer"
+    );
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamConvResultOld_, fftSize_ * sizeof(float)),
+        "cudaMalloc streaming old conv result buffer"
     );
 
     // Allocate device-resident overlap buffers
@@ -240,6 +258,17 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             "cufftExecR2C streaming"
         );
 
+        bool crossfadeEnabled = phaseCrossfade_.active && d_streamInputFFTBackup_ &&
+                                d_streamConvResultOld_ && phaseCrossfade_.previousFilter;
+        if (crossfadeEnabled) {
+            Utils::checkCudaError(
+                cudaMemcpyAsync(d_streamInputFFTBackup_, d_streamInputFFT_,
+                                fftComplexSize * sizeof(cufftComplex),
+                                cudaMemcpyDeviceToDevice, stream),
+                "cudaMemcpy backup FFT for crossfade"
+            );
+        }
+
         threadsPerBlock = 256;
         blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
         complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
@@ -272,6 +301,38 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             "cudaMemcpy streaming output to host"
         );
 
+        if (crossfadeEnabled) {
+            Utils::checkCudaError(
+                cudaMemcpyAsync(d_streamInputFFT_, d_streamInputFFTBackup_,
+                                fftComplexSize * sizeof(cufftComplex),
+                                cudaMemcpyDeviceToDevice, stream),
+                "cudaMemcpy restore FFT for crossfade"
+            );
+
+            threadsPerBlock = 256;
+            blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
+            complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+                d_streamInputFFT_, phaseCrossfade_.previousFilter, fftComplexSize
+            );
+
+            Utils::checkCufftError(
+                cufftExecC2R(fftPlanInverse_, d_streamInputFFT_, d_streamConvResultOld_),
+                "cufftExecC2R crossfade old filter"
+            );
+
+            int scaleBlocksOld = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
+            scaleKernel<<<scaleBlocksOld, threadsPerBlock, 0, stream>>>(
+                d_streamConvResultOld_, fftSize_, scale
+            );
+
+            crossfadeOldOutput_.resize(validOutputPerBlock_);
+            Utils::checkCudaError(
+                cudaMemcpyAsync(crossfadeOldOutput_.data(), d_streamConvResultOld_ + adjustedOverlapSize,
+                                validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                "cudaMemcpy crossfade old output"
+            );
+        }
+
         // Save overlap for next block (D2D)
         Utils::checkCudaError(
             cudaMemcpyAsync(d_overlap, d_streamPadded_ + validOutputPerBlock_,
@@ -284,6 +345,16 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             cudaStreamSynchronize(stream),
             "cudaStreamSynchronize streaming"
         );
+
+        if (crossfadeEnabled && phaseCrossfade_.active) {
+            bool advanceProgress = false;
+            if (stream == streamLeft_) {
+                advanceProgress = true;
+            } else if (streamLeft_ == nullptr && (stream == stream_ || stream == streamRight_)) {
+                advanceProgress = true;
+            }
+            applyPhaseAlignedCrossfade(outputData, crossfadeOldOutput_, advanceProgress);
+        }
 
         // 4. Shift remaining samples in input buffer
         size_t remaining = streamInputAccumulated - samplesToProcess;

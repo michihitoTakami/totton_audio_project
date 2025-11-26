@@ -1107,6 +1107,107 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily,
     return true;
 }
 
+bool HRTFProcessor::generateWoodworthProfile(RateFamily rateFamily, float azimuthDeg,
+                                             const HRTF::WoodworthParams& params) {
+    if (!initialized_) {
+        std::cerr << "HRTFProcessor::generateWoodworthProfile: Not initialized" << std::endl;
+        return false;
+    }
+    if (rateFamily == RateFamily::RATE_UNKNOWN) {
+        std::cerr << "HRTFProcessor::generateWoodworthProfile: Invalid rate family" << std::endl;
+        return false;
+    }
+    if (filterTaps_ <= 0 || fftSize_ <= 0) {
+        std::cerr << "HRTFProcessor::generateWoodworthProfile: Invalid filter geometry" << std::endl;
+        return false;
+    }
+
+    HRTF::WoodworthParams tuned = params;
+    tuned.taps = static_cast<size_t>(filterTaps_);
+    tuned.sampleRate = (rateFamily == RateFamily::RATE_44K) ? 44100.0f : 48000.0f;
+
+    HRTF::WoodworthIRSet irSet = HRTF::generateWoodworthSet(azimuthDeg, tuned);
+
+    auto normalize = [&](const std::vector<float>& src) {
+        std::vector<float> dst(filterTaps_, 0.0f);
+        size_t copyCount = std::min(dst.size(), src.size());
+        if (copyCount > 0) {
+            std::copy(src.begin(), src.begin() + copyCount, dst.begin());
+        }
+        return dst;
+    };
+
+    std::vector<float> tdLL = normalize(irSet.ll);
+    std::vector<float> tdLR = normalize(irSet.lr);
+    std::vector<float> tdRL = normalize(irSet.rl);
+    std::vector<float> tdRR = normalize(irSet.rr);
+
+    float* d_temp = nullptr;
+    cufftComplex* d_fftTemp = nullptr;
+    std::vector<cufftComplex> freqLL;
+    std::vector<cufftComplex> freqLR;
+    std::vector<cufftComplex> freqRL;
+    std::vector<cufftComplex> freqRR;
+
+    auto cleanup = [&]() {
+        if (d_temp) {
+            cudaFree(d_temp);
+            d_temp = nullptr;
+        }
+        if (d_fftTemp) {
+            cudaFree(d_fftTemp);
+            d_fftTemp = nullptr;
+        }
+    };
+
+    try {
+        checkCudaError(cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+                       "cudaMalloc woodworth temp");
+        checkCudaError(cudaMalloc(&d_fftTemp, filterFftSize_ * sizeof(cufftComplex)),
+                       "cudaMalloc woodworth FFT");
+
+        auto convertChannel = [&](const std::vector<float>& timeDomain,
+                                  std::vector<cufftComplex>& freqDomain,
+                                  const char* context) {
+            checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)),
+                           "cudaMemset woodworth temp");
+            checkCudaError(
+                cudaMemcpy(d_temp, timeDomain.data(),
+                           std::min(static_cast<size_t>(filterTaps_), timeDomain.size()) * sizeof(float),
+                           cudaMemcpyHostToDevice),
+                "cudaMemcpy woodworth temp");
+            checkCufftError(cufftSetStream(fftPlanForward_, 0), "cufftSetStream woodworth");
+            checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_fftTemp),
+                            context);
+            freqDomain.resize(filterFftSize_);
+            checkCudaError(
+                cudaMemcpy(freqDomain.data(), d_fftTemp,
+                           filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                "cudaMemcpy woodworth FFT");
+        };
+
+        convertChannel(tdLL, freqLL, "cufftExecR2C woodworth LL");
+        convertChannel(tdLR, freqLR, "cufftExecR2C woodworth LR");
+        convertChannel(tdRL, freqRL, "cufftExecR2C woodworth RL");
+        convertChannel(tdRR, freqRR, "cufftExecR2C woodworth RR");
+
+        cleanup();
+
+        bool success = setCombinedFilter(rateFamily, freqLL.data(), freqLR.data(), freqRL.data(),
+                                         freqRR.data(), filterFftSize_);
+        if (success) {
+            std::cout << "HRTFProcessor: Generated Woodworth profile (azimuth=" << azimuthDeg
+                      << " deg, family=" << rateFamilyToString(rateFamily) << ")" << std::endl;
+        }
+        return success;
+
+    } catch (const std::exception& e) {
+        std::cerr << "HRTFProcessor::generateWoodworthProfile failed: " << e.what() << std::endl;
+        cleanup();
+        return false;
+    }
+}
+
 void HRTFProcessor::clearCombinedFilter() {
     if (!initialized_) {
         return;

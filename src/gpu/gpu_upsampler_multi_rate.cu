@@ -181,6 +181,9 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
               << (targetFamily == RateFamily::RATE_44K ? "44.1kHz" : "48kHz")
               << std::endl;
 
+    float previousDelay = getCurrentGroupDelay();
+    cufftComplex* previousFilter = d_activeFilterFFT_;
+
     // Select the source FFT for the target family (considering phase type in quad-phase mode)
     cufftComplex* sourceFFT;
     if (quadPhaseEnabled_) {
@@ -214,6 +217,17 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     // Atomic swap to the new buffer
     d_activeFilterFFT_ = backBuffer;
 
+    float newDelay = 0.0f;
+    if (quadPhaseEnabled_) {
+        if (targetFamily == RateFamily::RATE_44K) {
+            newDelay = (phaseType_ == PhaseType::Minimum) ? filterCentroid44k_ : filterCentroid44kLinear_;
+        } else {
+            newDelay = (phaseType_ == PhaseType::Minimum) ? filterCentroid48k_ : filterCentroid48kLinear_;
+        }
+    } else {
+        newDelay = (targetFamily == RateFamily::RATE_44K) ? filterCentroid44k_ : filterCentroid48k_;
+    }
+
     // Update original filter FFT for EQ restoration (device)
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, sourceFFT,
@@ -242,6 +256,7 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     currentRateFamily_ = targetFamily;
     inputSampleRate_ = getBaseSampleRate(targetFamily);
     std::cout << "Rate family switch complete" << std::endl;
+    startPhaseAlignedCrossfade(previousFilter, previousDelay, newDelay);
     return true;
 }
 
@@ -283,6 +298,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
             // Single impulse at t=0 passes signal through unchanged
             h_filterCoeffsMulti_[i].resize(1);
             h_filterCoeffsMulti_[i][0] = 1.0f;  // Unity gain impulse
+            filterCentroidMulti_[i] = 0.0f;
             std::cout << "  Generated " << familyStr << "_1x: Dirac delta (passthrough for EQ)"
                       << std::endl;
             ++loadedCount;
@@ -335,6 +351,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
             maxTaps = taps;
         }
 
+        filterCentroidMulti_[i] = PhaseAlignment::computeEnergyCentroid(h_filterCoeffsMulti_[i]);
         std::cout << "  Loaded " << familyStr << "_" << config.ratio << "x: " << taps << " taps ("
                   << fileSize / 1024 << " KB)" << std::endl;
         ++loadedCount;
@@ -455,6 +472,9 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
               << currentConfig.ratio << "x) -> " << targetConfig.inputRate << " Hz ("
               << targetConfig.ratio << "x)" << std::endl;
 
+    float previousDelay = getCurrentGroupDelay();
+    cufftComplex* previousFilter = d_activeFilterFFT_;
+
     // Select the source FFT for the target configuration
     cufftComplex* sourceFFT = d_filterFFT_Multi_[targetIndex];
 
@@ -545,6 +565,8 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     }
 
     std::cout << "Input rate switch complete" << std::endl;
+    float newDelay = filterCentroidMulti_[currentMultiRateIndex_];
+    startPhaseAlignedCrossfade(previousFilter, previousDelay, newDelay);
     return true;
 }
 
@@ -588,6 +610,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     }
     h_filterCoeffs44k_ = h_filterCoeffs_;
     std::cout << "    " << h_filterCoeffs44k_.size() << " taps" << std::endl;
+    filterCentroid44k_ = baseFilterCentroid_;
 
     // 48kHz minimum phase
     std::cout << "  48kHz Minimum: " << filterCoeffPath48kMin << std::endl;
@@ -597,6 +620,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     }
     h_filterCoeffs48k_ = h_filterCoeffs_;
     std::cout << "    " << h_filterCoeffs48k_.size() << " taps" << std::endl;
+    filterCentroid48k_ = baseFilterCentroid_;
 
     // 44.1kHz linear phase
     std::cout << "  44.1kHz Linear: " << filterCoeffPath44kLinear << std::endl;
@@ -606,6 +630,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     }
     h_filterCoeffs44k_linear_ = h_filterCoeffs_;
     std::cout << "    " << h_filterCoeffs44k_linear_.size() << " taps" << std::endl;
+    filterCentroid44kLinear_ = baseFilterCentroid_;
 
     // 48kHz linear phase
     std::cout << "  48kHz Linear: " << filterCoeffPath48kLinear << std::endl;
@@ -615,6 +640,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     }
     h_filterCoeffs48k_linear_ = h_filterCoeffs_;
     std::cout << "    " << h_filterCoeffs48k_linear_.size() << " taps" << std::endl;
+    filterCentroid48kLinear_ = baseFilterCentroid_;
 
     // Verify all 4 coefficient files have the same tap count
     size_t taps44kMin = h_filterCoeffs44k_.size();
@@ -745,6 +771,9 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
     std::cout << "Switching phase type: " << (phaseType_ == PhaseType::Minimum ? "Minimum" : "Linear")
               << " -> " << (targetPhase == PhaseType::Minimum ? "Minimum" : "Linear") << std::endl;
 
+    float previousDelay = getCurrentGroupDelay();
+    cufftComplex* previousFilter = d_activeFilterFFT_;
+
     // Select the source FFT based on current rate family and target phase
     cufftComplex* sourceFFT;
     if (currentRateFamily_ == RateFamily::RATE_44K) {
@@ -792,6 +821,14 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
 
     phaseType_ = targetPhase;
     std::cout << "Phase type switch complete" << std::endl;
+
+    float newDelay = 0.0f;
+    if (currentRateFamily_ == RateFamily::RATE_44K) {
+        newDelay = (phaseType_ == PhaseType::Minimum) ? filterCentroid44k_ : filterCentroid44kLinear_;
+    } else {
+        newDelay = (phaseType_ == PhaseType::Minimum) ? filterCentroid48k_ : filterCentroid48kLinear_;
+    }
+    startPhaseAlignedCrossfade(previousFilter, previousDelay, newDelay);
     return true;
 }
 
