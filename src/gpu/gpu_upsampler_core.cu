@@ -34,7 +34,8 @@ GPUUpsampler::GPUUpsampler()
       d_filterFFT_44k_linear_(nullptr), d_filterFFT_48k_linear_(nullptr),
       multiRateEnabled_(false), currentInputRate_(44100), currentMultiRateIndex_(0),
       d_filterFFT_A_(nullptr), d_filterFFT_B_(nullptr), d_activeFilterFFT_(nullptr),
-      d_originalFilterFFT_(nullptr), filterFftSize_(0), eqApplied_(false),
+      d_originalFilterFFT_(nullptr), d_crossfadeFilterSnapshot_(nullptr),
+      filterFftSize_(0), eqApplied_(false),
       d_inputBlock_(nullptr), d_outputBlock_(nullptr),
       d_inputFFT_(nullptr), d_convResult_(nullptr),
       fftPlanForward_(0), fftPlanInverse_(0),
@@ -44,6 +45,7 @@ GPUUpsampler::GPUUpsampler()
       streamOverlapSize_(0),
       d_streamInput_(nullptr), d_streamUpsampled_(nullptr), d_streamPadded_(nullptr),
       d_streamInputFFT_(nullptr), d_streamConvResult_(nullptr),
+      d_streamInputFFTBackup_(nullptr), d_streamConvResultOld_(nullptr),
       d_overlapLeft_(nullptr), d_overlapRight_(nullptr),
       pinnedStreamInputLeft_(nullptr), pinnedStreamInputRight_(nullptr),
       pinnedStreamInputMono_(nullptr),
@@ -119,6 +121,7 @@ bool GPUUpsampler::loadFilterCoefficients(const std::string& path) {
     }
 
     std::cout << "  Filter loaded successfully (" << fileSize / 1024 << " KB)" << std::endl;
+    baseFilterCentroid_ = PhaseAlignment::computeEnergyCentroid(h_filterCoeffs_);
     return true;
 }
 
@@ -705,6 +708,157 @@ bool GPUUpsampler::processStereo(const float* leftInput,
     return leftSuccess && rightSuccess;
 }
 
+int GPUUpsampler::getPhaseCrossfadeSamples() const {
+    if (!streamInitialized_) {
+        return 0;
+    }
+    constexpr int kCrossfadeMs = 12;
+    int outputRate = inputSampleRate_ * upsampleRatio_;
+    if (outputRate <= 0) {
+        return 0;
+    }
+    int samples = static_cast<int>((static_cast<long double>(outputRate) * kCrossfadeMs) / 1000.0L);
+    if (samples <= 0) {
+        return 0;
+    }
+    if (validOutputPerBlock_ > 0) {
+        samples = std::max(samples, validOutputPerBlock_);
+    }
+    return samples;
+}
+
+float GPUUpsampler::getCurrentGroupDelay() const {
+    if (multiRateEnabled_ && currentMultiRateIndex_ >= 0 &&
+        currentMultiRateIndex_ < MULTI_RATE_CONFIG_COUNT) {
+        return filterCentroidMulti_[currentMultiRateIndex_];
+    }
+    if (quadPhaseEnabled_) {
+        if (currentRateFamily_ == RateFamily::RATE_44K) {
+            return (phaseType_ == PhaseType::Minimum) ? filterCentroid44k_ : filterCentroid44kLinear_;
+        }
+        return (phaseType_ == PhaseType::Minimum) ? filterCentroid48k_ : filterCentroid48kLinear_;
+    }
+    if (dualRateEnabled_) {
+        return (currentRateFamily_ == RateFamily::RATE_44K) ? filterCentroid44k_ : filterCentroid48k_;
+    }
+    return baseFilterCentroid_;
+}
+
+void GPUUpsampler::cancelPhaseAlignedCrossfade() {
+    phaseCrossfade_.active = false;
+    phaseCrossfade_.previousFilter = nullptr;
+    phaseCrossfade_.samplesRemaining = 0;
+    phaseCrossfade_.totalSamples = 0;
+    phaseCrossfade_.samplesProcessed = 0;
+    phaseCrossfade_.previousDelay = 0.0f;
+    phaseCrossfade_.newDelay = 0.0f;
+    phaseCrossfade_.delayOld.reset();
+    phaseCrossfade_.delayNewLine.reset();
+    crossfadeOldOutput_.clear();
+    crossfadeAlignedOld_.clear();
+    crossfadeAlignedNew_.clear();
+}
+
+void GPUUpsampler::startPhaseAlignedCrossfade(cufftComplex* previousFilter,
+                                              float previousDelay,
+                                              float newDelay) {
+    if (!streamInitialized_ || filterFftSize_ == 0 || previousFilter == nullptr) {
+        return;
+    }
+    int crossfadeSamples = getPhaseCrossfadeSamples();
+    if (crossfadeSamples <= 0) {
+        return;
+    }
+
+    size_t fftBytes = filterFftSize_ * sizeof(cufftComplex);
+    if (!d_crossfadeFilterSnapshot_) {
+        Utils::checkCudaError(
+            cudaMalloc(&d_crossfadeFilterSnapshot_, fftBytes),
+            "cudaMalloc crossfade snapshot"
+        );
+    }
+
+    Utils::checkCudaError(
+        cudaMemcpy(d_crossfadeFilterSnapshot_, previousFilter, fftBytes, cudaMemcpyDeviceToDevice),
+        "cudaMemcpy crossfade snapshot"
+    );
+
+    phaseCrossfade_.active = true;
+    phaseCrossfade_.previousFilter = d_crossfadeFilterSnapshot_;
+    phaseCrossfade_.previousDelay = previousDelay;
+    phaseCrossfade_.newDelay = newDelay;
+    phaseCrossfade_.samplesRemaining = crossfadeSamples;
+    phaseCrossfade_.totalSamples = crossfadeSamples;
+    phaseCrossfade_.samplesProcessed = 0;
+
+    float delta = previousDelay - newDelay;
+    float absDelta = std::fabs(delta);
+    if (absDelta < 1e-4f) {
+        phaseCrossfade_.delayNewLine.configure(0.0f);
+        phaseCrossfade_.delayOld.configure(0.0f);
+    } else if (delta > 0.0f) {
+        phaseCrossfade_.delayNew = true;
+        phaseCrossfade_.delayNewLine.configure(delta);
+        phaseCrossfade_.delayOld.configure(0.0f);
+    } else {
+        phaseCrossfade_.delayNew = false;
+        phaseCrossfade_.delayOld.configure(-delta);
+        phaseCrossfade_.delayNewLine.configure(0.0f);
+    }
+
+    phaseCrossfade_.delayOld.reset();
+    phaseCrossfade_.delayNewLine.reset();
+}
+
+void GPUUpsampler::applyPhaseAlignedCrossfade(std::vector<float>& newOutput,
+                                              const std::vector<float>& oldOutput,
+                                              bool advanceProgress) {
+    if (!phaseCrossfade_.active) {
+        return;
+    }
+
+    size_t frames = std::min(newOutput.size(), oldOutput.size());
+    if (frames == 0) {
+        return;
+    }
+
+    const std::vector<float>* oldPtr = &oldOutput;
+    const std::vector<float>* newPtr = &newOutput;
+
+    if (!phaseCrossfade_.delayOld.isBypassed()) {
+        phaseCrossfade_.delayOld.process(oldOutput, crossfadeAlignedOld_);
+        oldPtr = &crossfadeAlignedOld_;
+    } else {
+        crossfadeAlignedOld_.clear();
+    }
+
+    if (!phaseCrossfade_.delayNewLine.isBypassed()) {
+        phaseCrossfade_.delayNewLine.process(newOutput, crossfadeAlignedNew_);
+        newPtr = &crossfadeAlignedNew_;
+    } else {
+        crossfadeAlignedNew_.clear();
+    }
+
+    float denom = static_cast<float>(std::max(phaseCrossfade_.totalSamples, 1));
+    for (size_t i = 0; i < frames; ++i) {
+        float progress = static_cast<float>(phaseCrossfade_.samplesProcessed + i) / denom;
+        progress = std::clamp(progress, 0.0f, 1.0f);
+        float gainNew = progress;
+        float gainOld = 1.0f - progress;
+        newOutput[i] = (*oldPtr)[i] * gainOld + (*newPtr)[i] * gainNew;
+    }
+
+    if (advanceProgress) {
+        phaseCrossfade_.samplesProcessed += static_cast<int>(frames);
+        if (phaseCrossfade_.samplesProcessed >= phaseCrossfade_.totalSamples) {
+            cancelPhaseAlignedCrossfade();
+        } else {
+            phaseCrossfade_.samplesRemaining =
+                phaseCrossfade_.totalSamples - phaseCrossfade_.samplesProcessed;
+        }
+    }
+}
+
 void GPUUpsampler::cleanup() {
     unregisterHostBuffers();
 
@@ -727,6 +881,7 @@ void GPUUpsampler::cleanup() {
     if (d_outputBlock_) cudaFree(d_outputBlock_);
     if (d_inputFFT_) cudaFree(d_inputFFT_);
     if (d_convResult_) cudaFree(d_convResult_);
+    if (d_crossfadeFilterSnapshot_) cudaFree(d_crossfadeFilterSnapshot_);
 
     // Free streaming buffers
     if (d_streamInput_) cudaFree(d_streamInput_);
@@ -734,6 +889,8 @@ void GPUUpsampler::cleanup() {
     if (d_streamPadded_) cudaFree(d_streamPadded_);
     if (d_streamInputFFT_) cudaFree(d_streamInputFFT_);
     if (d_streamConvResult_) cudaFree(d_streamConvResult_);
+    if (d_streamInputFFTBackup_) cudaFree(d_streamInputFFTBackup_);
+    if (d_streamConvResultOld_) cudaFree(d_streamConvResultOld_);
     if (d_overlapLeft_) cudaFree(d_overlapLeft_);
     if (d_overlapRight_) cudaFree(d_overlapRight_);
 
@@ -778,6 +935,7 @@ void GPUUpsampler::cleanup() {
     d_filterFFT_B_ = nullptr;
     d_activeFilterFFT_ = nullptr;
     d_originalFilterFFT_ = nullptr;
+    d_crossfadeFilterSnapshot_ = nullptr;
     filterFftSize_ = 0;
     eqApplied_ = false;
     d_inputBlock_ = nullptr;
@@ -789,6 +947,8 @@ void GPUUpsampler::cleanup() {
     d_streamPadded_ = nullptr;
     d_streamInputFFT_ = nullptr;
     d_streamConvResult_ = nullptr;
+    d_streamInputFFTBackup_ = nullptr;
+    d_streamConvResultOld_ = nullptr;
     d_overlapLeft_ = nullptr;
     d_overlapRight_ = nullptr;
     fftPlanForward_ = 0;

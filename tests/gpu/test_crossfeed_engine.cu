@@ -187,6 +187,18 @@ TEST_F(HRTFProcessorTest, BasicProcessing) {
     EXPECT_LT(maxR, std::abs(outputL[0])) << "Contralateral (LR) should be weaker than ipsilateral (LL)";
 }
 
+TEST_F(HRTFProcessorTest, GenerateWoodworthProfileSetsCombinedFilter) {
+    createTestHRTFFiles();
+
+    HRTFProcessor processor;
+    ASSERT_TRUE(processor.initialize(testDir_, 256, HeadSize::M, RateFamily::RATE_44K));
+    ASSERT_FALSE(processor.isUsingCombinedFilter());
+
+    HRTF::WoodworthParams params;
+    EXPECT_TRUE(processor.generateWoodworthProfile(RateFamily::RATE_44K, 30.0f, params));
+    EXPECT_TRUE(processor.isUsingCombinedFilter());
+}
+
 // Test: Stereo symmetry
 TEST_F(HRTFProcessorTest, StereoSymmetry) {
     createTestHRTFFiles();

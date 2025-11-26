@@ -100,6 +100,8 @@ add_library(gpu_upsampler_core STATIC
     src/gpu/gpu_upsampler_streaming.cu
     src/gpu/gpu_upsampler_eq.cu
     src/gpu/crossfeed_engine.cu
+    src/phase_alignment.cpp
+    src/hrtf/woodworth_model.cpp
 )
 
 # CUDA architecture (RTX 2070 Super = Compute Capability 7.5)
@@ -439,6 +441,7 @@ add_executable(cpu_tests
     tests/cpp/test_eq_parser.cpp
     tests/cpp/test_eq_to_fir.cpp
     tests/cpp/test_config_loader.cpp
+    tests/cpp/test_phase_alignment.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main

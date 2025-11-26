@@ -272,6 +272,7 @@ static size_t g_cf_stream_accumulated_right = 0;
 static std::vector<float> g_cf_output_left;
 static std::vector<float> g_cf_output_right;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
+static std::mutex g_streaming_mutex;  // Protects streaming buffer state during rate switch
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
 
@@ -813,8 +814,12 @@ static void zeromq_listener_thread() {
                         resp["message"] = "Crossfeed disabled";
                         response = resp.dump();
                     } else if (cmdType == "CROSSFEED_SET_COMBINED") {
-                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-                        if (!g_hrtf_processor) {
+                        bool processorReady = false;
+                        {
+                            std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                            processorReady = (g_hrtf_processor != nullptr);
+                        }
+                        if (!processorReady) {
                             nlohmann::json resp;
                             resp["status"] = "error";
                             resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
@@ -906,70 +911,146 @@ static void zeromq_listener_thread() {
                                             "Filter size exceeds maximum (256KB per channel)";
                                         response = resp.dump();
                                     } else {
-                                        // Filter data is valid, apply to HRTFProcessor
-                                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                                        CrossfeedEngine::RateFamily family =
+                                            (rateFamily == "44k")
+                                                ? CrossfeedEngine::RateFamily::RATE_44K
+                                                : CrossfeedEngine::RateFamily::RATE_48K;
+                                        size_t complexCount = decodedLL.size() / CUFFT_COMPLEX_SIZE;
+                                        const cufftComplex* filterLL =
+                                            reinterpret_cast<const cufftComplex*>(decodedLL.data());
+                                        const cufftComplex* filterLR =
+                                            reinterpret_cast<const cufftComplex*>(decodedLR.data());
+                                        const cufftComplex* filterRL =
+                                            reinterpret_cast<const cufftComplex*>(decodedRL.data());
+                                        const cufftComplex* filterRR =
+                                            reinterpret_cast<const cufftComplex*>(decodedRR.data());
 
-                                        if (!g_hrtf_processor) {
-                                            nlohmann::json resp;
-                                            resp["status"] = "error";
-                                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
-                                            resp["message"] = "HRTFProcessor not initialized";
-                                            response = resp.dump();
-                                        } else {
-                                            // Convert rate family string to enum
-                                            CrossfeedEngine::RateFamily family =
-                                                (rateFamily == "44k")
-                                                    ? CrossfeedEngine::RateFamily::RATE_44K
-                                                    : CrossfeedEngine::RateFamily::RATE_48K;
-
-                                            // Cast decoded data to cufftComplex pointers
-                                            size_t complexCount =
-                                                decodedLL.size() / CUFFT_COMPLEX_SIZE;
-                                            const cufftComplex* filterLL =
-                                                reinterpret_cast<const cufftComplex*>(
-                                                    decodedLL.data());
-                                            const cufftComplex* filterLR =
-                                                reinterpret_cast<const cufftComplex*>(
-                                                    decodedLR.data());
-                                            const cufftComplex* filterRL =
-                                                reinterpret_cast<const cufftComplex*>(
-                                                    decodedRL.data());
-                                            const cufftComplex* filterRR =
-                                                reinterpret_cast<const cufftComplex*>(
-                                                    decodedRR.data());
-
-                                            bool success = g_hrtf_processor->setCombinedFilter(
+                                        bool applySuccess = false;
+                                        applySoftMuteForFilterSwitch([&]() {
+                                            std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                                            if (!g_hrtf_processor) {
+                                                return false;
+                                            }
+                                            applySuccess = g_hrtf_processor->setCombinedFilter(
                                                 family, filterLL, filterLR, filterRL, filterRR,
                                                 complexCount);
+                                            return applySuccess;
+                                        });
 
-                                            nlohmann::json resp;
-                                            if (success) {
-                                                resp["status"] = "ok";
-                                                resp["message"] = "Combined filter applied";
-                                                resp["data"]["rate_family"] = rateFamily;
-                                                resp["data"]["complex_count"] = complexCount;
+                                        nlohmann::json resp;
+                                        if (applySuccess) {
+                                            {
+                                                std::lock_guard<std::mutex> cf_lock(
+                                                    g_crossfeed_mutex);
                                                 reset_crossfeed_stream_state_locked();
-                                                std::cout
-                                                    << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
-                                                    << rateFamily << " (" << complexCount
-                                                    << " complex values)" << std::endl;
-                                            } else {
-                                                resp["status"] = "error";
-                                                resp["error_code"] =
-                                                    "CROSSFEED_INVALID_FILTER_SIZE";
-                                                resp["message"] =
-                                                    "Filter size mismatch or application failed";
-                                                resp["data"]["rate_family"] = rateFamily;
-                                                resp["data"]["complex_count"] = complexCount;
-                                                resp["data"]["expected_size"] =
-                                                    g_hrtf_processor->getFilterFftSize();
                                             }
-                                            response = resp.dump();
+                                            resp["status"] = "ok";
+                                            resp["message"] = "Combined filter applied";
+                                            resp["data"]["rate_family"] = rateFamily;
+                                            resp["data"]["complex_count"] = complexCount;
+                                            std::cout
+                                                << "ZeroMQ: CROSSFEED_SET_COMBINED applied for "
+                                                << rateFamily << " (" << complexCount
+                                                << " complex values)" << std::endl;
+                                        } else {
+                                            size_t expectedSize = 0;
+                                            {
+                                                std::lock_guard<std::mutex> cf_lock(
+                                                    g_crossfeed_mutex);
+                                                if (g_hrtf_processor) {
+                                                    expectedSize =
+                                                        g_hrtf_processor->getFilterFftSize();
+                                                }
+                                            }
+                                            resp["status"] = "error";
+                                            resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
+                                            resp["message"] =
+                                                "Filter size mismatch or application failed";
+                                            resp["data"]["rate_family"] = rateFamily;
+                                            resp["data"]["complex_count"] = complexCount;
+                                            resp["data"]["expected_size"] = expectedSize;
                                         }
+                                        response = resp.dump();
                                     }
                                 }
                             }
                         }
+                    } else if (cmdType == "CROSSFEED_GENERATE_WOODWORTH") {
+                        bool processorReady = false;
+                        {
+                            std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                            processorReady = (g_hrtf_processor != nullptr);
+                        }
+                        nlohmann::json resp;
+                        if (!processorReady) {
+                            resp["status"] = "error";
+                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                            resp["message"] = "HRTF processor not initialized";
+                        } else if (!j.contains("params") || !j["params"].is_object()) {
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params field";
+                        } else {
+                            auto params = j["params"];
+                            std::string rateFamily = params.value("rate_family", "");
+                            double azimuth = params.value("azimuth_deg", 30.0);
+
+                            if (rateFamily != "44k" && rateFamily != "48k") {
+                                resp["status"] = "error";
+                                resp["error_code"] = "CROSSFEED_INVALID_RATE_FAMILY";
+                                resp["message"] = "Invalid rate family: " + rateFamily;
+                            } else {
+                                HRTF::WoodworthParams modelParams;
+                                if (params.contains("model") && params["model"].is_object()) {
+                                    auto model = params["model"];
+                                    modelParams.headRadiusMeters =
+                                        model.value("head_radius_m", modelParams.headRadiusMeters);
+                                    modelParams.earSpacingMeters =
+                                        model.value("ear_spacing_m", modelParams.earSpacingMeters);
+                                    modelParams.farEarShadowDb =
+                                        model.value("far_shadow_db", modelParams.farEarShadowDb);
+                                    modelParams.diffuseFieldTiltDb = model.value(
+                                        "diffuse_tilt_db", modelParams.diffuseFieldTiltDb);
+                                }
+
+                                CrossfeedEngine::RateFamily family =
+                                    (rateFamily == "44k") ? CrossfeedEngine::RateFamily::RATE_44K
+                                                          : CrossfeedEngine::RateFamily::RATE_48K;
+                                bool success = false;
+                                applySoftMuteForFilterSwitch([&]() {
+                                    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                                    if (!g_hrtf_processor) {
+                                        return false;
+                                    }
+                                    success = g_hrtf_processor->generateWoodworthProfile(
+                                        family, static_cast<float>(azimuth), modelParams);
+                                    return success;
+                                });
+
+                                if (success) {
+                                    {
+                                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                                        reset_crossfeed_stream_state_locked();
+                                    }
+                                    resp["status"] = "ok";
+                                    resp["message"] = "Woodworth profile generated";
+                                    resp["data"]["rate_family"] = rateFamily;
+                                    resp["data"]["azimuth_deg"] = azimuth;
+                                    resp["data"]["head_radius_m"] = modelParams.headRadiusMeters;
+                                    resp["data"]["ear_spacing_m"] = modelParams.earSpacingMeters;
+                                    resp["data"]["far_shadow_db"] = modelParams.farEarShadowDb;
+                                    resp["data"]["diffuse_tilt_db"] =
+                                        modelParams.diffuseFieldTiltDb;
+                                    std::cout << "ZeroMQ: Generated Woodworth HRTF (" << rateFamily
+                                              << ", az=" << azimuth << " deg)" << std::endl;
+                                } else {
+                                    resp["status"] = "error";
+                                    resp["error_code"] = "CROSSFEED_WOODWORTH_FAILED";
+                                    resp["message"] = "Failed to generate Woodworth profile";
+                                }
+                            }
+                        }
+                        response = resp.dump();
                     } else if (cmdType == "CROSSFEED_GET_STATUS") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
                         bool enabled = g_crossfeed_enabled.load();
@@ -2120,8 +2201,8 @@ int main(int argc, char* argv[]) {
             std::cout << "  Coefficient directory: " << g_config.coefficientDir << std::endl;
 
             if (!std::filesystem::exists(g_config.coefficientDir)) {
-                std::cerr << "Config error: Coefficient directory not found: " << g_config.coefficientDir
-                          << std::endl;
+                std::cerr << "Config error: Coefficient directory not found: "
+                          << g_config.coefficientDir << std::endl;
                 delete g_upsampler;
                 exitCode = 1;
                 break;
@@ -2199,8 +2280,10 @@ int main(int argc, char* argv[]) {
                       << " samples/block)" << std::endl;
             std::cout << "  Current input rate: " << g_upsampler->getCurrentInputRate() << " Hz"
                       << std::endl;
-            std::cout << "  Upsample ratio: " << g_upsampler->getUpsampleRatio() << "x" << std::endl;
-            std::cout << "  Output rate: " << g_upsampler->getOutputSampleRate() << " Hz" << std::endl;
+            std::cout << "  Upsample ratio: " << g_upsampler->getUpsampleRatio() << "x"
+                      << std::endl;
+            std::cout << "  Output rate: " << g_upsampler->getOutputSampleRate() << " Hz"
+                      << std::endl;
         } else {
             std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                       << g_config.blockSize << " samples/block)" << std::endl;

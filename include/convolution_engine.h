@@ -2,10 +2,12 @@
 #define CONVOLUTION_ENGINE_H
 
 #include "config_loader.h"  // PhaseType enum
+#include "phase_alignment.h"
 
 #include <cuda_runtime.h>
 #include <cufft.h>
 
+#include <array>
 #include <complex>
 #include <string>
 #include <vector>
@@ -343,6 +345,10 @@ class GPUUpsampler {
         return inputSampleRate_ * upsampleRatio_;
     }
 
+    bool isPhaseCrossfadeActive() const {
+        return phaseCrossfade_.active;
+    }
+
     // Legacy: Get default input sample rate (44.1kHz)
     static constexpr int getDefaultInputSampleRate() {
         return 44100;
@@ -383,6 +389,14 @@ class GPUUpsampler {
     // This saves ~100MB of RAM, especially important for Jetson Unified Memory
     // Call this after all GPU transfers are complete (FFT pre-computation done)
     void releaseHostCoefficients();
+
+    void startPhaseAlignedCrossfade(cufftComplex* previousFilter, float previousDelay,
+                                    float newDelay);
+    void cancelPhaseAlignedCrossfade();
+    void applyPhaseAlignedCrossfade(std::vector<float>& newOutput,
+                                    const std::vector<float>& oldOutput, bool advanceProgress);
+    int getPhaseCrossfadeSamples() const;
+    float getCurrentGroupDelay() const;
 
     // Configuration
     int upsampleRatio_;
@@ -427,12 +441,13 @@ class GPUUpsampler {
         d_filterFFT_Multi_[MULTI_RATE_CONFIG_COUNT];  // Pre-computed FFT for all 8 configs
 
     // Double-buffered filter FFT (ping-pong) for glitch-free EQ updates
-    cufftComplex* d_filterFFT_A_;        // Filter FFT buffer A
-    cufftComplex* d_filterFFT_B_;        // Filter FFT buffer B
-    cufftComplex* d_activeFilterFFT_;    // Currently active filter (points to A or B)
-    cufftComplex* d_originalFilterFFT_;  // Original filter FFT (without EQ, for restoration)
-    size_t filterFftSize_;               // Size of filter FFT arrays
-    bool eqApplied_;                     // True if EQ has been applied
+    cufftComplex* d_filterFFT_A_;              // Filter FFT buffer A
+    cufftComplex* d_filterFFT_B_;              // Filter FFT buffer B
+    cufftComplex* d_activeFilterFFT_;          // Currently active filter (points to A or B)
+    cufftComplex* d_originalFilterFFT_;        // Original filter FFT (without EQ, for restoration)
+    cufftComplex* d_crossfadeFilterSnapshot_;  // Snapshot of previous filter during phase crossfade
+    size_t filterFftSize_;                     // Size of filter FFT arrays
+    bool eqApplied_;                           // True if EQ has been applied
 
     // Working buffers
     float* d_inputBlock_;         // Device input block
@@ -466,11 +481,13 @@ class GPUUpsampler {
     int streamOverlapSize_;            // Adjusted overlap per block for streaming alignment
 
     // Streaming GPU buffers (pre-allocated to avoid malloc/free in callbacks)
-    float* d_streamInput_;            // Device buffer for accumulated input
-    float* d_streamUpsampled_;        // Device buffer for upsampled input
-    float* d_streamPadded_;           // Device buffer for [overlap | new] concatenation
-    cufftComplex* d_streamInputFFT_;  // FFT of padded input
-    float* d_streamConvResult_;       // Convolution result
+    float* d_streamInput_;                  // Device buffer for accumulated input
+    float* d_streamUpsampled_;              // Device buffer for upsampled input
+    float* d_streamPadded_;                 // Device buffer for [overlap | new] concatenation
+    cufftComplex* d_streamInputFFT_;        // FFT of padded input
+    float* d_streamConvResult_;             // Convolution result
+    cufftComplex* d_streamInputFFTBackup_;  // Backup for phase-aware crossfade
+    float* d_streamConvResultOld_;          // Old filter convolution result during crossfade
 
     // Device-resident overlap buffers (eliminates H↔D transfers in real-time path)
     float* d_overlapLeft_;   // GPU overlap buffer for left channel
@@ -496,6 +513,31 @@ class GPUUpsampler {
     size_t pinnedStreamOutputLeftBytes_;
     size_t pinnedStreamOutputRightBytes_;
     size_t pinnedStreamOutputMonoBytes_;
+
+    struct PhaseCrossfadeState {
+        bool active = false;
+        int samplesRemaining = 0;
+        int totalSamples = 0;
+        int samplesProcessed = 0;
+        cufftComplex* previousFilter = nullptr;
+        float previousDelay = 0.0f;
+        float newDelay = 0.0f;
+        bool delayNew = true;
+        PhaseAlignment::FractionalDelayLine delayOld;
+        PhaseAlignment::FractionalDelayLine delayNewLine;
+    };
+
+    PhaseCrossfadeState phaseCrossfade_;
+    std::vector<float> crossfadeOldOutput_;
+    std::vector<float> crossfadeAlignedOld_;
+    std::vector<float> crossfadeAlignedNew_;
+
+    float baseFilterCentroid_ = 0.0f;
+    float filterCentroid44k_ = 0.0f;
+    float filterCentroid48k_ = 0.0f;
+    float filterCentroid44kLinear_ = 0.0f;
+    float filterCentroid48kLinear_ = 0.0f;
+    std::array<float, MULTI_RATE_CONFIG_COUNT> filterCentroidMulti_{};
 
     void registerHostBuffer(void* ptr, size_t bytes, const char* context);
     void registerStreamInputBuffer(std::vector<float>& buffer, cudaStream_t stream);

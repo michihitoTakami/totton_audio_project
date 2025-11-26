@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "hrtf/woodworth_model.h"
+
 namespace CrossfeedEngine {
 
 // Head size categories matching HRTF filter files
@@ -212,6 +214,9 @@ class HRTFProcessor {
     bool setCombinedFilter(RateFamily rateFamily, const cufftComplex* combinedLL,
                            const cufftComplex* combinedLR, const cufftComplex* combinedRL,
                            const cufftComplex* combinedRR, size_t filterComplexCount);
+
+    bool generateWoodworthProfile(RateFamily rateFamily, float azimuthDeg,
+                                  const HRTF::WoodworthParams& params);
 
     // Check if currently using externally-set combined filter
     bool isUsingCombinedFilter() const {

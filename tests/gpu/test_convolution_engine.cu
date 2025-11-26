@@ -14,6 +14,13 @@
 
 using namespace ConvolutionEngine;
 
+// Helper function to prepare streaming input buffer with appropriate size
+static void prepareStreamInputBuffer(GPUUpsampler& upsampler, std::vector<float>& buffer) {
+    // Use 2x the required size for safety margin as recommended in convolution_engine.h
+    size_t requiredSize = upsampler.getStreamValidInputPerBlock() * 2;
+    buffer.resize(requiredSize, 0.0f);
+}
+
 // RAII wrapper for temporary coefficient directory
 // Automatically cleans up on destruction (handles ASSERT_* early returns)
 class TempCoeffDir {
