@@ -21,5 +21,6 @@
   "license": "CC BY-SA 4.0",
   "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
   "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
-  "generated_at": "2025-11-24T04:33:55.770918"
+  "generated_at": "2025-11-26T10:02:27.551229",
+  "storage_format": "channel_major_v1"
 }
