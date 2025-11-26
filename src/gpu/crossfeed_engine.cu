@@ -277,6 +277,10 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
         md.license = meta.value("license", "");
         md.attribution = meta.value("attribution", "");
         md.source = meta.value("source", "");
+        md.storageFormat = meta.value("storage_format", "");
+        if (md.storageFormat.empty()) {
+            md.storageFormat = "tap_interleaved_v1";  // Backward compatibility
+        }
 
         if (meta.contains("channel_order")) {
             md.channelOrder.clear();
@@ -306,11 +310,40 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
             return false;
         }
 
-        // Read all channels
+        size_t totalFloats = static_cast<size_t>(md.nChannels) * md.nTaps;
+        std::vector<float> raw(totalFloats);
+        binFile.read(reinterpret_cast<char*>(raw.data()), totalFloats * sizeof(float));
+        if (!binFile) {
+            std::cerr << "Error: Failed to read HRTF binary data (" << binPath << ")"
+                      << std::endl;
+            return false;
+        }
+
+        bool channelMajor = (md.storageFormat == "channel_major_v1");
+        bool tapInterleaved = (md.storageFormat == "tap_interleaved_v1");
+        if (!channelMajor && !tapInterleaved) {
+            std::cerr << "Warning: Unknown HRTF storage format '" << md.storageFormat
+                      << "', defaulting to tap_interleaved_v1" << std::endl;
+            tapInterleaved = true;
+        }
+
         for (int c = 0; c < NUM_CHANNELS; ++c) {
             h_filterCoeffs_[configIdx][c].resize(md.nTaps);
-            binFile.read(reinterpret_cast<char*>(h_filterCoeffs_[configIdx][c].data()),
-                         md.nTaps * sizeof(float));
+        }
+
+        if (channelMajor) {
+            for (int c = 0; c < NUM_CHANNELS; ++c) {
+                size_t offset = static_cast<size_t>(c) * md.nTaps;
+                std::copy(raw.begin() + offset, raw.begin() + offset + md.nTaps,
+                          h_filterCoeffs_[configIdx][c].begin());
+            }
+        } else {
+            for (size_t tap = 0; tap < static_cast<size_t>(md.nTaps); ++tap) {
+                size_t base = tap * NUM_CHANNELS;
+                for (int c = 0; c < NUM_CHANNELS; ++c) {
+                    h_filterCoeffs_[configIdx][c][tap] = raw[base + c];
+                }
+            }
         }
 
         return true;
@@ -694,11 +727,15 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     // to prevent cudaHostUnregister on memory that no longer belongs to us.
     if (pinnedStreamOutputL_ != nullptr &&
         (outputL.empty() || pinnedStreamOutputL_ != outputL.data())) {
+        checkCudaError(cudaHostUnregister(pinnedStreamOutputL_),
+                       "cudaHostUnregister stale crossfeed stream output L");
         pinnedStreamOutputL_ = nullptr;
         pinnedStreamOutputLBytes_ = 0;
     }
     if (pinnedStreamOutputR_ != nullptr &&
         (outputR.empty() || pinnedStreamOutputR_ != outputR.data())) {
+        checkCudaError(cudaHostUnregister(pinnedStreamOutputR_),
+                       "cudaHostUnregister stale crossfeed stream output R");
         pinnedStreamOutputR_ = nullptr;
         pinnedStreamOutputRBytes_ = 0;
     }

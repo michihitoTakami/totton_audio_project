@@ -330,14 +330,14 @@ def generate_hrtf_filters(
     for name in channels:
         channels[name] = channels[name].astype(np.float32)
 
-    # インターリーブして保存（LL, LR, RL, RR の順）
-    interleaved = np.column_stack(
+    # チャンネル単位で連続配置（LL 全サンプル → LR → RL → RR）
+    channel_major = np.concatenate(
         [channels["ll"], channels["lr"], channels["rl"], channels["rr"]]
-    ).flatten()
+    )
 
     # バイナリ出力
     bin_path = output_dir / f"hrtf_{size.lower()}_{rate_key}.bin"
-    interleaved.tofile(bin_path)
+    channel_major.tofile(bin_path)
     print(
         f"\nSaved binary: {bin_path} ({bin_path.stat().st_size / 1024 / 1024:.1f} MB)"
     )
@@ -362,6 +362,7 @@ def generate_hrtf_filters(
         "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
         "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
         "generated_at": datetime.now().isoformat(),
+        "storage_format": "channel_major_v1",
     }
 
     # JSON出力

@@ -89,6 +89,7 @@ struct HRTFMetadata {
     std::string license;
     std::string attribution;
     std::string source;
+    std::string storageFormat;
 };
 
 // 4-channel HRTF FIR filter set
