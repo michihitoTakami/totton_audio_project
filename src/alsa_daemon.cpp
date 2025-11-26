@@ -557,6 +557,114 @@ static void reset_runtime_state() {
     g_cf_output_buffer_right.clear();
 }
 
+// Handle rate switch for multi-rate mode
+// Returns true on success, false on failure (with rollback)
+static bool handle_rate_switch(int newInputRate) {
+    if (!g_upsampler || !g_upsampler->isMultiRateEnabled()) {
+        std::cerr << "[Rate] Multi-rate mode not enabled" << std::endl;
+        return false;
+    }
+
+    int currentRate = g_upsampler->getCurrentInputRate();
+    if (currentRate == newInputRate) {
+        std::cout << "[Rate] Already at target rate: " << newInputRate << " Hz" << std::endl;
+        return true;
+    }
+
+    std::cout << "[Rate] Switching: " << currentRate << " Hz -> " << newInputRate << " Hz"
+              << std::endl;
+
+    int savedRate = currentRate;
+
+    if (g_soft_mute) {
+        g_soft_mute->startFadeOut();
+        auto startTime = std::chrono::steady_clock::now();
+        while (g_soft_mute->isTransitioning()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            auto elapsed = std::chrono::steady_clock::now() - startTime;
+            if (elapsed > std::chrono::milliseconds(200)) {
+                std::cerr << "[Rate] Warning: Fade-out timeout" << std::endl;
+                break;
+            }
+        }
+    }
+
+    int newOutputRate = g_upsampler->getOutputSampleRate();
+    int newUpsampleRatio = g_upsampler->getUpsampleRatio();
+    size_t buffer_capacity = 0;
+
+    {
+        std::lock_guard<std::mutex> streamLock(g_streaming_mutex);
+
+        g_upsampler->resetStreaming();
+
+        {
+            std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
+            g_output_buffer_left.clear();
+            g_output_buffer_right.clear();
+            g_output_read_pos = 0;
+        }
+        g_stream_input_left.clear();
+        g_stream_input_right.clear();
+        g_stream_accumulated_left = 0;
+        g_stream_accumulated_right = 0;
+
+        if (!g_upsampler->switchToInputRate(newInputRate)) {
+            std::cerr << "[Rate] Failed to switch rate, rolling back" << std::endl;
+            if (g_upsampler->switchToInputRate(savedRate)) {
+                std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
+                          << std::endl;
+            } else {
+                std::cerr << "[Rate] ERROR: Rollback failed!" << std::endl;
+            }
+            if (g_soft_mute) {
+                g_soft_mute->startFadeIn();
+            }
+            return false;
+        }
+
+        if (!g_upsampler->initializeStreaming()) {
+            std::cerr << "[Rate] Failed to re-initialize streaming mode, rolling back" << std::endl;
+            if (g_upsampler->switchToInputRate(savedRate)) {
+                if (g_upsampler->initializeStreaming()) {
+                    std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
+                              << std::endl;
+                }
+            }
+            if (g_soft_mute) {
+                g_soft_mute->startFadeIn();
+            }
+            return false;
+        }
+
+        g_input_sample_rate = newInputRate;
+        newOutputRate = g_upsampler->getOutputSampleRate();
+        newUpsampleRatio = g_upsampler->getUpsampleRatio();
+
+        buffer_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+        g_stream_input_left.resize(buffer_capacity, 0.0f);
+        g_stream_input_right.resize(buffer_capacity, 0.0f);
+        g_stream_accumulated_left = 0;
+        g_stream_accumulated_right = 0;
+
+        if (g_soft_mute) {
+            delete g_soft_mute;
+        }
+        g_soft_mute = new SoftMute::Controller(50, newOutputRate);
+    }
+
+    if (g_soft_mute) {
+        g_soft_mute->startFadeIn();
+    }
+
+    std::cout << "[Rate] Switch complete: " << newInputRate << " Hz (" << newUpsampleRatio
+              << "x -> " << newOutputRate << " Hz)" << std::endl;
+    std::cout << "[Rate] Streaming buffers re-initialized: " << buffer_capacity
+              << " samples capacity" << std::endl;
+
+    return true;
+}
+
 static void load_runtime_config() {
     AppConfig loaded;
     bool found = loadAppConfig(CONFIG_FILE_PATH, loaded);
@@ -2009,11 +2117,11 @@ int main(int argc, char* argv[]) {
             // Multi-rate mode: load all 10 filter configurations (Issue #219)
             // 2 rate families × 5 ratios (1x/2x/4x/8x/16x)
             std::cout << "Multi-rate mode enabled" << std::endl;
+            std::cout << "  Coefficient directory: " << g_config.coefficientDir << std::endl;
 
-            // Check coefficient directory exists
             if (!std::filesystem::exists(g_config.coefficientDir)) {
-                std::cerr << "Config error: Coefficient directory not found: "
-                          << g_config.coefficientDir << std::endl;
+                std::cerr << "Config error: Coefficient directory not found: " << g_config.coefficientDir
+                          << std::endl;
                 delete g_upsampler;
                 exitCode = 1;
                 break;
@@ -2023,7 +2131,6 @@ int main(int argc, char* argv[]) {
                                                            g_config.blockSize, g_input_sample_rate);
 
             if (initSuccess) {
-                // Update atomic variables with detected rates
                 g_current_input_rate.store(g_upsampler->getInputSampleRate(),
                                            std::memory_order_release);
                 g_current_output_rate.store(g_upsampler->getOutputSampleRate(),
@@ -2088,9 +2195,12 @@ int main(int argc, char* argv[]) {
         }
 
         if (g_config.multiRateEnabled) {
-            // Multi-rate mode: log actual ratio from upsampler
-            std::cout << "GPU upsampler ready (multi-rate mode, " << g_upsampler->getUpsampleRatio()
-                      << "x upsampling, " << g_config.blockSize << " samples/block)" << std::endl;
+            std::cout << "GPU upsampler ready (multi-rate mode, " << g_config.blockSize
+                      << " samples/block)" << std::endl;
+            std::cout << "  Current input rate: " << g_upsampler->getCurrentInputRate() << " Hz"
+                      << std::endl;
+            std::cout << "  Upsample ratio: " << g_upsampler->getUpsampleRatio() << "x" << std::endl;
+            std::cout << "  Output rate: " << g_upsampler->getOutputSampleRate() << " Hz" << std::endl;
         } else {
             std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
                       << g_config.blockSize << " samples/block)" << std::endl;
@@ -2120,7 +2230,9 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "Input sample rate: " << g_upsampler->getInputSampleRate() << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
-        std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
+        if (!g_config.multiRateEnabled) {
+            std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
+        }
 
         // Log latency warning for linear phase
         if (g_config.phaseType == PhaseType::Linear) {

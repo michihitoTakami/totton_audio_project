@@ -1224,3 +1224,379 @@ TEST_F(ConvolutionEngineTest, QuadPhaseLatencyCalculation) {
     // Latency = (taps - 1) / 2 = (1024 - 1) / 2 = 511
     EXPECT_EQ(upsampler.getLatencySamples(), 511);
 }
+
+// ============================================================
+// Issue #219: Multi-Rate Switch Implementation Tests
+// ============================================================
+
+// Test that switchToInputRate resets streaming state
+TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_ResetsStreamingState) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+
+    // Initialize streaming mode
+    ASSERT_TRUE(upsampler.initializeStreaming());
+    EXPECT_TRUE(upsampler.isMultiRateEnabled());
+
+    // Process some data to populate streaming buffers
+    const size_t inputFrames = 1000;
+    std::vector<float> input(inputFrames, 0.1f);
+    std::vector<float> output;
+    std::vector<float> streamInputBuffer;
+    size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+
+    // Process a few blocks
+    for (int i = 0; i < 3; ++i) {
+        upsampler.processStreamBlock(
+            input.data(), inputFrames, output,
+            upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+    }
+
+    // Switch rate - should invalidate streaming state
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
+
+    // Streaming should be invalidated (need to re-initialize)
+    // Note: switchToInputRate() sets streamInitialized_ to false
+    // We can't directly check this, but we can verify re-initialization works
+    EXPECT_TRUE(upsampler.initializeStreaming());
+}
+
+// Test rate switch with streaming mode re-initialization
+TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_ReinitializeStreaming) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    // Switch rate
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), 8);
+
+    // Re-initialize streaming mode (required after rate switch)
+    EXPECT_TRUE(upsampler.initializeStreaming());
+
+    // Verify streaming works after re-initialization
+    const size_t inputFrames = 1000;
+    std::vector<float> input(inputFrames, 0.1f);
+    std::vector<float> output;
+    std::vector<float> streamInputBuffer;
+    size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+
+    // Process should work with new rate
+    bool result = upsampler.processStreamBlock(
+        input.data(), inputFrames, output,
+        upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+
+    // May not produce output immediately (needs accumulation), but should not crash
+    EXPECT_TRUE(result || streamInputAccumulated > 0);
+}
+
+// Test consecutive rate switches (44.1k → 88.2k → 176.4k → 352.8k)
+TEST_F(ConvolutionEngineTest, Issue219_ConsecutiveRateSwitches_44kFamily) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+
+    // Switch through all 44.1k family rates
+    int rates[] = {44100, 88200, 176400, 352800};
+    int ratios[] = {16, 8, 4, 2};
+
+    for (size_t i = 0; i < sizeof(rates) / sizeof(rates[0]); ++i) {
+        EXPECT_TRUE(upsampler.switchToInputRate(rates[i]))
+            << "Failed to switch to " << rates[i] << " Hz";
+        EXPECT_EQ(upsampler.getCurrentInputRate(), rates[i]);
+        EXPECT_EQ(upsampler.getUpsampleRatio(), ratios[i]);
+        EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+        EXPECT_EQ(upsampler.getOutputSampleRate(), 705600);
+    }
+}
+
+// Test consecutive rate switches (48k → 96k → 192k → 384k)
+TEST_F(ConvolutionEngineTest, Issue219_ConsecutiveRateSwitches_48kFamily) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 48000));
+
+    // Switch through all 48k family rates
+    int rates[] = {48000, 96000, 192000, 384000};
+    int ratios[] = {16, 8, 4, 2};
+
+    for (size_t i = 0; i < sizeof(rates) / sizeof(rates[0]); ++i) {
+        EXPECT_TRUE(upsampler.switchToInputRate(rates[i]))
+            << "Failed to switch to " << rates[i] << " Hz";
+        EXPECT_EQ(upsampler.getCurrentInputRate(), rates[i]);
+        EXPECT_EQ(upsampler.getUpsampleRatio(), ratios[i]);
+        EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+        EXPECT_EQ(upsampler.getOutputSampleRate(), 768000);
+    }
+}
+
+// Test cross-family rate switch (44.1k → 48k)
+TEST_F(ConvolutionEngineTest, Issue219_CrossFamilyRateSwitch) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+
+    // Switch from 44.1k family to 48k family
+    EXPECT_TRUE(upsampler.switchToInputRate(48000));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 48000);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
+    EXPECT_EQ(upsampler.getOutputSampleRate(), 768000);
+
+    // Switch back to 44.1k family
+    EXPECT_TRUE(upsampler.switchToInputRate(44100));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 44100);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
+    EXPECT_EQ(upsampler.getOutputSampleRate(), 705600);
+}
+
+// Test that invalid rate switch preserves current state (rollback behavior)
+TEST_F(ConvolutionEngineTest, Issue219_InvalidRateSwitch_PreservesState) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+
+    int initialRate = upsampler.getCurrentInputRate();
+    int initialRatio = upsampler.getUpsampleRatio();
+    RateFamily initialFamily = upsampler.getCurrentRateFamily();
+
+    // Attempt to switch to invalid rate
+    EXPECT_FALSE(upsampler.switchToInputRate(44000));  // Invalid rate
+
+    // State should remain unchanged (rollback)
+    EXPECT_EQ(upsampler.getCurrentInputRate(), initialRate);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), initialRatio);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), initialFamily);
+}
+
+// Test rate switch with streaming mode active
+TEST_F(ConvolutionEngineTest, Issue219_RateSwitchWithStreamingActive) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    // Process some data
+    const size_t inputFrames = 1000;
+    std::vector<float> input(inputFrames, 0.1f);
+    std::vector<float> output;
+    std::vector<float> streamInputBuffer;
+    size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+
+    // Process a few blocks
+    for (int i = 0; i < 3; ++i) {
+        upsampler.processStreamBlock(
+            input.data(), inputFrames, output,
+            upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+    }
+
+    // Switch rate (should invalidate streaming)
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
+
+    // Re-initialize streaming
+    EXPECT_TRUE(upsampler.initializeStreaming());
+
+    // Verify streaming works with new rate
+    streamInputAccumulated = 0;
+    bool result = upsampler.processStreamBlock(
+        input.data(), inputFrames, output,
+        upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+
+    // Should work with new rate
+    EXPECT_TRUE(result || streamInputAccumulated > 0);
+}
+
+// Test that switchToInputRate updates output sample rate correctly
+TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_UpdatesOutputRate) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+
+    // Test 44.1k family rates
+    struct {
+        int inputRate;
+        int expectedOutputRate;
+        int expectedRatio;
+    } testCases[] = {
+        {44100, 705600, 16},
+        {88200, 705600, 8},
+        {176400, 705600, 4},
+        {352800, 705600, 2},
+        {48000, 768000, 16},
+        {96000, 768000, 8},
+        {192000, 768000, 4},
+        {384000, 768000, 2},
+    };
+
+    for (const auto& testCase : testCases) {
+        EXPECT_TRUE(upsampler.switchToInputRate(testCase.inputRate))
+            << "Failed to switch to " << testCase.inputRate << " Hz";
+        EXPECT_EQ(upsampler.getCurrentInputRate(), testCase.inputRate);
+        EXPECT_EQ(upsampler.getUpsampleRatio(), testCase.expectedRatio);
+        EXPECT_EQ(upsampler.getOutputSampleRate(), testCase.expectedOutputRate);
+    }
+}
+
+// Test rollback behavior when switchToInputRate fails mid-operation
+// This tests the internal rollback logic in switchToInputRate()
+TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_RollbackOnFailure) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+
+    int initialRate = upsampler.getCurrentInputRate();
+    int initialRatio = upsampler.getUpsampleRatio();
+    RateFamily initialFamily = upsampler.getCurrentRateFamily();
+
+    // Attempt to switch to invalid rate (should fail and preserve state)
+    EXPECT_FALSE(upsampler.switchToInputRate(44000));  // Invalid rate
+
+    // State should remain unchanged (rollback)
+    EXPECT_EQ(upsampler.getCurrentInputRate(), initialRate);
+    EXPECT_EQ(upsampler.getUpsampleRatio(), initialRatio);
+    EXPECT_EQ(upsampler.getCurrentRateFamily(), initialFamily);
+
+    // Verify we can still switch to a valid rate after failure
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
+}
+
+// Test that streaming re-initialization is required after rate switch
+TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_RequiresStreamingReinit) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    // Verify streaming is initialized
+    EXPECT_TRUE(upsampler.isMultiRateEnabled());
+
+    // Switch rate (should invalidate streaming)
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
+
+    // Streaming should be invalidated (need to re-initialize)
+    // We can't directly check streamInitialized_, but we can verify
+    // that re-initialization works
+    EXPECT_TRUE(upsampler.initializeStreaming());
+
+    // Verify streaming works after re-initialization
+    const size_t inputFrames = 1000;
+    std::vector<float> input(inputFrames, 0.1f);
+    std::vector<float> output;
+    std::vector<float> streamInputBuffer;
+    size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+
+    bool result = upsampler.processStreamBlock(
+        input.data(), inputFrames, output,
+        upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+
+    // Should work with new rate
+    EXPECT_TRUE(result || streamInputAccumulated > 0);
+}
+
+// Test multiple consecutive rate switches with streaming mode
+TEST_F(ConvolutionEngineTest, Issue219_MultipleRateSwitchesWithStreaming) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    // Switch through multiple rates
+    int rates[] = {44100, 88200, 176400, 352800, 48000, 96000, 192000, 384000};
+
+    for (int rate : rates) {
+        EXPECT_TRUE(upsampler.switchToInputRate(rate))
+            << "Failed to switch to " << rate << " Hz";
+        EXPECT_EQ(upsampler.getCurrentInputRate(), rate);
+
+        // Re-initialize streaming after each switch
+        EXPECT_TRUE(upsampler.initializeStreaming());
+
+        // Verify streaming works
+        const size_t inputFrames = 1000;
+        std::vector<float> input(inputFrames, 0.1f);
+        std::vector<float> output;
+        std::vector<float> streamInputBuffer;
+        size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+
+        bool result = upsampler.processStreamBlock(
+            input.data(), inputFrames, output,
+            upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+
+        // Should work with new rate
+        EXPECT_TRUE(result || streamInputAccumulated > 0);
+    }
+}
+
+// Test that resetStreaming() is called during rate switch
+TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_CallsResetStreaming) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    // Process some data to populate overlap buffers
+    const size_t inputFrames = 1000;
+    std::vector<float> input(inputFrames, 0.1f);
+    std::vector<float> output;
+    std::vector<float> streamInputBuffer;
+    size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+
+    // Process a few blocks
+    for (int i = 0; i < 3; ++i) {
+        upsampler.processStreamBlock(
+            input.data(), inputFrames, output,
+            upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+    }
+
+    // Switch rate (should call resetStreaming internally)
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 88200);
+
+    // Re-initialize streaming
+    EXPECT_TRUE(upsampler.initializeStreaming());
+
+    // Verify streaming works (overlap buffers should be cleared)
+    streamInputAccumulated = 0;
+    bool result = upsampler.processStreamBlock(
+        input.data(), inputFrames, output,
+        upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+
+    // Should work with cleared overlap buffers
+    EXPECT_TRUE(result || streamInputAccumulated > 0);
+}

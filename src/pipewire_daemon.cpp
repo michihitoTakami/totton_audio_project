@@ -43,7 +43,7 @@ inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
 // Global state
 static std::atomic<bool> g_running{true};
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
-static SoftMute::Controller* g_soft_mute = nullptr;
+static SoftMute::Controller* g_soft_mute = nullptr;  // Soft mute for glitch-free rate transitions
 
 // Pending rate change (set by PipeWire callback, processed in main loop)
 // Value: 0 = no change pending, >0 = detected input sample rate
@@ -699,6 +699,8 @@ int main(int argc, char* argv[]) {
         pw_main_loop_destroy(data.loop);
     }
 
+    delete g_soft_mute;
+    g_soft_mute = nullptr;
     delete g_upsampler;
     if (g_soft_mute) {
         delete g_soft_mute;
