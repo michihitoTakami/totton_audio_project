@@ -1,6 +1,11 @@
 # Web UI セットアップガイド
 
-GPU Upsampler の Web コントロールインターフェースの設定と使用方法。
+Magic Box Project の Web コントロールインターフェースの設定と使用方法。
+
+## 前提条件
+
+- [クイックスタート](quick_start.md) を完了していること
+- Python 3.11以上、uv がインストール済み
 
 ## 概要
 
@@ -200,3 +205,9 @@ ls -la build/gpu_upsampler_alsa
 # 権限確認 (バイナリ実行権限)
 chmod +x build/gpu_upsampler_alsa
 ```
+
+## 関連ドキュメント
+
+- [PC開発環境](pc_development.md) - デーモン起動・PipeWire設定
+- [REST API仕様](../api/README.md) - API詳細ドキュメント
+- [ビルド手順](build.md) - C++バイナリのビルド
