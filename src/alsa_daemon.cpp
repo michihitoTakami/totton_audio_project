@@ -3,6 +3,7 @@
 #include "config_loader.h"
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
+#include "playback_buffer.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -275,6 +276,21 @@ static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
 static std::mutex g_streaming_mutex;  // Protects streaming buffer state during rate switch
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
+
+static size_t get_playback_ready_threshold(size_t period_size) {
+    bool crossfeedActive = false;
+    size_t crossfeedBlockSize = 0;
+
+    if (g_crossfeed_enabled.load(std::memory_order_relaxed)) {
+        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
+            crossfeedActive = true;
+            crossfeedBlockSize = g_hrtf_processor->getStreamValidInputPerBlock();
+        }
+    }
+
+    return PlaybackBuffer::computeReadyThreshold(period_size, crossfeedActive, crossfeedBlockSize);
+}
 
 // Fallback manager (Issue #139)
 static FallbackManager::Manager* g_fallback_manager = nullptr;
@@ -1925,10 +1941,12 @@ void alsa_output_thread() {
             }
         }
 
-        // Wait for GPU processed data (3x period to ensure sufficient buffering)
+        // Wait for GPU processed data (dynamic threshold to avoid underflow with crossfeed)
         std::unique_lock<std::mutex> lock(g_buffer_mutex);
-        g_buffer_cv.wait_for(lock, std::chrono::milliseconds(200), [period_size] {
-            return (g_output_buffer_left.size() - g_output_read_pos) >= (period_size * 3) ||
+        size_t ready_threshold =
+            get_playback_ready_threshold(static_cast<size_t>(period_size));
+        g_buffer_cv.wait_for(lock, std::chrono::milliseconds(200), [ready_threshold] {
+            return (g_output_buffer_left.size() - g_output_read_pos) >= ready_threshold ||
                    !g_running;
         });
 
