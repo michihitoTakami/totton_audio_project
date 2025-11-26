@@ -18,7 +18,7 @@ Data Source: HUTUBS - Head-related Transfer Function Database
     https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960
 
 License:
-    - HUTUBS SOFA data: CC BY-SA 4.0
+    - HUTUBS SOFA data: CC BY 4.0
     - pysofaconventions: BSD-3-Clause
 
 Attribution:
@@ -358,7 +358,7 @@ def generate_hrtf_filters(
         "source_azimuth_left": -30.0,  # Logical value (HUTUBS uses 330°)
         "source_azimuth_right": TARGET_AZIMUTH_RIGHT,
         "source_elevation": TARGET_ELEVATION,
-        "license": "CC BY-SA 4.0",
+        "license": "CC BY 4.0",
         "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
         "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
         "generated_at": datetime.now().isoformat(),
@@ -389,7 +389,7 @@ Examples:
   # Specify SOFA directory
   python scripts/generate_hrtf.py --sofa-dir data/crossfeed/raw/sofa
 
-License: HUTUBS data is CC BY-SA 4.0
+License: HUTUBS data is CC BY 4.0
 Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin
         """,
     )
