@@ -77,7 +77,8 @@ class HRTFProcessorTest : public ::testing::Test {
                     {"source_elevation", 0.0},
                     {"license", "Test"},
                     {"attribution", "Test Data"},
-                    {"source", "synthetic"}
+                    {"source", "synthetic"},
+                    {"storage_format", "channel_major_v1"}
                 };
 
                 std::string jsonPath = testDir_ + "/hrtf_" + size + "_" + family + ".json";
