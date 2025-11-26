@@ -84,16 +84,26 @@ void checkCufftError(cufftResult result, const char* context) {
     }
 }
 
+void safeCudaHostUnregister(void** trackedPtr, size_t* trackedBytes, const char* context) {
+    if (trackedPtr == nullptr || *trackedPtr == nullptr) {
+        return;
+    }
+    cudaError_t err = cudaHostUnregister(*trackedPtr);
+    if (err != cudaSuccess && err != cudaErrorHostMemoryNotRegistered) {
+        checkCudaError(err, context);
+    }
+    *trackedPtr = nullptr;
+    if (trackedBytes) {
+        *trackedBytes = 0;
+    }
+}
+
 }  // namespace
 
 void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
                                          size_t* trackedBytes, const char* context) {
     if (buffer.empty()) {
-        if (*trackedPtr) {
-            checkCudaError(cudaHostUnregister(*trackedPtr), "cudaHostUnregister stream buffer");
-            *trackedPtr = nullptr;
-            *trackedBytes = 0;
-        }
+        safeCudaHostUnregister(trackedPtr, trackedBytes, "cudaHostUnregister stream buffer");
         return;
     }
 
@@ -104,9 +114,7 @@ void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trac
         return;  // Already registered
     }
 
-    if (*trackedPtr) {
-        checkCudaError(cudaHostUnregister(*trackedPtr), "cudaHostUnregister stream buffer");
-    }
+    safeCudaHostUnregister(trackedPtr, trackedBytes, "cudaHostUnregister stream buffer");
 
     checkCudaError(cudaHostRegister(ptr, bytes, cudaHostRegisterDefault), context);
     *trackedPtr = ptr;
@@ -727,17 +735,13 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     // to prevent cudaHostUnregister on memory that no longer belongs to us.
     if (pinnedStreamOutputL_ != nullptr &&
         (outputL.empty() || pinnedStreamOutputL_ != outputL.data())) {
-        checkCudaError(cudaHostUnregister(pinnedStreamOutputL_),
-                       "cudaHostUnregister stale crossfeed stream output L");
-        pinnedStreamOutputL_ = nullptr;
-        pinnedStreamOutputLBytes_ = 0;
+        safeCudaHostUnregister(&pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
+                               "cudaHostUnregister stale crossfeed stream output L");
     }
     if (pinnedStreamOutputR_ != nullptr &&
         (outputR.empty() || pinnedStreamOutputR_ != outputR.data())) {
-        checkCudaError(cudaHostUnregister(pinnedStreamOutputR_),
-                       "cudaHostUnregister stale crossfeed stream output R");
-        pinnedStreamOutputR_ = nullptr;
-        pinnedStreamOutputRBytes_ = 0;
+        safeCudaHostUnregister(&pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
+                               "cudaHostUnregister stale crossfeed stream output R");
     }
 
     // Accumulate input
@@ -964,18 +968,14 @@ void HRTFProcessor::cleanup() {
     if (streamR_) cudaStreamDestroy(streamR_);
 
     // Unregister pinned host buffers
-    if (pinnedStreamInputL_) cudaHostUnregister(pinnedStreamInputL_);
-    if (pinnedStreamInputR_) cudaHostUnregister(pinnedStreamInputR_);
-    if (pinnedStreamOutputL_) cudaHostUnregister(pinnedStreamOutputL_);
-    if (pinnedStreamOutputR_) cudaHostUnregister(pinnedStreamOutputR_);
-    pinnedStreamInputL_ = nullptr;
-    pinnedStreamInputR_ = nullptr;
-    pinnedStreamOutputL_ = nullptr;
-    pinnedStreamOutputR_ = nullptr;
-    pinnedStreamInputLBytes_ = 0;
-    pinnedStreamInputRBytes_ = 0;
-    pinnedStreamOutputLBytes_ = 0;
-    pinnedStreamOutputRBytes_ = 0;
+    safeCudaHostUnregister(&pinnedStreamInputL_, &pinnedStreamInputLBytes_,
+                           "cudaHostUnregister cleanup input L");
+    safeCudaHostUnregister(&pinnedStreamInputR_, &pinnedStreamInputRBytes_,
+                           "cudaHostUnregister cleanup input R");
+    safeCudaHostUnregister(&pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
+                           "cudaHostUnregister cleanup output L");
+    safeCudaHostUnregister(&pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
+                           "cudaHostUnregister cleanup output R");
 
     // Reset pointers
     d_inputL_ = nullptr;
