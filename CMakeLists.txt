@@ -304,6 +304,7 @@ target_link_libraries(auto_negotiation PUBLIC
 )
 target_include_directories(auto_negotiation PUBLIC
     ${CMAKE_SOURCE_DIR}/include
+    ${CUDAToolkit_INCLUDE_DIRS}
 )
 target_compile_options(auto_negotiation PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
