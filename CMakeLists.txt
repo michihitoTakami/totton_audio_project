@@ -536,7 +536,6 @@ add_executable(rate_switch_e2e_tests
 target_link_libraries(rate_switch_e2e_tests
     GTest::gtest_main
     auto_negotiation
-    gpu_upsampler_core
 )
 target_include_directories(rate_switch_e2e_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
