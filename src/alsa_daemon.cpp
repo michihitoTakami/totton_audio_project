@@ -280,6 +280,7 @@ static std::vector<float> g_cf_output_buffer_right;
 static size_t get_playback_ready_threshold(size_t period_size) {
     bool crossfeedActive = false;
     size_t crossfeedBlockSize = 0;
+    size_t producerBlockSize = 0;
 
     if (g_crossfeed_enabled.load(std::memory_order_relaxed)) {
         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -289,7 +290,19 @@ static size_t get_playback_ready_threshold(size_t period_size) {
         }
     }
 
-    return PlaybackBuffer::computeReadyThreshold(period_size, crossfeedActive, crossfeedBlockSize);
+    if (g_upsampler) {
+        // StreamValidInputPerBlock() is in input frames. Multiply by upsample ratio to obtain the
+        // number of samples the producer actually contributes to the playback ring per block so the
+        // ALSA thread can wake up as soon as a full GPU block finishes.
+        size_t streamBlock = g_upsampler->getStreamValidInputPerBlock();
+        int upsampleRatio = g_upsampler->getUpsampleRatio();
+        if (streamBlock > 0 && upsampleRatio > 0) {
+            producerBlockSize = streamBlock * static_cast<size_t>(upsampleRatio);
+        }
+    }
+
+    return PlaybackBuffer::computeReadyThreshold(period_size, crossfeedActive,
+                                                 crossfeedBlockSize, producerBlockSize);
 }
 
 // Fallback manager (Issue #139)

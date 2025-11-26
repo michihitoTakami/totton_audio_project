@@ -13,16 +13,27 @@ namespace PlaybackBuffer {
  * @param periodSize          ALSA period size in samples (per channel).
  * @param crossfeedActive     Whether crossfeed processing is currently enabled.
  * @param crossfeedBlockSize  Crossfeed block size reported by the HRTF engine.
+ * @param producerBlockSize   Producer (upsampler) output block size in samples. When crossfeed is
+ *                            disabled this value is clamped to [periodSize, periodSize *
+ *                            defaultMultiplier] and used as the threshold. Pass 0 to use only the
+ *                            default multiplier logic.
  * @param defaultMultiplier   Multiplier applied to periodSize when crossfeed is inactive.
  *
  * @return Samples required before playback should resume.
  */
 inline size_t computeReadyThreshold(size_t periodSize, bool crossfeedActive,
-                                    size_t crossfeedBlockSize, size_t defaultMultiplier = 3) {
+                                    size_t crossfeedBlockSize,
+                                    size_t producerBlockSize = 0,
+                                    size_t defaultMultiplier = 3) {
     size_t safePeriod = std::max<size_t>(periodSize, 1);
     size_t defaultReady = safePeriod * defaultMultiplier;
 
     if (!crossfeedActive || crossfeedBlockSize == 0) {
+        if (producerBlockSize > 0) {
+            size_t clampedProducer =
+                std::clamp(producerBlockSize, safePeriod, defaultReady);
+            return clampedProducer;
+        }
         return defaultReady;
     }
 
