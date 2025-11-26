@@ -5,12 +5,30 @@
 namespace {
 
 constexpr size_t kPeriod = 32768;
+constexpr size_t kDefaultMultiplier = 3;
+constexpr size_t kDefaultReady = kPeriod * kDefaultMultiplier;
 
 }  // namespace
 
-TEST(PlaybackBufferThresholdTest, CrossfeedDisabledUsesTriplePeriod) {
-    size_t expected = kPeriod * 3;
-    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, false, 0), expected);
+TEST(PlaybackBufferThresholdTest, CrossfeedDisabledDefaultsToProducerBlock) {
+    size_t producerBlock = kPeriod * 2;  // Between period and 3×period
+    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, false, 0, producerBlock),
+              producerBlock);
+}
+
+TEST(PlaybackBufferThresholdTest, CrossfeedDisabledWithoutProducerFallsBackToTriplePeriod) {
+    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, false, 0), kDefaultReady);
+}
+
+TEST(PlaybackBufferThresholdTest, CrossfeedDisabledProducerClampedToPeriod) {
+    size_t producerBlock = kPeriod / 2;
+    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, false, 0, producerBlock), kPeriod);
+}
+
+TEST(PlaybackBufferThresholdTest, CrossfeedDisabledProducerClampedToDefault) {
+    size_t producerBlock = kPeriod * 4;
+    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, false, 0, producerBlock),
+              kDefaultReady);
 }
 
 TEST(PlaybackBufferThresholdTest, CrossfeedBlockSmallerThanPeriodClampsToPeriod) {
@@ -25,13 +43,11 @@ TEST(PlaybackBufferThresholdTest, CrossfeedBlockWithinRangeUsesBlockSize) {
 
 TEST(PlaybackBufferThresholdTest, CrossfeedBlockAboveDefaultFallsBackToTriplePeriod) {
     size_t largeBlock = kPeriod * 4;
-    size_t expected = kPeriod * 3;
-    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, true, largeBlock), expected);
+    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, true, largeBlock), kDefaultReady);
 }
 
 TEST(PlaybackBufferThresholdTest, ZeroBlockSizeFallsBackToDefault) {
-    size_t expected = kPeriod * 3;
-    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, true, 0), expected);
+    EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, true, 0), kDefaultReady);
 }
 
 
