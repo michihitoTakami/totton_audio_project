@@ -417,3 +417,15 @@ TBD
 |--------|----------|----------|
 | **OPRA** | CC BY-SA 4.0 | ✅ OK（帰属表示必須） |
 | oratory1990 | 独自 | ❌ 禁止 |
+
+### HRTFデータソース（Crossfeed機能）
+
+| ソース | ライセンス | 商用利用 |
+|--------|----------|----------|
+| **HUTUBS** | CC BY 4.0 | ✅ OK（帰属表示必須） |
+
+**HUTUBS (Head-related Transfer Function Database of TU Berlin)**
+- 提供元: Technische Universität Berlin
+- URL: https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960
+- 著者: Brinkmann, Dinakaran, Pelzer, Wohlgemuth, Seipel, Voss, Grosche, Weinzierl
+- 帰属表示例: "HRTF data from HUTUBS database, TU Berlin (CC BY 4.0)"

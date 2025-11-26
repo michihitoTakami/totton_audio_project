@@ -1,11 +1,11 @@
 #include "config_loader.h"
 
+#include "daemon_constants.h"
+
 #include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
-
-#include "daemon_constants.h"
 
 PhaseType parsePhaseType(const std::string& str) {
     if (str == "linear") {
@@ -78,6 +78,12 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             outConfig.filterPath44kLinear = j["filterPath44kLinear"].get<std::string>();
         if (j.contains("filterPath48kLinear"))
             outConfig.filterPath48kLinear = j["filterPath48kLinear"].get<std::string>();
+
+        // Multi-rate mode settings (Issue #219)
+        if (j.contains("multiRateEnabled"))
+            outConfig.multiRateEnabled = j["multiRateEnabled"].get<bool>();
+        if (j.contains("coefficientDir"))
+            outConfig.coefficientDir = j["coefficientDir"].get<std::string>();
 
         // EQ settings
         if (j.contains("eqEnabled"))
@@ -152,9 +158,9 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
 
         // Clamp derived floating-point values after parsing (ensures sane bounds)
         outConfig.gain = std::max(0.0f, outConfig.gain);
-        outConfig.headroomTarget = std::clamp(outConfig.headroomTarget,
-                                              DaemonConstants::MIN_HEADROOM_TARGET,
-                                              DaemonConstants::MAX_HEADROOM_TARGET);
+        outConfig.headroomTarget =
+            std::clamp(outConfig.headroomTarget, DaemonConstants::MIN_HEADROOM_TARGET,
+                       DaemonConstants::MAX_HEADROOM_TARGET);
 
         if (verbose) {
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)

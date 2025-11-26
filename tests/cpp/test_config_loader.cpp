@@ -4,7 +4,6 @@
  */
 
 #include "config_loader.h"
-#include "daemon_constants.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -59,7 +58,6 @@ TEST_F(ConfigLoaderTest, LoadNonExistentFileUsesDefaults) {
     EXPECT_EQ(config.upsampleRatio, 16);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
-    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::DEFAULT_HEADROOM_TARGET);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");
 }
@@ -81,7 +79,6 @@ TEST_F(ConfigLoaderTest, LoadFullConfig) {
         "upsampleRatio": 8,
         "blockSize": 8192,
         "gain": 8.0,
-        "headroomTarget": 0.95,
         "filterPath": "custom/filter.bin",
         "eqEnabled": true,
         "eqProfilePath": "data/EQ/custom.txt"
@@ -97,28 +94,9 @@ TEST_F(ConfigLoaderTest, LoadFullConfig) {
     EXPECT_EQ(config.upsampleRatio, 8);
     EXPECT_EQ(config.blockSize, 8192);
     EXPECT_FLOAT_EQ(config.gain, 8.0f);
-    EXPECT_FLOAT_EQ(config.headroomTarget, 0.95f);
     EXPECT_EQ(config.filterPath, "custom/filter.bin");
     EXPECT_TRUE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "data/EQ/custom.txt");
-}
-
-TEST_F(ConfigLoaderTest, HeadroomTargetClampedAboveMax) {
-    writeConfig(R"({"headroomTarget": 5.0})");
-
-    AppConfig config;
-    loadAppConfig(testConfigPath, config, false);
-
-    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::MAX_HEADROOM_TARGET);
-}
-
-TEST_F(ConfigLoaderTest, HeadroomTargetClampedBelowMin) {
-    writeConfig(R"({"headroomTarget": 0.1})");
-
-    AppConfig config;
-    loadAppConfig(testConfigPath, config, false);
-
-    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::MIN_HEADROOM_TARGET);
 }
 
 TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
@@ -139,7 +117,6 @@ TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
     EXPECT_EQ(config.periodSize, 32768);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
-    EXPECT_FLOAT_EQ(config.headroomTarget, DaemonConstants::DEFAULT_HEADROOM_TARGET);
 }
 
 TEST_F(ConfigLoaderTest, LoadInvalidJsonReturnsFalse) {
@@ -407,62 +384,46 @@ TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedFieldsWrongTypes) {
     EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
 }
 
-// ============================================================================
-// Fallback Config Tests (Issue #139)
-// ============================================================================
+// ============================================================
+// Issue #219: Multi-Rate settings tests
+// ============================================================
 
-TEST_F(ConfigLoaderTest, FallbackDefaultValues) {
+TEST_F(ConfigLoaderTest, Issue219_MultiRateDefaultValues) {
     AppConfig config;
-    EXPECT_TRUE(config.fallback.enabled);
-    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 80.0f);
-    EXPECT_EQ(config.fallback.gpuThresholdCount, 3);
-    EXPECT_FLOAT_EQ(config.fallback.gpuRecoveryThreshold, 70.0f);
-    EXPECT_EQ(config.fallback.gpuRecoveryCount, 5);
-    EXPECT_TRUE(config.fallback.xrunTriggersFallback);
-    EXPECT_EQ(config.fallback.monitorIntervalMs, 100);
+
+    EXPECT_FALSE(config.multiRateEnabled);
+    EXPECT_EQ(config.coefficientDir, "data/coefficients");
 }
 
-TEST_F(ConfigLoaderTest, LoadConfigWithFallbackEnabled) {
+TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateEnabled) {
     writeConfig(R"({
-        "fallback": {
-            "enabled": true,
-            "gpuThreshold": 90.0,
-            "gpuThresholdCount": 5,
-            "gpuRecoveryThreshold": 80.0,
-            "gpuRecoveryCount": 10,
-            "xrunTriggersFallback": false,
-            "monitorIntervalMs": 200
-        }
+        "multiRateEnabled": true,
+        "coefficientDir": "custom/coefficients"
     })");
 
     AppConfig config;
     bool result = loadAppConfig(testConfigPath, config, false);
 
     EXPECT_TRUE(result);
-    EXPECT_TRUE(config.fallback.enabled);
-    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 90.0f);
-    EXPECT_EQ(config.fallback.gpuThresholdCount, 5);
-    EXPECT_FLOAT_EQ(config.fallback.gpuRecoveryThreshold, 80.0f);
-    EXPECT_EQ(config.fallback.gpuRecoveryCount, 10);
-    EXPECT_FALSE(config.fallback.xrunTriggersFallback);
-    EXPECT_EQ(config.fallback.monitorIntervalMs, 200);
+    EXPECT_TRUE(config.multiRateEnabled);
+    EXPECT_EQ(config.coefficientDir, "custom/coefficients");
 }
 
-TEST_F(ConfigLoaderTest, LoadConfigWithFallbackDisabled) {
+TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateDisabled) {
     writeConfig(R"({
-        "fallback": {
-            "enabled": false
-        }
+        "multiRateEnabled": false,
+        "coefficientDir": "other/coefficients"
     })");
 
     AppConfig config;
     bool result = loadAppConfig(testConfigPath, config, false);
 
     EXPECT_TRUE(result);
-    EXPECT_FALSE(config.fallback.enabled);
+    EXPECT_FALSE(config.multiRateEnabled);
+    EXPECT_EQ(config.coefficientDir, "other/coefficients");
 }
 
-TEST_F(ConfigLoaderTest, LoadConfigWithoutFallbackKeepsDefaults) {
+TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithoutMultiRateKeepsDefaults) {
     writeConfig(R"({
         "alsaDevice": "hw:Test"
     })");
@@ -471,90 +432,36 @@ TEST_F(ConfigLoaderTest, LoadConfigWithoutFallbackKeepsDefaults) {
     bool result = loadAppConfig(testConfigPath, config, false);
 
     EXPECT_TRUE(result);
-    EXPECT_TRUE(config.fallback.enabled);
-    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 80.0f);
+    EXPECT_FALSE(config.multiRateEnabled);
+    EXPECT_EQ(config.coefficientDir, "data/coefficients");
 }
 
-TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_GpuThresholdClamped) {
-    // Test gpuThreshold clamping to 0-100%
+TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithPartialMultiRateKeepsDefaults) {
     writeConfig(R"({
-        "fallback": {
-            "gpuThreshold": 150.0
-        }
+        "multiRateEnabled": true
     })");
 
     AppConfig config;
     bool result = loadAppConfig(testConfigPath, config, false);
 
     EXPECT_TRUE(result);
-    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 100.0f);  // Clamped to 100
-
-    // Test negative value
-    writeConfig(R"({
-        "fallback": {
-            "gpuThreshold": -10.0
-        }
-    })");
-    result = loadAppConfig(testConfigPath, config, false);
-    EXPECT_TRUE(result);
-    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 0.0f);  // Clamped to 0
+    EXPECT_TRUE(config.multiRateEnabled);
+    // coefficientDir should keep default
+    EXPECT_EQ(config.coefficientDir, "data/coefficients");
 }
 
-TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_RecoveryThresholdClamped) {
-    // Recovery threshold must be <= gpuThreshold
+TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndQuadPhase) {
     writeConfig(R"({
-        "fallback": {
-            "gpuThreshold": 80.0,
-            "gpuRecoveryThreshold": 90.0
-        }
+        "multiRateEnabled": true,
+        "quadPhaseEnabled": true,
+        "coefficientDir": "multi/coefficients"
     })");
 
     AppConfig config;
     bool result = loadAppConfig(testConfigPath, config, false);
 
     EXPECT_TRUE(result);
-    // gpuRecoveryThreshold should be clamped to gpuThreshold
-    EXPECT_FLOAT_EQ(config.fallback.gpuRecoveryThreshold, 80.0f);
-}
-
-TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_CountValuesMin1) {
-    writeConfig(R"({
-        "fallback": {
-            "gpuThresholdCount": 0,
-            "gpuRecoveryCount": -5
-        }
-    })");
-
-    AppConfig config;
-    bool result = loadAppConfig(testConfigPath, config, false);
-
-    EXPECT_TRUE(result);
-    EXPECT_EQ(config.fallback.gpuThresholdCount, 1);  // Min 1
-    EXPECT_EQ(config.fallback.gpuRecoveryCount, 1);   // Min 1
-}
-
-TEST_F(ConfigLoaderTest, LoadConfigWithFallbackValidation_MonitorIntervalMin10) {
-    writeConfig(R"({
-        "fallback": {
-            "monitorIntervalMs": 5
-        }
-    })");
-
-    AppConfig config;
-    bool result = loadAppConfig(testConfigPath, config, false);
-
-    EXPECT_TRUE(result);
-    EXPECT_EQ(config.fallback.monitorIntervalMs, 10);  // Min 10ms
-}
-
-TEST_F(ConfigLoaderTest, LoadConfigWithFallbackWrongTypes) {
-    // Test when fallback is not an object (should be ignored, keep defaults)
-    writeConfig(R"({"fallback": "not an object"})");
-
-    AppConfig config;
-    bool result = loadAppConfig(testConfigPath, config, false);
-
-    EXPECT_TRUE(result);
-    EXPECT_TRUE(config.fallback.enabled);
-    EXPECT_FLOAT_EQ(config.fallback.gpuThreshold, 80.0f);
+    EXPECT_TRUE(config.multiRateEnabled);
+    EXPECT_TRUE(config.quadPhaseEnabled);
+    EXPECT_EQ(config.coefficientDir, "multi/coefficients");
 }

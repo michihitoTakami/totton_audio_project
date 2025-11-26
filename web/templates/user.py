@@ -342,6 +342,9 @@ def get_embedded_html() -> str:
             </div>
         </div>
         <div id="crossfeedMessage" class="message"></div>
+        <div style="font-size:10px; color:#555; margin-top:12px; text-align:center;">
+            HRTF data: <a href="https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960" target="_blank" style="color:#00d4ff;">HUTUBS, TU Berlin</a> (CC BY 4.0)
+        </div>
     </div>
 
     <script>

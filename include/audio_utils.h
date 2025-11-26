@@ -1,8 +1,8 @@
 #ifndef AUDIO_UTILS_H
 #define AUDIO_UTILS_H
 
-#include <cstddef>
 #include <cmath>
+#include <cstddef>
 
 // Common audio utility functions shared between daemons
 // Issue #105: Daemon common code extraction
