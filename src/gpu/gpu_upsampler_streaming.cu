@@ -17,35 +17,7 @@ bool GPUUpsampler::initializeStreaming() {
     // Free existing streaming buffers if re-initializing (prevents memory leak on rate switch)
     if (streamInitialized_) {
         fprintf(stderr, "[Streaming] Re-initializing: freeing existing buffers\n");
-        if (d_streamInput_) {
-            cudaFree(d_streamInput_);
-            d_streamInput_ = nullptr;
-        }
-        if (d_streamUpsampled_) {
-            cudaFree(d_streamUpsampled_);
-            d_streamUpsampled_ = nullptr;
-        }
-        if (d_streamPadded_) {
-            cudaFree(d_streamPadded_);
-            d_streamPadded_ = nullptr;
-        }
-        if (d_streamInputFFT_) {
-            cudaFree(d_streamInputFFT_);
-            d_streamInputFFT_ = nullptr;
-        }
-        if (d_streamConvResult_) {
-            cudaFree(d_streamConvResult_);
-            d_streamConvResult_ = nullptr;
-        }
-        if (d_overlapLeft_) {
-            cudaFree(d_overlapLeft_);
-            d_overlapLeft_ = nullptr;
-        }
-        if (d_overlapRight_) {
-            cudaFree(d_overlapRight_);
-            d_overlapRight_ = nullptr;
-        }
-        streamInitialized_ = false;
+        freeStreamingBuffers();
     }
 
     // Calculate valid output per block (samples at output rate that don't overlap)
@@ -134,6 +106,46 @@ void GPUUpsampler::resetStreaming() {
         cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float));
     }
     fprintf(stderr, "[Streaming] Reset: device overlap buffers cleared\n");
+}
+
+void GPUUpsampler::freeStreamingBuffers() {
+    if (!streamInitialized_) {
+        return;
+    }
+
+    fprintf(stderr, "[Streaming] Freeing streaming buffers\n");
+
+    if (d_streamInput_) {
+        cudaFree(d_streamInput_);
+        d_streamInput_ = nullptr;
+    }
+    if (d_streamUpsampled_) {
+        cudaFree(d_streamUpsampled_);
+        d_streamUpsampled_ = nullptr;
+    }
+    if (d_streamPadded_) {
+        cudaFree(d_streamPadded_);
+        d_streamPadded_ = nullptr;
+    }
+    if (d_streamInputFFT_) {
+        cudaFree(d_streamInputFFT_);
+        d_streamInputFFT_ = nullptr;
+    }
+    if (d_streamConvResult_) {
+        cudaFree(d_streamConvResult_);
+        d_streamConvResult_ = nullptr;
+    }
+    if (d_overlapLeft_) {
+        cudaFree(d_overlapLeft_);
+        d_overlapLeft_ = nullptr;
+    }
+    if (d_overlapRight_) {
+        cudaFree(d_overlapRight_);
+        d_overlapRight_ = nullptr;
+    }
+
+    streamInitialized_ = false;
+    fprintf(stderr, "[Streaming] Streaming buffers freed\n");
 }
 
 bool GPUUpsampler::processStreamBlock(const float* inputData,

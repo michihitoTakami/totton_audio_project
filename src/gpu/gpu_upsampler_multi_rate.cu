@@ -455,42 +455,67 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
               << currentConfig.ratio << "x) -> " << targetConfig.inputRate << " Hz ("
               << targetConfig.ratio << "x)" << std::endl;
 
+    // Save current state for rollback on error
+    int savedMultiRateIndex = currentMultiRateIndex_;
+    int savedInputRate = currentInputRate_;
+    int savedUpsampleRatio = upsampleRatio_;
+    RateFamily savedRateFamily = currentRateFamily_;
+
+    // Reset streaming overlap buffers before switching (prevents artifacts from old rate)
+    if (streamInitialized_) {
+        resetStreaming();
+    }
+
     // Select the source FFT for the target configuration
     cufftComplex* sourceFFT = d_filterFFT_Multi_[targetIndex];
 
     // Use double-buffering for glitch-free switching
     cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
 
-    Utils::checkCudaError(
-        cudaMemcpyAsync(backBuffer, sourceFFT,
-                        filterFftSize_ * sizeof(cufftComplex),
-                        cudaMemcpyDeviceToDevice, stream_),
-        "cudaMemcpyAsync input rate switch"
-    );
+    // Copy filter FFT with error handling
+    cudaError_t err = cudaMemcpyAsync(backBuffer, sourceFFT,
+                                      filterFftSize_ * sizeof(cufftComplex),
+                                      cudaMemcpyDeviceToDevice, stream_);
+    if (err != cudaSuccess) {
+        std::cerr << "Error: Failed to copy filter FFT: " << cudaGetErrorString(err) << std::endl;
+        return false;
+    }
 
     // Synchronize to ensure copy is complete before switching
-    Utils::checkCudaError(
-        cudaStreamSynchronize(stream_),
-        "cudaStreamSynchronize input rate switch"
-    );
+    err = cudaStreamSynchronize(stream_);
+    if (err != cudaSuccess) {
+        std::cerr << "Error: Failed to synchronize stream: " << cudaGetErrorString(err) << std::endl;
+        return false;
+    }
 
     // Atomic swap to the new buffer
     d_activeFilterFFT_ = backBuffer;
 
     // Update original filter FFT for EQ restoration (device)
-    Utils::checkCudaError(
-        cudaMemcpy(d_originalFilterFFT_, sourceFFT,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
-        "cudaMemcpy update originalFilterFFT"
-    );
+    err = cudaMemcpy(d_originalFilterFFT_, sourceFFT,
+                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice);
+    if (err != cudaSuccess) {
+        std::cerr << "Error: Failed to update original filter FFT: " << cudaGetErrorString(err) << std::endl;
+        // Rollback: restore previous filter
+        d_activeFilterFFT_ = (backBuffer == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
+        return false;
+    }
 
     // Update host cache of original filter FFT for EQ computation
     h_originalFilterFft_.resize(filterFftSize_);
-    Utils::checkCudaError(
-        cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
-        "cudaMemcpy update h_originalFilterFft_"
-    );
+    err = cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
+                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        std::cerr << "Error: Failed to update host filter FFT cache: " << cudaGetErrorString(err) << std::endl;
+        // Rollback: restore previous state
+        currentMultiRateIndex_ = savedMultiRateIndex;
+        currentInputRate_ = savedInputRate;
+        inputSampleRate_ = savedInputRate;
+        upsampleRatio_ = savedUpsampleRatio;
+        currentRateFamily_ = savedRateFamily;
+        d_activeFilterFFT_ = (backBuffer == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
+        return false;
+    }
 
     // Note: h_filterCoeffs_ and h_filterCoeffsMulti_ (time-domain) are no longer updated here.
     // After initialization, host coefficient vectors are released to save memory.
@@ -503,38 +528,10 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     upsampleRatio_ = targetConfig.ratio;
     currentRateFamily_ = targetConfig.family;
 
-    // Free streaming buffers if initialized
+    // Invalidate streaming buffers (will be re-initialized by daemon after rate switch)
     if (streamInitialized_) {
-        std::cout << "  Streaming mode invalidated - freeing buffers" << std::endl;
-        if (d_streamInput_) {
-            cudaFree(d_streamInput_);
-            d_streamInput_ = nullptr;
-        }
-        if (d_streamUpsampled_) {
-            cudaFree(d_streamUpsampled_);
-            d_streamUpsampled_ = nullptr;
-        }
-        if (d_streamPadded_) {
-            cudaFree(d_streamPadded_);
-            d_streamPadded_ = nullptr;
-        }
-        if (d_streamInputFFT_) {
-            cudaFree(d_streamInputFFT_);
-            d_streamInputFFT_ = nullptr;
-        }
-        if (d_streamConvResult_) {
-            cudaFree(d_streamConvResult_);
-            d_streamConvResult_ = nullptr;
-        }
-        if (d_overlapLeft_) {
-            cudaFree(d_overlapLeft_);
-            d_overlapLeft_ = nullptr;
-        }
-        if (d_overlapRight_) {
-            cudaFree(d_overlapRight_);
-            d_overlapRight_ = nullptr;
-        }
-        streamInitialized_ = false;
+        std::cout << "  Streaming mode invalidated - buffers will be re-initialized" << std::endl;
+        freeStreamingBuffers();
         std::cout << "  Call initializeStreaming() to resume streaming" << std::endl;
     }
 
@@ -544,7 +541,8 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
         eqApplied_ = false;
     }
 
-    std::cout << "Input rate switch complete" << std::endl;
+    std::cout << "Input rate switch complete: " << inputSampleRate << " Hz ("
+              << targetConfig.ratio << "x -> " << targetConfig.outputRate << " Hz)" << std::endl;
     return true;
 }
 

@@ -229,6 +229,10 @@ class GPUUpsampler {
     // Reset streaming state (clears accumulated input and overlap buffers)
     void resetStreaming();
 
+    // Free streaming buffers (releases GPU memory)
+    // Call this before rate switch or shutdown to free streaming resources
+    void freeStreamingBuffers();
+
     // Process streaming audio block (real-time mode)
     // Accumulates input samples and processes when enough data is available
     // Returns true if output was generated, false if still accumulating

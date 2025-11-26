@@ -144,6 +144,30 @@ static float apply_output_limiter(float* interleaved, size_t frames) {
 
 // Runtime state: Input sample rate (auto-negotiated, not from config)
 // This value is detected from PipeWire stream or set to default (44100 Hz)
+// Issue #219: Changed to atomic for thread-safe multi-rate switching
+static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
+static std::atomic<int> g_current_output_rate{DEFAULT_OUTPUT_SAMPLE_RATE};
+static std::atomic<int> g_current_rate_family_int{
+    static_cast<int>(ConvolutionEngine::RateFamily::RATE_44K)};
+
+// Pending rate change (set by PipeWire callback, processed in main loop)
+// Value: 0 = no change pending, >0 = detected input sample rate
+static std::atomic<int> g_pending_rate_change{0};
+
+// ALSA reconfiguration flags (set when output rate changes)
+static std::atomic<bool> g_alsa_reconfigure_needed{false};
+static std::atomic<int> g_alsa_new_output_rate{0};
+
+// Helper to get/set rate family atomically
+inline ConvolutionEngine::RateFamily g_get_rate_family() {
+    return static_cast<ConvolutionEngine::RateFamily>(
+        g_current_rate_family_int.load(std::memory_order_acquire));
+}
+inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
+    g_current_rate_family_int.store(static_cast<int>(family), std::memory_order_release);
+}
+
+// Legacy alias (for backward compatibility with existing code)
 static int g_input_sample_rate = DEFAULT_INPUT_SAMPLE_RATE;
 
 // Soft Mute controller for glitch-free shutdown (50ms fade at output sample rate)
@@ -151,6 +175,10 @@ static SoftMute::Controller* g_soft_mute = nullptr;
 
 // Helper function for soft mute during filter switching (Issue #266)
 // Fade-out: 1.5 seconds, perform filter switch, fade-in: 1.5 seconds
+// Forward declaration for handle_rate_change (Issue #219)
+// Defined later in file, but called from ZeroMQ handler
+static bool handle_rate_change(int detected_sample_rate);
+
 // Thread safety: This function is called from ZeroMQ command thread.
 // Fade parameter changes leverage the atomic configuration inside SoftMute::Controller, and
 // we still wait for fade-out completion before manipulating filters to avoid artifacts.
@@ -529,6 +557,114 @@ static void reset_runtime_state() {
     g_cf_output_buffer_right.clear();
 }
 
+// Handle rate switch for multi-rate mode
+// Returns true on success, false on failure (with rollback)
+static bool handle_rate_switch(int newInputRate) {
+    if (!g_upsampler || !g_upsampler->isMultiRateEnabled()) {
+        std::cerr << "[Rate] Multi-rate mode not enabled" << std::endl;
+        return false;
+    }
+
+    int currentRate = g_upsampler->getCurrentInputRate();
+    if (currentRate == newInputRate) {
+        std::cout << "[Rate] Already at target rate: " << newInputRate << " Hz" << std::endl;
+        return true;
+    }
+
+    std::cout << "[Rate] Switching: " << currentRate << " Hz -> " << newInputRate << " Hz"
+              << std::endl;
+
+    int savedRate = currentRate;
+
+    if (g_soft_mute) {
+        g_soft_mute->startFadeOut();
+        auto startTime = std::chrono::steady_clock::now();
+        while (g_soft_mute->isTransitioning()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            auto elapsed = std::chrono::steady_clock::now() - startTime;
+            if (elapsed > std::chrono::milliseconds(200)) {
+                std::cerr << "[Rate] Warning: Fade-out timeout" << std::endl;
+                break;
+            }
+        }
+    }
+
+    int newOutputRate = g_upsampler->getOutputSampleRate();
+    int newUpsampleRatio = g_upsampler->getUpsampleRatio();
+    size_t buffer_capacity = 0;
+
+    {
+        std::lock_guard<std::mutex> streamLock(g_streaming_mutex);
+
+        g_upsampler->resetStreaming();
+
+        {
+            std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
+            g_output_buffer_left.clear();
+            g_output_buffer_right.clear();
+            g_output_read_pos = 0;
+        }
+        g_stream_input_left.clear();
+        g_stream_input_right.clear();
+        g_stream_accumulated_left = 0;
+        g_stream_accumulated_right = 0;
+
+        if (!g_upsampler->switchToInputRate(newInputRate)) {
+            std::cerr << "[Rate] Failed to switch rate, rolling back" << std::endl;
+            if (g_upsampler->switchToInputRate(savedRate)) {
+                std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
+                          << std::endl;
+            } else {
+                std::cerr << "[Rate] ERROR: Rollback failed!" << std::endl;
+            }
+            if (g_soft_mute) {
+                g_soft_mute->startFadeIn();
+            }
+            return false;
+        }
+
+        if (!g_upsampler->initializeStreaming()) {
+            std::cerr << "[Rate] Failed to re-initialize streaming mode, rolling back" << std::endl;
+            if (g_upsampler->switchToInputRate(savedRate)) {
+                if (g_upsampler->initializeStreaming()) {
+                    std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
+                              << std::endl;
+                }
+            }
+            if (g_soft_mute) {
+                g_soft_mute->startFadeIn();
+            }
+            return false;
+        }
+
+        g_input_sample_rate = newInputRate;
+        newOutputRate = g_upsampler->getOutputSampleRate();
+        newUpsampleRatio = g_upsampler->getUpsampleRatio();
+
+        buffer_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+        g_stream_input_left.resize(buffer_capacity, 0.0f);
+        g_stream_input_right.resize(buffer_capacity, 0.0f);
+        g_stream_accumulated_left = 0;
+        g_stream_accumulated_right = 0;
+
+        if (g_soft_mute) {
+            delete g_soft_mute;
+        }
+        g_soft_mute = new SoftMute::Controller(50, newOutputRate);
+    }
+
+    if (g_soft_mute) {
+        g_soft_mute->startFadeIn();
+    }
+
+    std::cout << "[Rate] Switch complete: " << newInputRate << " Hz (" << newUpsampleRatio
+              << "x -> " << newOutputRate << " Hz)" << std::endl;
+    std::cout << "[Rate] Streaming buffers re-initialized: " << buffer_capacity
+              << " samples capacity" << std::endl;
+
+    return true;
+}
+
 static void load_runtime_config() {
     AppConfig loaded;
     bool found = loadAppConfig(CONFIG_FILE_PATH, loaded);
@@ -901,6 +1037,66 @@ static void zeromq_listener_thread() {
                                 }
                             }
                         }
+                    } else if (cmdType == "SWITCH_RATE") {
+                        // Issue #219: Manual rate switching via ZeroMQ
+                        // JSON format: {"type": "SWITCH_RATE", "params": {"input_rate": 48000}}
+                        if (!g_upsampler) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "ENGINE_NOT_INITIALIZED";
+                            resp["message"] = "Upsampler not initialized";
+                            response = resp.dump();
+                        } else if (!g_upsampler->isMultiRateEnabled()) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "MULTI_RATE_NOT_ENABLED";
+                            resp["message"] = "Multi-rate mode not enabled";
+                            response = resp.dump();
+                        } else if (!j.contains("params") || !j["params"].contains("input_rate")) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params.input_rate field";
+                            response = resp.dump();
+                        } else {
+                            int targetRate = j["params"]["input_rate"].get<int>();
+                            int currentRate = g_current_input_rate.load(std::memory_order_acquire);
+
+                            if (targetRate == currentRate) {
+                                nlohmann::json resp;
+                                resp["status"] = "ok";
+                                resp["data"]["input_rate"] = currentRate;
+                                resp["data"]["output_rate"] =
+                                    g_current_output_rate.load(std::memory_order_acquire);
+                                resp["data"]["upsample_ratio"] = g_upsampler->getUpsampleRatio();
+                                resp["message"] = "Already at requested rate";
+                                response = resp.dump();
+                            } else {
+                                // Perform rate switch
+                                bool switch_success = handle_rate_change(targetRate);
+
+                                if (switch_success) {
+                                    nlohmann::json resp;
+                                    resp["status"] = "ok";
+                                    resp["data"]["input_rate"] =
+                                        g_current_input_rate.load(std::memory_order_acquire);
+                                    resp["data"]["output_rate"] =
+                                        g_current_output_rate.load(std::memory_order_acquire);
+                                    resp["data"]["upsample_ratio"] =
+                                        g_upsampler->getUpsampleRatio();
+                                    resp["data"]["alsa_reconfigure_scheduled"] =
+                                        g_alsa_reconfigure_needed.load(std::memory_order_acquire);
+                                    response = resp.dump();
+                                } else {
+                                    nlohmann::json resp;
+                                    resp["status"] = "error";
+                                    resp["error_code"] = "RATE_SWITCH_FAILED";
+                                    resp["message"] = "Failed to switch to rate " +
+                                                      std::to_string(targetRate) + " Hz";
+                                    response = resp.dump();
+                                }
+                            }
+                        }
                     } else {
                         nlohmann::json resp;
                         resp["status"] = "error";
@@ -1247,11 +1443,143 @@ static void on_stream_state_changed(void* userdata, enum pw_stream_state old_sta
     std::cout << std::endl;
 }
 
+// PipeWire format/param changed callback (Issue #219)
+// Detects input sample rate changes from the source stream
+static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* param) {
+    (void)userdata;
+
+    // Only process format changes
+    if (id != SPA_PARAM_Format || param == nullptr) {
+        return;
+    }
+
+    // Parse audio format info
+    struct spa_audio_info_raw info;
+    if (spa_format_audio_raw_parse(param, &info) < 0) {
+        return;
+    }
+
+    int detected_rate = static_cast<int>(info.rate);
+    int current_rate = g_current_input_rate.load(std::memory_order_acquire);
+
+    // Check if rate actually changed
+    if (detected_rate != current_rate && detected_rate > 0) {
+        LOG_INFO("[PipeWire] Sample rate change detected: {} -> {} Hz", current_rate,
+                 detected_rate);
+        // Set pending rate change for main loop to process
+        // (avoid blocking in real-time callback)
+        g_pending_rate_change.store(detected_rate, std::memory_order_release);
+    }
+}
+
 static const struct pw_stream_events input_stream_events = {
     .version = PW_VERSION_STREAM_EVENTS,
     .state_changed = on_stream_state_changed,
+    .param_changed = on_param_changed,
     .process = on_input_process,
 };
+
+// Handle sample rate change detected by PipeWire (Issue #219)
+// This function is called from the main loop when g_pending_rate_change is set
+static bool handle_rate_change(int detected_sample_rate) {
+    if (!g_upsampler) {
+        return false;
+    }
+
+    // Multi-rate mode: use switchToInputRate() for dynamic rate switching
+    if (!g_upsampler->isMultiRateEnabled()) {
+        LOG_ERROR("[Rate] Multi-rate mode not enabled. Rate switching requires multi-rate mode.");
+        return false;
+    }
+
+    // Save previous state for rollback
+    int prev_input_rate = g_current_input_rate.load(std::memory_order_acquire);
+    int prev_output_rate = g_current_output_rate.load(std::memory_order_acquire);
+
+    bool switch_success = false;
+
+    // Use soft mute for filter switching (fade-out, switch, fade-in)
+    applySoftMuteForFilterSwitch([&]() {
+        // Perform filter switch
+        if (!g_upsampler->switchToInputRate(detected_sample_rate)) {
+            LOG_ERROR("[Rate] Failed to switch to input rate: {} Hz", detected_sample_rate);
+            return false;
+        }
+
+        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
+
+        // Output rate is dynamically calculated (input_rate × upsample_ratio)
+        int new_output_rate = g_upsampler->getOutputSampleRate();
+        g_current_output_rate.store(new_output_rate, std::memory_order_release);
+
+        // Update rate family
+        g_set_rate_family(ConvolutionEngine::detectRateFamily(detected_sample_rate));
+
+        // Re-initialize streaming after rate switch (Issue #219)
+        if (!g_upsampler->initializeStreaming()) {
+            LOG_ERROR("[Rate] Failed to reinitialize streaming, rolling back...");
+            // Rollback: switch back to previous rate
+            if (g_upsampler->switchToInputRate(prev_input_rate)) {
+                g_upsampler->initializeStreaming();
+            }
+            g_current_input_rate.store(prev_input_rate, std::memory_order_release);
+            g_current_output_rate.store(prev_output_rate, std::memory_order_release);
+            return false;
+        }
+
+        // Resize streaming input buffers based on new streamValidInputPerBlock (Issue #219)
+        size_t new_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+        g_stream_input_left.resize(new_capacity, 0.0f);
+        g_stream_input_right.resize(new_capacity, 0.0f);
+
+        // Clear accumulated samples (old rate data is invalid)
+        g_stream_accumulated_left = 0;
+        g_stream_accumulated_right = 0;
+
+        LOG_INFO("[Rate] Streaming buffers resized to {} samples (streamValidInputPerBlock={})",
+                 new_capacity, g_upsampler->getStreamValidInputPerBlock());
+
+        // Clear output ring buffers to discard old rate samples (Issue #219)
+        g_output_buffer_left.clear();
+        g_output_buffer_right.clear();
+        LOG_INFO("[Rate] Output ring buffers cleared");
+
+        // Re-apply EQ if enabled (Issue #219: EQ state auto-restore)
+        // EQ magnitude depends on output sample rate, so we must recalculate
+        if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
+            EQ::EqProfile eqProfile;
+            if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
+                size_t filterFftSize = g_upsampler->getFilterFftSize();
+                size_t fullFftSize = g_upsampler->getFullFftSize();
+                double outputSampleRate = static_cast<double>(new_output_rate);
+                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
+                                                                outputSampleRate, eqProfile);
+
+                if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
+                    LOG_INFO("[Rate] EQ re-applied for new output rate {} Hz", new_output_rate);
+                } else {
+                    LOG_WARN("[Rate] Failed to re-apply EQ after rate switch");
+                }
+            }
+        }
+
+        // Schedule ALSA reconfiguration if output rate changed
+        if (new_output_rate != prev_output_rate) {
+            g_alsa_reconfigure_needed.store(true, std::memory_order_release);
+            g_alsa_new_output_rate.store(new_output_rate, std::memory_order_release);
+            LOG_INFO("[Rate] ALSA reconfiguration scheduled for {} Hz ({} -> {}x upsampling)",
+                     new_output_rate, detected_sample_rate, g_upsampler->getUpsampleRatio());
+        } else {
+            LOG_INFO("[Rate] Rate switched to {} Hz -> {} Hz ({}x upsampling)",
+                     detected_sample_rate, new_output_rate, g_upsampler->getUpsampleRatio());
+        }
+
+        switch_success = true;
+        return true;
+    });
+
+    return switch_success;
+}
 
 // Open and configure ALSA device. Returns nullptr on failure.
 static snd_pcm_t* open_and_configure_pcm() {
@@ -1326,6 +1654,87 @@ static snd_pcm_t* open_and_configure_pcm() {
     return pcm_handle;
 }
 
+// Reconfigure ALSA PCM for new sample rate (Issue #219)
+// Closes the old handle and opens a new one with the specified rate.
+// Returns new handle on success, nullptr on failure (old handle is closed regardless).
+static snd_pcm_t* reconfigure_alsa(snd_pcm_t* old_handle, int new_sample_rate) {
+    // Drop any pending samples and close old handle
+    if (old_handle) {
+        snd_pcm_drop(old_handle);
+        snd_pcm_close(old_handle);
+        LOG_INFO("[ALSA] Closed old PCM handle for reconfiguration");
+    }
+
+    snd_pcm_t* pcm_handle = nullptr;
+    int err;
+
+    err = snd_pcm_open(&pcm_handle, g_config.alsaDevice.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0) {
+        LOG_ERROR("[ALSA] Cannot open device {} for reconfiguration: {}", g_config.alsaDevice,
+                  snd_strerror(err));
+        return nullptr;
+    }
+
+    // Set hardware parameters
+    snd_pcm_hw_params_t* hw_params;
+    snd_pcm_hw_params_alloca(&hw_params);
+    snd_pcm_hw_params_any(pcm_handle, hw_params);
+
+    if ((err = snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
+            0 ||
+        (err = snd_pcm_hw_params_set_format(pcm_handle, hw_params, SND_PCM_FORMAT_S32_LE)) < 0) {
+        LOG_ERROR("[ALSA] Cannot set access/format: {}", snd_strerror(err));
+        snd_pcm_close(pcm_handle);
+        return nullptr;
+    }
+
+    // Use the new sample rate
+    unsigned int rate = static_cast<unsigned int>(new_sample_rate);
+    if ((err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0)) < 0) {
+        LOG_ERROR("[ALSA] Cannot set sample rate {} Hz: {}", new_sample_rate, snd_strerror(err));
+        snd_pcm_close(pcm_handle);
+        return nullptr;
+    }
+    if ((err = snd_pcm_hw_params_set_channels(pcm_handle, hw_params, CHANNELS)) < 0) {
+        LOG_ERROR("[ALSA] Cannot set channel count: {}", snd_strerror(err));
+        snd_pcm_close(pcm_handle);
+        return nullptr;
+    }
+
+    snd_pcm_uframes_t buffer_size = static_cast<snd_pcm_uframes_t>(g_config.bufferSize);
+    snd_pcm_uframes_t period_size = static_cast<snd_pcm_uframes_t>(g_config.periodSize);
+    snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size);
+    snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, 0);
+
+    if ((err = snd_pcm_hw_params(pcm_handle, hw_params)) < 0) {
+        LOG_ERROR("[ALSA] Cannot set hardware parameters: {}", snd_strerror(err));
+        snd_pcm_close(pcm_handle);
+        return nullptr;
+    }
+
+    if ((err = snd_pcm_prepare(pcm_handle)) < 0) {
+        LOG_ERROR("[ALSA] Cannot prepare device: {}", snd_strerror(err));
+        snd_pcm_close(pcm_handle);
+        return nullptr;
+    }
+
+    // Set software parameters for XRUN detection
+    snd_pcm_sw_params_t* sw_params;
+    snd_pcm_sw_params_alloca(&sw_params);
+    if (snd_pcm_sw_params_current(pcm_handle, sw_params) == 0) {
+        snd_pcm_sw_params_set_start_threshold(pcm_handle, sw_params, buffer_size);
+        snd_pcm_sw_params_set_avail_min(pcm_handle, sw_params, period_size);
+        if (snd_pcm_sw_params(pcm_handle, sw_params) < 0) {
+            LOG_WARN("[ALSA] Failed to set software parameters");
+        }
+    }
+
+    LOG_INFO(
+        "[ALSA] Reconfigured for {} Hz (32-bit int, stereo), buffer {} frames, period {} frames",
+        rate, buffer_size, period_size);
+    return pcm_handle;
+}
+
 // Check current PCM state; return false if disconnected/suspended
 static bool pcm_alive(snd_pcm_t* pcm_handle) {
     if (!pcm_handle)
@@ -1394,6 +1803,44 @@ void alsa_output_thread() {
                     g_output_read_pos = 0;
                 }
                 continue;
+            }
+        }
+
+        // Issue #219: Check for pending rate change from PipeWire callback
+        int pending_rate = g_pending_rate_change.exchange(0, std::memory_order_acquire);
+        if (pending_rate > 0 && g_config.multiRateEnabled) {
+            LOG_INFO("[Main] Processing pending rate change to {} Hz", pending_rate);
+            if (!handle_rate_change(pending_rate)) {
+                LOG_ERROR("[Main] Failed to handle rate change to {} Hz", pending_rate);
+            }
+        }
+
+        // Issue #219: Check for pending ALSA reconfiguration (output rate changed)
+        if (g_alsa_reconfigure_needed.exchange(false, std::memory_order_acquire)) {
+            int new_output_rate = g_alsa_new_output_rate.load(std::memory_order_acquire);
+            if (new_output_rate > 0) {
+                LOG_INFO("[Main] Reconfiguring ALSA for new output rate {} Hz", new_output_rate);
+
+                // Reconfigure ALSA with new rate
+                snd_pcm_t* new_handle = reconfigure_alsa(pcm_handle, new_output_rate);
+                if (new_handle) {
+                    pcm_handle = new_handle;
+
+                    // Update soft mute sample rate
+                    if (g_soft_mute) {
+                        g_soft_mute->setSampleRate(new_output_rate);
+                    }
+
+                    LOG_INFO("[Main] ALSA reconfiguration successful");
+                } else {
+                    // Failed to reconfigure - try to reopen with old rate
+                    LOG_ERROR("[Main] ALSA reconfiguration failed, attempting recovery...");
+                    int old_rate = g_current_output_rate.load(std::memory_order_acquire);
+                    pcm_handle = reconfigure_alsa(nullptr, old_rate);
+                    if (!pcm_handle) {
+                        LOG_ERROR("[Main] ALSA recovery failed, waiting for reconnect...");
+                    }
+                }
             }
         }
 
@@ -1666,7 +2113,31 @@ int main(int argc, char* argv[]) {
 
         bool initSuccess = false;
         ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
-        if (g_config.quadPhaseEnabled) {
+        if (g_config.multiRateEnabled) {
+            // Multi-rate mode: load all 10 filter configurations (Issue #219)
+            // 2 rate families × 5 ratios (1x/2x/4x/8x/16x)
+            std::cout << "Multi-rate mode enabled" << std::endl;
+            std::cout << "  Coefficient directory: " << g_config.coefficientDir << std::endl;
+
+            if (!std::filesystem::exists(g_config.coefficientDir)) {
+                std::cerr << "Config error: Coefficient directory not found: " << g_config.coefficientDir
+                          << std::endl;
+                delete g_upsampler;
+                exitCode = 1;
+                break;
+            }
+
+            initSuccess = g_upsampler->initializeMultiRate(g_config.coefficientDir,
+                                                           g_config.blockSize, g_input_sample_rate);
+
+            if (initSuccess) {
+                g_current_input_rate.store(g_upsampler->getInputSampleRate(),
+                                           std::memory_order_release);
+                g_current_output_rate.store(g_upsampler->getOutputSampleRate(),
+                                            std::memory_order_release);
+                g_set_rate_family(ConvolutionEngine::detectRateFamily(g_input_sample_rate));
+            }
+        } else if (g_config.quadPhaseEnabled) {
             // Quad-phase mode: load all 4 filter configurations
             std::cout << "Quad-phase mode enabled" << std::endl;
 
@@ -1723,10 +2194,23 @@ int main(int argc, char* argv[]) {
             break;
         }
 
-        std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
-                  << g_config.blockSize << " samples/block)" << std::endl;
+        if (g_config.multiRateEnabled) {
+            std::cout << "GPU upsampler ready (multi-rate mode, " << g_config.blockSize
+                      << " samples/block)" << std::endl;
+            std::cout << "  Current input rate: " << g_upsampler->getCurrentInputRate() << " Hz"
+                      << std::endl;
+            std::cout << "  Upsample ratio: " << g_upsampler->getUpsampleRatio() << "x" << std::endl;
+            std::cout << "  Output rate: " << g_upsampler->getOutputSampleRate() << " Hz" << std::endl;
+        } else {
+            std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
+                      << g_config.blockSize << " samples/block)" << std::endl;
+        }
 
-        if (g_config.quadPhaseEnabled) {
+        // Set g_active_rate_family and g_active_phase_type for headroom tracking
+        if (g_config.multiRateEnabled) {
+            // Rate family already set during initializeMultiRate()
+            // g_active_rate_family is set via g_set_rate_family() above
+        } else if (g_config.quadPhaseEnabled) {
             g_active_rate_family = initialFamily;
         } else {
             ConvolutionEngine::RateFamily detected =
@@ -1738,14 +2222,17 @@ int main(int argc, char* argv[]) {
         g_active_phase_type = g_config.phaseType;
         refresh_current_headroom("initial filter load");
 
-        // Set input sample rate for correct output rate calculation (non-quad-phase mode)
-        if (!g_config.quadPhaseEnabled) {
+        // Set input sample rate for correct output rate calculation (non-multi-rate, non-quad-phase
+        // mode)
+        if (!g_config.multiRateEnabled && !g_config.quadPhaseEnabled) {
             g_upsampler->setInputSampleRate(g_input_sample_rate);
             g_upsampler->setPhaseType(g_config.phaseType);
         }
-        std::cout << "Input sample rate: " << g_input_sample_rate << " Hz -> "
+        std::cout << "Input sample rate: " << g_upsampler->getInputSampleRate() << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
-        std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
+        if (!g_config.multiRateEnabled) {
+            std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
+        }
 
         // Log latency warning for linear phase
         if (g_config.phaseType == PhaseType::Linear) {
