@@ -183,6 +183,9 @@ TEST_F(HRTFProcessorTest, BasicProcessing) {
             maxRIdx = i;
         }
     }
+    EXPECT_GT(maxRIdx, 10) << "Right output peak should be delayed (ITD)";
+    EXPECT_LT(maxR, std::abs(outputL[0])) << "Contralateral (LR) should be weaker than ipsilateral (LL)";
+}
 
 TEST_F(HRTFProcessorTest, GenerateWoodworthProfileSetsCombinedFilter) {
     createTestHRTFFiles();
@@ -194,9 +197,6 @@ TEST_F(HRTFProcessorTest, GenerateWoodworthProfileSetsCombinedFilter) {
     HRTF::WoodworthParams params;
     EXPECT_TRUE(processor.generateWoodworthProfile(RateFamily::RATE_44K, 30.0f, params));
     EXPECT_TRUE(processor.isUsingCombinedFilter());
-}
-    EXPECT_GT(maxRIdx, 10) << "Right output peak should be delayed (ITD)";
-    EXPECT_LT(maxR, std::abs(outputL[0])) << "Contralateral (LR) should be weaker than ipsilateral (LL)";
 }
 
 // Test: Stereo symmetry

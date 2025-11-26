@@ -65,10 +65,7 @@ float computeEnergyCentroid(const std::vector<float>& impulse) {
 }
 
 FractionalDelayLine::FractionalDelayLine()
-    : delaySamples_(0.0f),
-      kernelRadius_(12),
-      beta_(8.6f),
-      kernelDirty_(true) {}
+    : delaySamples_(0.0f), kernelRadius_(12), beta_(8.6f), kernelDirty_(true) {}
 
 void FractionalDelayLine::configure(float delaySamples, int kernelRadius, float beta) {
     delaySamples_ = std::max(0.0f, delaySamples);
@@ -90,7 +87,8 @@ void FractionalDelayLine::rebuildKernel() {
     int taps = kernelRadius_ * 2 + 1;
     kernel_.resize(taps);
     for (int n = 0; n < taps; ++n) {
-        float x = static_cast<float>(n - kernelRadius_) - delaySamples_;
+        // Positive delaySamples_ shifts output later (adds delay)
+        float x = static_cast<float>(n - kernelRadius_) + delaySamples_;
         float win = kaiserWindow(n, taps, beta_);
         kernel_[n] = sinc(x) * win;
     }
@@ -129,8 +127,7 @@ void FractionalDelayLine::process(const std::vector<float>& input, std::vector<f
         double acc = 0.0;
         const float* signalPtr = extended.data() + i;
         for (size_t k = 0; k < taps; ++k) {
-            acc += static_cast<double>(kernel_[k]) *
-                   static_cast<double>(signalPtr[taps - 1 - k]);
+            acc += static_cast<double>(kernel_[k]) * static_cast<double>(signalPtr[taps - 1 - k]);
         }
         output[i] = static_cast<float>(acc);
     }
@@ -141,4 +138,3 @@ void FractionalDelayLine::process(const std::vector<float>& input, std::vector<f
 }
 
 }  // namespace PhaseAlignment
-

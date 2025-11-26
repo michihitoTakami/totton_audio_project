@@ -272,6 +272,7 @@ static size_t g_cf_stream_accumulated_right = 0;
 static std::vector<float> g_cf_output_left;
 static std::vector<float> g_cf_output_right;
 static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
+static std::mutex g_streaming_mutex;  // Protects streaming buffer state during rate switch
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
 

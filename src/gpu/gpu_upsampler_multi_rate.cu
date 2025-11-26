@@ -265,6 +265,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
                                         int initialInputRate) {
     blockSize_ = blockSize;
     currentInputRate_ = initialInputRate;
+    inputSampleRate_ = initialInputRate;  // Also set inputSampleRate_ for getOutputSampleRate()
 
     // Find the config index for the initial input rate
     currentMultiRateIndex_ = findMultiRateConfigIndex(initialInputRate);
