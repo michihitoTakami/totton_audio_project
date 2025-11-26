@@ -31,6 +31,78 @@ N_TAPS = 2_000_000
 N_CHANNELS = 4
 
 
+def split_channels(data: np.ndarray, metadata: dict) -> dict:
+    """
+    Split raw HRTF binary data into channel arrays according to storage_format.
+
+    Args:
+        data: flat float32 array read from .bin
+        metadata: dict containing at least n_taps and optional storage_format
+
+    Returns:
+        dict with keys ll, lr, rl, rr (each np.ndarray of length n_taps)
+    """
+    n_taps = metadata["n_taps"]
+    fmt = metadata.get("storage_format", "tap_interleaved_v1")
+
+    if fmt == "channel_major_v1":
+        expected = N_CHANNELS * n_taps
+        if data.size < expected:
+            raise ValueError(f"Insufficient samples for channel_major_v1: got {data.size}")
+        ll = data[0:n_taps]
+        lr = data[n_taps : 2 * n_taps]
+        rl = data[2 * n_taps : 3 * n_taps]
+        rr = data[3 * n_taps : 4 * n_taps]
+    else:
+        ll = data[0::4][:n_taps]
+        lr = data[1::4][:n_taps]
+        rl = data[2::4][:n_taps]
+        rr = data[3::4][:n_taps]
+
+    return {"ll": ll, "lr": lr, "rl": rl, "rr": rr}
+
+
+class TestStorageFormatCompatibility:
+    """Unit tests for split_channels helper handling multiple layouts."""
+
+    def test_channel_major_layout(self):
+        metadata = {"n_taps": 3, "storage_format": "channel_major_v1"}
+        ll = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        lr = np.array([4.0, 5.0, 6.0], dtype=np.float32)
+        rl = np.array([7.0, 8.0, 9.0], dtype=np.float32)
+        rr = np.array([10.0, 11.0, 12.0], dtype=np.float32)
+        data = np.concatenate([ll, lr, rl, rr])
+
+        channels = split_channels(data, metadata)
+        assert np.array_equal(channels["ll"], ll)
+        assert np.array_equal(channels["lr"], lr)
+        assert np.array_equal(channels["rl"], rl)
+        assert np.array_equal(channels["rr"], rr)
+
+    def test_tap_interleaved_default(self):
+        metadata = {"n_taps": 2}  # storage_format omitted (legacy default)
+        # Layout: LL0, LR0, RL0, RR0, LL1, LR1, RL1, RR1
+        data = np.array(
+            [
+                0.1,
+                0.2,
+                0.3,
+                0.4,
+                0.5,
+                0.6,
+                0.7,
+                0.8,
+            ],
+            dtype=np.float32,
+        )
+
+        channels = split_channels(data, metadata)
+        assert np.array_equal(channels["ll"], np.array([0.1, 0.5], dtype=np.float32))
+        assert np.array_equal(channels["lr"], np.array([0.2, 0.6], dtype=np.float32))
+        assert np.array_equal(channels["rl"], np.array([0.3, 0.7], dtype=np.float32))
+        assert np.array_equal(channels["rr"], np.array([0.4, 0.8], dtype=np.float32))
+
+
 class TestPadHrirToLength:
     """Unit tests for pad_hrir_to_length function."""
 
@@ -172,20 +244,9 @@ class TestGeneratedHRTFFilters:
         with open(json_path) as f:
             metadata = json.load(f)
 
-        # De-interleave: [LL0, LR0, RL0, RR0, LL1, LR1, RL1, RR1, ...]
-        n_taps = metadata["n_taps"]
-        ll = data[0::4][:n_taps]
-        lr = data[1::4][:n_taps]
-        rl = data[2::4][:n_taps]
-        rr = data[3::4][:n_taps]
-
-        return {
-            "ll": ll,
-            "lr": lr,
-            "rl": rl,
-            "rr": rr,
-            "metadata": metadata,
-        }
+        channels = split_channels(data, metadata)
+        channels["metadata"] = metadata
+        return channels
 
     def test_max_dc_gain_is_one(self, hrtf_m_44k):
         """Test maximum DC gain across all channels is 1.0."""
@@ -333,13 +394,11 @@ class TestAllHRTFFilters:
             metadata = json.load(f)
 
         data = np.fromfile(bin_path, dtype=np.float32)
-        n_taps = metadata["n_taps"]
-
-        # De-interleave
-        ll = data[0::4][:n_taps]
-        lr = data[1::4][:n_taps]
-        rl = data[2::4][:n_taps]
-        rr = data[3::4][:n_taps]
+        channels = split_channels(data, metadata)
+        ll = channels["ll"]
+        lr = channels["lr"]
+        rl = channels["rl"]
+        rr = channels["rr"]
 
         dc_gains = {
             "LL": np.sum(ll),
@@ -378,10 +437,9 @@ class TestAllHRTFFilters:
             metadata = json.load(f)
 
         data = np.fromfile(bin_path, dtype=np.float32)
-        n_taps = metadata["n_taps"]
-
-        ll = data[0::4][:n_taps]
-        lr = data[1::4][:n_taps]
+        channels = split_channels(data, metadata)
+        ll = channels["ll"]
+        lr = channels["lr"]
 
         ll_peak = np.argmax(np.abs(ll[:1000]))
         lr_peak = np.argmax(np.abs(lr[:1000]))

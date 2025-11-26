@@ -84,16 +84,26 @@ void checkCufftError(cufftResult result, const char* context) {
     }
 }
 
+void safeCudaHostUnregister(void** trackedPtr, size_t* trackedBytes, const char* context) {
+    if (trackedPtr == nullptr || *trackedPtr == nullptr) {
+        return;
+    }
+    cudaError_t err = cudaHostUnregister(*trackedPtr);
+    if (err != cudaSuccess && err != cudaErrorHostMemoryNotRegistered) {
+        checkCudaError(err, context);
+    }
+    *trackedPtr = nullptr;
+    if (trackedBytes) {
+        *trackedBytes = 0;
+    }
+}
+
 }  // namespace
 
 void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
                                          size_t* trackedBytes, const char* context) {
     if (buffer.empty()) {
-        if (*trackedPtr) {
-            checkCudaError(cudaHostUnregister(*trackedPtr), "cudaHostUnregister stream buffer");
-            *trackedPtr = nullptr;
-            *trackedBytes = 0;
-        }
+        safeCudaHostUnregister(trackedPtr, trackedBytes, "cudaHostUnregister stream buffer");
         return;
     }
 
@@ -104,9 +114,7 @@ void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trac
         return;  // Already registered
     }
 
-    if (*trackedPtr) {
-        checkCudaError(cudaHostUnregister(*trackedPtr), "cudaHostUnregister stream buffer");
-    }
+    safeCudaHostUnregister(trackedPtr, trackedBytes, "cudaHostUnregister stream buffer");
 
     checkCudaError(cudaHostRegister(ptr, bytes, cudaHostRegisterDefault), context);
     *trackedPtr = ptr;
@@ -277,6 +285,10 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
         md.license = meta.value("license", "");
         md.attribution = meta.value("attribution", "");
         md.source = meta.value("source", "");
+        md.storageFormat = meta.value("storage_format", "");
+        if (md.storageFormat.empty()) {
+            md.storageFormat = "tap_interleaved_v1";  // Backward compatibility
+        }
 
         if (meta.contains("channel_order")) {
             md.channelOrder.clear();
@@ -306,11 +318,40 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
             return false;
         }
 
-        // Read all channels
+        size_t totalFloats = static_cast<size_t>(md.nChannels) * md.nTaps;
+        std::vector<float> raw(totalFloats);
+        binFile.read(reinterpret_cast<char*>(raw.data()), totalFloats * sizeof(float));
+        if (!binFile) {
+            std::cerr << "Error: Failed to read HRTF binary data (" << binPath << ")"
+                      << std::endl;
+            return false;
+        }
+
+        bool channelMajor = (md.storageFormat == "channel_major_v1");
+        bool tapInterleaved = (md.storageFormat == "tap_interleaved_v1");
+        if (!channelMajor && !tapInterleaved) {
+            std::cerr << "Warning: Unknown HRTF storage format '" << md.storageFormat
+                      << "', defaulting to tap_interleaved_v1" << std::endl;
+            tapInterleaved = true;
+        }
+
         for (int c = 0; c < NUM_CHANNELS; ++c) {
             h_filterCoeffs_[configIdx][c].resize(md.nTaps);
-            binFile.read(reinterpret_cast<char*>(h_filterCoeffs_[configIdx][c].data()),
-                         md.nTaps * sizeof(float));
+        }
+
+        if (channelMajor) {
+            for (int c = 0; c < NUM_CHANNELS; ++c) {
+                size_t offset = static_cast<size_t>(c) * md.nTaps;
+                std::copy(raw.begin() + offset, raw.begin() + offset + md.nTaps,
+                          h_filterCoeffs_[configIdx][c].begin());
+            }
+        } else {
+            for (size_t tap = 0; tap < static_cast<size_t>(md.nTaps); ++tap) {
+                size_t base = tap * NUM_CHANNELS;
+                for (int c = 0; c < NUM_CHANNELS; ++c) {
+                    h_filterCoeffs_[configIdx][c][tap] = raw[base + c];
+                }
+            }
         }
 
         return true;
@@ -694,13 +735,13 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     // to prevent cudaHostUnregister on memory that no longer belongs to us.
     if (pinnedStreamOutputL_ != nullptr &&
         (outputL.empty() || pinnedStreamOutputL_ != outputL.data())) {
-        pinnedStreamOutputL_ = nullptr;
-        pinnedStreamOutputLBytes_ = 0;
+        safeCudaHostUnregister(&pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
+                               "cudaHostUnregister stale crossfeed stream output L");
     }
     if (pinnedStreamOutputR_ != nullptr &&
         (outputR.empty() || pinnedStreamOutputR_ != outputR.data())) {
-        pinnedStreamOutputR_ = nullptr;
-        pinnedStreamOutputRBytes_ = 0;
+        safeCudaHostUnregister(&pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
+                               "cudaHostUnregister stale crossfeed stream output R");
     }
 
     // Accumulate input
@@ -927,18 +968,14 @@ void HRTFProcessor::cleanup() {
     if (streamR_) cudaStreamDestroy(streamR_);
 
     // Unregister pinned host buffers
-    if (pinnedStreamInputL_) cudaHostUnregister(pinnedStreamInputL_);
-    if (pinnedStreamInputR_) cudaHostUnregister(pinnedStreamInputR_);
-    if (pinnedStreamOutputL_) cudaHostUnregister(pinnedStreamOutputL_);
-    if (pinnedStreamOutputR_) cudaHostUnregister(pinnedStreamOutputR_);
-    pinnedStreamInputL_ = nullptr;
-    pinnedStreamInputR_ = nullptr;
-    pinnedStreamOutputL_ = nullptr;
-    pinnedStreamOutputR_ = nullptr;
-    pinnedStreamInputLBytes_ = 0;
-    pinnedStreamInputRBytes_ = 0;
-    pinnedStreamOutputLBytes_ = 0;
-    pinnedStreamOutputRBytes_ = 0;
+    safeCudaHostUnregister(&pinnedStreamInputL_, &pinnedStreamInputLBytes_,
+                           "cudaHostUnregister cleanup input L");
+    safeCudaHostUnregister(&pinnedStreamInputR_, &pinnedStreamInputRBytes_,
+                           "cudaHostUnregister cleanup input R");
+    safeCudaHostUnregister(&pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
+                           "cudaHostUnregister cleanup output L");
+    safeCudaHostUnregister(&pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
+                           "cudaHostUnregister cleanup output R");
 
     // Reset pointers
     d_inputL_ = nullptr;
