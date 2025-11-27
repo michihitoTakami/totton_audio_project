@@ -197,11 +197,11 @@ graph TD
 # Setup environment
 uv sync
 
-# Generate 2M-tap minimum phase filter (default)
-uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
+# Generate 2M-tap minimum phase filter (default β=25)
+uv run python scripts/generate_filter.py --taps 2000000
 
 # Generate 2M-tap linear phase filter
-uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55 --phase-type linear
+uv run python scripts/generate_filter.py --taps 2000000 --phase-type linear
 
 # Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)
 uv run python scripts/generate_filter.py --generate-all --phase-type minimum
