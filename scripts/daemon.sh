@@ -200,6 +200,19 @@ setup_links() {
     done
     pw-link "$GPU_SINK_NAME":monitor_FL "GPU Upsampler Input:input_FL" 2>/dev/null || true
     pw-link "$GPU_SINK_NAME":monitor_FR "GPU Upsampler Input:input_FR" 2>/dev/null || true
+
+    # Connect RTP source if --jetson mode
+    if [[ "${JETSON_MODE:-false}" == "true" ]]; then
+        if pw-link -o 2>/dev/null | grep -q "rtp-source:receive_FL"; then
+            log_info "Connecting RTP source..."
+            pw-link "rtp-source:receive_FL" "$GPU_SINK_NAME:playback_FL" 2>/dev/null || true
+            pw-link "rtp-source:receive_FR" "$GPU_SINK_NAME:playback_FR" 2>/dev/null || true
+            log_info "RTP source connected"
+        else
+            log_warn "RTP source not found. Make sure sender is streaming."
+        fi
+    fi
+
     log_info "Links configured"
 }
 
@@ -322,6 +335,18 @@ show_status() {
     fi
 }
 
+# Parse --jetson flag
+JETSON_MODE=false
+ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--jetson" ]]; then
+        JETSON_MODE=true
+    else
+        ARGS+=("$arg")
+    fi
+done
+set -- "${ARGS[@]:-}"
+
 # Main
 case "${1:-restart}" in
     start)
@@ -344,7 +369,7 @@ case "${1:-restart}" in
         setup_links
         ;;
     *)
-        echo "Usage: $0 [start|stop|restart|status|links] [eq_profile|off]"
+        echo "Usage: $0 [start|stop|restart|status|links] [eq_profile|off] [--jetson]"
         exit 1
         ;;
 esac
