@@ -52,7 +52,7 @@ except ImportError:
 
 
 # デフォルト定数
-N_TAPS = 2_000_000  # 2M taps
+N_TAPS = 640_000  # 640k taps (optimized for Float32)
 # Note: HUTUBS uses 0-360° azimuth convention, so -30° is represented as 330°
 TARGET_AZIMUTH_LEFT = 330.0  # 左スピーカー方位角 (-30° in HUTUBS coordinate)
 TARGET_AZIMUTH_RIGHT = 30.0  # 右スピーカー方位角

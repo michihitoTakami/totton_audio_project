@@ -55,7 +55,7 @@ class TestFilterConfig:
 
         config = FilterConfig()
 
-        assert config.n_taps == 2_000_000
+        assert config.n_taps == 640_000
         assert config.input_rate == 44100
         assert config.upsample_ratio == 16
         assert config.passband_end == 20000
@@ -63,7 +63,7 @@ class TestFilterConfig:
         assert (
             config.stopband_attenuation_db == 160
         )  # Updated: realistic target for min phase
-        assert config.kaiser_beta == 25.0
+        assert config.kaiser_beta == 28.0
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
@@ -701,7 +701,7 @@ class TestCoefficientFileLoading:
 
         h = np.fromfile(coeff_path, dtype=np.float32)
 
-        assert len(h) == 2_000_000
+        assert len(h) == 640_000
         assert np.isfinite(h).all()
 
     def test_load_48k_16x_coefficients(self, coefficients_dir):
@@ -713,7 +713,7 @@ class TestCoefficientFileLoading:
 
         h = np.fromfile(coeff_path, dtype=np.float32)
 
-        assert len(h) == 2_000_000
+        assert len(h) == 640_000
         assert np.isfinite(h).all()
 
     def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):

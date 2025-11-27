@@ -15,11 +15,11 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 - linear: 線形位相（プリリンギングあり、全周波数で一定遅延）
 
 仕様:
-- タップ数: 2,000,000 (2M) デフォルト
+- タップ数: 640,000 (640k) デフォルト
 - 通過帯域: 0-20,000 Hz
 - 阻止帯域: 入力Nyquist周波数以降
 - 阻止帯域減衰: -160 dB以下 (24bit品質に十分、最小位相変換後の現実的値)
-- 窓関数: Kaiser (β ≈ 25 / Float32実装の実効上限に合わせた値)
+- 窓関数: Kaiser (β ≈ 28 / 32bit Float実装の量子ノイズ限界に合わせた最適値)
 
 注意:
 - 最小位相: タップ数はアップサンプリング比率の倍数であること
@@ -89,13 +89,13 @@ MULTI_RATE_CONFIGS = {
 class FilterConfig:
     """フィルタ生成の設定"""
 
-    n_taps: int = 2_000_000
+    n_taps: int = 640_000
     input_rate: int = 44100
     upsample_ratio: int = 16
     passband_end: int = 20000
     stopband_start: int | None = None  # Noneの場合は入力Nyquist周波数
     stopband_attenuation_db: int = 160  # 24bit品質に十分、最小位相変換後の現実的値
-    kaiser_beta: float = 25.0
+    kaiser_beta: float = 28.0
     phase_type: PhaseType = PhaseType.MINIMUM
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
@@ -179,6 +179,8 @@ class FilterConfig:
         """
         if self.final_taps == 2_000_000:
             return "2m"
+        if self.final_taps == 640_000:
+            return "2m"  # ファイル名互換性のため2mを維持
         return str(self.final_taps)
 
     @property
@@ -819,14 +821,14 @@ class FilterGenerator:
 # ==============================================================================
 
 # デフォルト定数（後方互換性のため維持）
-N_TAPS = 2_000_000
+N_TAPS = 640_000
 SAMPLE_RATE_INPUT = 44100
 UPSAMPLE_RATIO = 16
 SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO
 PASSBAND_END = 20000
 STOPBAND_START = 22050
 STOPBAND_ATTENUATION_DB = 160  # 24bit品質に十分
-KAISER_BETA = 25
+KAISER_BETA = 28
 OUTPUT_PREFIX = None
 
 
@@ -1415,8 +1417,8 @@ GPU Acceleration:
     parser.add_argument(
         "--taps",
         type=int,
-        default=2_000_000,
-        help="Number of filter taps. Default: 2000000 (2M). Auto-adjusted to ratio multiple.",
+        default=640_000,
+        help="Number of filter taps. Default: 640000 (640k). Auto-adjusted to ratio multiple.",
     )
     parser.add_argument(
         "--passband-end",
@@ -1439,8 +1441,8 @@ GPU Acceleration:
     parser.add_argument(
         "--kaiser-beta",
         type=float,
-        default=25.0,
-        help="Kaiser window beta. Default: 25 (Float32実装の実効阻止帯域に合わせた推奨値)",
+        default=28.0,
+        help="Kaiser window beta. Default: 28 (32bit Float実装の量子ノイズ限界に合わせた最適値)",
     )
     parser.add_argument(
         "--phase-type",
