@@ -895,11 +895,11 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
     upsampler.setInputSampleRate(44100);
     upsampler.setPhaseType(PhaseType::Linear);
 
-    // 2M taps: (2000000 - 1) / 2 = 999999.5 -> 999999 samples
-    EXPECT_EQ(upsampler.getLatencySamples(), 999999);
+    // 640k taps: (640000 - 1) / 2 = 319999.5 -> 319999 samples
+    EXPECT_EQ(upsampler.getLatencySamples(), 319999);
 
-    // 999999 / 705600 ≈ 1.417 seconds
-    double expectedLatency = 999999.0 / 705600.0;
+    // 319999 / 705600 ≈ 0.454 seconds
+    double expectedLatency = 319999.0 / 705600.0;
     EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
 }
 
@@ -918,11 +918,11 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
     upsampler.setInputSampleRate(48000);  // 48k family
     upsampler.setPhaseType(PhaseType::Linear);
 
-    // 2M taps: (2000000 - 1) / 2 = 999999 samples
-    EXPECT_EQ(upsampler.getLatencySamples(), 999999);
+    // 640k taps: (640000 - 1) / 2 = 319999 samples
+    EXPECT_EQ(upsampler.getLatencySamples(), 319999);
 
-    // 999999 / 768000 ≈ 1.302 seconds (different from 44k!)
-    double expectedLatency = 999999.0 / 768000.0;
+    // 319999 / 768000 ≈ 0.417 seconds (different from 44k!)
+    double expectedLatency = 319999.0 / 768000.0;
     EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
 }
 
