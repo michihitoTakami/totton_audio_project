@@ -791,7 +791,7 @@ void GPUUpsampler::startPhaseAlignedCrossfade(cufftComplex* previousFilter,
     phaseCrossfade_.delayNewLine.reset();
 }
 
-void GPUUpsampler::applyPhaseAlignedCrossfade(std::vector<float>& newOutput,
+void GPUUpsampler::applyPhaseAlignedCrossfade(StreamFloatVector& newOutput,
                                               const std::vector<float>& oldOutput,
                                               bool advanceProgress) {
     if (!phaseCrossfade_.active) {
@@ -804,7 +804,7 @@ void GPUUpsampler::applyPhaseAlignedCrossfade(std::vector<float>& newOutput,
     }
 
     const std::vector<float>* oldPtr = &oldOutput;
-    const std::vector<float>* newPtr = &newOutput;
+    const std::vector<float>* newPtr = &crossfadeAlignedNew_;
 
     if (!phaseCrossfade_.delayOld.isBypassed()) {
         phaseCrossfade_.delayOld.process(oldOutput, crossfadeAlignedOld_);
@@ -815,9 +815,8 @@ void GPUUpsampler::applyPhaseAlignedCrossfade(std::vector<float>& newOutput,
 
     if (!phaseCrossfade_.delayNewLine.isBypassed()) {
         phaseCrossfade_.delayNewLine.process(newOutput, crossfadeAlignedNew_);
-        newPtr = &crossfadeAlignedNew_;
     } else {
-        crossfadeAlignedNew_.clear();
+        crossfadeAlignedNew_.assign(newOutput.begin(), newOutput.end());
     }
 
     float denom = static_cast<float>(std::max(phaseCrossfade_.totalSamples, 1));

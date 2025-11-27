@@ -2,8 +2,8 @@
 #define CONVOLUTION_ENGINE_H
 
 #include "config_loader.h"  // PhaseType enum
-#include "phase_alignment.h"
 #include "gpu/pinned_allocator.h"
+#include "phase_alignment.h"
 
 #include <cuda_runtime.h>
 #include <cufft.h>
@@ -396,7 +396,7 @@ class GPUUpsampler {
     void startPhaseAlignedCrossfade(cufftComplex* previousFilter, float previousDelay,
                                     float newDelay);
     void cancelPhaseAlignedCrossfade();
-    void applyPhaseAlignedCrossfade(std::vector<float>& newOutput,
+    void applyPhaseAlignedCrossfade(StreamFloatVector& newOutput,
                                     const std::vector<float>& oldOutput, bool advanceProgress);
     int getPhaseCrossfadeSamples() const;
     float getCurrentGroupDelay() const;
