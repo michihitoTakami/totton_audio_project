@@ -73,6 +73,15 @@ RATE_CONFIGS = {
     "48k": {"input_rate": 48000, "output_rate": 768000, "ratio": 16},
 }
 
+# 聴感調整用定数
+IPSILATERAL_DIRECT_BLEND = 0.45  # 0=完全にドライ, 1=完全に計測HRTF
+CONTRALATERAL_TAIL_START_MS = 0.8
+CONTRALATERAL_TAIL_DECAY_MS = 5.5
+CONTRALATERAL_HF_CUTOFF_HZ = 5200.0
+CONTRALATERAL_HF_MIN_GAIN_DB = -12.0
+CONTRALATERAL_HF_SLOPE = 2.4
+DC_HEADROOM_DB = 0.5  # 左右耳のDCゲイン上限に与えるヘッドルーム
+
 # デフォルトパス
 DEFAULT_SOFA_DIR = Path(__file__).parent.parent / "data" / "crossfeed" / "raw" / "sofa"
 DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "data" / "crossfeed" / "hrtf"
@@ -87,6 +96,67 @@ class HRTFChannels:
     rl: np.ndarray  # 右スピーカー → 左耳（対側）
     rr: np.ndarray  # 右スピーカー → 右耳（同側）
     sample_rate: int
+
+
+def blend_with_direct_path(hrir: np.ndarray, mix_ratio: float) -> np.ndarray:
+    """
+    同側のHRTFにドライ信号をブレンドして色付けを抑制する。
+    """
+    mix = np.clip(mix_ratio, 0.0, 1.0)
+    if mix <= 0.0:
+        result = np.zeros_like(hrir)
+        result[0] = 1.0
+        return result
+    if mix >= 0.999:
+        return hrir
+
+    direct = np.zeros_like(hrir)
+    direct[0] = 1.0
+    return mix * hrir + (1.0 - mix) * direct
+
+
+def apply_exponential_tail_taper(
+    hrir: np.ndarray, sample_rate: int, start_ms: float, decay_ms: float
+) -> np.ndarray:
+    """
+    遅延成分を指数減衰させて低域のボワつきを抑える。
+    """
+    if decay_ms <= 0:
+        return hrir
+
+    start_idx = int(max(0.0, start_ms) * 1e-3 * sample_rate)
+    start_idx = min(start_idx, len(hrir))
+    if start_idx >= len(hrir):
+        return hrir
+
+    tail_length = len(hrir) - start_idx
+    times = np.arange(tail_length, dtype=np.float64) / float(sample_rate)
+    tau = decay_ms / 1000.0
+    envelope = np.exp(-times / max(tau, 1e-6))
+
+    tapered = hrir.copy()
+    tapered[start_idx:] *= envelope.astype(hrir.dtype)
+    return tapered
+
+
+def apply_high_frequency_tilt(
+    hrir: np.ndarray, sample_rate: int, cutoff_hz: float, min_gain_db: float, slope: float
+) -> np.ndarray:
+    """
+    高域にかける緩やかな減衰カーブ（contralateral向け）。
+    """
+    if cutoff_hz <= 0 or slope <= 0:
+        return hrir
+
+    min_gain = 10.0 ** (min_gain_db / 20.0)
+    freq = np.fft.rfftfreq(len(hrir), d=1.0 / sample_rate)
+    norm = np.clip(freq / cutoff_hz, 0.0, None)
+    rolloff = 1.0 / (1.0 + np.power(norm, slope))
+    tilt = min_gain + (1.0 - min_gain) * rolloff
+
+    spectrum = np.fft.rfft(hrir)
+    shaped = np.fft.irfft(spectrum * tilt, n=len(hrir))
+    return shaped.astype(hrir.dtype)
 
 
 def angular_distance(az1: float, az2: float) -> float:
@@ -300,8 +370,32 @@ def generate_hrtf_filters(
         resampled = resample_hrir(hrir, hrtf.sample_rate, output_rate)
         print(f"  Resampled length: {len(resampled)} samples")
 
+        shaped = resampled
+        if name in ("ll", "rr"):
+            shaped = blend_with_direct_path(shaped, IPSILATERAL_DIRECT_BLEND)
+            print(
+                f"  Ipsilateral blend: mix={IPSILATERAL_DIRECT_BLEND:.2f} "
+                "(1.0=raw HRTF, 0.0=dry)"
+            )
+        else:
+            shaped = apply_exponential_tail_taper(
+                shaped, output_rate, CONTRALATERAL_TAIL_START_MS, CONTRALATERAL_TAIL_DECAY_MS
+            )
+            shaped = apply_high_frequency_tilt(
+                shaped,
+                output_rate,
+                CONTRALATERAL_HF_CUTOFF_HZ,
+                CONTRALATERAL_HF_MIN_GAIN_DB,
+                CONTRALATERAL_HF_SLOPE,
+            )
+            print(
+                "  Contralateral shaping: tail taper start "
+                f"{CONTRALATERAL_TAIL_START_MS} ms / decay {CONTRALATERAL_TAIL_DECAY_MS} ms,"
+                f" HF tilt cutoff {CONTRALATERAL_HF_CUTOFF_HZ:.0f} Hz"
+            )
+
         # ゼロパディングでターゲット長に拡張（位相保持）
-        fir = pad_hrir_to_length(resampled, n_taps)
+        fir = pad_hrir_to_length(shaped, n_taps)
         print(f"  FIR length: {len(fir)} taps")
 
         dc_gains[name] = np.sum(fir)
@@ -325,6 +419,33 @@ def generate_hrtf_filters(
         channels[name] = channels[name] / max_dc_gain
         normalized_dc = np.sum(channels[name])
         print(f"  {name.upper()}: {dc_gains[name]:.6f} → {normalized_dc:.6f}")
+
+    # 左右耳それぞれのDCゲイン（同側＋対側）を測定し、上限を超える場合は全体スケール
+    left_dc = float(np.sum(channels["ll"]) + np.sum(channels["rl"]))
+    right_dc = float(np.sum(channels["rr"]) + np.sum(channels["lr"]))
+    ear_dc = {"left": left_dc, "right": right_dc}
+
+    headroom_linear = 10 ** (DC_HEADROOM_DB / 20.0)
+    max_allowed = 1.0 / headroom_linear
+    max_ear_dc = max(abs(left_dc), abs(right_dc))
+    if max_ear_dc > max_allowed + 1e-6:
+        scale = max_allowed / max_ear_dc
+        print(
+            f"\nEar DC clamp: max {max_ear_dc:.4f} > {max_allowed:.3f}, "
+            f"applying global scale {scale:.3f}"
+        )
+        for name in channels:
+            channels[name] *= scale
+        ear_dc = {ear: gain * scale for ear, gain in ear_dc.items()}
+        print(
+            f"  Post-clamp left/right DC: {ear_dc['left']:.4f} / {ear_dc['right']:.4f} "
+            f"(headroom {DC_HEADROOM_DB} dB)"
+        )
+    else:
+        print(
+            f"\nEar DC totals within headroom: left={ear_dc['left']:.4f}, "
+            f"right={ear_dc['right']:.4f}"
+        )
 
     # float32に変換
     for name in channels:
@@ -355,6 +476,7 @@ def generate_hrtf_filters(
         "phase_type": "original",  # 位相保持（ITD/ILD維持）
         "normalization": "ild_preserving",  # 共通スケール正規化（ILD保持）
         "max_dc_gain": 1.0,  # 最大DCゲインチャンネル=1.0、他はILD分だけ小さい
+        "ear_dc_gain": ear_dc,
         "source_azimuth_left": -30.0,  # Logical value (HUTUBS uses 330°)
         "source_azimuth_right": TARGET_AZIMUTH_RIGHT,
         "source_elevation": TARGET_ELEVATION,
@@ -363,6 +485,15 @@ def generate_hrtf_filters(
         "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
         "generated_at": datetime.now().isoformat(),
         "storage_format": "channel_major_v1",
+        "shaping": {
+            "ipsilateral_direct_blend": IPSILATERAL_DIRECT_BLEND,
+            "contralateral_tail_start_ms": CONTRALATERAL_TAIL_START_MS,
+            "contralateral_tail_decay_ms": CONTRALATERAL_TAIL_DECAY_MS,
+            "contralateral_highfreq_cutoff_hz": CONTRALATERAL_HF_CUTOFF_HZ,
+            "contralateral_highfreq_min_gain_db": CONTRALATERAL_HF_MIN_GAIN_DB,
+            "contralateral_highfreq_slope": CONTRALATERAL_HF_SLOPE,
+            "ear_dc_headroom_db": DC_HEADROOM_DB,
+        },
     }
 
     # JSON出力
