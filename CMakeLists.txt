@@ -191,6 +191,7 @@ target_link_libraries(gpu_upsampler_alsa
     graceful_shutdown
     fallback_manager
     zeromq_interface
+    dac_capability
     logging
     ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}

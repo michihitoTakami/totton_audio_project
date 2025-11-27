@@ -3,7 +3,7 @@
 #include "config_loader.h"
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
-#include "playback_buffer.h"
+#include "dac_capability.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -11,11 +11,13 @@
 #include "filter_headroom.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
+#include "playback_buffer.h"
 #include "soft_mute.h"
 
 #include <algorithm>
 #include <alsa/asoundlib.h>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -24,7 +26,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cctype>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -42,8 +43,8 @@
 #include <sys/file.h>
 #include <sys/types.h>
 #include <thread>
-#include <unordered_set>
 #include <unistd.h>
+#include <unordered_set>
 #include <vector>
 #include <zmq.hpp>
 
@@ -354,8 +355,8 @@ static size_t get_playback_ready_threshold(size_t period_size) {
         }
     }
 
-    return PlaybackBuffer::computeReadyThreshold(period_size, crossfeedActive,
-                                                 crossfeedBlockSize, producerBlockSize);
+    return PlaybackBuffer::computeReadyThreshold(period_size, crossfeedActive, crossfeedBlockSize,
+                                                 producerBlockSize);
 }
 
 // Fallback manager (Issue #139)
@@ -414,8 +415,7 @@ static void shutdown_pub_socket() {
     if (g_zmq_pub_socket) {
         try {
             g_zmq_pub_socket->close();
-        } catch (...) {
-        }
+        } catch (...) {}
         g_zmq_pub_socket.reset();
     }
     g_zmq_pub_context.reset();
@@ -562,9 +562,8 @@ static std::vector<DacDeviceRuntimeInfo> enumerate_dac_devices() {
 
 static std::string pick_preferred_device_locked(const std::vector<DacDeviceRuntimeInfo>& devices) {
     if (!g_requested_alsa_device.empty()) {
-        auto it = std::find_if(devices.begin(), devices.end(), [](const auto& info) {
-            return info.id == g_requested_alsa_device;
-        });
+        auto it = std::find_if(devices.begin(), devices.end(),
+                               [](const auto& info) { return info.id == g_requested_alsa_device; });
         if (it != devices.end()) {
             return g_requested_alsa_device;
         }
@@ -629,8 +628,8 @@ static void set_selected_device_locked(const std::string& device, const std::str
     g_selected_alsa_device = device;
     g_dac_change_pending.store(true, std::memory_order_release);
     g_dac_cv.notify_all();
-    std::cout << "[DAC] Selected ALSA device: " << (device.empty() ? "<none>" : device)
-              << " (" << reason << ")" << std::endl;
+    std::cout << "[DAC] Selected ALSA device: " << (device.empty() ? "<none>" : device) << " ("
+              << reason << ")" << std::endl;
 }
 
 static void update_active_device_state(const std::string& device, bool active) {
@@ -2460,7 +2459,8 @@ void alsa_output_thread() {
                 LOG_INFO("[Main] Reconfiguring ALSA for new output rate {} Hz", new_output_rate);
 
                 // Reconfigure ALSA with new rate
-                snd_pcm_t* new_handle = reconfigure_alsa(pcm_handle, currentDevice, new_output_rate);
+                snd_pcm_t* new_handle =
+                    reconfigure_alsa(pcm_handle, currentDevice, new_output_rate);
                 if (new_handle) {
                     pcm_handle = new_handle;
 
@@ -2510,8 +2510,7 @@ void alsa_output_thread() {
 
         // Wait for GPU processed data (dynamic threshold to avoid underflow with crossfeed)
         std::unique_lock<std::mutex> lock(g_buffer_mutex);
-        size_t ready_threshold =
-            get_playback_ready_threshold(static_cast<size_t>(period_size));
+        size_t ready_threshold = get_playback_ready_threshold(static_cast<size_t>(period_size));
         g_buffer_cv.wait_for(lock, std::chrono::milliseconds(200), [ready_threshold] {
             return (g_output_buffer_left.size() - g_output_read_pos) >= ready_threshold ||
                    !g_running;
