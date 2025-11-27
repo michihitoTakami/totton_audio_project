@@ -205,6 +205,45 @@ class DacMaxRatioResponse(BaseModel):
     max_output_rate: int
 
 
+class DacDaemonDevice(BaseModel):
+    """Runtime DAC device info reported by daemon."""
+
+    id: str
+    card: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_requested: bool = False
+    is_selected: bool = False
+    is_active: bool = False
+
+
+class DacCapabilitySnapshot(BaseModel):
+    """Runtime DAC capability snapshot."""
+
+    device: Optional[str] = None
+    is_valid: bool = False
+    min_rate: int = 0
+    max_rate: int = 0
+    max_channels: int = 0
+    supported_rates: list[int] = Field(default_factory=list)
+    error_message: Optional[str] = None
+    alsa_errno: Optional[int] = None
+
+
+class DacDaemonState(BaseModel):
+    """Aggregated DAC state as reported by daemon."""
+
+    requested_device: Optional[str] = None
+    selected_device: Optional[str] = None
+    active_device: Optional[str] = None
+    change_pending: bool = False
+    device_count: int = 0
+    devices: list[DacDaemonDevice] = Field(default_factory=list)
+    capability: Optional[DacCapabilitySnapshot] = None
+    output_rate: Optional[int] = None
+    last_event: Optional[dict[str, Any]] = None
+
+
 # ============================================================================
 # EQ Profile Models
 # ============================================================================
@@ -315,6 +354,13 @@ class RewireRequest(BaseModel):
 
     source_node: str
     target_node: str
+
+
+class DacSelectRequest(BaseModel):
+    """Request model for runtime DAC selection."""
+
+    device: str
+    persist: bool = False
 
 
 # ============================================================================

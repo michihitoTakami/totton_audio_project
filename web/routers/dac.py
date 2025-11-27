@@ -9,6 +9,8 @@ from ..models import (
     DacDeviceInfo,
     DacDevicesResponse,
     DacMaxRatioResponse,
+    DacDaemonState,
+    DacSelectRequest,
     DacSupportedRatesResponse,
 )
 from ..services.alsa import get_alsa_devices
@@ -18,8 +20,25 @@ from ..services.dac import (
     is_safe_device_name,
     scan_dac_capability,
 )
+from ..services.daemon_client import get_daemon_client
+from ..services.config import load_config, save_config
 
 router = APIRouter(prefix="/dac", tags=["dac"])
+
+
+@router.get("/state", response_model=DacDaemonState)
+async def get_dac_state() -> DacDaemonState:
+    """
+    Fetch current DAC runtime state from the daemon.
+    """
+    with get_daemon_client() as client:
+        result = client.dac_status()
+        if not result.success:
+            raise result.error
+        data = result.data
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=502, detail="Invalid daemon response")
+        return DacDaemonState(**data)
 
 
 @router.get("/capabilities", response_model=DacCapabilityResponse)
@@ -188,3 +207,41 @@ async def validate_dac_config(
             "suggested_rates": cap.supported_rates,
         },
     )
+
+
+@router.post("/select", response_model=ApiResponse)
+async def select_runtime_dac(request: DacSelectRequest) -> ApiResponse:
+    """
+    Ask the daemon to switch to a specific ALSA device.
+
+    Optionally persist the selection to config.json.
+    """
+    if not is_safe_device_name(request.device):
+        raise HTTPException(status_code=400, detail="Invalid device name format")
+
+    with get_daemon_client() as client:
+        result = client.dac_select(request.device)
+        if not result.success:
+            raise result.error
+        data = result.data if isinstance(result.data, dict) else None
+
+    if request.persist:
+        settings = load_config()
+        settings.alsa_device = request.device
+        if not save_config(settings):
+            raise HTTPException(status_code=500, detail="Failed to persist config")
+
+    return ApiResponse(success=True, message="DAC selection updated", data=data)
+
+
+@router.post("/rescan", response_model=ApiResponse)
+async def rescan_runtime_dac() -> ApiResponse:
+    """
+    Trigger a DAC rescan on the daemon.
+    """
+    with get_daemon_client() as client:
+        result = client.dac_rescan()
+        if not result.success:
+            raise result.error
+        data = result.data if isinstance(result.data, dict) else None
+    return ApiResponse(success=True, message="Rescan requested", data=data)
