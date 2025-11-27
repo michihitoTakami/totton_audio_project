@@ -15,12 +15,25 @@
   "phase_type": "original",
   "normalization": "ild_preserving",
   "max_dc_gain": 1.0,
+  "ear_dc_gain": {
+    "left": 0.9440608762859234,
+    "right": 0.9427348583854861
+  },
   "source_azimuth_left": -30.0,
   "source_azimuth_right": 30.0,
   "source_elevation": 0.0,
   "license": "CC BY 4.0",
   "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
   "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
-  "generated_at": "2025-11-26T10:02:27.956419",
-  "storage_format": "channel_major_v1"
+  "generated_at": "2025-11-28T00:24:14.384361",
+  "storage_format": "channel_major_v1",
+  "shaping": {
+    "ipsilateral_direct_blend": 0.45,
+    "contralateral_tail_start_ms": 0.8,
+    "contralateral_tail_decay_ms": 5.5,
+    "contralateral_highfreq_cutoff_hz": 5200.0,
+    "contralateral_highfreq_min_gain_db": -12.0,
+    "contralateral_highfreq_slope": 2.4,
+    "ear_dc_headroom_db": 0.5
+  }
 }
