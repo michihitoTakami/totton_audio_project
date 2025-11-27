@@ -127,7 +127,7 @@ graph TD
 |-----------|-------|
 | Tap Count | 2,000,000 (2M) |
 | Phase Type | Minimum Phase (default) / Linear Phase (optional) |
-| Window | Kaiser (β=55) |
+| Window | Kaiser (β=25, Float32 GPU実装での実効阻止帯域に合わせた設定) |
 | Stopband Attenuation | ~160dB (24bit品質に十分) |
 | Upsampling Ratio | Up to 16x |
 
@@ -177,7 +177,7 @@ graph TD
 ### Stopband Attenuation (-160dB)
 - Ensures aliasing components are far below quantization noise floor
 - 160dB is sufficient for 24-bit audio (144dB dynamic range)
-- Minimum phase conversion reduces theoretical maximum (~197dB for Kaiser β=55)
+- Minimum phase conversion reduces theoretical maximum (~236dB theoretical for Kaiser β=25 / 実効はFloat32実装で約175dB)
 
 ### DC Gain Normalization
 - Zero-stuffing upsampling reduces DC by factor of L (upsample ratio)

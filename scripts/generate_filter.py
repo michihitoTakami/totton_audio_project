@@ -19,7 +19,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/線�
 - 通過帯域: 0-20,000 Hz
 - 阻止帯域: 入力Nyquist周波数以降
 - 阻止帯域減衰: -160 dB以下 (24bit品質に十分、最小位相変換後の現実的値)
-- 窓関数: Kaiser (β ≈ 55)
+- 窓関数: Kaiser (β ≈ 25 / Float32実装の実効上限に合わせた値)
 
 注意:
 - 最小位相: タップ数はアップサンプリング比率の倍数であること
@@ -95,7 +95,7 @@ class FilterConfig:
     passband_end: int = 20000
     stopband_start: int | None = None  # Noneの場合は入力Nyquist周波数
     stopband_attenuation_db: int = 160  # 24bit品質に十分、最小位相変換後の現実的値
-    kaiser_beta: float = 55.0
+    kaiser_beta: float = 25.0
     phase_type: PhaseType = PhaseType.MINIMUM
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
@@ -826,7 +826,7 @@ SAMPLE_RATE_OUTPUT = SAMPLE_RATE_INPUT * UPSAMPLE_RATIO
 PASSBAND_END = 20000
 STOPBAND_START = 22050
 STOPBAND_ATTENUATION_DB = 160  # 24bit品質に十分
-KAISER_BETA = 55
+KAISER_BETA = 25
 OUTPUT_PREFIX = None
 
 
@@ -1439,8 +1439,8 @@ GPU Acceleration:
     parser.add_argument(
         "--kaiser-beta",
         type=float,
-        default=55.0,
-        help="Kaiser window beta. Default: 55",
+        default=25.0,
+        help="Kaiser window beta. Default: 25 (Float32実装の実効阻止帯域に合わせた推奨値)",
     )
     parser.add_argument(
         "--phase-type",

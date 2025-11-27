@@ -63,7 +63,7 @@ class TestFilterConfig:
         assert (
             config.stopband_attenuation_db == 160
         )  # Updated: realistic target for min phase
-        assert config.kaiser_beta == 55.0
+        assert config.kaiser_beta == 25.0
         assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio

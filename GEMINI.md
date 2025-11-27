@@ -72,7 +72,7 @@ cmake --build build -j$(nproc)
 
 1. **Minimum Phase** - プリリンギングなし（必須）
 2. **2M taps** - 197dB stopband attenuation達成に必要
-3. **Kaiser β=55** - 最適なストップバンド特性
+3. **Kaiser β=25** - Float32 GPU実装での実効阻止帯域に最適
 4. **DC gain = 1.0** - クリッピング防止
 
 ## Git Workflow
