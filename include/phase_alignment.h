@@ -1,6 +1,7 @@
 #ifndef PHASE_ALIGNMENT_H
 #define PHASE_ALIGNMENT_H
 
+#include <cstddef>
 #include <vector>
 
 namespace PhaseAlignment {
