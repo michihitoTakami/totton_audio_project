@@ -11,6 +11,7 @@ Tests the following endpoints:
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -21,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from web.main import app  # noqa: E402
 from web.services.dac import DacCapability  # noqa: E402
+from web.services.daemon_client import DaemonError, DaemonResponse  # noqa: E402
 
 
 @pytest.fixture
@@ -317,6 +319,140 @@ class TestValidateConfigEndpoint:
         )
 
         assert response.status_code == 400
+
+
+class DummyDaemonClient:
+    """Context manager friendly fake ZeroMQ client."""
+
+    def __init__(self, *, status_response=None, select_response=None, rescan_response=None):
+        self._status_response = status_response
+        self._select_response = select_response
+        self._rescan_response = rescan_response
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+    def dac_status(self):
+        return self._status_response
+
+    def dac_select(self, device: str):
+        return self._select_response
+
+    def dac_rescan(self):
+        return self._rescan_response
+
+
+class TestRuntimeDacEndpoints:
+    """Tests for new runtime DAC management endpoints."""
+
+    def test_dac_state_success(self, client):
+        """Should return daemon state payload."""
+        payload = {
+            "requested_device": "hw:1",
+            "selected_device": "hw:1",
+            "active_device": "hw:1",
+            "change_pending": False,
+            "device_count": 2,
+            "devices": [
+                {"id": "default", "is_active": False},
+                {"id": "hw:1", "is_active": True},
+            ],
+            "capability": {
+                "device": "hw:1",
+                "is_valid": True,
+                "min_rate": 44100,
+                "max_rate": 768000,
+                "supported_rates": [44100, 705600],
+                "max_channels": 2,
+            },
+            "output_rate": 705600,
+        }
+        fake_client = DummyDaemonClient(
+            status_response=DaemonResponse(success=True, data=payload)
+        )
+
+        with patch("web.routers.dac.get_daemon_client", return_value=fake_client):
+            response = client.get("/dac/state")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["active_device"] == "hw:1"
+        assert data["capability"]["is_valid"] is True
+
+    def test_dac_state_error_propagates(self, client):
+        """Daemon errors should propagate to HTTP layer."""
+        fake_client = DummyDaemonClient(
+            status_response=DaemonResponse(
+                success=False,
+                error=DaemonError(
+                    error_code="IPC_TIMEOUT",
+                    message="Timeout",
+                ),
+            )
+        )
+
+        with patch("web.routers.dac.get_daemon_client", return_value=fake_client):
+            response = client.get("/dac/state")
+
+        # DaemonError propagates its mapped HTTP status (timeout -> 504).
+        assert response.status_code == 504
+
+    def test_dac_select_persist_success(self, client):
+        """Selecting a device with persist flag updates config."""
+        fake_client = DummyDaemonClient(
+            select_response=DaemonResponse(success=True, data={"selected_device": "hw:2"})
+        )
+        fake_settings = SimpleNamespace(alsa_device="hw:0")
+
+        with patch("web.routers.dac.get_daemon_client", return_value=fake_client):
+            with patch("web.routers.dac.load_config", return_value=fake_settings) as mock_load:
+                with patch("web.routers.dac.save_config", return_value=True) as mock_save:
+                    response = client.post(
+                        "/dac/select", json={"device": "hw:2", "persist": True}
+                    )
+
+        assert response.status_code == 200
+        mock_load.assert_called_once()
+        mock_save.assert_called_once()
+        assert fake_settings.alsa_device == "hw:2"
+
+    def test_dac_select_invalid_device(self, client):
+        """Invalid device names should be rejected."""
+        response = client.post("/dac/select", json={"device": "../etc/passwd"})
+        assert response.status_code == 400
+
+    def test_dac_select_persist_failure(self, client):
+        """Persist failure should return 500."""
+        fake_client = DummyDaemonClient(
+            select_response=DaemonResponse(success=True, data={"selected_device": "hw:3"})
+        )
+        fake_settings = SimpleNamespace(alsa_device="hw:0")
+
+        with patch("web.routers.dac.get_daemon_client", return_value=fake_client):
+            with patch("web.routers.dac.load_config", return_value=fake_settings):
+                with patch("web.routers.dac.save_config", return_value=False):
+                    response = client.post(
+                        "/dac/select", json={"device": "hw:3", "persist": True}
+                    )
+
+        assert response.status_code == 500
+
+    def test_dac_rescan(self, client):
+        """Rescan endpoint should proxy response."""
+        fake_client = DummyDaemonClient(
+            rescan_response=DaemonResponse(
+                success=True, data={"message": "rescan scheduled"}
+            )
+        )
+
+        with patch("web.routers.dac.get_daemon_client", return_value=fake_client):
+            response = client.post("/dac/rescan")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["message"] == "rescan scheduled"
 
 
 class TestDeviceNameValidation:
