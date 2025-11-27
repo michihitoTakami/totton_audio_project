@@ -32,8 +32,8 @@ Phase 3: Hardware Integration         [                    ] 0%
 
 - [x] **Filter Coefficient Generation**
   - scipy.signalによる2Mタップフィルタ生成
-  - 197dB stopband attenuation達成
-  - Kaiser window (β=55) 適用
+  - 197dB stopband attenuation（理論値）/ 実測175dB級（Float32最小位相）
+  - Kaiser window (β=25) - Float32 GPU実装向けに最適化
 
 - [x] **Phase Type Selection** (#165, #166, #167)
   - Minimum Phase / Linear Phase 切り替え機能

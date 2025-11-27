@@ -105,7 +105,7 @@ gh pr create --title "#123 機能の説明" --body "..."
 
 1. **Minimum Phase FIR** - No pre-ringing allowed
 2. **2M taps** - Required for 197dB stopband attenuation
-3. **Kaiser window** - β=55 for optimal stopband performance
+3. **Kaiser window** - β=25 (Float32 GPU実装で実効阻止帯域が頭打ちになるポイント)
 4. **DC gain = 1.0** - Normalized to prevent clipping
 
 ## Reference
