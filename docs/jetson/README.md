@@ -100,6 +100,7 @@ USBケーブル接続後、ブラウザで以下にアクセス：
 | [deployment/](./deployment/) | デプロイメント・OTA設計 |
 | [reliability/](./reliability/) | 信頼性・エラー回復設計 |
 | [quality/](./quality/) | 品質基準・テスト |
+| [dev-autostart.md](./dev-autostart.md) | Jetson開発機向け自動起動セットアップ |
 | [troubleshooting.md](./troubleshooting.md) | トラブルシューティング |
 
 ---
