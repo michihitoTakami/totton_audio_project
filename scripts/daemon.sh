@@ -258,7 +258,7 @@ start_daemon() {
             exit 1
         fi
         # Check if ALSA is configured (daemon is ready)
-        if grep -q "ALSA: Output device configured" "$LOG_FILE" 2>/dev/null; then
+        if grep -q "ALSA: Output device .* configured" "$LOG_FILE" 2>/dev/null; then
             ready=true
             break
         fi
