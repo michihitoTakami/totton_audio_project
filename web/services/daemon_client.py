@@ -346,6 +346,24 @@ class DaemonClient:
             )
             return DaemonResponse(success=False, error=error)
 
+    # ========== DAC Commands ==========
+
+    def dac_list_devices(self) -> DaemonResponse:
+        """List runtime DAC devices from the daemon."""
+        return self.send_json_command_v2("DAC_LIST")
+
+    def dac_status(self) -> DaemonResponse:
+        """Get current DAC state from the daemon."""
+        return self.send_json_command_v2("DAC_STATUS")
+
+    def dac_select(self, device: str) -> DaemonResponse:
+        """Request that the daemon switch to the specified ALSA device."""
+        return self.send_json_command_v2("DAC_SELECT", {"device": device})
+
+    def dac_rescan(self) -> DaemonResponse:
+        """Trigger a DAC rescan on the daemon."""
+        return self.send_json_command_v2("DAC_RESCAN")
+
     # ========== Crossfeed Commands (#150) ==========
 
     def crossfeed_enable(self) -> DaemonResponse:
