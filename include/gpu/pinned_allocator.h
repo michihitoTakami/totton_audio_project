@@ -13,12 +13,19 @@
 
 namespace ConvolutionEngine {
 
+namespace PinnedAllocationRegistry {
+std::atomic<bool>& pinnedEnabled();
+void registerPinned(void* ptr);
+bool unregisterPinned(void* ptr);
+bool hasLoggedFailure();
+void setLoggedFailure();
+}  // namespace PinnedAllocationRegistry
+
 /**
- * @brief Allocator that obtains CUDA pinned (page-locked) host memory.
+ * @brief Allocator that obtains CUDA pinned (page-locked) host memory when possible.
  *
- * Jetsonではホスト↔デバイス間コピーがボトルネックになりやすいため、streaming経路で
- * 使用するバッファを常にcudaHostAlloc()で確保する。RTXなどのPC GPUでも互換性があり、
- * 未対応環境ではstd::bad_allocを投げてフォールバックさせる。
+ * Jetsonではホスト↔デバイス間コピーがボトルネックになりやすいが、Pinned確保が失敗した
+ * 環境でもページングメモリへ自動フォールバックして実行不能になるのを避ける。
  */
 template <typename T>
 class CudaPinnedAllocator {
@@ -126,17 +133,17 @@ inline std::atomic<bool>& pinnedEnabled() {
     return enabled;
 }
 
-inline bool& loggedFailureFlag() {
-    static bool logged = false;
+inline std::atomic<bool>& loggedFailureFlag() {
+    static std::atomic<bool> logged{false};
     return logged;
 }
 
 inline bool hasLoggedFailure() {
-    return loggedFailureFlag();
+    return loggedFailureFlag().load(std::memory_order_acquire);
 }
 
 inline void setLoggedFailure() {
-    loggedFailureFlag() = true;
+    loggedFailureFlag().store(true, std::memory_order_release);
 }
 }  // namespace PinnedAllocationRegistry
 
