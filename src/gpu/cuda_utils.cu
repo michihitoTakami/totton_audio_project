@@ -44,6 +44,43 @@ void checkCufftError(cufftResult result, const char* context) {
     }
 }
 
+cudaStream_t createPrioritizedStream(const char* context,
+                                     unsigned int flags,
+                                     bool* usedHighPriority) {
+    cudaStream_t stream = nullptr;
+    bool createdHighPriority = false;
+
+    int leastPriority = 0;
+    int greatestPriority = 0;
+    cudaError_t rangeStatus = cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority);
+
+    if (rangeStatus == cudaSuccess) {
+        cudaError_t createStatus =
+            cudaStreamCreateWithPriority(&stream, flags, greatestPriority);
+
+        if (createStatus == cudaSuccess) {
+            createdHighPriority = true;
+        } else {
+            std::cerr << "Warning: Failed to create high-priority CUDA stream (" << context
+                      << "): " << cudaGetErrorString(createStatus)
+                      << " - falling back to default priority" << std::endl;
+        }
+    } else {
+        std::cerr << "Warning: Unable to query CUDA stream priority range: "
+                  << cudaGetErrorString(rangeStatus)
+                  << " - falling back to default priority for " << context << std::endl;
+    }
+
+    if (!createdHighPriority) {
+        Utils::checkCudaError(cudaStreamCreateWithFlags(&stream, flags), context);
+    }
+
+    if (usedHighPriority) {
+        *usedHighPriority = createdHighPriority;
+    }
+    return stream;
+}
+
 // =========================================================================
 // ErrorCode-based error handling (Issue #44)
 // =========================================================================

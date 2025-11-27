@@ -2,6 +2,7 @@
 #define CONVOLUTION_ENGINE_H
 
 #include "config_loader.h"  // PhaseType enum
+#include "gpu/pinned_allocator.h"
 #include "phase_alignment.h"
 
 #include <cuda_runtime.h>
@@ -13,6 +14,8 @@
 #include <vector>
 
 namespace ConvolutionEngine {
+
+using StreamFloatVector = CudaPinnedVector<float>;
 
 // Rate family enumeration for multi-rate support
 enum class RateFamily {
@@ -239,8 +242,8 @@ class GPUUpsampler {
     // Accumulates input samples and processes when enough data is available
     // Returns true if output was generated, false if still accumulating
     bool processStreamBlock(const float* inputData, size_t inputFrames,
-                            std::vector<float>& outputData, cudaStream_t stream,
-                            std::vector<float>& streamInputBuffer, size_t& streamInputAccumulated);
+                            StreamFloatVector& outputData, cudaStream_t stream,
+                            StreamFloatVector& streamInputBuffer, size_t& streamInputAccumulated);
 
     // Get performance statistics
     struct Stats {
@@ -393,7 +396,7 @@ class GPUUpsampler {
     void startPhaseAlignedCrossfade(cufftComplex* previousFilter, float previousDelay,
                                     float newDelay);
     void cancelPhaseAlignedCrossfade();
-    void applyPhaseAlignedCrossfade(std::vector<float>& newOutput,
+    void applyPhaseAlignedCrossfade(StreamFloatVector& newOutput,
                                     const std::vector<float>& oldOutput, bool advanceProgress);
     int getPhaseCrossfadeSamples() const;
     float getCurrentGroupDelay() const;
@@ -540,8 +543,8 @@ class GPUUpsampler {
     std::array<float, MULTI_RATE_CONFIG_COUNT> filterCentroidMulti_{};
 
     void registerHostBuffer(void* ptr, size_t bytes, const char* context);
-    void registerStreamInputBuffer(std::vector<float>& buffer, cudaStream_t stream);
-    void registerStreamOutputBuffer(std::vector<float>& buffer, cudaStream_t stream);
+    void registerStreamInputBuffer(StreamFloatVector& buffer, cudaStream_t stream);
+    void registerStreamOutputBuffer(StreamFloatVector& buffer, cudaStream_t stream);
     void removePinnedHostBuffer(void* ptr);
     void unregisterHostBuffers();
 };

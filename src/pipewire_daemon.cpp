@@ -84,6 +84,8 @@ static std::vector<float> g_output_temp_right;
 static constexpr size_t OUTPUT_RING_CAPACITY = 768000 * 2;  // ~2 seconds per channel at max rate
 
 // PipeWire objects
+using StreamBuffer = ConvolutionEngine::StreamFloatVector;
+
 struct Data {
     struct pw_main_loop* loop;
     struct pw_stream* input_stream;
@@ -93,12 +95,12 @@ struct Data {
     // Scratch buffers to avoid allocations in real-time callbacks
     std::vector<float> input_left;
     std::vector<float> input_right;
-    std::vector<float> output_left;
-    std::vector<float> output_right;
+    StreamBuffer output_left;
+    StreamBuffer output_right;
 
     // Streaming input accumulation buffers (per channel)
-    std::vector<float> stream_input_left;
-    std::vector<float> stream_input_right;
+    StreamBuffer stream_input_left;
+    StreamBuffer stream_input_right;
     size_t stream_accum_left = 0;
     size_t stream_accum_right = 0;
 

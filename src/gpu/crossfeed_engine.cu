@@ -366,9 +366,21 @@ bool HRTFProcessor::setupGPUResources() {
         std::cout << "Setting up HRTF GPU resources..." << std::endl;
 
         // Create CUDA streams
-        checkCudaError(cudaStreamCreate(&stream_), "cudaStreamCreate primary");
-        checkCudaError(cudaStreamCreate(&streamL_), "cudaStreamCreate left");
-        checkCudaError(cudaStreamCreate(&streamR_), "cudaStreamCreate right");
+        bool highPriorityMain = false;
+        stream_ = ConvolutionEngine::Utils::createPrioritizedStream(
+            "crossfeed cudaStreamCreate primary", cudaStreamNonBlocking, &highPriorityMain);
+
+        bool highPriorityL = false;
+        streamL_ = ConvolutionEngine::Utils::createPrioritizedStream(
+            "crossfeed cudaStreamCreate left", cudaStreamNonBlocking, &highPriorityL);
+
+        bool highPriorityR = false;
+        streamR_ = ConvolutionEngine::Utils::createPrioritizedStream(
+            "crossfeed cudaStreamCreate right", cudaStreamNonBlocking, &highPriorityR);
+
+        if (highPriorityMain || highPriorityL || highPriorityR) {
+            std::cout << "[Crossfeed] CUDA streams using high priority scheduling" << std::endl;
+        }
 
         // Calculate FFT size for Overlap-Save
         size_t fftSizeNeeded = static_cast<size_t>(blockSize_) + static_cast<size_t>(filterTaps_) - 1;

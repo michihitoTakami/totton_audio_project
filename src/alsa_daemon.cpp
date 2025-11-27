@@ -33,6 +33,8 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <pipewire/pipewire.h>
+#include <pthread.h>
+#include <sched.h>
 #include <spa/param/audio/format-utils.h>
 #include <sstream>
 #include <string>
@@ -59,6 +61,7 @@ constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock";
 
 // Default configuration values (using common constants)
 using namespace DaemonConstants;
+using StreamFloatVector = ConvolutionEngine::StreamFloatVector;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
 constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
@@ -256,12 +259,12 @@ static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
 
 // Streaming input accumulation buffers
-static std::vector<float> g_stream_input_left;
-static std::vector<float> g_stream_input_right;
+static StreamFloatVector g_stream_input_left;
+static StreamFloatVector g_stream_input_right;
 static size_t g_stream_accumulated_left = 0;
 static size_t g_stream_accumulated_right = 0;
-static std::vector<float> g_upsampler_output_left;
-static std::vector<float> g_upsampler_output_right;
+static StreamFloatVector g_upsampler_output_left;
+static StreamFloatVector g_upsampler_output_right;
 
 // Crossfeed (HRTF) processor
 static CrossfeedEngine::HRTFProcessor* g_hrtf_processor = nullptr;
@@ -276,6 +279,23 @@ static std::mutex g_crossfeed_mutex;  // Protects HRTFProcessor and CF buffers
 static std::mutex g_streaming_mutex;  // Protects streaming buffer state during rate switch
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
+
+static void elevate_realtime_priority(const char* name, int priority = 65) {
+#ifdef __linux__
+    sched_param params{};
+    params.sched_priority = priority;
+    int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &params);
+    if (ret != 0) {
+        LOG_WARN("[RT] Failed to set {} thread to SCHED_FIFO (errno={}): {}", name, ret,
+                 std::strerror(ret));
+    } else {
+        LOG_INFO("[RT] {} thread priority set to SCHED_FIFO {}", name, priority);
+    }
+#else
+    (void)name;
+    (void)priority;
+#endif
+}
 
 static size_t get_playback_ready_threshold(size_t period_size) {
     bool crossfeedActive = false;
@@ -1427,8 +1447,8 @@ static void on_input_process(void* userdata) {
 
         // Process through GPU upsampler using streaming API
         // This preserves overlap buffer across calls
-        std::vector<float>& output_left = g_upsampler_output_left;
-        std::vector<float>& output_right = g_upsampler_output_right;
+        StreamFloatVector& output_left = g_upsampler_output_left;
+        StreamFloatVector& output_right = g_upsampler_output_right;
 
         // Check if fallback mode is active (Issue #139)
         bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
@@ -1863,6 +1883,8 @@ static bool pcm_alive(snd_pcm_t* pcm_handle) {
 
 // ALSA output thread (705.6kHz direct to DAC)
 void alsa_output_thread() {
+    elevate_realtime_priority("ALSA output");
+
     snd_pcm_t* pcm_handle = open_and_configure_pcm();
     std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
     std::vector<float> float_buffer(32768 * CHANNELS);          // for soft mute processing
