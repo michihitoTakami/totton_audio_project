@@ -388,7 +388,7 @@ def get_admin_html() -> str:
             <div class="toggle-switch" id="partitionToggle"></div>
         </div>
         <div class="warning-banner" id="partitionNotice" style="display:none;">
-            ⚠️ EQ / Crossfeed は低遅延モードと同時に利用できません。
+            ⚠️ クロスフィードは低遅延モードでは利用できません。
         </div>
         <div class="partition-field">
             <label for="fastPartitionTaps">
