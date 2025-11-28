@@ -1484,6 +1484,74 @@
         }
       }
     },
+    "/partitioned-convolution": {
+      "get": {
+        "tags": [
+          "partitioned"
+        ],
+        "summary": "Get partitioned convolution settings",
+        "description": "Return the current low-latency partitioned convolution configuration stored in config.json.",
+        "operationId": "get_partitioned_convolution_settings_partitioned_convolution_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartitionedConvolutionSettings"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "partitioned"
+        ],
+        "summary": "Update partitioned convolution settings",
+        "description": "Validate and persist low-latency partitioned convolution settings. Returns whether the daemon restart is required for changes to take effect.",
+        "operationId": "update_partitioned_convolution_settings_partitioned_convolution_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PartitionedConvolutionSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -2674,6 +2742,48 @@
         ],
         "title": "OpraVendorsResponse",
         "description": "OPRA vendors list response model."
+      },
+      "PartitionedConvolutionSettings": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "fast_partition_taps": {
+            "type": "integer",
+            "multipleOf": 256.0,
+            "maximum": 262144.0,
+            "minimum": 1024.0,
+            "title": "Fast Partition Taps",
+            "default": 32768
+          },
+          "min_partition_taps": {
+            "type": "integer",
+            "multipleOf": 256.0,
+            "maximum": 262144.0,
+            "minimum": 1024.0,
+            "title": "Min Partition Taps",
+            "default": 32768
+          },
+          "max_partitions": {
+            "type": "integer",
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Max Partitions",
+            "default": 4
+          },
+          "tail_fft_multiple": {
+            "type": "integer",
+            "maximum": 16.0,
+            "minimum": 2.0,
+            "title": "Tail Fft Multiple",
+            "default": 2
+          }
+        },
+        "type": "object",
+        "title": "PartitionedConvolutionSettings",
+        "description": "Partitioned convolution (low latency) configuration."
       },
       "PeakLevels": {
         "properties": {

@@ -6,6 +6,7 @@ from .config import (
     load_partitioned_convolution_settings,
     save_config,
     save_partitioned_convolution_settings,
+    save_phase_type,
 )
 from .dac import (
     DacCapability,
@@ -54,6 +55,7 @@ __all__ = [
     "load_partitioned_convolution_settings",
     "save_config",
     "save_partitioned_convolution_settings",
+    "save_phase_type",
     # dac
     "DacCapability",
     "get_max_upsample_ratio",

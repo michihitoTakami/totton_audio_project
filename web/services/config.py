@@ -129,6 +129,23 @@ def save_partitioned_convolution_settings(
             "maxPartitions": settings.max_partitions,
             "tailFftMultiple": settings.tail_fft_multiple,
         }
+        if settings.enabled:
+            phase_type = str(existing.get("phaseType", "minimum")).lower()
+            if phase_type != "minimum":
+                existing["phaseType"] = "minimum"
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+def save_phase_type(phase_type: str) -> bool:
+    """Persist phaseType field in config.json."""
+    normalized = "linear" if phase_type == "linear" else "minimum"
+    try:
+        existing = load_raw_config()
+        existing["phaseType"] = normalized
         with open(CONFIG_PATH, "w") as f:
             json.dump(existing, f, indent=2)
         return True

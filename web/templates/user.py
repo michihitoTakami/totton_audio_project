@@ -589,6 +589,35 @@ def get_embedded_html() -> str:
 
         // Phase Type Functions
         let currentPhaseType = 'minimum';
+        let isLowLatencyModeEnabled = false;
+
+        function updatePhaseOptionAvailability() {
+            const linearOption = document.querySelector('#phaseType option[value="linear"]');
+            if (!linearOption) return;
+            linearOption.disabled = isLowLatencyModeEnabled;
+            linearOption.title = isLowLatencyModeEnabled ? '低遅延モード中は選択できません' : '';
+        }
+
+        async function fetchPartitionStatus() {
+            try {
+                const res = await fetch(API + '/partitioned-convolution');
+                if (!res.ok) return;
+                const data = await res.json();
+                const previouslyEnabled = isLowLatencyModeEnabled;
+                isLowLatencyModeEnabled = Boolean(data.enabled);
+                updatePhaseOptionAvailability();
+                if (isLowLatencyModeEnabled && currentPhaseType !== 'minimum') {
+                    currentPhaseType = 'minimum';
+                    const select = document.getElementById('phaseType');
+                    select.value = 'minimum';
+                    updatePhaseWarning('minimum');
+                } else if (!isLowLatencyModeEnabled && previouslyEnabled) {
+                    updatePhaseWarning(currentPhaseType);
+                }
+            } catch (e) {
+                console.error('Failed to fetch partitioned-convolution status:', e);
+            }
+        }
 
         async function fetchPhaseType() {
             const select = document.getElementById('phaseType');
@@ -614,6 +643,7 @@ def get_embedded_html() -> str:
                 select.disabled = false;
                 // Use API's latency_warning if provided
                 updatePhaseWarning(data.phase_type, data.latency_warning);
+                updatePhaseOptionAvailability();
             } catch (e) {
                 console.error('Failed to fetch phase type:', e);
                 select.disabled = true;
@@ -661,7 +691,15 @@ def get_embedded_html() -> str:
 
                 if (res.ok && data.success) {
                     currentPhaseType = newPhaseType;
-                    showPhaseMessage('Phase type updated to ' + newPhaseType, true);
+                    let successMessage = 'Phase type updated to ' + newPhaseType;
+                    if (data.data && data.data.partition_disabled) {
+                        isLowLatencyModeEnabled = false;
+                        updatePhaseOptionAvailability();
+                        successMessage += '（線形位相に切り替えたため低遅延モードを自動で無効化しました）';
+                    }
+                    showPhaseMessage(successMessage, true);
+                    // Refresh partition status to keep availability in sync
+                    await fetchPartitionStatus();
                 } else {
                     // Revert selection
                     select.value = currentPhaseType;
@@ -824,9 +862,11 @@ def get_embedded_html() -> str:
         fetchDevices();
         fetchStatus();
         fetchPhaseType();
+        fetchPartitionStatus();
         fetchCrossfeedStatus();
         setInterval(fetchStatus, 5000);
         setInterval(fetchPhaseType, 5000);
+        setInterval(fetchPartitionStatus, 5000);
         setInterval(fetchCrossfeedStatus, 5000);
     </script>
 </body>

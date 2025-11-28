@@ -22,6 +22,15 @@
 using namespace DaemonConstants;
 
 static AppConfig g_config;
+
+static void enforce_phase_partition_constraints(AppConfig& config) {
+    if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
+        std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
+                  << "Switching to minimum phase." << std::endl;
+        config.phaseType = PhaseType::Minimum;
+    }
+}
+
 static std::atomic<float> g_limiter_gain{1.0f};
 static std::atomic<float> g_effective_gain{1.0f};
 
@@ -461,6 +470,7 @@ int main(int argc, char* argv[]) {
 
     AppConfig appConfig;
     bool configLoaded = loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false);
+    enforce_phase_partition_constraints(appConfig);
     PartitionRuntime::RuntimeRequest partitionRequest{
         appConfig.partitionedConvolution.enabled, appConfig.eqEnabled, appConfig.crossfeed.enabled};
 

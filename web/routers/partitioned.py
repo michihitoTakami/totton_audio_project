@@ -5,8 +5,10 @@ from fastapi import APIRouter, HTTPException
 from ..models import ApiResponse, PartitionedConvolutionSettings
 from ..services import (
     check_daemon_running,
+    get_daemon_client,
     load_partitioned_convolution_settings,
     save_partitioned_convolution_settings,
+    save_phase_type,
 )
 
 router = APIRouter(
@@ -45,11 +47,34 @@ async def update_partitioned_convolution_settings(
             detail="Failed to save partitioned convolution settings",
         )
 
-    restart_required = check_daemon_running()
+    daemon_running = check_daemon_running()
+    phase_adjusted = False
+    runtime_phase_updated = False
+
+    if settings.enabled:
+        phase_adjusted = save_phase_type("minimum")
+        if daemon_running:
+            try:
+                with get_daemon_client() as client:
+                    phase_response = client.send_command_v2("PHASE_TYPE_SET:minimum")
+                    runtime_phase_updated = phase_response.success
+                    if not phase_response.success and phase_response.error:
+                        # Only log client-side; API still succeeds because config was saved
+                        message = str(phase_response.error)
+                        print(f"[Partition] Warning: Failed to force minimum phase: {message}")
+            except Exception as exc:  # pragma: no cover - defensive logging
+                print(f"[Partition] Warning: Unable to contact daemon for phase sync: {exc}")
+
+    response_data = {"partitioned_convolution": settings.model_dump()}
+    if phase_adjusted:
+        response_data["phase_type"] = "minimum"
+        response_data["phase_adjusted"] = True
+        response_data["phase_runtime_updated"] = runtime_phase_updated
+
     return ApiResponse(
         success=True,
         message="Partitioned convolution settings updated",
-        data={"partitioned_convolution": settings.model_dump()},
-        restart_required=restart_required,
+        data=response_data,
+        restart_required=daemon_running,
     )
 
