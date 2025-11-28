@@ -57,7 +57,18 @@
     "bitsPerSample": 24,
     "targetLatencyMs": 5,
     "watchdogTimeoutMs": 500,
-    "enableRtcp": true
+    "enableRtcp": true,
+    "discovery": {
+      "scanDurationMs": 250,
+      "cooldownMs": 1500,
+      "maxStreams": 12,
+      "enableMulticast": true,
+      "enableUnicast": true,
+      "ports": [
+        5004,
+        6000
+      ]
+    }
   },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }

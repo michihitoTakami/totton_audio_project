@@ -35,7 +35,8 @@ enum class CommandType {
     RTP_START_SESSION,
     RTP_STOP_SESSION,
     RTP_LIST_SESSIONS,
-    RTP_GET_SESSION
+    RTP_GET_SESSION,
+    RTP_DISCOVER_STREAMS
 };
 
 // Response status
@@ -168,6 +169,7 @@ class ZMQClient {
     CommandResult rtpStopSession(const std::string& sessionId);
     CommandResult rtpListSessions();
     CommandResult rtpGetSession(const std::string& sessionId);
+    CommandResult rtpDiscoverStreams();
 
     // Subscribe to status updates (async)
     bool subscribeStatus(const std::string& pubEndpoint, StatusCallback callback);
