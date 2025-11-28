@@ -33,6 +33,9 @@ void GPUUpsampler::restoreOriginalFilter() {
 
         eqApplied_ = false;
         std::cout << "EQ: Restored original filter (ping-pong)" << std::endl;
+        if (!refreshPartitionFiltersFromActiveSpectrum()) {
+            std::cerr << "EQ: Failed to refresh partition filters after restore" << std::endl;
+        }
     } catch (const std::exception& e) {
         std::cerr << "EQ: Failed to restore: " << e.what() << std::endl;
     }
@@ -110,6 +113,10 @@ bool GPUUpsampler::applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude) 
 
         eqApplied_ = true;
         std::cout << "EQ: Applied with magnitude-only (linear phase preserved, ping-pong)" << std::endl;
+        if (!refreshPartitionFiltersFromActiveSpectrum()) {
+            std::cerr << "EQ: Failed to refresh partition filters after linear-phase EQ" << std::endl;
+            return false;
+        }
         return true;
 
     } catch (const std::exception& e) {
@@ -220,6 +227,11 @@ bool GPUUpsampler::applyEqMagnitudeMinPhase(const std::vector<double>& eqMagnitu
 
         eqApplied_ = true;
         std::cout << "EQ: Applied with minimum phase reconstruction (GPU, ping-pong)" << std::endl;
+        if (!refreshPartitionFiltersFromActiveSpectrum()) {
+            std::cerr << "EQ: Failed to refresh partition filters after minimum-phase EQ"
+                      << std::endl;
+            return false;
+        }
         return true;
 
     } catch (const std::exception& e) {

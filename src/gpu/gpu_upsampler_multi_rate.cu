@@ -68,7 +68,8 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
 
     // Use 44k coefficients as primary for initialization
     filterTaps_ = h_filterCoeffs44k_.size();
-    h_filterCoeffs_ = (initialFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_;
+    setActiveHostCoefficients(
+        (initialFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_);
 
     // Setup GPU resources (this will pre-compute FFT for current family)
     if (!setupGPUResources()) {
@@ -243,9 +244,19 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
         "cudaMemcpy update h_originalFilterFft_"
     );
 
-    // Note: h_filterCoeffs_ (time-domain) is no longer updated here.
-    // After initialization, host coefficient vectors are released to save memory.
-    // EQ computation uses h_originalFilterFft_ (FFT spectrum) directly.
+    if (quadPhaseEnabled_) {
+        if (targetFamily == RateFamily::RATE_44K) {
+            setActiveHostCoefficients((phaseType_ == PhaseType::Minimum) ? h_filterCoeffs44k_
+                                                                         : h_filterCoeffs44k_linear_);
+        } else {
+            setActiveHostCoefficients((phaseType_ == PhaseType::Minimum) ? h_filterCoeffs48k_
+                                                                         : h_filterCoeffs48k_linear_);
+        }
+    } else {
+        setActiveHostCoefficients(
+            (targetFamily == RateFamily::RATE_44K) ? h_filterCoeffs44k_ : h_filterCoeffs48k_);
+    }
+    refreshPartitionFiltersFromHost();
 
     // Clear EQ state (EQ needs to be re-applied for new rate family)
     if (eqApplied_) {
@@ -538,9 +549,8 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
         return false;
     }
 
-    // Note: h_filterCoeffs_ and h_filterCoeffsMulti_ (time-domain) are no longer updated here.
-    // After initialization, host coefficient vectors are released to save memory.
-    // EQ computation uses h_originalFilterFft_ (FFT spectrum) directly.
+    setActiveHostCoefficients(h_filterCoeffsMulti_[targetIndex]);
+    refreshPartitionFiltersFromHost();
 
     // Update state
     currentMultiRateIndex_ = targetIndex;
@@ -655,7 +665,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     }
 
     // Use 44k minimum as the primary coefficients for now
-    h_filterCoeffs_ = h_filterCoeffs44k_;
+    setActiveHostCoefficients(h_filterCoeffs44k_);
 
     // Setup GPU resources (allocates FFT buffers, plans, etc.)
     if (!setupGPUResources()) {
@@ -722,11 +732,13 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     if (initialFamily == RateFamily::RATE_44K) {
         initialFilter =
             (initialPhase == PhaseType::Minimum) ? d_filterFFT_44k_ : d_filterFFT_44k_linear_;
-        h_filterCoeffs_ = (initialPhase == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_;
+        setActiveHostCoefficients(
+            (initialPhase == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_);
     } else {
         initialFilter =
             (initialPhase == PhaseType::Minimum) ? d_filterFFT_48k_ : d_filterFFT_48k_linear_;
-        h_filterCoeffs_ = (initialPhase == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_;
+        setActiveHostCoefficients(
+            (initialPhase == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_);
     }
 
     // Copy to original and active filter buffers
@@ -777,10 +789,12 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
     cufftComplex* sourceFFT;
     if (currentRateFamily_ == RateFamily::RATE_44K) {
         sourceFFT = (targetPhase == PhaseType::Minimum) ? d_filterFFT_44k_ : d_filterFFT_44k_linear_;
-        h_filterCoeffs_ = (targetPhase == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_;
+        setActiveHostCoefficients(
+            (targetPhase == PhaseType::Minimum) ? h_filterCoeffs44k_ : h_filterCoeffs44k_linear_);
     } else {
         sourceFFT = (targetPhase == PhaseType::Minimum) ? d_filterFFT_48k_ : d_filterFFT_48k_linear_;
-        h_filterCoeffs_ = (targetPhase == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_;
+        setActiveHostCoefficients(
+            (targetPhase == PhaseType::Minimum) ? h_filterCoeffs48k_ : h_filterCoeffs48k_linear_);
     }
 
     // Use double-buffering for glitch-free switching
@@ -807,9 +821,7 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
                                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
                           "cudaMemcpy update h_originalFilterFft_");
 
-    // Note: h_filterCoeffs_ (time-domain) is no longer updated here.
-    // After initialization, host coefficient vectors are released to save memory.
-    // EQ computation uses h_originalFilterFft_ (FFT spectrum) directly.
+    refreshPartitionFiltersFromHost();
 
     // Clear EQ state (EQ needs to be re-applied for new phase type)
     if (eqApplied_) {
