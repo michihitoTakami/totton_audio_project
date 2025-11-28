@@ -105,6 +105,7 @@ add_library(gpu_upsampler_core STATIC
     src/audio_io.cpp
     src/gpu/convolution_kernels.cu
     src/gpu/cuda_utils.cu
+    src/gpu/partition_plan.cpp
     src/gpu/gpu_upsampler_core.cu
     src/gpu/gpu_upsampler_multi_rate.cu
     src/gpu/gpu_upsampler_streaming.cu

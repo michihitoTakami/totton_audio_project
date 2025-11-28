@@ -462,9 +462,20 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
+    // Load configuration before initializing GPU resources
+    AppConfig appConfig;
+    bool configLoaded = loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false);
+    if (!configLoaded) {
+        std::cout << "Config: using defaults (config.json not found or invalid)" << std::endl;
+    }
+    g_config = appConfig;
+    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
+    g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
+
     // Initialize GPU upsampler (multi-rate mode only)
     std::cout << "Initializing GPU upsampler..." << std::endl;
     g_upsampler = new ConvolutionEngine::GPUUpsampler();
+    g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
 
     std::cout << "Mode: Multi-Rate (all supported rates: 44.1k/48k families, 16x/8x/4x/2x)"
               << std::endl;
@@ -477,27 +488,26 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         return 1;
     }
+    if (g_config.partitionedConvolution.enabled) {
+        const auto& plan = g_upsampler->getPartitionPlan();
+        if (plan.enabled && !plan.partitions.empty()) {
+            std::cout << "Partition plan: " << plan.describe(g_upsampler->getOutputSampleRate())
+                      << std::endl;
+        } else {
+            std::cout << "Partition plan requested but not generated (taps: "
+                      << g_config.partitionedConvolution.fastPartitionTaps << ")" << std::endl;
+        }
+    }
     std::cout << "GPU upsampler ready (" << g_upsampler->getUpsampleRatio() << "x upsampling, "
               << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
 
-    // Load config and set phase type (input sample rate is auto-detected from PipeWire)
-    AppConfig appConfig;
-    if (loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false)) {
-        g_upsampler->setPhaseType(appConfig.phaseType);
-        std::cout << "Phase type: " << phaseTypeToString(appConfig.phaseType) << std::endl;
-
-        // Log latency warning for linear phase
-        if (appConfig.phaseType == PhaseType::Linear) {
-            double latencySec = g_upsampler->getLatencySeconds();
-            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
-                      << g_upsampler->getLatencySamples() << " samples)" << std::endl;
-        }
-    } else {
-        std::cout << "Phase type: minimum (default)" << std::endl;
+    g_upsampler->setPhaseType(g_config.phaseType);
+    std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
+    if (g_config.phaseType == PhaseType::Linear) {
+        double latencySec = g_upsampler->getLatencySeconds();
+        std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
+                  << g_upsampler->getLatencySamples() << " samples)" << std::endl;
     }
-    g_config = appConfig;
-    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
-    g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
     // Input sample rate will be auto-detected from PipeWire stream
     std::cout << "Input sample rate: auto-detected from PipeWire" << std::endl;
 

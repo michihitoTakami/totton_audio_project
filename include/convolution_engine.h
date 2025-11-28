@@ -2,6 +2,7 @@
 #define CONVOLUTION_ENGINE_H
 
 #include "config_loader.h"  // PhaseType enum
+#include "gpu/partition_plan.h"
 #include "gpu/pinned_allocator.h"
 #include "phase_alignment.h"
 
@@ -364,6 +365,15 @@ class GPUUpsampler {
         return streamValidInputPerBlock_;
     }
 
+    void setPartitionedConvolutionConfig(
+        const AppConfig::PartitionedConvolutionConfig& config) {
+        partitionConfig_ = config;
+    }
+
+    const PartitionPlan& getPartitionPlan() const {
+        return partitionPlan_;
+    }
+
     // CUDA streams for async operations (public for daemon access)
     cudaStream_t stream_;       // Primary stream for mono
     cudaStream_t streamLeft_;   // Left channel for stereo parallel
@@ -393,6 +403,8 @@ class GPUUpsampler {
     // Call this after all GPU transfers are complete (FFT pre-computation done)
     void releaseHostCoefficients();
 
+    void refreshPartitionPlanSummary(const char* context);
+
     void startPhaseAlignedCrossfade(cufftComplex* previousFilter, float previousDelay,
                                     float newDelay);
     void cancelPhaseAlignedCrossfade();
@@ -412,6 +424,8 @@ class GPUUpsampler {
     // Filter coefficients (single-rate mode)
     std::vector<float> h_filterCoeffs_;  // Host
     float* d_filterCoeffs_;              // Device
+    PartitionPlan partitionPlan_;
+    AppConfig::PartitionedConvolutionConfig partitionConfig_;
 
     // Dual-rate support
     bool dualRateEnabled_;          // True if dual-rate mode is active

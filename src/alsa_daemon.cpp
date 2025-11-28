@@ -952,6 +952,13 @@ static void print_config_summary(const AppConfig& cfg) {
     if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
         LOG_INFO("  EQ profile:     {}", cfg.eqProfilePath);
     }
+    LOG_INFO("  Partition FIR:  {}", (cfg.partitionedConvolution.enabled ? "yes" : "no"));
+    if (cfg.partitionedConvolution.enabled) {
+        LOG_INFO("    fast taps:    {}", cfg.partitionedConvolution.fastPartitionTaps);
+        LOG_INFO("    min taps:     {}", cfg.partitionedConvolution.minPartitionTaps);
+        LOG_INFO("    partitions:   {}", cfg.partitionedConvolution.maxPartitions);
+        LOG_INFO("    target lat.:  {} ms", cfg.partitionedConvolution.targetLatencyMs);
+    }
     // Update metrics with audio configuration
     gpu_upsampler::metrics::setAudioConfig(g_input_sample_rate, outputRate, cfg.upsampleRatio);
 }
@@ -2796,6 +2803,7 @@ int main(int argc, char* argv[]) {
         // Initialize GPU upsampler with configured values
         std::cout << "Initializing GPU upsampler..." << std::endl;
         g_upsampler = new ConvolutionEngine::GPUUpsampler();
+        g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
 
         bool initSuccess = false;
         ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
@@ -2870,6 +2878,17 @@ int main(int argc, char* argv[]) {
             delete g_upsampler;
             exitCode = 1;
             break;
+        }
+
+        if (g_config.partitionedConvolution.enabled) {
+            const auto& plan = g_upsampler->getPartitionPlan();
+            if (plan.enabled && !plan.partitions.empty()) {
+                LOG_INFO("Partition plan summary: {}",
+                         plan.describe(g_upsampler->getOutputSampleRate()));
+            } else {
+                LOG_WARN("Partitioned convolution requested but no plan generated (taps={}, ratio={})",
+                         g_config.partitionedConvolution.fastPartitionTaps, g_config.upsampleRatio);
+            }
         }
 
         // Check for early abort (signal received during GPU initialization)

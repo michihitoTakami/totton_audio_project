@@ -160,6 +160,7 @@ bool GPUUpsampler::setupGPUResources() {
 
         overlapSize_ = filterTaps_ - 1;
         resizeOverlapBuffers(overlapSize_);
+        refreshPartitionPlanSummary("setup");
 
         // Allocate device memory for filter coefficients
         Utils::checkCudaError(
@@ -994,6 +995,25 @@ void GPUUpsampler::releaseHostCoefficients() {
                   << (freedBytes / (1024 * 1024)) << " MB ("
                   << freedBytes << " bytes)" << std::endl;
     }
+}
+
+void GPUUpsampler::refreshPartitionPlanSummary(const char* context) {
+    if (!partitionConfig_.enabled || filterTaps_ <= 0) {
+        partitionPlan_ = PartitionPlan{};
+        return;
+    }
+
+    partitionPlan_ = buildPartitionPlan(filterTaps_, upsampleRatio_, partitionConfig_);
+    if (!partitionPlan_.enabled || partitionPlan_.partitions.empty()) {
+        return;
+    }
+
+    const int outputRate = getOutputSampleRate();
+    std::cout << "  Partition plan";
+    if (context && std::strlen(context) > 0) {
+        std::cout << " [" << context << "]";
+    }
+    std::cout << ": " << partitionPlan_.describe(outputRate) << std::endl;
 }
 
 }  // namespace ConvolutionEngine

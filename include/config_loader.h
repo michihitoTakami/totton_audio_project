@@ -46,6 +46,15 @@ struct AppConfig {
         std::string hrtfPath = "data/crossfeed/hrtf/";
     } crossfeed;
 
+    // Partitioned convolution (Issue #349)
+    struct PartitionedConvolutionConfig {
+        bool enabled = false;
+        int fastPartitionTaps = 32768;
+        int minPartitionTaps = 8192;
+        int maxPartitions = 4;
+        float targetLatencyMs = 5.0f;
+    } partitionedConvolution;
+
     // Fallback settings (Issue #139)
     struct FallbackConfig {
         bool enabled = true;                 // Enable dynamic fallback

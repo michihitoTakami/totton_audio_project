@@ -111,6 +111,40 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             }
         }
 
+        // Partitioned convolution settings (Issue #349)
+        if (j.contains("partitionedConvolution") && j["partitionedConvolution"].is_object()) {
+            auto pc = j["partitionedConvolution"];
+            try {
+                if (pc.contains("enabled") && pc["enabled"].is_boolean())
+                    outConfig.partitionedConvolution.enabled = pc["enabled"].get<bool>();
+                if (pc.contains("fastPartitionTaps") && pc["fastPartitionTaps"].is_number_integer())
+                    outConfig.partitionedConvolution.fastPartitionTaps =
+                        pc["fastPartitionTaps"].get<int>();
+                if (pc.contains("minPartitionTaps") && pc["minPartitionTaps"].is_number_integer())
+                    outConfig.partitionedConvolution.minPartitionTaps =
+                        pc["minPartitionTaps"].get<int>();
+                if (pc.contains("maxPartitions") && pc["maxPartitions"].is_number_integer())
+                    outConfig.partitionedConvolution.maxPartitions =
+                        pc["maxPartitions"].get<int>();
+                if (pc.contains("targetLatencyMs") && pc["targetLatencyMs"].is_number())
+                    outConfig.partitionedConvolution.targetLatencyMs =
+                        pc["targetLatencyMs"].get<float>();
+
+                auto& pcCfg = outConfig.partitionedConvolution;
+                pcCfg.minPartitionTaps = std::max(1024, pcCfg.minPartitionTaps);
+                pcCfg.fastPartitionTaps =
+                    std::max(pcCfg.minPartitionTaps, pcCfg.fastPartitionTaps);
+                pcCfg.maxPartitions = std::max(1, pcCfg.maxPartitions);
+                pcCfg.targetLatencyMs = std::clamp(pcCfg.targetLatencyMs, 0.1f, 1000.0f);
+            } catch (const std::exception& e) {
+                if (verbose) {
+                    std::cerr << "Config: Invalid partitionedConvolution settings, using defaults: "
+                              << e.what() << std::endl;
+                }
+                outConfig.partitionedConvolution = AppConfig::PartitionedConvolutionConfig{};
+            }
+        }
+
         // Fallback settings (Issue #139)
         if (j.contains("fallback") && j["fallback"].is_object()) {
             auto fb = j["fallback"];

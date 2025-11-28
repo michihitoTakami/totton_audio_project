@@ -190,6 +190,7 @@ int main(int argc, char* argv[]) {
         // Step 2: Initialize GPU upsampler
         std::cout << std::endl << "Step 2: Initializing GPU engine..." << std::endl;
         ConvolutionEngine::GPUUpsampler upsampler;
+        upsampler.setPartitionedConvolutionConfig(appConfig.partitionedConvolution);
         if (!upsampler.initialize(config.filterPath, config.upsampleRatio, config.blockSize)) {
             return 1;
         }

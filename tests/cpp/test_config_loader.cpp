@@ -384,6 +384,60 @@ TEST_F(ConfigLoaderTest, LoadConfigWithCrossfeedFieldsWrongTypes) {
     EXPECT_EQ(config.crossfeed.hrtfPath, "data/crossfeed/hrtf/");
 }
 
+TEST_F(ConfigLoaderTest, PartitionedConvolutionDefaultValues) {
+    AppConfig config;
+    EXPECT_FALSE(config.partitionedConvolution.enabled);
+    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 32768);
+    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 8192);
+    EXPECT_EQ(config.partitionedConvolution.maxPartitions, 4);
+    EXPECT_FLOAT_EQ(config.partitionedConvolution.targetLatencyMs, 5.0f);
+}
+
+TEST_F(ConfigLoaderTest, PartitionedConvolutionParsesValues) {
+    writeConfig(R"({
+        "partitionedConvolution": {
+            "enabled": true,
+            "fastPartitionTaps": 65536,
+            "minPartitionTaps": 4096,
+            "maxPartitions": 6,
+            "targetLatencyMs": 12.5
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.partitionedConvolution.enabled);
+    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 65536);
+    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 4096);
+    EXPECT_EQ(config.partitionedConvolution.maxPartitions, 6);
+    EXPECT_FLOAT_EQ(config.partitionedConvolution.targetLatencyMs, 12.5f);
+}
+
+TEST_F(ConfigLoaderTest, PartitionedConvolutionClampsInvalidValues) {
+    writeConfig(R"({
+        "partitionedConvolution": {
+            "enabled": true,
+            "fastPartitionTaps": 512,
+            "minPartitionTaps": -10,
+            "maxPartitions": 0,
+            "targetLatencyMs": 0.01
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.partitionedConvolution.enabled);
+    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 1024);  // clamped to >=1024
+    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps,
+              config.partitionedConvolution.minPartitionTaps);
+    EXPECT_EQ(config.partitionedConvolution.maxPartitions, 1);
+    EXPECT_FLOAT_EQ(config.partitionedConvolution.targetLatencyMs, 0.1f);
+}
+
 // ============================================================
 // Issue #219: Multi-Rate settings tests
 // ============================================================

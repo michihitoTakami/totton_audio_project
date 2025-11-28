@@ -21,6 +21,13 @@
     "headSize": "m",
     "hrtfPath": "data/crossfeed/hrtf/"
   },
+  "partitionedConvolution": {
+    "enabled": false,
+    "fastPartitionTaps": 32768,
+    "minPartitionTaps": 8192,
+    "maxPartitions": 4,
+    "targetLatencyMs": 5.0
+  },
   "fallback": {
     "enabled": true,
     "gpuThreshold": 80.0,
