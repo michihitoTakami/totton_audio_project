@@ -104,6 +104,15 @@ Magic Box製品出荷前の品質検証チェックリストです。すべて�
 | 1時間連続再生 | XRUN 0回 | [ ] |
 | レート切替テスト | 44.1k⇔48k 10回 | [ ] |
 
+### 4.5 低遅延パーティション検証
+
+- [ ] `partitionedConvolution.enabled = true`、`fastPartitionTaps` / `tailFftMultiple` が仕様通りに反映されている
+- [ ] `pw-loopback` または ALSA loopback で `test_impulse_44100hz.wav` を通し、`scripts/inspect_impulse.py` の energy 比率が >99%（fast）になる
+- [ ] `scripts/verify_frequency_response.py --compare-fast-tail` で fast/tail スペクトル差分 < 0.5 dB
+- [ ] `nvidia-smi dmon` で GPU Utilization < 20% を維持
+- [ ] `/proc/asound/*/status` の `XRUNs` が 0 のまま 10 分以上継続
+- [ ] 実施手順・ログを `docs/investigations/low_latency_partition_validation.md` に記録
+
 ---
 
 ## 5. EQ/ヘッドホン補正検証

@@ -35,6 +35,11 @@ Phase 3: Hardware Integration         [                    ] 0%
   - 197dB stopband attenuation（理論値）/ 実測175dB級（Float32最小位相）
   - Kaiser window (β=25) - Float32 GPU実装向けに最適化
 
+- [x] **Low-Latency Partition Validation** (#355)
+  - `scripts/inspect_impulse.py` / `verify_frequency_response.py` をpartition対応
+  - PipeWire/ALSAループバックとXRUN/GPU監視フローを `docs/investigations/low_latency_partition_validation.md` に記録
+  - QAチェックリストへ低遅延モードの回帰項目を追加
+
 - [x] **Phase Type Selection** (#165, #166, #167)
   - Minimum Phase / Linear Phase 切り替え機能
   - `--phase-type` CLIオプション

@@ -16,6 +16,10 @@ APIへの重要な変更はこのファイルに記録されます。
   - `GET /dac/supported-rates` - レートファミリ（44k/48k）別対応レート
   - `GET /dac/max-ratio` - 最大アップサンプリング倍率取得
   - `GET /dac/validate-config` - 設定バリデーション
+- **Low-Latency Validation Toolkit** (#355)
+  - `scripts/inspect_impulse.py` に partition summary / latency 推定を追加
+  - `scripts/verify_frequency_response.py` に fast/tail スペクトル比較と自動スキップ機能を追加
+  - `docs/investigations/low_latency_partition_validation.md` にループバック手順とQA基準を掲載
 
 ### Security
 - ALSAデバイス名のバリデーション追加（パストラバーサル防止）
