@@ -43,6 +43,14 @@ const char* commandTypeToString(CommandType type) {
         return "CROSSFEED_GET_STATUS";
     case CommandType::CROSSFEED_GENERATE_WOODWORTH:
         return "CROSSFEED_GENERATE_WOODWORTH";
+    case CommandType::RTP_START_SESSION:
+        return "RTP_START_SESSION";
+    case CommandType::RTP_STOP_SESSION:
+        return "RTP_STOP_SESSION";
+    case CommandType::RTP_LIST_SESSIONS:
+        return "RTP_LIST_SESSIONS";
+    case CommandType::RTP_GET_SESSION:
+        return "RTP_GET_SESSION";
     default:
         return "UNKNOWN";
     }
@@ -63,7 +71,15 @@ CommandType stringToCommandType(const std::string& str) {
         {"CROSSFEED_SET_COMBINED", CommandType::CROSSFEED_SET_COMBINED},
         {"CROSSFEED_SET_SIZE", CommandType::CROSSFEED_SET_SIZE},
         {"CROSSFEED_GET_STATUS", CommandType::CROSSFEED_GET_STATUS},
-        {"CROSSFEED_GENERATE_WOODWORTH", CommandType::CROSSFEED_GENERATE_WOODWORTH}};
+        {"CROSSFEED_GENERATE_WOODWORTH", CommandType::CROSSFEED_GENERATE_WOODWORTH},
+        {"RTP_START_SESSION", CommandType::RTP_START_SESSION},
+        {"StartSession", CommandType::RTP_START_SESSION},
+        {"RTP_STOP_SESSION", CommandType::RTP_STOP_SESSION},
+        {"StopSession", CommandType::RTP_STOP_SESSION},
+        {"RTP_LIST_SESSIONS", CommandType::RTP_LIST_SESSIONS},
+        {"ListSessions", CommandType::RTP_LIST_SESSIONS},
+        {"RTP_GET_SESSION", CommandType::RTP_GET_SESSION},
+        {"GetSession", CommandType::RTP_GET_SESSION}};
 
     auto it = lookup.find(str);
     if (it != lookup.end()) {
@@ -677,6 +693,26 @@ CommandResult ZMQClient::crossfeedGenerateWoodworth(const std::string& rateFamil
     model["diffuse_tilt_db"] = diffuseFieldTiltDb;
     params["model"] = model;
     return sendCommand(CommandType::CROSSFEED_GENERATE_WOODWORTH, params.dump());
+}
+
+CommandResult ZMQClient::rtpStartSession(const std::string& paramsJson) {
+    return sendCommand(CommandType::RTP_START_SESSION, paramsJson);
+}
+
+CommandResult ZMQClient::rtpStopSession(const std::string& sessionId) {
+    json params;
+    params["session_id"] = sessionId;
+    return sendCommand(CommandType::RTP_STOP_SESSION, params.dump());
+}
+
+CommandResult ZMQClient::rtpListSessions() {
+    return sendCommand(CommandType::RTP_LIST_SESSIONS);
+}
+
+CommandResult ZMQClient::rtpGetSession(const std::string& sessionId) {
+    json params;
+    params["session_id"] = sessionId;
+    return sendCommand(CommandType::RTP_GET_SESSION, params.dump());
 }
 
 bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, StatusCallback callback) {

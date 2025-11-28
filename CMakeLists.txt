@@ -191,6 +191,7 @@ target_link_libraries(gpu_upsampler_alsa
     graceful_shutdown
     fallback_manager
     zeromq_interface
+    rtp_session
     dac_capability
     logging
     ${PIPEWIRE_LIBRARIES}
@@ -278,6 +279,21 @@ target_include_directories(zeromq_interface PUBLIC
     ${cppzmq_SOURCE_DIR}
 )
 target_compile_options(zeromq_interface PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
+add_library(rtp_session STATIC
+    src/rtp_session_manager.cpp
+)
+target_link_libraries(rtp_session PUBLIC
+    logging
+    error_codes
+    nlohmann_json::nlohmann_json
+)
+target_include_directories(rtp_session PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(rtp_session PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
@@ -516,6 +532,18 @@ target_include_directories(error_codes_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(error_codes_tests)
+
+add_executable(rtp_session_tests
+    tests/cpp/test_rtp_session_manager.cpp
+)
+target_link_libraries(rtp_session_tests
+    GTest::gtest_main
+    rtp_session
+)
+target_include_directories(rtp_session_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(rtp_session_tests)
 
 # Auto-Negotiation tests (CPU-only, no ALSA hardware required)
 add_executable(auto_negotiation_tests

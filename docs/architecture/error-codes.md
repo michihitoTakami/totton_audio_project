@@ -72,6 +72,8 @@ Q: どのカテゴリを使うべきか？
 | 0x1004 | `AUDIO_FILTER_NOT_FOUND` | 404 | 指定されたフィルタ係数ファイルが見つからない |
 | 0x1005 | `AUDIO_BUFFER_OVERFLOW` | 500 | 内部バッファがオーバーフロー（処理が追いつかない） |
 | 0x1006 | `AUDIO_XRUN_DETECTED` | 500 | ALSA XRUNが発生（アンダーラン/オーバーラン） |
+| 0x1007 | `AUDIO_RTP_SOCKET_ERROR` | 500 | RTPソケット初期化またはマルチキャスト参加に失敗 |
+| 0x1008 | `AUDIO_RTP_SESSION_NOT_FOUND` | 404 | 指定されたRTPセッションが存在しない |
 
 ### 3.2 DAC/ALSA (0x2000)
 
