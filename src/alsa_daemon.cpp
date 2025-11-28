@@ -1155,6 +1155,18 @@ static void load_runtime_config() {
     if (!found) {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
     }
+
+    if (g_config.partitionedConvolution.enabled && g_config.eqEnabled) {
+        std::cout << "[Partition] EQ disabled: not yet supported in low-latency mode (see #353)"
+                  << std::endl;
+        g_config.eqEnabled = false;
+    }
+
+    if (g_config.partitionedConvolution.enabled && g_config.crossfeed.enabled) {
+        std::cout << "[Partition] Crossfeed disabled: not supported in low-latency mode" << std::endl;
+        g_config.crossfeed.enabled = false;
+    }
+
     print_config_summary(g_config);
     g_headroom_cache.setTargetPeak(g_config.headroomTarget);
     update_effective_gain(1.0f, "config load (pending filter headroom)");
@@ -1219,14 +1231,18 @@ static void zeromq_listener_thread() {
             } else if (cmd == "STATS") {
                 response = "OK:" + build_stats_json();
             } else if (cmd == "CROSSFEED_ENABLE") {
-                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-                if (g_hrtf_processor) {
-                    reset_crossfeed_stream_state_locked();
-                    g_hrtf_processor->setEnabled(true);
-                    g_crossfeed_enabled.store(true);
-                    response = "OK:Crossfeed enabled";
+                if (g_config.partitionedConvolution.enabled) {
+                    response = "ERR:Crossfeed disabled in low-latency mode";
                 } else {
-                    response = "ERR:HRTF processor not initialized";
+                    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                    if (g_hrtf_processor) {
+                        reset_crossfeed_stream_state_locked();
+                        g_hrtf_processor->setEnabled(true);
+                        g_crossfeed_enabled.store(true);
+                        response = "OK:Crossfeed enabled";
+                    } else {
+                        response = "ERR:HRTF processor not initialized";
+                    }
                 }
             } else if (cmd == "CROSSFEED_DISABLE") {
                 std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -1251,21 +1267,29 @@ static void zeromq_listener_thread() {
                     std::string cmdType = j.value("cmd", "");
 
                     if (cmdType == "CROSSFEED_ENABLE") {
-                        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-                        if (g_hrtf_processor) {
-                            reset_crossfeed_stream_state_locked();
-                            g_hrtf_processor->setEnabled(true);
-                            g_crossfeed_enabled.store(true);
-                            nlohmann::json resp;
-                            resp["status"] = "ok";
-                            resp["message"] = "Crossfeed enabled";
-                            response = resp.dump();
-                        } else {
+                        if (g_config.partitionedConvolution.enabled) {
                             nlohmann::json resp;
                             resp["status"] = "error";
-                            resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
-                            resp["message"] = "HRTF processor not initialized";
+                            resp["error_code"] = "CROSSFEED_DISABLED";
+                            resp["message"] = "Crossfeed not available in low-latency mode";
                             response = resp.dump();
+                        } else {
+                            std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+                            if (g_hrtf_processor) {
+                                reset_crossfeed_stream_state_locked();
+                                g_hrtf_processor->setEnabled(true);
+                                g_crossfeed_enabled.store(true);
+                                nlohmann::json resp;
+                                resp["status"] = "ok";
+                                resp["message"] = "Crossfeed enabled";
+                                response = resp.dump();
+                            } else {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "CROSSFEED_NOT_INITIALIZED";
+                                resp["message"] = "HRTF processor not initialized";
+                                response = resp.dump();
+                            }
                         }
                     } else if (cmdType == "CROSSFEED_DISABLE") {
                         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
@@ -2796,6 +2820,7 @@ int main(int argc, char* argv[]) {
         // Initialize GPU upsampler with configured values
         std::cout << "Initializing GPU upsampler..." << std::endl;
         g_upsampler = new ConvolutionEngine::GPUUpsampler();
+        g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
 
         bool initSuccess = false;
         ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
@@ -2986,61 +3011,67 @@ int main(int argc, char* argv[]) {
         g_upsampler_output_left.reserve(upsampler_output_capacity);
         g_upsampler_output_right.reserve(upsampler_output_capacity);
 
-        // Initialize HRTF processor for crossfeed (optional feature)
-        // Crossfeed is disabled by default until enabled via ZeroMQ command
-        std::string hrtfDir = "data/crossfeed/hrtf";
-        if (std::filesystem::exists(hrtfDir)) {
-            std::cout << "Initializing HRTF processor for crossfeed..." << std::endl;
-            g_hrtf_processor = new CrossfeedEngine::HRTFProcessor();
+        if (!g_config.partitionedConvolution.enabled) {
+            // Initialize HRTF processor for crossfeed (optional feature)
+            // Crossfeed is disabled by default until enabled via ZeroMQ command
+            std::string hrtfDir = "data/crossfeed/hrtf";
+            if (std::filesystem::exists(hrtfDir)) {
+                std::cout << "Initializing HRTF processor for crossfeed..." << std::endl;
+                g_hrtf_processor = new CrossfeedEngine::HRTFProcessor();
 
-            // Determine rate family based on input sample rate
-            CrossfeedEngine::RateFamily rateFamily = (g_input_sample_rate == 48000)
-                                                         ? CrossfeedEngine::RateFamily::RATE_48K
-                                                         : CrossfeedEngine::RateFamily::RATE_44K;
+                // Determine rate family based on input sample rate
+                CrossfeedEngine::RateFamily rateFamily = (g_input_sample_rate == 48000)
+                                                             ? CrossfeedEngine::RateFamily::RATE_48K
+                                                             : CrossfeedEngine::RateFamily::RATE_44K;
 
-            if (g_hrtf_processor->initialize(hrtfDir, g_config.blockSize,
-                                             CrossfeedEngine::HeadSize::M, rateFamily)) {
-                if (g_hrtf_processor->initializeStreaming()) {
-                    std::cout << "  HRTF processor ready (head size: M, rate family: "
-                              << (rateFamily == CrossfeedEngine::RateFamily::RATE_44K ? "44k"
-                                                                                      : "48k")
-                              << ")" << std::endl;
+                if (g_hrtf_processor->initialize(hrtfDir, g_config.blockSize,
+                                                 CrossfeedEngine::HeadSize::M, rateFamily)) {
+                    if (g_hrtf_processor->initializeStreaming()) {
+                        std::cout << "  HRTF processor ready (head size: M, rate family: "
+                                  << (rateFamily == CrossfeedEngine::RateFamily::RATE_44K ? "44k"
+                                                                                          : "48k")
+                                  << ")" << std::endl;
 
-                    // Pre-allocate crossfeed streaming buffers
-                    size_t cf_buffer_capacity = g_hrtf_processor->getStreamValidInputPerBlock() * 2;
-                    g_cf_stream_input_left.resize(cf_buffer_capacity, 0.0f);
-                    g_cf_stream_input_right.resize(cf_buffer_capacity, 0.0f);
-                    g_cf_stream_accumulated_left = 0;
-                    g_cf_stream_accumulated_right = 0;
-                    g_cf_output_buffer_left.reserve(cf_buffer_capacity);
-                    g_cf_output_buffer_right.reserve(cf_buffer_capacity);
-                    std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity << " samples"
-                              << std::endl;
+                        // Pre-allocate crossfeed streaming buffers
+                        size_t cf_buffer_capacity =
+                            g_hrtf_processor->getStreamValidInputPerBlock() * 2;
+                        g_cf_stream_input_left.resize(cf_buffer_capacity, 0.0f);
+                        g_cf_stream_input_right.resize(cf_buffer_capacity, 0.0f);
+                        g_cf_stream_accumulated_left = 0;
+                        g_cf_stream_accumulated_right = 0;
+                        g_cf_output_buffer_left.reserve(cf_buffer_capacity);
+                        g_cf_output_buffer_right.reserve(cf_buffer_capacity);
+                        std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity
+                                  << " samples" << std::endl;
 
-                    // Crossfeed is initialized but disabled by default
-                    g_crossfeed_enabled.store(false);
-                    g_hrtf_processor->setEnabled(false);
-                    std::cout << "  Crossfeed: initialized (disabled by default)" << std::endl;
+                        // Crossfeed is initialized but disabled by default
+                        g_crossfeed_enabled.store(false);
+                        g_hrtf_processor->setEnabled(false);
+                        std::cout << "  Crossfeed: initialized (disabled by default)" << std::endl;
+                    } else {
+                        std::cerr << "  HRTF: Failed to initialize streaming mode" << std::endl;
+                        delete g_hrtf_processor;
+                        g_hrtf_processor = nullptr;
+                    }
                 } else {
-                    std::cerr << "  HRTF: Failed to initialize streaming mode" << std::endl;
+                    std::cerr << "  HRTF: Failed to initialize processor" << std::endl;
+                    std::cerr
+                        << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
+                           "filters"
+                        << std::endl;
                     delete g_hrtf_processor;
                     g_hrtf_processor = nullptr;
                 }
             } else {
-                std::cerr << "  HRTF: Failed to initialize processor" << std::endl;
-                std::cerr
-                    << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
-                       "filters"
-                    << std::endl;
-                delete g_hrtf_processor;
-                g_hrtf_processor = nullptr;
+                std::cout << "HRTF directory not found (" << hrtfDir
+                          << "), crossfeed feature disabled" << std::endl;
+                std::cout << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
+                             "filters"
+                          << std::endl;
             }
         } else {
-            std::cout << "HRTF directory not found (" << hrtfDir << "), crossfeed feature disabled"
+            std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)"
                       << std::endl;
-            std::cout
-                << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF filters"
-                << std::endl;
         }
 
         std::cout << std::endl;

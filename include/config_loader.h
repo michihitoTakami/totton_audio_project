@@ -39,6 +39,14 @@ struct AppConfig {
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)
 
+    // Partitioned convolution (Issue #351)
+    struct PartitionedConvolutionConfig {
+        bool enabled = false;
+        int fastPartitionTaps = 32768;
+        int minPartitionTaps = 32768;
+        int maxPartitions = 4;
+    } partitionedConvolution;
+
     // Crossfeed settings (nested struct for clarity)
     struct CrossfeedConfig {
         bool enabled = false;
