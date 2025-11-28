@@ -4,8 +4,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from ..constants import CONFIG_PATH, EQ_PROFILES_DIR
-from ..models import CrossfeedSettings, Settings
+from ..models import (
+    CrossfeedSettings,
+    PartitionedConvolutionSettings,
+    Settings,
+)
 
 
 def _build_profile_path(profile_name: str | None) -> str | None:
@@ -83,6 +89,68 @@ def load_raw_config() -> dict[str, Any]:
         except (json.JSONDecodeError, IOError):
             pass
     return {}
+
+
+def load_partitioned_convolution_settings() -> PartitionedConvolutionSettings:
+    """Load partitioned convolution settings from config.json."""
+    defaults = PartitionedConvolutionSettings()
+    raw = load_raw_config()
+    section = raw.get("partitionedConvolution", {})
+    if not isinstance(section, dict):
+        section = {}
+    try:
+        return PartitionedConvolutionSettings(
+            enabled=section.get("enabled", defaults.enabled),
+            fast_partition_taps=section.get(
+                "fastPartitionTaps", defaults.fast_partition_taps
+            ),
+            min_partition_taps=section.get(
+                "minPartitionTaps", defaults.min_partition_taps
+            ),
+            max_partitions=section.get("maxPartitions", defaults.max_partitions),
+            tail_fft_multiple=section.get(
+                "tailFftMultiple", defaults.tail_fft_multiple
+            ),
+        )
+    except (ValidationError, ValueError, TypeError):
+        return defaults
+
+
+def save_partitioned_convolution_settings(
+    settings: PartitionedConvolutionSettings,
+) -> bool:
+    """Persist partitioned convolution settings to config.json."""
+    try:
+        existing = load_raw_config()
+        existing["partitionedConvolution"] = {
+            "enabled": settings.enabled,
+            "fastPartitionTaps": settings.fast_partition_taps,
+            "minPartitionTaps": settings.min_partition_taps,
+            "maxPartitions": settings.max_partitions,
+            "tailFftMultiple": settings.tail_fft_multiple,
+        }
+        if settings.enabled:
+            phase_type = str(existing.get("phaseType", "minimum")).lower()
+            if phase_type != "minimum":
+                existing["phaseType"] = "minimum"
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+def save_phase_type(phase_type: str) -> bool:
+    """Persist phaseType field in config.json."""
+    normalized = "linear" if phase_type == "linear" else "minimum"
+    try:
+        existing = load_raw_config()
+        existing["phaseType"] = normalized
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False
 
 
 def save_config(settings: Settings) -> bool:

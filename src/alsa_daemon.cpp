@@ -59,6 +59,14 @@
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
+static void enforce_phase_partition_constraints(AppConfig& config) {
+    if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
+        std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
+                  << "Switching to minimum phase." << std::endl;
+        config.phaseType = PhaseType::Minimum;
+    }
+}
+
 // Stats file path (JSON format for Web API)
 constexpr const char* STATS_FILE_PATH = "/tmp/gpu_upsampler_stats.json";
 
@@ -1252,6 +1260,8 @@ static void load_runtime_config() {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
     }
 
+    enforce_phase_partition_constraints(g_config);
+
     print_config_summary(g_config);
     g_headroom_cache.setTargetPeak(g_config.headroomTarget);
     update_effective_gain(1.0f, "config load (pending filter headroom)");
@@ -2004,6 +2014,15 @@ static void zeromq_listener_thread() {
                         });
 
                         if (switch_success) {
+                            if (newPhase == PhaseType::Linear &&
+                                g_config.partitionedConvolution.enabled) {
+                                std::cout << "[Partition] Linear phase selected, disabling "
+                                             "low-latency partitioned convolution."
+                                          << std::endl;
+                                g_config.partitionedConvolution.enabled = false;
+                                g_upsampler->setPartitionedConvolutionConfig(
+                                    g_config.partitionedConvolution);
+                            }
                             response = "OK:Phase type set to " + phaseStr;
                         } else {
                             response = "ERR:Failed to switch phase type";

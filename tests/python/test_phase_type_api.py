@@ -1,10 +1,11 @@
 """Tests for phase type API endpoints."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from web.main import app
+from web.models import PartitionedConvolutionSettings
 from web.services.daemon_client import DaemonError, DaemonResponse
 
 
@@ -77,7 +78,13 @@ class TestPhaseTypeSet:
 
     def test_set_phase_type_minimum(self):
         """Test setting phase type to minimum."""
-        with patch("web.routers.daemon.get_daemon_client") as mock_client:
+        with patch("web.routers.daemon.get_daemon_client") as mock_client, patch(
+            "web.routers.daemon.save_phase_type"
+        ) as mock_save_phase, patch(
+            "web.routers.daemon.load_partitioned_convolution_settings"
+        ) as mock_load_partition, patch(
+            "web.routers.daemon.save_partitioned_convolution_settings"
+        ) as mock_save_partition:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
@@ -85,6 +92,7 @@ class TestPhaseTypeSet:
                 success=True, data={"phase_type": "minimum"}
             )
             mock_client.return_value = mock_instance
+            mock_load_partition.return_value = PartitionedConvolutionSettings(enabled=False)
 
             response = client.put(
                 "/daemon/phase-type",
@@ -95,10 +103,18 @@ class TestPhaseTypeSet:
             data = response.json()
             assert data["success"] is True
             assert data["data"]["phase_type"] == "minimum"
+            mock_save_phase.assert_called_once_with("minimum")
+            mock_save_partition.assert_not_called()
 
     def test_set_phase_type_linear(self):
         """Test setting phase type to linear."""
-        with patch("web.routers.daemon.get_daemon_client") as mock_client:
+        with patch("web.routers.daemon.get_daemon_client") as mock_client, patch(
+            "web.routers.daemon.save_phase_type"
+        ) as mock_save_phase, patch(
+            "web.routers.daemon.load_partitioned_convolution_settings"
+        ) as mock_load_partition, patch(
+            "web.routers.daemon.save_partitioned_convolution_settings"
+        ) as mock_save_partition:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
             mock_instance.__exit__ = MagicMock(return_value=False)
@@ -106,6 +122,13 @@ class TestPhaseTypeSet:
                 success=True, data={"phase_type": "linear"}
             )
             mock_client.return_value = mock_instance
+            mock_load_partition.return_value = PartitionedConvolutionSettings(
+                enabled=True,
+                fast_partition_taps=49152,
+                min_partition_taps=8192,
+                max_partitions=6,
+                tail_fft_multiple=4,
+            )
 
             response = client.put(
                 "/daemon/phase-type",
@@ -116,6 +139,9 @@ class TestPhaseTypeSet:
             data = response.json()
             assert data["success"] is True
             assert data["data"]["phase_type"] == "linear"
+            assert data["data"]["partition_disabled"] is True
+            mock_save_phase.assert_called_once_with("linear")
+            mock_save_partition.assert_called_once()
 
     def test_set_phase_type_invalid(self):
         """Test setting invalid phase type returns 422 (Pydantic Literal validation)."""

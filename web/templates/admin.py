@@ -73,6 +73,39 @@ def get_admin_html() -> str:
         .btn-warning { background: #ffaa00; color: #000; }
         .btn-warning:hover { background: #cc8800; }
         button:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .toggle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background: #0f3460;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #eee;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s;
+        }
+        .toggle-switch.active {
+            background: #00d4ff;
+        }
+        .toggle-switch.active::after {
+            transform: translateX(24px);
+        }
         .info-row {
             display: flex;
             justify-content: space-between;
@@ -206,6 +239,37 @@ def get_admin_html() -> str:
         .btn-secondary { background: #0f3460; color: #eee; }
         .btn-secondary:hover { background: #1a4b7c; }
         .empty-state { color: #666; font-size: 13px; text-align: center; padding: 20px; }
+        .partition-field {
+            margin-top: 12px;
+        }
+        .partition-field:first-of-type {
+            margin-top: 0;
+        }
+        .partition-field label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 6px;
+        }
+        .partition-field input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #eee;
+            font-size: 14px;
+        }
+        .partition-field input:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        .partition-helper {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -312,6 +376,60 @@ def get_admin_html() -> str:
             <span class="label">Upsample Ratio</span>
             <span class="value" id="upsampleRatio">-</span>
         </div>
+    </div>
+
+    <h2>低遅延パーティション</h2>
+    <div class="card">
+        <div class="toggle-row">
+            <div>
+                <div style="font-size:10px; color:#666; text-transform:uppercase; letter-spacing:1px;">Mode</div>
+                <div style="font-size:14px; font-weight:600; color:#eee;">Partitioned Convolution</div>
+            </div>
+            <div class="toggle-switch" id="partitionToggle"></div>
+        </div>
+        <div class="warning-banner" id="partitionNotice" style="display:none;">
+            ⚠️ クロスフィードは低遅延モードでは利用できません。
+        </div>
+        <div class="partition-field">
+            <label for="fastPartitionTaps">
+                Fast Partition Taps
+                <span style="color:#555;">(1024–262144)</span>
+            </label>
+            <input type="number" id="fastPartitionTaps" min="1024" max="262144" step="256" value="32768">
+            <div class="partition-helper">先頭パーティションのタップ数。大きいほど初期応答が長くなります。</div>
+        </div>
+        <div class="partition-field">
+            <label for="minPartitionTaps">
+                Tail Partition Taps
+                <span style="color:#555;">(1024–262144)</span>
+            </label>
+            <input type="number" id="minPartitionTaps" min="1024" max="262144" step="256" value="32768">
+            <div class="partition-helper">残りストリームを処理する tail FFT の最小タップ数。</div>
+        </div>
+        <div class="partition-field">
+            <label for="maxPartitions">
+                Max Partitions
+                <span style="color:#555;">(1–32)</span>
+            </label>
+            <input type="number" id="maxPartitions" min="1" max="32" step="1" value="4">
+            <div class="partition-helper">生成される tail パーティション数の上限。GPUメモリに注意。</div>
+        </div>
+        <div class="partition-field">
+            <label for="tailFftMultiple">
+                Tail FFT Multiple
+                <span style="color:#555;">(2–16)</span>
+            </label>
+            <input type="number" id="tailFftMultiple" min="2" max="16" step="1" value="2">
+            <div class="partition-helper">tail FFT サイズをタップ数の何倍にするか。</div>
+        </div>
+        <div class="warning-banner" id="partitionRestartHint" style="display:none; margin-top:12px;">
+            保存後にデーモン再起動を実行して設定を適用してください。
+        </div>
+        <div class="btn-row">
+            <button class="btn-success btn-small" id="partitionSaveBtn">設定を保存</button>
+            <button class="btn-secondary btn-small" id="partitionResetBtn">リセット</button>
+        </div>
+        <div id="partitionMessage" class="message"></div>
     </div>
 
     <h2>適用中EQプロファイル</h2>
@@ -682,6 +800,155 @@ def get_admin_html() -> str:
         });
 
         // ============================================================
+        // Partitioned Convolution Controls
+        // ============================================================
+        const partitionDefaults = {
+            enabled: false,
+            fast_partition_taps: 32768,
+            min_partition_taps: 32768,
+            max_partitions: 4,
+            tail_fft_multiple: 2,
+        };
+
+        const partitionState = {
+            current: { ...partitionDefaults },
+            dirty: false,
+        };
+
+        function getPartitionToggle() {
+            return document.getElementById('partitionToggle');
+        }
+
+        function updatePartitionNotice(enabled) {
+            const notice = document.getElementById('partitionNotice');
+            if (!notice) return;
+            notice.style.display = enabled ? 'block' : 'none';
+            if (enabled) {
+                notice.classList.add('visible');
+            } else {
+                notice.classList.remove('visible');
+            }
+        }
+
+        function updatePartitionRestartHint(show) {
+            const hint = document.getElementById('partitionRestartHint');
+            if (!hint) return;
+            hint.style.display = show ? 'block' : 'none';
+        }
+
+        function updatePartitionForm(values) {
+            const config = values || partitionDefaults;
+            const toggle = getPartitionToggle();
+            if (config.enabled) {
+                toggle.classList.add('active');
+            } else {
+                toggle.classList.remove('active');
+            }
+            document.getElementById('fastPartitionTaps').value = config.fast_partition_taps;
+            document.getElementById('minPartitionTaps').value = config.min_partition_taps;
+            document.getElementById('maxPartitions').value = config.max_partitions;
+            document.getElementById('tailFftMultiple').value = config.tail_fft_multiple;
+            updatePartitionNotice(config.enabled);
+        }
+
+        function collectPartitionPayload() {
+            return {
+                enabled: getPartitionToggle().classList.contains('active'),
+                fast_partition_taps: Number(document.getElementById('fastPartitionTaps').value),
+                min_partition_taps: Number(document.getElementById('minPartitionTaps').value),
+                max_partitions: Number(document.getElementById('maxPartitions').value),
+                tail_fft_multiple: Number(document.getElementById('tailFftMultiple').value),
+            };
+        }
+
+        function showPartitionMessage(text, success) {
+            const el = document.getElementById('partitionMessage');
+            if (!el) return;
+            el.textContent = text;
+            el.classList.remove('success', 'error');
+            if (text) {
+                el.classList.add(success ? 'success' : 'error');
+                setTimeout(() => el.classList.remove('success', 'error'), 4000);
+            }
+        }
+
+        function markPartitionDirty() {
+            partitionState.dirty = true;
+            updatePartitionRestartHint(false);
+        }
+
+        async function fetchPartitionSettings() {
+            try {
+                const res = await fetch(API + '/partitioned-convolution');
+                if (!res.ok) {
+                    throw new Error('HTTP ' + res.status);
+                }
+                const data = await res.json();
+                partitionState.current = data;
+                partitionState.dirty = false;
+                updatePartitionForm(data);
+            } catch (e) {
+                console.error('Failed to fetch partitioned settings:', e);
+                showPartitionMessage('設定の取得に失敗: ' + e.message, false);
+            }
+        }
+
+        async function savePartitionSettings() {
+            const payload = collectPartitionPayload();
+            const btn = document.getElementById('partitionSaveBtn');
+            btn.disabled = true;
+            try {
+                const res = await fetch(API + '/partitioned-convolution', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    partitionState.current = data.data?.partitioned_convolution || payload;
+                    partitionState.dirty = false;
+                    updatePartitionForm(partitionState.current);
+                    showPartitionMessage(
+                        data.message + (data.restart_required ? ' / デーモン再起動が必要です' : ''),
+                        true
+                    );
+                    updatePartitionRestartHint(Boolean(data.restart_required));
+                } else {
+                    showPartitionMessage(
+                        data.detail || data.message || '設定の保存に失敗しました',
+                        false
+                    );
+                }
+            } catch (e) {
+                showPartitionMessage('保存エラー: ' + e.message, false);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function resetPartitionForm() {
+            updatePartitionForm(partitionState.current || partitionDefaults);
+            partitionState.dirty = false;
+            updatePartitionRestartHint(false);
+            showPartitionMessage('変更をリセットしました', true);
+        }
+
+        getPartitionToggle().addEventListener('click', () => {
+            const toggle = getPartitionToggle();
+            toggle.classList.toggle('active');
+            updatePartitionNotice(toggle.classList.contains('active'));
+            markPartitionDirty();
+        });
+
+        ['fastPartitionTaps', 'minPartitionTaps', 'maxPartitions', 'tailFftMultiple'].forEach((id) => {
+            const input = document.getElementById(id);
+            input.addEventListener('input', markPartitionDirty);
+        });
+
+        document.getElementById('partitionSaveBtn').addEventListener('click', savePartitionSettings);
+        document.getElementById('partitionResetBtn').addEventListener('click', resetPartitionForm);
+
+        // ============================================================
         // Custom EQ Upload
         // ============================================================
         let pendingFile = null;
@@ -933,6 +1200,7 @@ def get_admin_html() -> str:
 
         // Initial load and auto-refresh
         fetchStatus();
+        fetchPartitionSettings();
         fetchEqProfile();
         fetchProfiles();
         // Full status refresh every 5 seconds (for daemon info, settings, etc.)

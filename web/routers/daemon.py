@@ -2,6 +2,7 @@
 
 import subprocess
 import time
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -20,6 +21,9 @@ from ..services import (
     get_daemon_client,
     get_daemon_pid,
     load_config,
+    load_partitioned_convolution_settings,
+    save_partitioned_convolution_settings,
+    save_phase_type,
     start_daemon,
     stop_daemon,
 )
@@ -200,10 +204,23 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
             # Raise DaemonError to trigger RFC 9457 error handler
             raise response.error
 
+        save_phase_type(request.phase_type)
+        partition_disabled = False
+        if request.phase_type == "linear":
+            current_partition = load_partitioned_convolution_settings()
+            if current_partition.enabled:
+                current_partition.enabled = False
+                save_partitioned_convolution_settings(current_partition)
+                partition_disabled = True
+
+        response_data: dict[str, Any] = {"phase_type": request.phase_type}
+        if partition_disabled:
+            response_data["partition_disabled"] = True
+
         return ApiResponse(
             success=True,
             message=f"Phase type set to {request.phase_type}",
-            data={"phase_type": request.phase_type},
+            data=response_data,
         )
 
 

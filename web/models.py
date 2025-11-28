@@ -6,7 +6,15 @@ import ipaddress
 import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict, conint, constr, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ConfigDict,
+    conint,
+    constr,
+    field_validator,
+    model_validator,
+)
 
 
 # ============================================================================
@@ -66,6 +74,23 @@ class SettingsUpdate(BaseModel):
     input_rate: Optional[int] = None
     output_rate: Optional[int] = None
     crossfeed: Optional[CrossfeedSettingsUpdate] = None
+
+
+class PartitionedConvolutionSettings(BaseModel):
+    """Partitioned convolution (low latency) configuration."""
+
+    enabled: bool = False
+    fast_partition_taps: int = Field(default=32768, ge=1024, le=262_144)
+    min_partition_taps: int = Field(default=32768, ge=1024, le=262_144)
+    max_partitions: int = Field(default=4, ge=1, le=32)
+    tail_fft_multiple: int = Field(default=2, ge=2, le=16)
+
+    @model_validator(mode="after")
+    def validate_relationships(self) -> "PartitionedConvolutionSettings":
+        """Ensure partition parameters are internally consistent."""
+        if self.min_partition_taps > self.fast_partition_taps:
+            raise ValueError("min_partition_taps cannot exceed fast_partition_taps")
+        return self
 
 
 # ============================================================================
