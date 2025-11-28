@@ -472,6 +472,10 @@ class DaemonClient:
         """Retrieve metrics for a single RTP session."""
         return self.send_json_command_v2("RTP_GET_SESSION", {"session_id": session_id})
 
+    def rtp_discover_streams(self) -> DaemonResponse:
+        """Trigger a short-lived scan for available RTP senders."""
+        return self.send_json_command_v2("RTP_DISCOVER_STREAMS")
+
 
 def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:
     """

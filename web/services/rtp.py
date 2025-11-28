@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any
 
 from ..models import (
     RtpAdvancedSettings,
+    RtpDiscoveryStream,
     RtpEndpointSettings,
     RtpFormatSettings,
     RtpRtcpSettings,
@@ -24,6 +26,7 @@ from ..models import (
 from .daemon_client import DaemonResponse, get_daemon_client
 
 logger = logging.getLogger(__name__)
+_SESSION_ID_SLUG = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _ms_now() -> int:
@@ -309,4 +312,109 @@ async def refresh_sessions_from_daemon() -> list[RtpSessionMetrics]:
         telemetry_store.update_from_list(sessions)
     snapshot, _ = telemetry_store.snapshot()
     return snapshot
+
+
+def _sanitize_session_id(value: str | None) -> str | None:
+    """Return a SessionId-compliant slug or None if value empty."""
+    if value is None:
+        return None
+    slug = _SESSION_ID_SLUG.sub("-", value.strip())
+    slug = slug.strip("-_.")
+    return slug[:64] if slug else None
+
+
+def _fallback_session_id(payload: dict[str, Any]) -> str:
+    host = payload.get("source_host") or payload.get("source_ip") or "rtp"
+    port = payload.get("port") or 0
+    candidate = f"{host}-{port}"
+    slug = _sanitize_session_id(candidate)
+    return slug or "rtp-stream"
+
+
+def _coerce_port(value: Any, default: int = 6000) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        port = default
+    return port if 1024 <= port <= 65535 else default
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def build_discovery_stream(payload: dict[str, Any]) -> RtpDiscoveryStream:
+    """Normalize daemon discovery payload into RtpDiscoveryStream."""
+    session_id = (
+        _sanitize_session_id(payload.get("session_id"))
+        or _sanitize_session_id(payload.get("id"))
+        or _sanitize_session_id(payload.get("name"))
+        or _sanitize_session_id(payload.get("display_name"))
+    )
+    if not session_id:
+        session_id = _fallback_session_id(payload)
+
+    display_name = payload.get("display_name") or payload.get("name") or session_id
+    source_host = payload.get("source_host") or payload.get("source_ip")
+    bind_address = payload.get("bind_address") or payload.get("listen_address")
+    multicast_group = payload.get("multicast_group") or payload.get("group")
+    status = (
+        str(payload.get("status")).strip()
+        if payload.get("status") is not None
+        else "unknown"
+    )
+
+    stream = RtpDiscoveryStream(
+        session_id=session_id,
+        display_name=display_name,
+        source_host=source_host,
+        port=_coerce_port(payload.get("port")),
+        status=status or "unknown",
+        existing_session=False,
+        sample_rate=payload.get("sample_rate"),
+        channels=payload.get("channels"),
+        payload_type=payload.get("payload_type"),
+        multicast=_coerce_bool(payload.get("multicast")),
+        multicast_group=multicast_group,
+        bind_address=bind_address,
+        last_seen_unix_ms=payload.get("last_seen_unix_ms")
+        or payload.get("last_seen"),
+        latency_ms=payload.get("latency_ms"),
+    )
+    return stream
+
+
+def parse_discovery_streams(raw: Any) -> list[RtpDiscoveryStream]:
+    """Convert daemon discovery payload into strongly typed streams."""
+    if not isinstance(raw, list):
+        return []
+
+    streams: list[RtpDiscoveryStream] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            streams.append(build_discovery_stream(item))
+        except ValueError as exc:  # pragma: no cover - defensive
+            logger.debug("Skipping invalid discovery payload: %s", exc)
+    return streams
+
+
+def flag_existing_sessions(
+    streams: list[RtpDiscoveryStream], active_ids: set[str]
+) -> None:
+    """Mark discovery streams that already have an active RTP session."""
+    if not active_ids:
+        return
+    for stream in streams:
+        if stream.session_id in active_ids:
+            stream.existing_session = True
 

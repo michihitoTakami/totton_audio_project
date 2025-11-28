@@ -9,15 +9,18 @@ from fastapi import APIRouter, HTTPException, Path, status
 
 from ..models import (
     ApiResponse,
+    RtpDiscoveryResponse,
     RtpSessionCreateRequest,
     RtpSessionCreateResponse,
     RtpSessionDetailResponse,
     RtpSessionListResponse,
 )
 from ..services import (
+    flag_existing_sessions,
     build_session_config_payload,
     get_daemon_client,
     parse_config_snapshot,
+    parse_discovery_streams,
     parse_metrics_payload,
     refresh_sessions_from_daemon,
     telemetry_poller,
@@ -87,6 +90,35 @@ async def list_sessions() -> RtpSessionListResponse:
         await refresh_sessions_from_daemon()
         sessions, polled_at = telemetry_store.snapshot()
     return RtpSessionListResponse(sessions=sessions, polled_at_unix_ms=polled_at)
+
+
+@router.get(
+    "/discover",
+    response_model=RtpDiscoveryResponse,
+    summary="Discover available RTP senders",
+)
+async def discover_streams() -> RtpDiscoveryResponse:
+    """Trigger a short-lived scan for available network RTP inputs."""
+
+    def _command():
+        with get_daemon_client() as client:
+            return client.rtp_discover_streams()
+
+    response = await _execute_daemon(_command)
+    if not response.success:
+        if response.error:
+            raise response.error
+        raise HTTPException(status_code=502, detail="Failed to discover RTP streams")
+
+    data = response.data if isinstance(response.data, dict) else {}
+    streams = parse_discovery_streams(data.get("streams", []))
+    active_sessions, _ = telemetry_store.snapshot()
+    flag_existing_sessions(streams, {session.session_id for session in active_sessions})
+    return RtpDiscoveryResponse(
+        streams=streams,
+        scanned_at_unix_ms=data.get("scanned_at_unix_ms") or data.get("scanned_at"),
+        duration_ms=data.get("duration_ms"),
+    )
 
 
 @router.get(
