@@ -11,7 +11,6 @@ import time
 from typing import Any
 
 from ..models import (
-    RtpAdvancedSettings,
     RtpDiscoveryStream,
     RtpEndpointSettings,
     RtpFormatSettings,
@@ -57,7 +56,9 @@ def _render_sdp_body(
         or endpoint.bind_address
     )
 
-    media_format = sdp.media_format if sdp and sdp.media_format else _format_media_descriptor(fmt)
+    media_format = (
+        sdp.media_format if sdp and sdp.media_format else _format_media_descriptor(fmt)
+    )
 
     lines = [
         "v=0",
@@ -77,9 +78,7 @@ def _render_sdp_body(
         lines.append(f"a=mediaclk:{sdp.media_clock}")
 
     if security:
-        lines.append(
-            f"a=crypto:1 {security.crypto_suite} inline:{security.key_base64}"
-        )
+        lines.append(f"a=crypto:1 {security.crypto_suite} inline:{security.key_base64}")
 
     return "\r\n".join(lines) + "\r\n"
 
@@ -254,7 +253,9 @@ class RtpTelemetryPoller:
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("RTP telemetry poller error: %s", exc)
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self._interval_s)
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=self._interval_s
+                )
             except asyncio.TimeoutError:
                 continue
 
@@ -307,7 +308,9 @@ async def refresh_sessions_from_daemon() -> list[RtpSessionMetrics]:
             raise response.error
         return []
 
-    sessions = response.data.get("sessions", []) if isinstance(response.data, dict) else []
+    sessions = (
+        response.data.get("sessions", []) if isinstance(response.data, dict) else []
+    )
     if isinstance(sessions, list):
         telemetry_store.update_from_list(sessions)
     snapshot, _ = telemetry_store.snapshot()
@@ -385,8 +388,7 @@ def build_discovery_stream(payload: dict[str, Any]) -> RtpDiscoveryStream:
         multicast=_coerce_bool(payload.get("multicast")),
         multicast_group=multicast_group,
         bind_address=bind_address,
-        last_seen_unix_ms=payload.get("last_seen_unix_ms")
-        or payload.get("last_seen"),
+        last_seen_unix_ms=payload.get("last_seen_unix_ms") or payload.get("last_seen"),
         latency_ms=payload.get("latency_ms"),
     )
     return stream
@@ -417,4 +419,3 @@ def flag_existing_sessions(
     for stream in streams:
         if stream.session_id in active_ids:
             stream.existing_session = True
-
