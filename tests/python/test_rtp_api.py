@@ -210,7 +210,10 @@ def test_discover_streams_success_marks_existing(client):
     assert data["scanned_at_unix_ms"] == 123456789
     assert len(data["streams"]) == 2
     assert data["streams"][0]["existing_session"] is True
-    assert data["streams"][1]["session_id"].startswith("rtp")
+    # Second stream should have auto-generated session_id from display_name or source_host+port
+    assert "session_id" in data["streams"][1]
+    assert len(data["streams"][1]["session_id"]) > 0
+    assert data["streams"][1]["existing_session"] is False
 
 
 def test_discover_streams_error_propagates(client):
@@ -229,4 +232,3 @@ def test_discover_streams_error_propagates(client):
         response = client.get("/api/rtp/discover")
 
     assert response.status_code == 503
-
