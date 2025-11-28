@@ -17,6 +17,7 @@ from .routers import (
     daemon_router,
     eq_router,
     opra_router,
+    partitioned_router,
     rtp_router,
     status_router,
 )
@@ -94,6 +95,7 @@ app.include_router(opra_router)
 app.include_router(dac_router)
 app.include_router(crossfeed_router)
 app.include_router(rtp_router)
+app.include_router(partitioned_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)

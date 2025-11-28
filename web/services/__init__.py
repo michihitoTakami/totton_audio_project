@@ -1,7 +1,12 @@
 """Services for the GPU Upsampler Web API."""
 
 from .alsa import get_alsa_devices
-from .config import load_config, save_config
+from .config import (
+    load_config,
+    load_partitioned_convolution_settings,
+    save_config,
+    save_partitioned_convolution_settings,
+)
 from .dac import (
     DacCapability,
     get_max_upsample_ratio,
@@ -46,7 +51,9 @@ __all__ = [
     "get_alsa_devices",
     # config
     "load_config",
+    "load_partitioned_convolution_settings",
     "save_config",
+    "save_partitioned_convolution_settings",
     # dac
     "DacCapability",
     "get_max_upsample_ratio",

@@ -77,6 +77,14 @@ DAC Capability検出とサンプリングレートフィルタリング
 | GET | `/dac/max-ratio` | 最大アップサンプリング倍率 |
 | GET | `/dac/validate-config` | 設定バリデーション |
 
+### Partitioned Convolution (`/partitioned-convolution`)
+低遅延パーティション化コンボリューションの設定管理
+
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/partitioned-convolution` | 現在の低遅延パーティション設定を取得 |
+| PUT | `/partitioned-convolution` | 設定を更新し、再起動要否を返す |
+
 ## レスポンス形式
 
 ### 成功レスポンス（変更系）
