@@ -2,6 +2,7 @@
 
 import subprocess
 import time
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -212,7 +213,7 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
                 save_partitioned_convolution_settings(current_partition)
                 partition_disabled = True
 
-        response_data = {"phase_type": request.phase_type}
+        response_data: dict[str, Any] = {"phase_type": request.phase_type}
         if partition_disabled:
             response_data["partition_disabled"] = True
 

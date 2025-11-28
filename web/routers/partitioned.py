@@ -1,5 +1,7 @@
 """Low-latency partitioned convolution configuration endpoints."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 
 from ..models import ApiResponse, PartitionedConvolutionSettings
@@ -61,11 +63,15 @@ async def update_partitioned_convolution_settings(
                     if not phase_response.success and phase_response.error:
                         # Only log client-side; API still succeeds because config was saved
                         message = str(phase_response.error)
-                        print(f"[Partition] Warning: Failed to force minimum phase: {message}")
+                        print(
+                            f"[Partition] Warning: Failed to force minimum phase: {message}"
+                        )
             except Exception as exc:  # pragma: no cover - defensive logging
-                print(f"[Partition] Warning: Unable to contact daemon for phase sync: {exc}")
+                print(
+                    f"[Partition] Warning: Unable to contact daemon for phase sync: {exc}"
+                )
 
-    response_data = {"partitioned_convolution": settings.model_dump()}
+    response_data: dict[str, Any] = {"partitioned_convolution": settings.model_dump()}
     if phase_adjusted:
         response_data["phase_type"] = "minimum"
         response_data["phase_adjusted"] = True
@@ -77,4 +83,3 @@ async def update_partitioned_convolution_settings(
         data=response_data,
         restart_required=daemon_running,
     )
-

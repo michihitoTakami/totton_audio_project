@@ -2774,7 +2774,6 @@
           },
           "fast_partition_taps": {
             "type": "integer",
-            "multipleOf": 256.0,
             "maximum": 262144.0,
             "minimum": 1024.0,
             "title": "Fast Partition Taps",
@@ -2782,7 +2781,6 @@
           },
           "min_partition_taps": {
             "type": "integer",
-            "multipleOf": 256.0,
             "maximum": 262144.0,
             "minimum": 1024.0,
             "title": "Min Partition Taps",
