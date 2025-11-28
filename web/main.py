@@ -20,7 +20,7 @@ from .routers import (
     rtp_router,
     status_router,
 )
-from .templates import get_admin_html
+from .templates import get_admin_html, get_rtp_sessions_html
 
 # OpenAPI tag descriptions
 tags_metadata = [
@@ -118,8 +118,14 @@ async def restart():
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page():
-    """Serve the admin dashboard"""
+    """Serve the admin dashboard."""
     return get_admin_html()
+
+
+@app.get("/rtp", response_class=HTMLResponse)
+async def rtp_page():
+    """Serve the RTP session management page."""
+    return get_rtp_sessions_html()
 
 
 # ============================================================================

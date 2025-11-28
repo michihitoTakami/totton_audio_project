@@ -168,6 +168,16 @@ POST /api/rtp/sessions
 結果は `RtpTelemetryStore` にキャッシュされ `GET /api/rtp/sessions` から即時取得できる。
 `MAGICBOX_DISABLE_RTP_POLLING=1` を指定するとポーリングを無効化（テスト用途）。
 
+## Web UI (Issue #360)
+
+Issue #360 では Control Plane API を直接叩けないメンバー向けに `/rtp` ページを追加した。FastAPI 側から配信されるプレーンHTML/JSで以下を提供する:
+
+- **Session Builder**: SDP貼り付け、バインドIP/ポート、同期モード（低遅延/安定/PTP）、SRTPキー入力。即時バリデーションと進捗インジケータを備え、`POST /api/rtp/sessions` をラップ。
+- **Telemetry Board**: `GET /api/rtp/sessions` のキャッシュをカード化。接続状態、RTCP遅延、ネットワークジッタ、PTPロックの有無、遅延パケット数を視覚表示。停止ボタンから `DELETE /api/rtp/sessions/{id}` を発行。
+- **UX 保護**: SRTP有効時のみBase64必須、PTPモード選択時のみインターフェース必須、トースト通知 & 自動ポーリング（5s）。
+
+このページは `/`（ユーザーページ）や `/admin` と同じく FastAPI 組み込みテンプレート (`web/templates/rtp.py`) で提供する。Storybook 等は未導入だが `tests/python/test_rtp_ui.py` で必須DOM要素とJSフックをカバーしている。
+
 ### cURL での検証手順
 
 ```bash

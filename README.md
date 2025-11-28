@@ -138,6 +138,19 @@ curl -X DELETE http://127.0.0.1:8000/api/rtp/sessions/aes67-main
 
 `GET /api/rtp/sessions` はバックグラウンドポーラがキャッシュした RTCP テレメトリを返し、Data Plane に負荷を掛けません。
 
+#### Web UI からの操作 (Issue #360)
+
+FastAPI アプリを立ち上げると `/rtp` パスに **RTPセッション管理ページ** が追加されます。フォームから
+
+1. セッションID / IP / ポート / ソースIPフィルタ
+2. 同期モード（低遅延 / 安定 / PTP）
+3. 任意のSDP貼り付け、SRTPキー（Base64 40文字以上）
+
+を入力して送信すると `POST /api/rtp/sessions` が呼ばれ、結果はトースト通知で表示されます。  
+下段には `GET /api/rtp/sessions` のキャッシュがカード表示され、接続状態・RTCP遅延・ジッタ統計・PTPロック可否を即時確認できます。各カードの「停止」ボタンは `DELETE /api/rtp/sessions/{id}` を呼び出します。
+
+> ブラウザだけで「登録→開始→停止」まで完結するため、非エンジニアでもストリーム切り替えを担当できます。
+
 ---
 
 ## 主要機能
