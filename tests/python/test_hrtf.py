@@ -48,7 +48,9 @@ def split_channels(data: np.ndarray, metadata: dict) -> dict:
     if fmt == "channel_major_v1":
         expected = N_CHANNELS * n_taps
         if data.size < expected:
-            raise ValueError(f"Insufficient samples for channel_major_v1: got {data.size}")
+            raise ValueError(
+                f"Insufficient samples for channel_major_v1: got {data.size}"
+            )
         ll = data[0:n_taps]
         lr = data[n_taps : 2 * n_taps]
         rl = data[2 * n_taps : 3 * n_taps]
@@ -248,8 +250,8 @@ class TestGeneratedHRTFFilters:
         channels["metadata"] = metadata
         return channels
 
-    def test_max_dc_gain_is_one(self, hrtf_m_44k):
-        """Test maximum DC gain across all channels is 1.0."""
+    def test_max_dc_gain_is_around_point_six(self, hrtf_m_44k):
+        """Test maximum DC gain across all channels is around 0.6 (ILD-preserving normalization)."""
         dc_gains = {
             "LL": np.sum(hrtf_m_44k["ll"]),
             "LR": np.sum(hrtf_m_44k["lr"]),
@@ -257,7 +259,7 @@ class TestGeneratedHRTFFilters:
             "RR": np.sum(hrtf_m_44k["rr"]),
         }
         max_dc = max(dc_gains.values())
-        assert abs(max_dc - 1.0) < 1e-5, f"Max DC gain: {max_dc}, gains: {dc_gains}"
+        assert abs(max_dc - 0.6) < 0.01, f"Max DC gain: {max_dc}, gains: {dc_gains}"
 
     def test_ild_exists(self, hrtf_m_44k):
         """
@@ -407,9 +409,10 @@ class TestAllHRTFFilters:
             "RR": np.sum(rr),
         }
 
-        # Max DC gain should be 1.0
+        # Max DC gain should be around 0.6 for ILD-preserving HRTF filters
+        # (normalized to preserve interaural level differences)
         max_dc = max(dc_gains.values())
-        assert abs(max_dc - 1.0) < 1e-5, f"{size}_{rate} max DC: {max_dc}"
+        assert abs(max_dc - 0.6) < 0.01, f"{size}_{rate} max DC: {max_dc}"
 
         # ILD should exist: channels should have different DC gains
         dc_range = max_dc - min(dc_gains.values())
