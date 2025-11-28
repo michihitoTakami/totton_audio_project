@@ -16,8 +16,8 @@
 
 ## What This Project Does
 
-- **GPU-accelerated audio upsampling** with 2M-tap minimum phase FIR filter (197dB stopband)
-- **Headphone EQ correction** using oratory1990 data + KB5000_7 target curve
+- **GPU-accelerated audio upsampling** with 640k-tap minimum phase FIR filter (Kaiser β≈28, ~160dB stopband)
+- **Headphone EQ correction** using OPRA data (CC BY-SA 4.0) + KB5000_7 target curve
 - **Standalone DDC/DSP device** running on Jetson Orin Nano (production) or PC (development)
 
 ## Architecture Overview
@@ -57,7 +57,7 @@ gpu_os/
 ```bash
 # Filter generation
 uv sync
-uv run python scripts/generate_filter.py --taps 2000000
+uv run python scripts/generate_filter.py --taps 640000
 
 # Build
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -104,8 +104,8 @@ gh pr create --title "#123 機能の説明" --body "..."
 ## Key Technical Constraints
 
 1. **Minimum Phase FIR** - No pre-ringing allowed
-2. **2M taps** - Required for 197dB stopband attenuation
-3. **Kaiser window** - β=25 (Float32 GPU実装で実効阻止帯域が頭打ちになるポイント)
+2. **640k taps** - ~160dB stopband attenuation (sufficient for 24-bit audio)
+3. **Kaiser window** - β≈28 (optimal for 32-bit Float GPU implementation)
 4. **DC gain = 1.0** - Normalized to prevent clipping
 
 ## Reference
