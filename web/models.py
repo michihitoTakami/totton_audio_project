@@ -771,6 +771,70 @@ class RtpSessionListResponse(BaseModel):
     polled_at_unix_ms: Optional[int] = None
 
 
+class RtpDiscoveryStream(BaseModel):
+    """Single RTP stream candidate discovered by the daemon."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    session_id: SessionId = Field(description="Suggested session identifier")
+    display_name: str = Field(description="Human-friendly label for the stream")
+    source_host: Optional[str] = Field(
+        default=None, description="Source IPv4 host of the RTP sender"
+    )
+    port: Port = Field(description="RTP payload port reported by the scanner")
+    status: str = Field(
+        default="unknown",
+        description="Scanner-reported status such as 'active', 'idle', or diagnostic text",
+    )
+    existing_session: bool = Field(
+        default=False, description="True when this candidate already has an active RTP session"
+    )
+    sample_rate: Optional[int] = Field(
+        default=None, description="Sample rate hint to pre-fill new RTP sessions"
+    )
+    channels: Optional[int] = Field(
+        default=None, description="Channel count hint to pre-fill new RTP sessions"
+    )
+    payload_type: Optional[int] = Field(
+        default=None, description="Dynamic payload type hint from scanner"
+    )
+    multicast: bool = Field(
+        default=False,
+        description="True if the stream is multicast and requires group subscription",
+    )
+    multicast_group: Optional[str] = Field(
+        default=None, description="Multicast group address when multicast is enabled"
+    )
+    bind_address: Optional[str] = Field(
+        default=None, description="Suggested local bind address for receiving the stream"
+    )
+    last_seen_unix_ms: Optional[int] = Field(
+        default=None, description="Unix timestamp (ms) when the stream was last observed"
+    )
+    latency_ms: Optional[int] = Field(
+        default=None, description="Estimated transport latency reported by scanner"
+    )
+
+    @field_validator("source_host", "multicast_group", "bind_address")
+    @classmethod
+    def _validate_ipv4(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_ipv4_literal(value)
+
+
+class RtpDiscoveryResponse(BaseModel):
+    """Response payload for RTP discovery scans."""
+
+    streams: list[RtpDiscoveryStream] = Field(
+        default_factory=list, description="List of discovered RTP senders"
+    )
+    scanned_at_unix_ms: Optional[int] = Field(
+        default=None, description="Unix timestamp (ms) when the scan completed"
+    )
+    duration_ms: Optional[int] = Field(
+        default=None, description="Approximate scan duration in milliseconds"
+    )
+
+
 # ============================================================================
 # Crossfeed Models
 # ============================================================================

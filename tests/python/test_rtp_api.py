@@ -37,10 +37,15 @@ class DummyDaemonClient:
         start_response: DaemonResponse | None = None,
         stop_response: DaemonResponse | None = None,
         get_response: DaemonResponse | None = None,
+        discover_response: DaemonResponse | None = None,
     ):
         self.start_response = start_response or DaemonResponse(success=True, data={})
         self.stop_response = stop_response or DaemonResponse(success=True, data={})
         self.get_response = get_response or DaemonResponse(success=True, data={})
+        self.discover_response = discover_response or DaemonResponse(
+            success=True,
+            data={"streams": []},
+        )
         self.last_params: dict[str, Any] | None = None
 
     def __enter__(self):
@@ -60,6 +65,9 @@ class DummyDaemonClient:
     def rtp_get_session(self, session_id: str) -> DaemonResponse:
         self.last_params = {"session_id": session_id}
         return self.get_response
+
+    def rtp_discover_streams(self) -> DaemonResponse:
+        return self.discover_response
 
 
 def test_create_session_success(client):
@@ -154,4 +162,71 @@ def test_delete_session_error_propagates(client):
         response = client.delete("/api/rtp/sessions/unknown")
 
     assert response.status_code == 404
+
+
+def test_discover_streams_success_marks_existing(client):
+    """GET /api/rtp/discover surfaces scanner output and marks active sessions."""
+    telemetry_store.update_from_list(
+        [
+            {
+                "session_id": "aes67-main",
+                "packets_received": 10,
+                "packets_dropped": 0,
+            }
+        ]
+    )
+    dummy = DummyDaemonClient(
+        discover_response=DaemonResponse(
+            success=True,
+            data={
+                "streams": [
+                    {
+                        "session_id": "aes67-main",
+                        "display_name": "Main AES67",
+                        "source_host": "239.0.0.1",
+                        "port": 5004,
+                        "status": "active",
+                        "sample_rate": 48000,
+                        "channels": 2,
+                    },
+                    {
+                        "display_name": "Backup Feed",
+                        "source_host": "10.0.0.5",
+                        "port": 6000,
+                        "status": "idle",
+                    },
+                ],
+                "scanned_at_unix_ms": 123456789,
+                "duration_ms": 120,
+            },
+        )
+    )
+
+    with patch("web.routers.rtp.get_daemon_client", return_value=dummy):
+        response = client.get("/api/rtp/discover")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["scanned_at_unix_ms"] == 123456789
+    assert len(data["streams"]) == 2
+    assert data["streams"][0]["existing_session"] is True
+    assert data["streams"][1]["session_id"].startswith("rtp")
+
+
+def test_discover_streams_error_propagates(client):
+    """Daemon discovery errors bubble up with mapped HTTP code."""
+    dummy = DummyDaemonClient(
+        discover_response=DaemonResponse(
+            success=False,
+            error=DaemonError(
+                error_code="IPC_DAEMON_NOT_RUNNING",
+                message="Daemon offline",
+            ),
+        )
+    )
+
+    with patch("web.routers.rtp.get_daemon_client", return_value=dummy):
+        response = client.get("/api/rtp/discover")
+
+    assert response.status_code == 503
 
