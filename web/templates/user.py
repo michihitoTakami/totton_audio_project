@@ -89,6 +89,64 @@ def get_embedded_html() -> str:
         }
         .message.success { background: #00ff8840; display: block; }
         .message.error { background: #ff444440; display: block; }
+        .rtp-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+        .rtp-details {
+            margin-top: 12px;
+            padding: 10px;
+            background: #0f3460;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .rtp-details strong {
+            color: #fff;
+        }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: #1f4068;
+            color: #9ec9ff;
+            margin-right: 6px;
+        }
+        .pill-active {
+            background: #00ff8840;
+            color: #00ff88;
+        }
+        .rtp-active {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #9ec9ff;
+        }
+        .rtp-active span {
+            font-weight: 600;
+            color: #fff;
+        }
+        .rtp-scan-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .rtp-scan-row button {
+            flex: 0 0 auto;
+        }
+        .scan-status {
+            font-size: 11px;
+            color: #666;
+        }
         .warning-banner {
             background: #ffaa0030;
             border: 1px solid #ffaa00;
@@ -253,6 +311,29 @@ def get_embedded_html() -> str:
         </div>
     </div>
 
+    <h2>RTP Input</h2>
+    <div class="card">
+        <div class="rtp-scan-row">
+            <button type="button" class="btn-secondary" id="rtpScanBtn">RTP入力をスキャン</button>
+            <div class="scan-status" id="rtpScanStatus">未スキャン</div>
+        </div>
+        <div class="form-group">
+            <label>受信候補</label>
+            <select id="rtpStreamSelect" disabled>
+                <option value="">スキャンしてください</option>
+            </select>
+        </div>
+        <div class="btn-row">
+            <button type="button" class="btn-primary" id="rtpStartBtn" disabled>開始</button>
+            <button type="button" class="btn-secondary" id="rtpStopBtn" disabled>停止</button>
+        </div>
+        <div class="rtp-details" id="rtpDetails">
+            スキャンして候補を読み込みます。ソースIPとポートを表示します。
+        </div>
+        <div class="rtp-active" id="rtpActiveSession">稼働中のRTPセッション: なし</div>
+        <div id="rtpMessage" class="message"></div>
+    </div>
+
     <h2>Output Device</h2>
     <div class="card">
         <form id="settingsForm">
@@ -349,8 +430,24 @@ def get_embedded_html() -> str:
 
     <script>
         const API = '';
+        const RTP_API = API + '/rtp';
         let currentAlsaDevice = '';
         let deviceList = [];
+        const rtpState = {
+            streams: [],
+            selectedId: '',
+            scanning: false,
+            lastScanAt: null,
+            activeSessions: [],
+        };
+        const rtpSelect = document.getElementById('rtpStreamSelect');
+        const rtpScanBtn = document.getElementById('rtpScanBtn');
+        const rtpStartBtn = document.getElementById('rtpStartBtn');
+        const rtpStopBtn = document.getElementById('rtpStopBtn');
+        const rtpMessage = document.getElementById('rtpMessage');
+        const rtpDetails = document.getElementById('rtpDetails');
+        const rtpActiveSession = document.getElementById('rtpActiveSession');
+        const rtpScanStatus = document.getElementById('rtpScanStatus');
 
         async function fetchDevices() {
             try {
@@ -422,6 +519,225 @@ def get_embedded_html() -> str:
             setTimeout(() => el.classList.remove('success', 'error'), 4000);
         }
 
+        function showRtpMessage(text, success) {
+            rtpMessage.textContent = text;
+            rtpMessage.classList.remove('success', 'error');
+            rtpMessage.classList.add(success ? 'success' : 'error');
+            setTimeout(() => rtpMessage.classList.remove('success', 'error'), 4000);
+        }
+
+        function updateRtpScanStatus() {
+            if (rtpState.scanning) {
+                rtpScanStatus.textContent = 'スキャン中...';
+                return;
+            }
+            if (rtpState.lastScanAt) {
+                const updated = new Date(rtpState.lastScanAt);
+                const hh = String(updated.getHours()).padStart(2, '0');
+                const mm = String(updated.getMinutes()).padStart(2, '0');
+                rtpScanStatus.textContent = `${hh}:${mm} に更新 (${rtpState.streams.length}件)`;
+            } else {
+                rtpScanStatus.textContent = '未スキャン';
+            }
+        }
+
+        function renderRtpOptions() {
+            rtpSelect.innerHTML = '';
+            if (!rtpState.streams.length) {
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = rtpState.scanning ? 'スキャン中...' : '候補がありません';
+                rtpSelect.appendChild(placeholder);
+                rtpSelect.disabled = true;
+                rtpStartBtn.disabled = true;
+                updateRtpDetails();
+                return;
+            }
+            rtpSelect.disabled = false;
+            rtpState.streams.forEach((stream) => {
+                const opt = document.createElement('option');
+                opt.value = stream.session_id;
+                const status = stream.existing_session ? ' (稼働中)' : '';
+                opt.textContent = `${stream.display_name} • ${stream.source_host || '-'}:${stream.port}${status}`;
+                rtpSelect.appendChild(opt);
+            });
+            if (!rtpState.selectedId || !rtpState.streams.some((s) => s.session_id === rtpState.selectedId)) {
+                rtpState.selectedId = rtpState.streams[0].session_id;
+            }
+            rtpSelect.value = rtpState.selectedId;
+            rtpStartBtn.disabled = false;
+            updateRtpDetails();
+        }
+
+        function updateRtpDetails() {
+            const stream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
+            if (!stream) {
+                rtpDetails.textContent = 'スキャンして候補を読み込みます。';
+                return;
+            }
+            const tags = [`<span class="pill">${stream.status || 'unknown'}</span>`];
+            if (stream.existing_session) {
+                tags.push('<span class="pill pill-active">稼働中</span>');
+            }
+            const infoBits = [];
+            if (stream.sample_rate) infoBits.push(`${stream.sample_rate} Hz`);
+            if (stream.channels) infoBits.push(`${stream.channels}ch`);
+            if (stream.payload_type !== null && stream.payload_type !== undefined) {
+                infoBits.push(`PT${stream.payload_type}`);
+            }
+            rtpDetails.innerHTML = `
+                <div><strong>${stream.display_name}</strong></div>
+                <div>ソース: <strong>${stream.source_host || '-'}</strong>:${stream.port}</div>
+                <div>${tags.join(' ')}</div>
+                <div>${infoBits.length ? infoBits.join(' / ') : '詳細情報なし'}</div>
+            `;
+        }
+
+        function updateActiveSessionText() {
+            if (!rtpState.activeSessions.length) {
+                rtpActiveSession.textContent = '稼働中のRTPセッション: なし';
+                rtpStopBtn.disabled = true;
+                delete rtpStopBtn.dataset.targetId;
+                return;
+            }
+            const labels = rtpState.activeSessions.map((session) => session.session_id).join(', ');
+            rtpActiveSession.innerHTML = `稼働中のRTPセッション: <span>${labels}</span>`;
+            rtpStopBtn.disabled = false;
+            rtpStopBtn.dataset.targetId = rtpState.activeSessions[0].session_id;
+        }
+
+        async function refreshRtpSessions() {
+            try {
+                const res = await fetch(RTP_API + '/sessions');
+                if (!res.ok) {
+                    return;
+                }
+                const data = await res.json();
+                rtpState.activeSessions = data.sessions || [];
+                const activeIds = new Set(rtpState.activeSessions.map((session) => session.session_id));
+                rtpState.streams = rtpState.streams.map((stream) => ({
+                    ...stream,
+                    existing_session: activeIds.has(stream.session_id),
+                }));
+                renderRtpOptions();
+                updateActiveSessionText();
+            } catch (e) {
+                console.error('Failed to refresh RTP sessions:', e);
+            }
+        }
+
+        function buildRtpSessionPayload(stream) {
+            const payload = {
+                session_id: stream.session_id,
+                endpoint: {
+                    bind_address: stream.bind_address || '0.0.0.0',
+                    port: stream.port,
+                },
+                format: {
+                    sample_rate: stream.sample_rate || 48000,
+                    channels: stream.channels || 2,
+                    payload_type: (stream.payload_type !== undefined && stream.payload_type !== null) ? stream.payload_type : 97,
+                },
+            };
+            if (stream.source_host) {
+                payload.endpoint.source_host = stream.source_host;
+            }
+            if (stream.multicast) {
+                payload.endpoint.multicast = true;
+            }
+            if (stream.multicast_group) {
+                payload.endpoint.multicast_group = stream.multicast_group;
+            }
+            return payload;
+        }
+
+        async function scanRtpStreams() {
+            if (rtpState.scanning) return;
+            rtpState.scanning = true;
+            rtpScanBtn.disabled = true;
+            rtpScanBtn.textContent = 'スキャン中...';
+            updateRtpScanStatus();
+            try {
+                const res = await fetch(RTP_API + '/discover');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data.detail || data.message || 'スキャンに失敗しました');
+                }
+                rtpState.streams = data.streams || [];
+                rtpState.selectedId = rtpState.streams[0]?.session_id || '';
+                rtpState.lastScanAt = data.scanned_at_unix_ms || Date.now();
+                renderRtpOptions();
+                updateRtpScanStatus();
+                showRtpMessage(`候補を更新しました (${rtpState.streams.length}件)`, true);
+                await refreshRtpSessions();
+            } catch (e) {
+                console.error('RTP scan failed:', e);
+                showRtpMessage('エラー: ' + e.message, false);
+            } finally {
+                rtpState.scanning = false;
+                rtpScanBtn.disabled = false;
+                rtpScanBtn.textContent = 'RTP入力をスキャン';
+                updateRtpScanStatus();
+            }
+        }
+
+        async function startSelectedRtpSession() {
+            const stream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
+            if (!stream) {
+                showRtpMessage('候補を選択してください', false);
+                return;
+            }
+            const payload = buildRtpSessionPayload(stream);
+            rtpStartBtn.disabled = true;
+            rtpStartBtn.textContent = '開始中...';
+            try {
+                const res = await fetch(RTP_API + '/sessions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data.detail || data.message || '開始に失敗しました');
+                }
+                showRtpMessage(`${stream.display_name} を開始しました`, true);
+                await refreshRtpSessions();
+            } catch (e) {
+                console.error('Failed to start RTP session:', e);
+                showRtpMessage('エラー: ' + e.message, false);
+            } finally {
+                rtpStartBtn.disabled = false;
+                rtpStartBtn.textContent = '開始';
+            }
+        }
+
+        async function stopActiveRtpSession() {
+            const targetId = rtpStopBtn.dataset.targetId;
+            if (!targetId) {
+                showRtpMessage('停止できるセッションがありません', false);
+                return;
+            }
+            rtpStopBtn.disabled = true;
+            rtpStopBtn.textContent = '停止中...';
+            try {
+                const res = await fetch(`${RTP_API}/sessions/${encodeURIComponent(targetId)}`, {
+                    method: 'DELETE',
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data.detail || data.message || '停止に失敗しました');
+                }
+                showRtpMessage(data.message || 'RTPを停止しました', true);
+                await refreshRtpSessions();
+            } catch (e) {
+                console.error('Failed to stop RTP session:', e);
+                showRtpMessage('エラー: ' + e.message, false);
+            } finally {
+                rtpStopBtn.disabled = false;
+                rtpStopBtn.textContent = '停止';
+            }
+        }
+
         document.getElementById('settingsForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const newDevice = document.getElementById('alsaDevice').value;
@@ -452,6 +768,15 @@ def get_embedded_html() -> str:
                 btn.disabled = false;
                 btn.textContent = 'Save & Restart';
             }
+        });
+
+        rtpScanBtn.addEventListener('click', scanRtpStreams);
+        rtpStartBtn.addEventListener('click', startSelectedRtpSession);
+        rtpStopBtn.addEventListener('click', stopActiveRtpSession);
+        rtpSelect.addEventListener('change', (event) => {
+            rtpState.selectedId = event.target.value;
+            rtpStartBtn.disabled = !rtpState.selectedId;
+            updateRtpDetails();
         });
 
         // OPRA Functions
@@ -864,10 +1189,13 @@ def get_embedded_html() -> str:
         fetchPhaseType();
         fetchPartitionStatus();
         fetchCrossfeedStatus();
+        updateRtpScanStatus();
+        refreshRtpSessions();
         setInterval(fetchStatus, 5000);
         setInterval(fetchPhaseType, 5000);
         setInterval(fetchPartitionStatus, 5000);
         setInterval(fetchCrossfeedStatus, 5000);
+        setInterval(refreshRtpSessions, 7000);
     </script>
 </body>
 </html>

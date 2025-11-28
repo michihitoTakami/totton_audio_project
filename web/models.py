@@ -515,7 +515,9 @@ class RtpEndpointSettings(BaseModel):
         default="0.0.0.0",
         description="IPv4 address to bind for RTP reception",
     )
-    port: Port = Field(default=6000, description="UDP port for RTP payloads")
+    port: int = Field(
+        default=6000, description="UDP port for RTP payloads", ge=1024, le=65535
+    )
     source_host: Optional[str] = Field(
         default=None,
         description="Optional IPv4 address filter for incoming packets",
@@ -528,11 +530,11 @@ class RtpEndpointSettings(BaseModel):
         default=None,
         description="Interface name or IPv4 address used for multicast subscription",
     )
-    ttl: conint(ge=1, le=255) = Field(
-        default=32, description="TTL for multicast/QoS traffic"
+    ttl: int = Field(
+        default=32, description="TTL for multicast/QoS traffic", ge=1, le=255
     )
-    dscp: conint(ge=-1, le=63) = Field(
-        default=-1, description="DiffServ code point (-1 to disable)"
+    dscp: int = Field(
+        default=-1, description="DiffServ code point (-1 to disable)", ge=-1, le=63
     )
 
     @field_validator("bind_address", "source_host", "multicast_group")
@@ -546,13 +548,13 @@ class RtpFormatSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sample_rate: conint(gt=0) = Field(default=48000, description="Samples per second")
-    channels: conint(ge=1, le=8) = Field(default=2, description="Channel count")
+    sample_rate: int = Field(default=48000, description="Samples per second", gt=0)
+    channels: int = Field(default=2, description="Channel count", ge=1, le=8)
     bits_per_sample: Literal[16, 24, 32] = Field(
         default=24, description="PCM word size"
     )
-    payload_type: conint(ge=0, le=127) = Field(
-        default=97, description="Dynamic RTP payload type"
+    payload_type: int = Field(
+        default=97, description="Dynamic RTP payload type", ge=0, le=127
     )
     big_endian: bool = Field(default=True, description="Endianness of PCM payload")
     signed_samples: bool = Field(default=True, description="True if PCM is signed")
@@ -563,14 +565,17 @@ class RtpSyncSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    target_latency_ms: conint(ge=1, le=5000) = Field(
-        default=5, description="Target buffering latency in milliseconds"
+    target_latency_ms: int = Field(
+        default=5, description="Target buffering latency in milliseconds", ge=1, le=5000
     )
-    watchdog_timeout_ms: conint(ge=100, le=60000) = Field(
-        default=500, description="Watchdog timeout used for gap detection"
+    watchdog_timeout_ms: int = Field(
+        default=500,
+        description="Watchdog timeout used for gap detection",
+        ge=100,
+        le=60000,
     )
-    telemetry_interval_ms: conint(ge=100, le=60000) = Field(
-        default=1000, description="Interval for telemetry emission"
+    telemetry_interval_ms: int = Field(
+        default=1000, description="Interval for telemetry emission", ge=100, le=60000
     )
     enable_ptp: bool = Field(default=False, description="Enable PTP clock tracking")
     ptp_interface: Optional[str] = Field(
@@ -588,8 +593,11 @@ class RtpRtcpSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enable: bool = Field(default=True, description="Enable RTCP listener")
-    port: Optional[Port] = Field(
-        default=None, description="Explicit RTCP port (defaults to RTP port + 1)"
+    port: Optional[int] = Field(
+        default=None,
+        description="Explicit RTCP port (defaults to RTP port + 1)",
+        ge=1024,
+        le=65535,
     )
 
 
@@ -598,11 +606,11 @@ class RtpAdvancedSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    socket_buffer_bytes: conint(ge=65536, le=4 * 1024 * 1024) = Field(
-        default=1 << 20, description="SO_RCVBUF size"
+    socket_buffer_bytes: int = Field(
+        default=1 << 20, description="SO_RCVBUF size", ge=65536, le=4 * 1024 * 1024
     )
-    mtu_bytes: conint(ge=256, le=9000) = Field(
-        default=1500, description="Expected MTU for incoming packets"
+    mtu_bytes: int = Field(
+        default=1500, description="Expected MTU for incoming packets", ge=256, le=9000
     )
 
 
@@ -670,8 +678,11 @@ class RtpSessionCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    session_id: SessionId = Field(
-        description="Unique identifier for the RTP session"
+    session_id: str = Field(
+        description="Unique identifier for the RTP session",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9._-]+$",
     )
     endpoint: RtpEndpointSettings = Field(
         default_factory=RtpEndpointSettings,
@@ -794,6 +805,75 @@ class RtpSessionListResponse(BaseModel):
 
     sessions: list[RtpSessionMetrics]
     polled_at_unix_ms: Optional[int] = None
+
+
+class RtpDiscoveryStream(BaseModel):
+    """Single RTP stream candidate discovered by the daemon."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    session_id: str = Field(description="Suggested session identifier")
+    display_name: str = Field(description="Human-friendly label for the stream")
+    source_host: Optional[str] = Field(
+        default=None, description="Source IPv4 host of the RTP sender"
+    )
+    port: int = Field(
+        description="RTP payload port reported by the scanner", ge=1024, le=65535
+    )
+    status: str = Field(
+        default="unknown",
+        description="Scanner-reported status such as 'active', 'idle', or diagnostic text",
+    )
+    existing_session: bool = Field(
+        default=False,
+        description="True when this candidate already has an active RTP session",
+    )
+    sample_rate: Optional[int] = Field(
+        default=None, description="Sample rate hint to pre-fill new RTP sessions"
+    )
+    channels: Optional[int] = Field(
+        default=None, description="Channel count hint to pre-fill new RTP sessions"
+    )
+    payload_type: Optional[int] = Field(
+        default=None, description="Dynamic payload type hint from scanner"
+    )
+    multicast: bool = Field(
+        default=False,
+        description="True if the stream is multicast and requires group subscription",
+    )
+    multicast_group: Optional[str] = Field(
+        default=None, description="Multicast group address when multicast is enabled"
+    )
+    bind_address: Optional[str] = Field(
+        default=None,
+        description="Suggested local bind address for receiving the stream",
+    )
+    last_seen_unix_ms: Optional[int] = Field(
+        default=None,
+        description="Unix timestamp (ms) when the stream was last observed",
+    )
+    latency_ms: Optional[int] = Field(
+        default=None, description="Estimated transport latency reported by scanner"
+    )
+
+    @field_validator("source_host", "multicast_group", "bind_address")
+    @classmethod
+    def _validate_ipv4(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_ipv4_literal(value)
+
+
+class RtpDiscoveryResponse(BaseModel):
+    """Response payload for RTP discovery scans."""
+
+    streams: list[RtpDiscoveryStream] = Field(
+        default_factory=list, description="List of discovered RTP senders"
+    )
+    scanned_at_unix_ms: Optional[int] = Field(
+        default=None, description="Unix timestamp (ms) when the scan completed"
+    )
+    duration_ms: Optional[int] = Field(
+        default=None, description="Approximate scan duration in milliseconds"
+    )
 
 
 # ============================================================================

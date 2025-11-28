@@ -1394,6 +1394,28 @@
         }
       }
     },
+    "/api/rtp/discover": {
+      "get": {
+        "tags": [
+          "rtp"
+        ],
+        "summary": "Discover available RTP senders",
+        "description": "Trigger a short-lived scan for available network RTP inputs.",
+        "operationId": "discover_streams_api_rtp_discover_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RtpDiscoveryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rtp/sessions/{session_id}": {
       "get": {
         "tags": [
@@ -2913,6 +2935,188 @@
         "type": "object",
         "title": "RtpAdvancedSettings",
         "description": "Advanced buffer tuning for RTP reception."
+      },
+      "RtpDiscoveryResponse": {
+        "properties": {
+          "streams": {
+            "items": {
+              "$ref": "#/components/schemas/RtpDiscoveryStream"
+            },
+            "type": "array",
+            "title": "Streams",
+            "description": "List of discovered RTP senders"
+          },
+          "scanned_at_unix_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scanned At Unix Ms",
+            "description": "Unix timestamp (ms) when the scan completed"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms",
+            "description": "Approximate scan duration in milliseconds"
+          }
+        },
+        "type": "object",
+        "title": "RtpDiscoveryResponse",
+        "description": "Response payload for RTP discovery scans."
+      },
+      "RtpDiscoveryStream": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Suggested session identifier"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "Human-friendly label for the stream"
+          },
+          "source_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Host",
+            "description": "Source IPv4 host of the RTP sender"
+          },
+          "port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Port",
+            "description": "RTP payload port reported by the scanner"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Scanner-reported status such as 'active', 'idle', or diagnostic text",
+            "default": "unknown"
+          },
+          "existing_session": {
+            "type": "boolean",
+            "title": "Existing Session",
+            "description": "True when this candidate already has an active RTP session",
+            "default": false
+          },
+          "sample_rate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Rate",
+            "description": "Sample rate hint to pre-fill new RTP sessions"
+          },
+          "channels": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channels",
+            "description": "Channel count hint to pre-fill new RTP sessions"
+          },
+          "payload_type": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Type",
+            "description": "Dynamic payload type hint from scanner"
+          },
+          "multicast": {
+            "type": "boolean",
+            "title": "Multicast",
+            "description": "True if the stream is multicast and requires group subscription",
+            "default": false
+          },
+          "multicast_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multicast Group",
+            "description": "Multicast group address when multicast is enabled"
+          },
+          "bind_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bind Address",
+            "description": "Suggested local bind address for receiving the stream"
+          },
+          "last_seen_unix_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen Unix Ms",
+            "description": "Unix timestamp (ms) when the stream was last observed"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms",
+            "description": "Estimated transport latency reported by scanner"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "display_name",
+          "port"
+        ],
+        "title": "RtpDiscoveryStream",
+        "description": "Single RTP stream candidate discovered by the daemon."
       },
       "RtpEndpointSettings": {
         "properties": {

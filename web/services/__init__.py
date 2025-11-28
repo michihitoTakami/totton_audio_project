@@ -39,8 +39,11 @@ from .pipewire import (
     wait_for_daemon_node,
 )
 from .rtp import (
+    build_discovery_stream,
     build_session_config_payload,
+    flag_existing_sessions,
     parse_config_snapshot,
+    parse_discovery_streams,
     parse_metrics_payload,
     refresh_sessions_from_daemon,
     telemetry_poller,
@@ -85,8 +88,11 @@ __all__ = [
     "setup_pipewire_links",
     "wait_for_daemon_node",
     # rtp
+    "build_discovery_stream",
     "build_session_config_payload",
+    "flag_existing_sessions",
     "parse_config_snapshot",
+    "parse_discovery_streams",
     "parse_metrics_payload",
     "refresh_sessions_from_daemon",
     "telemetry_poller",
