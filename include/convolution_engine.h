@@ -534,7 +534,8 @@ class GPUUpsampler {
         int overlapSize = 0;
         size_t fftComplexSize = 0;
         int64_t sampleOffset = 0;
-        cufftComplex* d_filterFFT = nullptr;
+        cufftComplex* d_filterFFT[2] = {nullptr, nullptr};
+        int activeFilterIndex = 0;
 
         // Runtime buffers (allocated when streaming is enabled)
         float* d_timeDomain = nullptr;
@@ -576,6 +577,11 @@ class GPUUpsampler {
                                const float* d_newSamples, int newSamples,
                                float* d_channelOverlap, StreamFloatVector& tempOutput,
                                StreamFloatVector& outputData);
+    void setActiveHostCoefficients(const std::vector<float>& source);
+    bool updateActiveImpulseFromSpectrum(const cufftComplex* spectrum,
+                                         std::vector<float>& destination);
+    bool refreshPartitionFiltersFromHost();
+    bool refreshPartitionFiltersFromActiveSpectrum();
 
     struct PhaseCrossfadeState {
         bool active = false;
@@ -607,6 +613,8 @@ class GPUUpsampler {
     void registerStreamOutputBuffer(StreamFloatVector& buffer, cudaStream_t stream);
     void removePinnedHostBuffer(void* ptr);
     void unregisterHostBuffers();
+    cufftHandle partitionImpulsePlanInverse_ = 0;
+    float* d_partitionImpulse_ = nullptr;
 };
 
 // Utility functions

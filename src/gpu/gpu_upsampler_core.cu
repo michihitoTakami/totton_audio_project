@@ -144,12 +144,6 @@ void GPUUpsampler::setPartitionedConvolutionConfig(
         return;
     }
 
-    if (multiRateEnabled_ || quadPhaseEnabled_) {
-        std::cout << "[Partition] Disabled: incompatible with current multi-rate/quad-phase mode"
-                  << " (see issue #353)" << std::endl;
-        return;
-    }
-
     partitionPlan_ = buildPartitionPlan(filterTaps_, upsampleRatio_, partitionConfig_);
     if (!partitionPlan_.enabled || partitionPlan_.partitions.empty()) {
         std::cerr << "[Partition] Failed to build partition plan (taps=" << filterTaps_ << ")"
@@ -264,6 +258,11 @@ bool GPUUpsampler::setupGPUResources() {
         Utils::checkCufftError(
             cufftPlan1d(&fftPlanInverse_, fftSize_, CUFFT_C2R, 1),
             "cufftPlan1d inverse"
+        );
+
+        Utils::checkCufftError(
+            cufftPlan1d(&partitionImpulsePlanInverse_, fftSize_, CUFFT_C2R, 1),
+            "cufftPlan1d partition impulse inverse"
         );
 
         // Pre-compute filter FFT
@@ -920,12 +919,20 @@ void GPUUpsampler::cleanup() {
 
     if (fftPlanForward_) cufftDestroy(fftPlanForward_);
     if (fftPlanInverse_) cufftDestroy(fftPlanInverse_);
+    if (partitionImpulsePlanInverse_) {
+        cufftDestroy(partitionImpulsePlanInverse_);
+        partitionImpulsePlanInverse_ = 0;
+    }
 
     // Free EQ-specific resources
     if (eqPlanD2Z_) cufftDestroy(eqPlanD2Z_);
     if (eqPlanZ2D_) cufftDestroy(eqPlanZ2D_);
     if (d_eqLogMag_) cudaFree(d_eqLogMag_);
     if (d_eqComplexSpec_) cudaFree(d_eqComplexSpec_);
+    if (d_partitionImpulse_) {
+        cudaFree(d_partitionImpulse_);
+        d_partitionImpulse_ = nullptr;
+    }
     h_originalFilterFft_.clear();
 
     if (stream_) cudaStreamDestroy(stream_);
@@ -1129,9 +1136,12 @@ bool GPUUpsampler::setupPartitionStates() {
         }
 
         // Allocate frequency-domain storage for this partition's filter
-        Utils::checkCudaError(
-            cudaMalloc(&state.d_filterFFT, state.fftComplexSize * sizeof(cufftComplex)),
-            "cudaMalloc partition filter FFT");
+        for (int bufIdx = 0; bufIdx < 2; ++bufIdx) {
+            Utils::checkCudaError(
+                cudaMalloc(&state.d_filterFFT[bufIdx],
+                           state.fftComplexSize * sizeof(cufftComplex)),
+                "cudaMalloc partition filter FFT buffer");
+        }
 
         float* d_tempTime = nullptr;
         Utils::checkCudaError(
@@ -1152,11 +1162,15 @@ bool GPUUpsampler::setupPartitionStates() {
             cufftPlan1d(&plan, descriptor.fftSize, CUFFT_R2C, 1),
             "cufftPlan1d partition filter");
         Utils::checkCufftError(
-            cufftExecR2C(plan, d_tempTime, state.d_filterFFT),
+            cufftExecR2C(plan, d_tempTime, state.d_filterFFT[0]),
             "cufftExecR2C partition filter");
         cufftDestroy(plan);
         cudaFree(d_tempTime);
-
+        Utils::checkCudaError(
+            cudaMemcpy(state.d_filterFFT[1], state.d_filterFFT[0],
+                       state.fftComplexSize * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+            "cudaMemcpy partition filter FFT mirror");
+        state.activeFilterIndex = 0;
         coeffOffset += descriptor.taps;
         maxPartitionValidOutput_ =
             std::max(maxPartitionValidOutput_, static_cast<size_t>(state.validOutput));
@@ -1173,9 +1187,11 @@ bool GPUUpsampler::setupPartitionStates() {
 
 void GPUUpsampler::freePartitionStates() {
     for (auto& state : partitionStates_) {
-        if (state.d_filterFFT) {
-            cudaFree(state.d_filterFFT);
-            state.d_filterFFT = nullptr;
+        for (int bufIdx = 0; bufIdx < 2; ++bufIdx) {
+            if (state.d_filterFFT[bufIdx]) {
+                cudaFree(state.d_filterFFT[bufIdx]);
+                state.d_filterFFT[bufIdx] = nullptr;
+            }
         }
         if (state.d_timeDomain) {
             cudaFree(state.d_timeDomain);
@@ -1413,8 +1429,9 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
 
         int threadsPerBlock = 256;
         int blocks = (state.fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
+        cufftComplex* activeFilter = state.d_filterFFT[state.activeFilterIndex];
         complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-            state.d_inputFFT, state.d_filterFFT, state.fftComplexSize);
+            state.d_inputFFT, activeFilter, state.fftComplexSize);
 
         Utils::checkCufftError(cufftSetStream(state.planInverse, stream),
                                "cufftSetStream partition inverse");
@@ -1447,6 +1464,124 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
         std::cerr << "[Partition] Error: " << e.what() << std::endl;
         return false;
     }
+}
+
+void GPUUpsampler::setActiveHostCoefficients(const std::vector<float>& source) {
+    size_t desiredTaps = static_cast<size_t>(std::max(filterTaps_, static_cast<int>(source.size())));
+    if (desiredTaps == 0) {
+        desiredTaps = source.size();
+        filterTaps_ = static_cast<int>(desiredTaps);
+    }
+    h_filterCoeffs_.assign(desiredTaps, 0.0f);
+    const size_t copyCount = std::min(source.size(), h_filterCoeffs_.size());
+    if (copyCount > 0) {
+        std::copy(source.begin(), source.begin() + copyCount, h_filterCoeffs_.begin());
+    }
+}
+
+bool GPUUpsampler::updateActiveImpulseFromSpectrum(const cufftComplex* spectrum,
+                                                   std::vector<float>& destination) {
+    if (!spectrum || fftSize_ <= 0) {
+        return false;
+    }
+    if (filterTaps_ <= 0) {
+        return false;
+    }
+    if (!partitionImpulsePlanInverse_) {
+        Utils::checkCufftError(
+            cufftPlan1d(&partitionImpulsePlanInverse_, fftSize_, CUFFT_C2R, 1),
+            "cufftPlan1d partition impulse inverse (lazy)");
+    }
+    size_t impulseBytes = static_cast<size_t>(fftSize_) * sizeof(float);
+    if (!d_partitionImpulse_) {
+        Utils::checkCudaError(
+            cudaMalloc(&d_partitionImpulse_, impulseBytes),
+            "cudaMalloc partition impulse buffer");
+    }
+
+    Utils::checkCufftError(
+        cufftExecC2R(partitionImpulsePlanInverse_, const_cast<cufftComplex*>(spectrum),
+                     d_partitionImpulse_),
+        "cufftExecC2R partition impulse build");
+    Utils::checkCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize partition impulse build");
+
+    destination.assign(static_cast<size_t>(filterTaps_), 0.0f);
+    Utils::checkCudaError(
+        cudaMemcpy(destination.data(), d_partitionImpulse_,
+                   static_cast<size_t>(filterTaps_) * sizeof(float), cudaMemcpyDeviceToHost),
+        "cudaMemcpy partition impulse to host");
+    const float scale = 1.0f / static_cast<float>(fftSize_);
+    for (auto& sample : destination) {
+        sample *= scale;
+    }
+    return true;
+}
+
+bool GPUUpsampler::refreshPartitionFiltersFromHost() {
+    if (!partitionPlan_.enabled || partitionStates_.empty()) {
+        return true;
+    }
+    if (h_filterCoeffs_.empty()) {
+        std::cerr << "[Partition] Host coefficients unavailable; cannot refresh spectra"
+                  << std::endl;
+        return false;
+    }
+
+    int maxFft = 0;
+    for (const auto& state : partitionStates_) {
+        maxFft = std::max(maxFft, state.descriptor.fftSize);
+    }
+    float* d_tempTime = nullptr;
+    Utils::checkCudaError(
+        cudaMalloc(&d_tempTime, static_cast<size_t>(maxFft) * sizeof(float)),
+        "cudaMalloc partition refresh temp buffer");
+
+    size_t coeffOffset = 0;
+    for (auto& state : partitionStates_) {
+        const size_t taps = static_cast<size_t>(state.descriptor.taps);
+        if (coeffOffset + taps > h_filterCoeffs_.size()) {
+            std::cerr << "[Partition] Refresh failed: tap window exceeds host coefficients"
+                      << std::endl;
+            cudaFree(d_tempTime);
+            return false;
+        }
+
+        Utils::checkCudaError(
+            cudaMemset(d_tempTime, 0, state.descriptor.fftSize * sizeof(float)),
+            "cudaMemset partition refresh temp buffer");
+        Utils::checkCudaError(
+            cudaMemcpy(d_tempTime, h_filterCoeffs_.data() + coeffOffset,
+                       taps * sizeof(float), cudaMemcpyHostToDevice),
+            "cudaMemcpy partition refresh taps");
+
+        cufftHandle plan = 0;
+        Utils::checkCufftError(
+            cufftPlan1d(&plan, state.descriptor.fftSize, CUFFT_R2C, 1),
+            "cufftPlan1d partition refresh");
+        int inactiveIndex = 1 - state.activeFilterIndex;
+        Utils::checkCufftError(
+            cufftExecR2C(plan, d_tempTime, state.d_filterFFT[inactiveIndex]),
+            "cufftExecR2C partition refresh");
+        Utils::checkCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize partition refresh");
+        cufftDestroy(plan);
+
+        state.activeFilterIndex = inactiveIndex;
+        coeffOffset += taps;
+    }
+
+    cudaFree(d_tempTime);
+    std::cout << "[Partition] Filter spectra refreshed for current impulse response" << std::endl;
+    return true;
+}
+
+bool GPUUpsampler::refreshPartitionFiltersFromActiveSpectrum() {
+    if (!updateActiveImpulseFromSpectrum(d_activeFilterFFT_, h_filterCoeffs_)) {
+        return false;
+    }
+    if (!partitionPlan_.enabled) {
+        return true;
+    }
+    return refreshPartitionFiltersFromHost();
 }
 
 }  // namespace ConvolutionEngine

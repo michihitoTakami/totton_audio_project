@@ -34,7 +34,7 @@ void applyPartitionPolicy(const RuntimeRequest& request,
     }
 
     config.partitionedConvolution.enabled = true;
-    config.eqEnabled = false;
+    config.eqEnabled = request.eqEnabled;
     config.crossfeed.enabled = false;
 
     const auto& plan = upsampler.getPartitionPlan();
@@ -47,8 +47,7 @@ void applyPartitionPolicy(const RuntimeRequest& request,
               << " output)" << std::endl;
 
     if (request.eqEnabled) {
-        std::cout << "[Partition][" << tag
-                  << "] EQ disabled (unsupported in low-latency mode, see #353)" << std::endl;
+        std::cout << "[Partition][" << tag << "] EQ enabled for low-latency streaming" << std::endl;
     }
     if (request.crossfeedEnabled) {
         std::cout << "[Partition][" << tag

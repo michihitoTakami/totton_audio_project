@@ -350,6 +350,53 @@ TEST_F(ConvolutionEngineTest, ResetStreaming) {
     SUCCEED();
 }
 
+TEST_F(ConvolutionEngineTest, PartitionModeSupportsEqApply) {
+    TempCoeffDir tempDir;
+    if (!tempDir.isValid()) {
+        GTEST_SKIP() << tempDir.error();
+    }
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initialize(tempDir.getMinPhasePath("44k"), 16, 512));
+
+    AppConfig::PartitionedConvolutionConfig partitionConfig;
+    partitionConfig.enabled = true;
+    partitionConfig.fastPartitionTaps = 256;
+    partitionConfig.minPartitionTaps = 256;
+    partitionConfig.maxPartitions = 2;
+    partitionConfig.tailFftMultiple = 2;
+
+    upsampler.setPartitionedConvolutionConfig(partitionConfig);
+    EXPECT_TRUE(upsampler.isPartitionedConvolutionEnabled());
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    std::vector<double> eqMagnitude(upsampler.getFilterFftSize(), 0.75);
+    EXPECT_TRUE(upsampler.applyEqMagnitude(eqMagnitude));
+}
+
+TEST_F(ConvolutionEngineTest, PartitionModeSupportsMultiRateSwitch) {
+    TempCoeffDir tempDir;
+    if (!tempDir.isValid()) {
+        GTEST_SKIP() << tempDir.error();
+    }
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 512, 44100));
+
+    AppConfig::PartitionedConvolutionConfig partitionConfig;
+    partitionConfig.enabled = true;
+    partitionConfig.fastPartitionTaps = 256;
+    partitionConfig.minPartitionTaps = 256;
+    partitionConfig.maxPartitions = 3;
+    partitionConfig.tailFftMultiple = 2;
+    upsampler.setPartitionedConvolutionConfig(partitionConfig);
+    EXPECT_TRUE(upsampler.isPartitionedConvolutionEnabled());
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    EXPECT_TRUE(upsampler.switchToInputRate(88200));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+}
+
 // ============================================================
 // EQ Tests
 // ============================================================
