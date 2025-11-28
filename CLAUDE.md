@@ -19,7 +19,7 @@ Think in English and answer in Japanese.
 ユーザーに余計なことを考えさせない。ヘッドホンを選んで、ボタンを押すだけ。
 
 ### Core Concept
-- **Ultimate Filtering:** 2,000,000 (2M) タップの最小位相FIRフィルタによる究極のアップサンプリング
+- **Ultimate Filtering:** 640,000 (640k) タップの最小位相FIRフィルタによる究極のアップサンプリング
 - **Headphone Correction:** ヘッドホンの周波数特性をターゲットカーブに自動補正（EQはあくまで補正用途）
 - **Seamless Operation:** 入力レート自動検知、DAC性能に応じた最適アップサンプリング
 - **Simple UI:** Web上でヘッドホンを選んでポチポチするだけ
@@ -72,7 +72,7 @@ graph TD
 - **Resampler:** `libsoxr` (Very High Quality) を使用。入力レートに関わらず、ターゲットレート（DAC限界）へ変換
 - **Convolution Core (GPU):**
   - CUDA FFT (`cuFFT`) を使用したOverlap-Save法
-  - Partitioned Convolutionにより、2Mタップ処理時のレイテンシを制御
+  - Partitioned Convolutionにより、640kタップ処理時のレイテンシを制御
 - **Buffering:** `moodycamel::ReaderWriterQueue` (Lock-free) によるスレッド間データ転送
 - **Output Interface:** ALSA (`alsa-lib`) 直接制御によるBit-perfect出力
 
@@ -125,9 +125,9 @@ graph TD
 ### Filter Specifications
 | Parameter | Value |
 |-----------|-------|
-| Tap Count | 2,000,000 (2M) |
+| Tap Count | 640,000 (640k) |
 | Phase Type | Minimum Phase (default) / Linear Phase (optional) |
-| Window | Kaiser (β=25, Float32 GPU実装での実効阻止帯域に合わせた設定) |
+| Window | Kaiser (β≈28, 32bit Float実装の量子ノイズ限界に合わせた最適値) |
 | Stopband Attenuation | ~160dB (24bit品質に十分) |
 | Upsampling Ratio | Up to 16x |
 
@@ -147,7 +147,7 @@ graph TD
 
 #### Linear Phase
 - **完全な対称性**: インパルス応答が中心で対称、群遅延が全周波数で一定
-- **高レイテンシ**: 2Mタップ @ 705.6kHz = 約1.4秒のレイテンシ
+- **高レイテンシ**: 640kタップ @ 705.6kHz = 約0.45秒のレイテンシ
 - **位相精度重視の用途向け**: マスタリングやミキシングなど、位相の正確性が重要な場面で使用
 
 ### Audio Processing
@@ -177,7 +177,7 @@ graph TD
 ### Stopband Attenuation (-160dB)
 - Ensures aliasing components are far below quantization noise floor
 - 160dB is sufficient for 24-bit audio (144dB dynamic range)
-- Minimum phase conversion reduces theoretical maximum (~236dB theoretical for Kaiser β=25 / 実効はFloat32実装で約175dB)
+- Kaiser β≈28 provides optimal balance for 32-bit Float implementation
 
 ### DC Gain Normalization
 - Zero-stuffing upsampling reduces DC by factor of L (upsample ratio)
@@ -197,17 +197,17 @@ graph TD
 # Setup environment
 uv sync
 
-# Generate 2M-tap minimum phase filter (default β=25)
-uv run python scripts/generate_filter.py --taps 2000000
+# Generate 640k-tap minimum phase filter (default β≈28)
+uv run python scripts/generate_filter.py --taps 640000
 
-# Generate 2M-tap linear phase filter
-uv run python scripts/generate_filter.py --taps 2000000 --phase-type linear
+# Generate 640k-tap linear phase filter
+uv run python scripts/generate_filter.py --taps 640000 --phase-type linear
 
 # Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)
 uv run python scripts/generate_filter.py --generate-all --phase-type minimum
 
 # Output (example for minimum phase, 44.1kHz input, 16x upsample):
-# - data/coefficients/filter_44k_16x_2m_minimum.bin (8 MB binary)
+# - data/coefficients/filter_44k_16x_2m_minimum.bin (2.56 MB binary)
 # - data/coefficients/filter_44k_16x_2m_minimum.json (metadata)
 # - plots/analysis/filter_44k_16x_2m_minimum_*.png (validation plots)
 ```
@@ -422,7 +422,7 @@ gh milestone list
 Current phase: **Phase 1** (Core Engine & Middleware)
 
 **Achieved:**
-- 2M-tap minimum phase FIR filter generation (~160dB stopband attenuation)
+- 640k-tap minimum phase FIR filter generation (~160dB stopband attenuation)
 - GPU FFT convolution engine (~28x realtime on RTX 2070S)
 - PipeWire→GPU→ALSA daemon (working prototype)
 

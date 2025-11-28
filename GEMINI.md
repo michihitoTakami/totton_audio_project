@@ -14,8 +14,8 @@ Think in English and answer in Japanese.
 - ユーザーに余計なことを考えさせない
 
 ### Core Features
-- **2M-tap FIR upsampling:** 2,000,000タップ最小位相FIRフィルタ（197dB stopband）
-- **Headphone EQ:** oratory1990データ + KB5000_7ターゲットカーブ
+- **640k-tap FIR upsampling:** 640,000タップ最小位相FIRフィルタ（Kaiser β≈28、~160dB stopband）
+- **Headphone EQ:** OPRAプロジェクト（CC BY-SA 4.0）データ + KB5000_7ターゲットカーブ
 - **Auto-negotiation:** 入力レート自動検知、DAC性能に応じた最適化
 
 ## Tech Stack
@@ -40,7 +40,7 @@ Think in English and answer in Japanese.
 gpu_os/
 ├── src/               # C++/CUDA (convolution_engine.cu, alsa_daemon.cpp)
 ├── scripts/           # Python (generate_filter.py, analysis tools)
-├── data/coefficients/ # FIR filter binaries (2M-tap)
+├── data/coefficients/ # FIR filter binaries (640k-tap)
 ├── web/               # FastAPI Web UI
 └── docs/              # Documentation
 ```
@@ -48,9 +48,9 @@ gpu_os/
 ## Key Commands
 
 ```bash
-# Filter generation (2M taps)
+# Filter generation (640k taps)
 uv sync
-uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
+uv run python scripts/generate_filter.py --taps 640000
 
 # Build
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -71,8 +71,8 @@ cmake --build build -j$(nproc)
 ## Technical Constraints
 
 1. **Minimum Phase** - プリリンギングなし（必須）
-2. **2M taps** - 197dB stopband attenuation達成に必要
-3. **Kaiser β=25** - Float32 GPU実装での実効阻止帯域に最適
+2. **640k taps** - ~160dB stopband attenuation（24bit品質に十分）
+3. **Kaiser β≈28** - 32bit Float GPU実装の量子ノイズ限界に合わせた最適値
 4. **DC gain = 1.0** - クリッピング防止
 
 ## Git Workflow

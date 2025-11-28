@@ -13,7 +13,7 @@
 
 ## 何ができるか
 
-- **究極のアップサンプリング**: 2,000,000タップ最小位相FIRフィルタ（44.1k系: 197dB / 48k系: 191dB ストップバンド減衰）
+- **究極のアップサンプリング**: 640,000タップ最小位相FIRフィルタ（Kaiser β≈28、~160dB ストップバンド減衰）
 - **ヘッドホン補正EQ**: OPRAプロジェクト（CC BY-SA 4.0）のEQデータを活用し、あなたのヘッドホンをターゲットカーブ（KB5000_7）に自動補正
 - **Auto-Negotiation**: DAC性能を自動検出し、最適なアップサンプリング倍率を自動算出
 - **Multi-Rate対応**: 44.1kHz系/48kHz系を自動判定し、適切な係数に切り替え
@@ -62,7 +62,7 @@ flowchart LR
     subgraph Processing
         RD[Rate Detection<br/>44k系 or 48k系]
         RB1[Ring Buffer<br/>Lock-free]
-        GPU[GPU FFT Convolution<br/>2M-tap FIR<br/>cuFFT Overlap-Save]
+        GPU[GPU FFT Convolution<br/>640k-tap FIR<br/>cuFFT Overlap-Save]
         CF[Crossfeed<br/>HRTF<br/>Optional]
         SM[Soft Mute<br/>Fade Control]
         RB2[Ring Buffer<br/>Lock-free]
@@ -146,7 +146,7 @@ FastAPI アプリを立ち上げると `/rtp` パスに **RTPセッション管�
 2. 同期モード（低遅延 / 安定 / PTP）
 3. 任意のSDP貼り付け、SRTPキー（Base64 40文字以上）
 
-を入力して送信すると `POST /api/rtp/sessions` が呼ばれ、結果はトースト通知で表示されます。  
+を入力して送信すると `POST /api/rtp/sessions` が呼ばれ、結果はトースト通知で表示されます。
 下段には `GET /api/rtp/sessions` のキャッシュがカード表示され、接続状態・RTCP遅延・ジッタ統計・PTPロック可否を即時確認できます。各カードの「停止」ボタンは `DELETE /api/rtp/sessions/{id}` を呼び出します。
 
 > ブラウザだけで「登録→開始→停止」まで完結するため、非エンジニアでもストリーム切り替えを担当できます。
@@ -344,7 +344,7 @@ cmake --build build -j$(nproc)
 
 ### 低遅延パーティションモード
 
-`config.json` の `partitionedConvolution` セクションで GPU パーティション処理を制御できます。  
+`config.json` の `partitionedConvolution` セクションで GPU パーティション処理を制御できます。
 サポートされるキー:
 
 | キー | 説明 | デフォルト |
