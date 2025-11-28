@@ -20,8 +20,8 @@ class TestErrorCodeEnum:
     """Tests for ErrorCode enum."""
 
     def test_all_codes_defined(self):
-        """Verify all error codes are defined (30 base + 4 crossfeed)."""
-        assert len(ErrorCode) == 34
+        """Verify all error codes are defined (30 base + 4 crossfeed + 2 RTP)."""
+        assert len(ErrorCode) == 36
 
     def test_no_duplicate_values(self):
         """Verify no duplicate enum values."""
@@ -29,9 +29,9 @@ class TestErrorCodeEnum:
         assert len(values) == len(set(values))
 
     def test_audio_processing_codes(self):
-        """Verify Audio Processing category codes (6 codes)."""
+        """Verify Audio Processing category codes (8 codes including RTP)."""
         audio_codes = [c for c in ErrorCode if c.value.startswith("AUDIO_")]
-        assert len(audio_codes) == 6
+        assert len(audio_codes) == 8
         assert ErrorCode.AUDIO_INVALID_INPUT_RATE in audio_codes
         assert ErrorCode.AUDIO_XRUN_DETECTED in audio_codes
 
@@ -95,8 +95,8 @@ class TestErrorMappings:
     """Tests for ERROR_MAPPINGS dictionary."""
 
     def test_all_codes_have_mappings(self):
-        """Verify all error codes have mappings (30 base + 4 crossfeed)."""
-        assert len(ERROR_MAPPINGS) == 34
+        """Verify all error codes have mappings (30 base + 4 crossfeed + 2 RTP)."""
+        assert len(ERROR_MAPPINGS) == 36
         for code in ErrorCode:
             assert code in ERROR_MAPPINGS, f"Missing mapping for {code}"
 

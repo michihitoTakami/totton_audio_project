@@ -12,6 +12,7 @@
 #include "logging/logger.h"
 #include "logging/metrics.h"
 #include "playback_buffer.h"
+#include "rtp_session_manager.h"
 #include "soft_mute.h"
 
 #include <algorithm>
@@ -32,6 +33,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <pipewire/pipewire.h>
@@ -94,6 +96,14 @@ static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
+static std::unique_ptr<Network::RtpSessionManager> g_rtp_manager;
+static std::mutex g_input_process_mutex;
+
+static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
+static void ensure_rtp_manager_initialized();
+static void maybe_start_rtp_from_config();
+static void shutdown_rtp_manager();
+static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInputConfig& cfg);
 
 struct DacDeviceRuntimeInfo {
     std::string id;
@@ -1023,6 +1033,91 @@ static void reset_runtime_state() {
     g_cf_output_buffer_right.clear();
 }
 
+static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInputConfig& cfg) {
+    Network::SessionConfig session;
+    session.sessionId = cfg.sessionId;
+    session.bindAddress = cfg.bindAddress;
+    session.port = cfg.port;
+    session.sourceHost = cfg.sourceHost;
+    session.multicast = cfg.multicast;
+    session.multicastGroup = cfg.multicastGroup;
+    session.interfaceName = cfg.interfaceName;
+    session.ttl = cfg.ttl;
+    session.dscp = cfg.dscp;
+    session.sampleRate = cfg.sampleRate;
+    session.channels = cfg.channels;
+    session.bitsPerSample = cfg.bitsPerSample;
+    session.bigEndian = cfg.bigEndian;
+    session.signedSamples = cfg.signedSamples;
+    session.payloadType = cfg.payloadType;
+    session.socketBufferBytes = cfg.socketBufferBytes;
+    session.mtuBytes = cfg.mtuBytes;
+    session.targetLatencyMs = cfg.targetLatencyMs;
+    session.watchdogTimeoutMs = cfg.watchdogTimeoutMs;
+    session.telemetryIntervalMs = cfg.telemetryIntervalMs;
+    session.enableRtcp = cfg.enableRtcp;
+    session.rtcpPort = cfg.rtcpPort;
+    session.enablePtp = cfg.enablePtp;
+    session.ptpInterface = cfg.ptpInterface;
+    session.ptpDomain = cfg.ptpDomain;
+    session.sdp = cfg.sdp;
+    return session;
+}
+
+static void ensure_rtp_manager_initialized() {
+    if (g_rtp_manager) {
+        return;
+    }
+
+    auto frameCallback = [](const float* interleaved, size_t frames, uint32_t sampleRate) {
+        if (!g_running.load()) {
+            return;
+        }
+        if (sampleRate != static_cast<uint32_t>(g_input_sample_rate)) {
+            LOG_EVERY_N(WARN, 200,
+                        "RTP session sample rate {} differs from engine input {} Hz. "
+                        "Reconfigure engine to avoid drift.",
+                        sampleRate, g_input_sample_rate);
+        }
+        process_interleaved_block(interleaved, static_cast<uint32_t>(frames));
+    };
+
+    auto ptpProvider = []() -> Network::PtpSyncState { return {}; };
+
+    auto telemetryCallback = [](const Network::SessionMetrics& metrics) {
+        (void)metrics;  // Suppress unused parameter warning in release builds
+        LOG_DEBUG("RTP session {} stats: packets={} dropped={}", metrics.sessionId,
+                  metrics.packetsReceived, metrics.packetsDropped);
+    };
+
+    g_rtp_manager =
+        std::make_unique<Network::RtpSessionManager>(frameCallback, ptpProvider, telemetryCallback);
+}
+
+static void maybe_start_rtp_from_config() {
+    if (!g_config.rtp.enabled || !g_config.rtp.autoStart) {
+        return;
+    }
+
+    ensure_rtp_manager_initialized();
+    Network::SessionConfig sessionCfg = build_rtp_session_config(g_config.rtp);
+    std::string error;
+    if (!g_rtp_manager->startSession(sessionCfg, error)) {
+        LOG_ERROR("Failed to auto-start RTP session {}: {}", sessionCfg.sessionId, error);
+    } else {
+        LOG_INFO("RTP session '{}' auto-started on {}:{}", sessionCfg.sessionId,
+                 sessionCfg.bindAddress, sessionCfg.port);
+    }
+}
+
+static void shutdown_rtp_manager() {
+    if (!g_rtp_manager) {
+        return;
+    }
+    g_rtp_manager->stopAll();
+    g_rtp_manager.reset();
+}
+
 // Handle rate switch for multi-rate mode
 // Returns true on success, false on failure (with rollback)
 static bool handle_rate_switch(int newInputRate) {
@@ -1607,6 +1702,121 @@ static void zeromq_listener_thread() {
                                 }
                             }
                         }
+                    } else if (cmdType == "RTP_START_SESSION" || cmdType == "StartSession") {
+                        if (!j.contains("params") || !j["params"].is_object()) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params object";
+                            response = resp.dump();
+                        } else {
+                            ensure_rtp_manager_initialized();
+                            Network::SessionConfig sessionCfg;
+                            std::string parseError;
+                            if (!Network::sessionConfigFromJson(j["params"], sessionCfg,
+                                                                parseError)) {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "VALIDATION_INVALID_CONFIG";
+                                resp["message"] = parseError;
+                                response = resp.dump();
+                            } else if (!g_rtp_manager) {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
+                                resp["message"] = "RTP manager unavailable";
+                                response = resp.dump();
+                            } else {
+                                std::string startError;
+                                if (!g_rtp_manager->startSession(sessionCfg, startError)) {
+                                    nlohmann::json resp;
+                                    resp["status"] = "error";
+                                    resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
+                                    resp["message"] = startError;
+                                    response = resp.dump();
+                                } else {
+                                    nlohmann::json resp;
+                                    resp["status"] = "ok";
+                                    resp["message"] = "RTP session started";
+                                    resp["data"] = Network::sessionConfigToJson(sessionCfg);
+                                    response = resp.dump();
+                                }
+                            }
+                        }
+                    } else if (cmdType == "RTP_STOP_SESSION" || cmdType == "StopSession") {
+                        if (!j.contains("params") || !j["params"].is_object() ||
+                            !j["params"].contains("session_id")) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params.session_id";
+                            response = resp.dump();
+                        } else if (!g_rtp_manager) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
+                            resp["message"] = "RTP manager not initialized";
+                            response = resp.dump();
+                        } else {
+                            std::string sessionId = j["params"]["session_id"].get<std::string>();
+                            std::string stopError;
+                            if (!g_rtp_manager->stopSession(sessionId, stopError)) {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
+                                resp["message"] = stopError;
+                                response = resp.dump();
+                            } else {
+                                nlohmann::json resp;
+                                resp["status"] = "ok";
+                                resp["message"] = "RTP session stopped";
+                                resp["data"]["session_id"] = sessionId;
+                                response = resp.dump();
+                            }
+                        }
+                    } else if (cmdType == "RTP_LIST_SESSIONS" || cmdType == "ListSessions") {
+                        ensure_rtp_manager_initialized();
+                        nlohmann::json resp;
+                        resp["status"] = "ok";
+                        nlohmann::json sessionsJson = nlohmann::json::array();
+                        if (g_rtp_manager) {
+                            auto sessions = g_rtp_manager->listSessions();
+                            for (const auto& metrics : sessions) {
+                                sessionsJson.push_back(Network::sessionMetricsToJson(metrics));
+                            }
+                        }
+                        resp["data"]["sessions"] = sessionsJson;
+                        response = resp.dump();
+                    } else if (cmdType == "RTP_GET_SESSION" || cmdType == "GetSession") {
+                        if (!j.contains("params") || !j["params"].is_object() ||
+                            !j["params"].contains("session_id")) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "IPC_INVALID_PARAMS";
+                            resp["message"] = "Missing params.session_id";
+                            response = resp.dump();
+                        } else if (!g_rtp_manager) {
+                            nlohmann::json resp;
+                            resp["status"] = "error";
+                            resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
+                            resp["message"] = "RTP manager not initialized";
+                            response = resp.dump();
+                        } else {
+                            std::string sessionId = j["params"]["session_id"].get<std::string>();
+                            auto metrics = g_rtp_manager->getMetrics(sessionId);
+                            if (!metrics.has_value()) {
+                                nlohmann::json resp;
+                                resp["status"] = "error";
+                                resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
+                                resp["message"] = "Session not found: " + sessionId;
+                                response = resp.dump();
+                            } else {
+                                nlohmann::json resp;
+                                resp["status"] = "ok";
+                                resp["data"] = Network::sessionMetricsToJson(metrics.value());
+                                response = resp.dump();
+                            }
+                        }
                     } else if (cmdType == "SWITCH_RATE") {
                         // Issue #219: Manual rate switching via ZeroMQ
                         // JSON format: {"type": "SWITCH_RATE", "params": {"input_rate": 48000}}
@@ -1923,6 +2133,95 @@ static void on_signal_check_timer(void* userdata, uint64_t expirations) {
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
+static void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
+    if (!input_samples || n_frames == 0 || !g_upsampler) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
+
+    std::vector<float> left(n_frames);
+    std::vector<float> right(n_frames);
+    AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
+    float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
+    update_peak_level(g_peak_input_level, inputPeak);
+
+    StreamFloatVector& output_left = g_upsampler_output_left;
+    StreamFloatVector& output_right = g_upsampler_output_right;
+
+    bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
+    bool left_generated = false;
+    bool right_generated = false;
+
+    if (use_fallback) {
+        size_t output_frames = static_cast<size_t>(n_frames) * g_config.upsampleRatio;
+        output_left.assign(output_frames, 0.0f);
+        output_right.assign(output_frames, 0.0f);
+        for (size_t i = 0; i < n_frames; ++i) {
+            output_left[i * g_config.upsampleRatio] = left[i];
+            output_right[i * g_config.upsampleRatio] = right[i];
+        }
+        left_generated = true;
+        right_generated = true;
+    } else {
+        left_generated = g_upsampler->processStreamBlock(
+            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
+            g_stream_accumulated_left);
+        right_generated = g_upsampler->processStreamBlock(
+            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
+            g_stream_accumulated_right);
+    }
+
+    if (!left_generated || !right_generated) {
+        return;
+    }
+
+    size_t frames_generated = std::min(output_left.size(), output_right.size());
+    if (frames_generated > 0) {
+        float upsamplerPeak =
+            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
+        update_peak_level(g_peak_upsampler_level, upsamplerPeak);
+    }
+
+    if (g_crossfeed_enabled.load()) {
+        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
+            bool cf_generated = g_hrtf_processor->processStreamBlock(
+                output_left.data(), output_right.data(), output_left.size(), g_cf_output_left,
+                g_cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
+                g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
+
+            if (cf_generated) {
+                size_t cf_frames = std::min(g_cf_output_left.size(), g_cf_output_right.size());
+                if (cf_frames > 0) {
+                    float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
+                                                       g_cf_output_right.data(), cf_frames);
+                    update_peak_level(g_peak_post_crossfeed_level, cfPeak);
+                }
+                std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                g_output_buffer_left.insert(g_output_buffer_left.end(), g_cf_output_left.begin(),
+                                            g_cf_output_left.end());
+                g_output_buffer_right.insert(g_output_buffer_right.end(), g_cf_output_right.begin(),
+                                             g_cf_output_right.end());
+                g_buffer_cv.notify_one();
+                return;
+            }
+        }
+        // Crossfeed disabled or not ready: fall through and store original upsampler output.
+    }
+
+    std::lock_guard<std::mutex> lock(g_buffer_mutex);
+    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(), output_left.end());
+    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
+                                 output_right.end());
+    g_buffer_cv.notify_one();
+    if (frames_generated > 0) {
+        float postPeak =
+            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
+        update_peak_level(g_peak_post_crossfeed_level, postPeak);
+    }
+}
+
 static void on_input_process(void* userdata) {
     Data* data = static_cast<Data*>(userdata);
 
@@ -1936,124 +2235,7 @@ static void on_input_process(void* userdata) {
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
     if (input_samples && n_frames > 0 && data->gpu_ready) {
-        // Deinterleave input (stereo interleaved → separate L/R)
-        std::vector<float> left(n_frames);
-        std::vector<float> right(n_frames);
-
-        AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
-        float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
-        update_peak_level(g_peak_input_level, inputPeak);
-
-        // Process through GPU upsampler using streaming API
-        // This preserves overlap buffer across calls
-        StreamFloatVector& output_left = g_upsampler_output_left;
-        StreamFloatVector& output_right = g_upsampler_output_right;
-
-        // Check if fallback mode is active (Issue #139)
-        bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
-        bool left_generated = false;
-        bool right_generated = false;
-
-        if (use_fallback) {
-            // Fallback mode: bypass GPU processing to reduce load
-            // Uses simple zero-padding upsampling (repeats input samples at upsampled positions)
-            // Note: This provides basic functionality but lower quality than GPU FIR filtering.
-            // Quality trade-off is acceptable for stability during GPU overload/XRUN situations.
-            size_t output_frames = n_frames * g_config.upsampleRatio;
-            output_left.resize(output_frames, 0.0f);
-            output_right.resize(output_frames, 0.0f);
-            // Copy input samples at upsampled positions (zero-padding between samples)
-            for (size_t i = 0; i < n_frames; ++i) {
-                output_left[i * g_config.upsampleRatio] = left[i];
-                output_right[i * g_config.upsampleRatio] = right[i];
-            }
-            // Both channels "generated" in fallback mode
-            left_generated = true;
-            right_generated = true;
-        } else {
-            // Normal mode: GPU processing
-            // Process left channel
-            left_generated = g_upsampler->processStreamBlock(
-                left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
-                g_stream_accumulated_left);
-
-            // Process right channel
-            right_generated = g_upsampler->processStreamBlock(
-                right.data(), n_frames, output_right, g_upsampler->streamRight_,
-                g_stream_input_right, g_stream_accumulated_right);
-        }
-
-        // Only store output if both channels generated output
-        // (they should synchronize due to same input size)
-        if (left_generated && right_generated) {
-            size_t frames_generated = std::min(output_left.size(), output_right.size());
-            if (frames_generated > 0) {
-                float upsamplerPeak =
-                    compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-                update_peak_level(g_peak_upsampler_level, upsamplerPeak);
-            }
-            // Quick atomic check first to avoid lock overhead when crossfeed is disabled
-            if (g_crossfeed_enabled.load()) {
-                // Apply crossfeed (HRTF) - lock protects HRTFProcessor and CF buffers
-                std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-                // Re-check under lock (double-checked locking pattern)
-                if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-                    // Use default CUDA stream (0) for crossfeed processing
-                    bool cf_generated = g_hrtf_processor->processStreamBlock(
-                        output_left.data(), output_right.data(), output_left.size(),
-                        g_cf_output_left, g_cf_output_right, 0, g_cf_stream_input_left,
-                        g_cf_stream_input_right, g_cf_stream_accumulated_left,
-                        g_cf_stream_accumulated_right);
-
-                    if (cf_generated) {
-                        size_t cf_frames =
-                            std::min(g_cf_output_left.size(), g_cf_output_right.size());
-                        if (cf_frames > 0) {
-                            float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
-                                                               g_cf_output_right.data(), cf_frames);
-                            update_peak_level(g_peak_post_crossfeed_level, cfPeak);
-                        }
-                        // Store crossfeed output for ALSA thread consumption
-                        std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                        g_output_buffer_left.insert(g_output_buffer_left.end(),
-                                                    g_cf_output_left.begin(),
-                                                    g_cf_output_left.end());
-                        g_output_buffer_right.insert(g_output_buffer_right.end(),
-                                                     g_cf_output_right.begin(),
-                                                     g_cf_output_right.end());
-                        g_buffer_cv.notify_one();
-                    }
-                    // Note: If crossfeed didn't generate output yet (accumulating),
-                    // we don't store anything this iteration
-                } else {
-                    // Crossfeed was disabled while we were waiting for lock
-                    std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(),
-                                                output_left.end());
-                    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
-                                                 output_right.end());
-                    g_buffer_cv.notify_one();
-                    if (frames_generated > 0) {
-                        float postPeak = compute_stereo_peak(output_left.data(),
-                                                             output_right.data(), frames_generated);
-                        update_peak_level(g_peak_post_crossfeed_level, postPeak);
-                    }
-                }
-            } else {
-                // Bypass crossfeed - store upsampler output directly
-                std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(),
-                                            output_left.end());
-                g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
-                                             output_right.end());
-                g_buffer_cv.notify_one();
-                if (frames_generated > 0) {
-                    float postPeak = compute_stereo_peak(output_left.data(), output_right.data(),
-                                                         frames_generated);
-                    update_peak_level(g_peak_post_crossfeed_level, postPeak);
-                }
-            }
-        }
+        process_interleaved_block(input_samples, n_frames);
     }
 
     pw_stream_queue_buffer(data->input_stream, buf);
@@ -3133,6 +3315,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Starting ALSA output thread..." << std::endl;
         std::thread alsa_thread(alsa_output_thread);
 
+        maybe_start_rtp_from_config();
+
         // Initialize PipeWire input
         pw_init(&argc, &argv);
 
@@ -3281,6 +3465,7 @@ int main(int argc, char* argv[]) {
 
         // Step 6: Release audio processing resources
         std::cout << "  Step 6: Releasing resources..." << std::endl;
+        shutdown_rtp_manager();
         if (g_fallback_manager) {
             g_fallback_manager->shutdown();
             delete g_fallback_manager;

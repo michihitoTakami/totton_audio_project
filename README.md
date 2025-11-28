@@ -99,6 +99,18 @@ sequenceDiagram
     Py-->>Web: WebSocket Push
 ```
 
+### RTPセッション管理
+
+Jetson環境では PipeWire を介さずにネットワークRTPストリームを直接 Data Plane に流せます。
+`config.json` の `rtp` セクション、もしくは ZeroMQ コマンドで制御します。
+
+- `RTP_START_SESSION` / `RTP_STOP_SESSION` でセッションの開始・停止
+- `RTP_LIST_SESSIONS` で受信メトリクス (パケット数、SSRC、PTP状態など) を取得
+- PCM16/24/32 Big/Little Endian に対応し、自動で `float` へ変換して GPU パイプラインへ投入
+- PTP Hook によるオフセット監視・Watchdog により SSRC 変更やギャップを検知
+
+詳細は `docs/architecture/rtp_session_manager.md` を参照してください。
+
 ---
 
 ## 主要機能

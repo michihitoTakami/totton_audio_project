@@ -29,7 +29,13 @@ enum class CommandType {
     CROSSFEED_SET_COMBINED,      // Set combined filter (4ch x 2 rate families, Base64 encoded)
     CROSSFEED_SET_SIZE,          // Set head size (xs/s/m/l/xl)
     CROSSFEED_GET_STATUS,        // Get crossfeed status (enabled, head_size, headphone)
-    CROSSFEED_GENERATE_WOODWORTH // Procedurally generate Woodworth HRTF
+    CROSSFEED_GENERATE_WOODWORTH,  // Procedurally generate Woodworth HRTF
+
+    // RTP session management (#358)
+    RTP_START_SESSION,
+    RTP_STOP_SESSION,
+    RTP_LIST_SESSIONS,
+    RTP_GET_SESSION
 };
 
 // Response status
@@ -156,6 +162,12 @@ class ZMQClient {
                                              float earSpacingMeters = 0.18f,
                                              float farEarShadowDb = -8.0f,
                                              float diffuseFieldTiltDb = -2.0f);
+
+    // RTP session controls
+    CommandResult rtpStartSession(const std::string& paramsJson);
+    CommandResult rtpStopSession(const std::string& sessionId);
+    CommandResult rtpListSessions();
+    CommandResult rtpGetSession(const std::string& sessionId);
 
     // Subscribe to status updates (async)
     bool subscribeStatus(const std::string& pubEndpoint, StatusCallback callback);

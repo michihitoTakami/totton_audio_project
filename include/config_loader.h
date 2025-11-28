@@ -64,6 +64,37 @@ struct AppConfig {
         bool xrunTriggersFallback = true;    // Whether XRUN triggers immediate fallback
         int monitorIntervalMs = 100;         // GPU monitoring interval (milliseconds)
     } fallback;
+
+    struct RtpInputConfig {
+        bool enabled = false;
+        bool autoStart = false;
+        std::string sessionId = "default";
+        std::string bindAddress = "0.0.0.0";
+        uint16_t port = 6000;
+        std::string sourceHost;
+        bool multicast = false;
+        std::string multicastGroup;
+        std::string interfaceName;
+        uint8_t ttl = 32;
+        int dscp = -1;
+        uint32_t sampleRate = 48000;
+        uint8_t channels = 2;
+        uint8_t bitsPerSample = 24;
+        bool bigEndian = true;
+        bool signedSamples = true;
+        uint8_t payloadType = 97;
+        size_t socketBufferBytes = 1 << 20;
+        size_t mtuBytes = 1500;
+        uint32_t targetLatencyMs = 5;
+        uint32_t watchdogTimeoutMs = 500;
+        uint32_t telemetryIntervalMs = 1000;
+        bool enableRtcp = true;
+        uint16_t rtcpPort = 0;
+        bool enablePtp = false;
+        std::string ptpInterface;
+        int ptpDomain = 0;
+        std::string sdp;
+    } rtp;
 };
 
 // Convert string to PhaseType (returns Minimum for invalid input)

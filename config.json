@@ -38,5 +38,19 @@
     "consoleOutput": true,
     "coloredOutput": true
   },
+  "rtp": {
+    "enabled": false,
+    "autoStart": false,
+    "sessionId": "default",
+    "bindAddress": "0.0.0.0",
+    "port": 6000,
+    "payloadType": 97,
+    "sampleRate": 48000,
+    "channels": 2,
+    "bitsPerSample": 24,
+    "targetLatencyMs": 5,
+    "watchdogTimeoutMs": 500,
+    "enableRtcp": true
+  },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }
