@@ -58,6 +58,7 @@ PCM/RTP ストリームを受信する必要がある。本ドキュメントで
 | `RTP_STOP_SESSION` | `{ "session_id": "foo" }` | 指定セッションを停止・破棄 |
 | `RTP_LIST_SESSIONS` | なし | 現在のセッション一覧とメトリクス |
 | `RTP_GET_SESSION` | `{ "session_id": "foo" }` | 単一セッションのメトリクス |
+| `RTP_DISCOVER_STREAMS` | なし | 短時間のネットワークスキャンで受信候補を列挙 |
 
 ### 例
 
@@ -167,6 +168,35 @@ POST /api/rtp/sessions
 `web/services/rtp.py` に `RtpTelemetryPoller` を実装し、1.5s間隔で `RTP_LIST_SESSIONS` をポーリングする。
 結果は `RtpTelemetryStore` にキャッシュされ `GET /api/rtp/sessions` から即時取得できる。
 `MAGICBOX_DISABLE_RTP_POLLING=1` を指定するとポーリングを無効化（テスト用途）。
+
+### Discovery Scanner (#372)
+
+`RTP_DISCOVER_STREAMS` コマンドは `rtp.discovery` ブロックで挙動を制御する。
+デフォルト例:
+
+```json
+"rtp": {
+  "...": "...",
+  "discovery": {
+    "scanDurationMs": 250,
+    "cooldownMs": 1500,
+    "maxStreams": 12,
+    "enableMulticast": true,
+    "enableUnicast": true,
+    "ports": [5004, 6000]
+  }
+}
+```
+
+- `scanDurationMs` (50-5000ms): UDPソケットをバインドしてRTPパケットを待ち受ける時間
+- `cooldownMs` (>=250ms): 直近のスキャン結果をキャッシュする最小インターバル
+- `maxStreams` (1-64): レスポンス内で返却する候補数の上限
+- `enableMulticast` / `enableUnicast`: それぞれのアドレスタイプを検出対象に含めるか
+- `ports`: スキャン対象のポートリスト。`rtp.port` と AES67 デフォルト(5004)は自動追加される
+
+レスポンスは `streams` 配列に `session_id` / `display_name` / `source_host` /
+`port` / `payload_type` / `sample_rate` / `existing_session` などのヒントを含み、UI や REST API
+のプリセット生成に利用できる。
 
 ## Web UI (Issue #360)
 

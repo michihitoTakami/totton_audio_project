@@ -51,6 +51,8 @@ const char* commandTypeToString(CommandType type) {
         return "RTP_LIST_SESSIONS";
     case CommandType::RTP_GET_SESSION:
         return "RTP_GET_SESSION";
+    case CommandType::RTP_DISCOVER_STREAMS:
+        return "RTP_DISCOVER_STREAMS";
     default:
         return "UNKNOWN";
     }
@@ -79,7 +81,9 @@ CommandType stringToCommandType(const std::string& str) {
         {"RTP_LIST_SESSIONS", CommandType::RTP_LIST_SESSIONS},
         {"ListSessions", CommandType::RTP_LIST_SESSIONS},
         {"RTP_GET_SESSION", CommandType::RTP_GET_SESSION},
-        {"GetSession", CommandType::RTP_GET_SESSION}};
+        {"GetSession", CommandType::RTP_GET_SESSION},
+        {"RTP_DISCOVER_STREAMS", CommandType::RTP_DISCOVER_STREAMS},
+        {"DiscoverStreams", CommandType::RTP_DISCOVER_STREAMS}};
 
     auto it = lookup.find(str);
     if (it != lookup.end()) {
@@ -713,6 +717,10 @@ CommandResult ZMQClient::rtpGetSession(const std::string& sessionId) {
     json params;
     params["session_id"] = sessionId;
     return sendCommand(CommandType::RTP_GET_SESSION, params.dump());
+}
+
+CommandResult ZMQClient::rtpDiscoverStreams() {
+    return sendCommand(CommandType::RTP_DISCOVER_STREAMS);
 }
 
 bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, StatusCallback callback) {

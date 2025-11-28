@@ -394,6 +394,7 @@ cmake --build build -j$(nproc)
 | `SWITCH_RATE` | レートファミリー切り替え |
 | `APPLY_EQ` | EQ適用 |
 | `RESTORE_EQ` | EQ解除 |
+| `RTP_DISCOVER_STREAMS` | RTP送信元スキャン |
 
 ---
 

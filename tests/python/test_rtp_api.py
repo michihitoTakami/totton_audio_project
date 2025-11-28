@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("MAGICBOX_DISABLE_RTP_POLLING", "1")
 
 from web.main import app  # noqa: E402
-from web.services import telemetry_store  # noqa: E402
+from web.services import build_discovery_stream, telemetry_store  # noqa: E402
 from web.services.daemon_client import DaemonError, DaemonResponse  # noqa: E402
 
 
@@ -232,3 +232,23 @@ def test_discover_streams_error_propagates(client):
         response = client.get("/api/rtp/discover")
 
     assert response.status_code == 503
+
+
+def test_build_discovery_stream_preserves_existing_flag():
+    """Daemon discovery payloads should propagate existing_session/multicast hints."""
+    payload = {
+        "session_id": "aes67-main",
+        "display_name": "AES67 Main",
+        "source_host": "239.1.1.10",
+        "port": 5004,
+        "existing_session": True,
+        "payload_type": 97,
+        "multicast": True,
+    }
+
+    stream = build_discovery_stream(payload)
+
+    assert stream.existing_session is True
+    assert stream.payload_type == 97
+    assert stream.multicast is True
+    assert stream.session_id == "aes67-main"

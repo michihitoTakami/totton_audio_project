@@ -381,7 +381,7 @@ def build_discovery_stream(payload: dict[str, Any]) -> RtpDiscoveryStream:
         source_host=source_host,
         port=_coerce_port(payload.get("port")),
         status=status or "unknown",
-        existing_session=False,
+        existing_session=_coerce_bool(payload.get("existing_session")),
         sample_rate=payload.get("sample_rate"),
         channels=payload.get("channels"),
         payload_type=payload.get("payload_type"),

@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 constexpr const char* DEFAULT_CONFIG_FILE = "config.json";
 
@@ -95,6 +96,13 @@ struct AppConfig {
         std::string ptpInterface;
         int ptpDomain = 0;
         std::string sdp;
+        // Discovery scanner defaults (Issue #372)
+        std::vector<uint16_t> discoveryPorts = {5004, 6000};
+        uint32_t discoveryScanDurationMs = 250;
+        uint32_t discoveryCooldownMs = 1500;
+        size_t discoveryMaxStreams = 12;
+        bool discoveryEnableMulticast = true;
+        bool discoveryEnableUnicast = true;
     } rtp;
 };
 

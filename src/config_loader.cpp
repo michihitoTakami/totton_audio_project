@@ -244,6 +244,85 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                     outConfig.rtp.ptpDomain = rtp["ptpDomain"].get<int>();
                 if (rtp.contains("sdp") && rtp["sdp"].is_string())
                     outConfig.rtp.sdp = rtp["sdp"].get<std::string>();
+                if (rtp.contains("discovery") && rtp["discovery"].is_object()) {
+                    auto discovery = rtp["discovery"];
+                    if (discovery.contains("scanDurationMs") &&
+                        discovery["scanDurationMs"].is_number_integer()) {
+                        outConfig.rtp.discoveryScanDurationMs =
+                            static_cast<uint32_t>(discovery["scanDurationMs"].get<int>());
+                    }
+                    if (discovery.contains("cooldownMs") &&
+                        discovery["cooldownMs"].is_number_integer()) {
+                        outConfig.rtp.discoveryCooldownMs =
+                            static_cast<uint32_t>(discovery["cooldownMs"].get<int>());
+                    }
+                    if (discovery.contains("maxStreams") &&
+                        discovery["maxStreams"].is_number_integer()) {
+                        outConfig.rtp.discoveryMaxStreams =
+                            static_cast<size_t>(std::max(1, discovery["maxStreams"].get<int>()));
+                    }
+                    if (discovery.contains("enableMulticast") &&
+                        discovery["enableMulticast"].is_boolean()) {
+                        outConfig.rtp.discoveryEnableMulticast =
+                            discovery["enableMulticast"].get<bool>();
+                    }
+                    if (discovery.contains("enableUnicast") &&
+                        discovery["enableUnicast"].is_boolean()) {
+                        outConfig.rtp.discoveryEnableUnicast =
+                            discovery["enableUnicast"].get<bool>();
+                    }
+                    if (discovery.contains("ports") && discovery["ports"].is_array()) {
+                        outConfig.rtp.discoveryPorts.clear();
+                        for (const auto& value : discovery["ports"]) {
+                            if (!value.is_number_integer()) {
+                                continue;
+                            }
+                            int portValue = value.get<int>();
+                            if (portValue >= 1024 && portValue <= 65535) {
+                                outConfig.rtp.discoveryPorts.push_back(
+                                    static_cast<uint16_t>(portValue));
+                            }
+                        }
+                    }
+                }
+
+                // Clamp discovery parameters to sane ranges
+                outConfig.rtp.discoveryScanDurationMs =
+                    std::clamp(outConfig.rtp.discoveryScanDurationMs, 50u, 5000u);
+                outConfig.rtp.discoveryCooldownMs =
+                    std::clamp(outConfig.rtp.discoveryCooldownMs, 250u, 30000u);
+                outConfig.rtp.discoveryMaxStreams =
+                    std::clamp(outConfig.rtp.discoveryMaxStreams, static_cast<size_t>(1),
+                               static_cast<size_t>(64));
+
+                auto appendDiscoveryPort = [&](uint16_t candidate) {
+                    if (candidate < 1024 || candidate > 65535) {
+                        return;
+                    }
+                    if (std::find(outConfig.rtp.discoveryPorts.begin(),
+                                  outConfig.rtp.discoveryPorts.end(),
+                                  candidate) == outConfig.rtp.discoveryPorts.end()) {
+                        outConfig.rtp.discoveryPorts.push_back(candidate);
+                    }
+                };
+
+                appendDiscoveryPort(outConfig.rtp.port);
+                appendDiscoveryPort(5004);
+
+                if (outConfig.rtp.discoveryPorts.empty()) {
+                    outConfig.rtp.discoveryPorts.push_back(outConfig.rtp.port);
+                }
+
+                std::sort(outConfig.rtp.discoveryPorts.begin(), outConfig.rtp.discoveryPorts.end());
+                outConfig.rtp.discoveryPorts.erase(
+                    std::unique(outConfig.rtp.discoveryPorts.begin(),
+                                outConfig.rtp.discoveryPorts.end()),
+                    outConfig.rtp.discoveryPorts.end());
+
+                constexpr size_t kMaxDiscoveryPorts = 16;
+                if (outConfig.rtp.discoveryPorts.size() > kMaxDiscoveryPorts) {
+                    outConfig.rtp.discoveryPorts.resize(kMaxDiscoveryPorts);
+                }
             } catch (const std::exception& e) {
                 if (verbose) {
                     std::cerr << "Config: Invalid RTP settings, using defaults: " << e.what()
