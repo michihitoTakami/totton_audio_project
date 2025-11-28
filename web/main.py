@@ -17,6 +17,7 @@ from .routers import (
     daemon_router,
     eq_router,
     opra_router,
+    rtp_router,
     status_router,
 )
 from .templates import get_admin_html
@@ -46,6 +47,10 @@ tags_metadata = [
     {
         "name": "crossfeed",
         "description": "Crossfeed (HRTF-based headphone virtualization) control",
+    },
+    {
+        "name": "rtp",
+        "description": "RTP session lifecycle management and telemetry",
     },
     {
         "name": "legacy",
@@ -88,6 +93,7 @@ app.include_router(eq_router)
 app.include_router(opra_router)
 app.include_router(dac_router)
 app.include_router(crossfeed_router)
+app.include_router(rtp_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)

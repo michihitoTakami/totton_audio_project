@@ -124,3 +124,64 @@ PCM/RTP ストリームを受信する必要がある。本ドキュメントで
 PipeWire 入力と並列で PCM を供給できる。ZeroMQ コマンドは常に利用可能で、
 制御プレーンから複数セッションのライフサイクルを管理できる。
 
+## Control Plane API (Issue #359)
+
+FastAPI (`web/main.py`) から RTP セッションを管理するための REST API を追加した。
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/rtp/sessions` | SessionConfig を受け取り `RTP_START_SESSION` を送信 |
+| `GET` | `/api/rtp/sessions` | バックグラウンドポーラがキャッシュしたテレメトリ一覧を返す |
+| `GET` | `/api/rtp/sessions/{id}` | 単一セッションの最新メトリクス (`RTP_GET_SESSION`) |
+| `DELETE` | `/api/rtp/sessions/{id}` | `RTP_STOP_SESSION` を送信し停止 |
+
+### Pydantic モデル
+
+- `RtpEndpointSettings`: `bind_address`, `port`, `source_host`, `multicast_group`
+- `RtpFormatSettings`: `sample_rate`, `channels`, `bits_per_sample`, `payload_type`
+- `RtpSyncSettings`: `target_latency_ms`, `watchdog_timeout_ms`, `enable_ptp`
+- `RtpSecurityConfig`: Optional SRTPキー (`crypto_suite`, `key_base64`)
+- `RtpSdpConfig`: 任意の SDP テンプレート（未指定時は AES67 互換で自動生成）
+
+API リクエスト例:
+
+```json
+POST /api/rtp/sessions
+{
+  "session_id": "aes67-main",
+  "endpoint": {
+    "bind_address": "0.0.0.0",
+    "port": 6000,
+    "multicast": true,
+    "multicast_group": "239.69.0.1"
+  },
+  "format": { "sample_rate": 48000, "channels": 2, "bits_per_sample": 24 },
+  "sync": { "target_latency_ms": 5, "telemetry_interval_ms": 1000 },
+  "rtcp": { "enable": true },
+  "security": { "crypto_suite": "AES_CM_128_HMAC_SHA1_80", "key_base64": "kK1B..." }
+}
+```
+
+### バックグラウンドテレメトリ
+
+`web/services/rtp.py` に `RtpTelemetryPoller` を実装し、1.5s間隔で `RTP_LIST_SESSIONS` をポーリングする。
+結果は `RtpTelemetryStore` にキャッシュされ `GET /api/rtp/sessions` から即時取得できる。
+`MAGICBOX_DISABLE_RTP_POLLING=1` を指定するとポーリングを無効化（テスト用途）。
+
+### cURL での検証手順
+
+```bash
+uv sync
+uv run uvicorn web.main:app --reload --port 8000
+
+curl -X POST http://127.0.0.1:8000/api/rtp/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"aes67-main","endpoint":{"port":6000},"format":{"sample_rate":48000}}'
+
+curl http://127.0.0.1:8000/api/rtp/sessions
+curl http://127.0.0.1:8000/api/rtp/sessions/aes67-main
+curl -X DELETE http://127.0.0.1:8000/api/rtp/sessions/aes67-main
+```
+
+この手順を README にも掲載し、受け入れ条件「API を叩きセッション開始／停止を確認できる」に対応した。
+
