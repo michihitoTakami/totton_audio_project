@@ -16,6 +16,13 @@
   "_comment": "Multi-rate filter paths: System automatically selects appropriate filter based on input rate and DAC capability. Available filters: 44k/48k × 2x/4x/8x/16x × min_phase/linear. Default gain 1.0 is suitable for all rates.",
   "eqEnabled": true,
   "eqProfilePath": "data/EQ/Sample_EQ.txt",
+  "partitionedConvolution": {
+    "enabled": false,
+    "fastPartitionTaps": 32768,
+    "minPartitionTaps": 32768,
+    "maxPartitions": 4,
+    "tailFftMultiple": 2
+  },
   "crossfeed": {
     "enabled": false,
     "headSize": "m",

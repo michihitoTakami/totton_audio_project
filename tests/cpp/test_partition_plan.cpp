@@ -1,5 +1,6 @@
 #include "gpu/partition_plan.h"
 
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <string>
 
@@ -68,5 +69,23 @@ TEST_F(PartitionPlanTest, DescribeIncludesLatencyInfo) {
     EXPECT_NE(description.find("fast#0=32768"), std::string::npos);
     EXPECT_NE(description.find("tail#1"), std::string::npos);
     EXPECT_NE(description.find("ms"), std::string::npos);
+}
+
+TEST_F(PartitionPlanTest, TailFftMultipleExpandsFftSize) {
+    defaultConfig_.tailFftMultiple = 8;
+    auto plan = ConvolutionEngine::buildPartitionPlan(200000, 16, defaultConfig_);
+
+    ASSERT_TRUE(plan.enabled);
+    ASSERT_GT(plan.partitions.size(), 1u);
+
+    const auto& tail = plan.partitions[1];
+    int expectedFft = 1;
+    const int target = std::max(tail.taps * defaultConfig_.tailFftMultiple, tail.taps + 1);
+    while (expectedFft < target) {
+        expectedFft <<= 1;
+    }
+
+    EXPECT_EQ(tail.fftSize, expectedFft);
+    EXPECT_FALSE(tail.realtime);
 }
 

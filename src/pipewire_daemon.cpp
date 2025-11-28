@@ -3,6 +3,7 @@
 #include "config_loader.h"
 #include "convolution_engine.h"
 #include "daemon_constants.h"
+#include "partition_runtime_utils.h"
 #include "soft_mute.h"
 
 #include <algorithm>
@@ -460,6 +461,8 @@ int main(int argc, char* argv[]) {
 
     AppConfig appConfig;
     bool configLoaded = loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false);
+    PartitionRuntime::RuntimeRequest partitionRequest{
+        appConfig.partitionedConvolution.enabled, appConfig.eqEnabled, appConfig.crossfeed.enabled};
 
     // Install signal handlers
     std::signal(SIGINT, signal_handler);
@@ -499,15 +502,6 @@ int main(int argc, char* argv[]) {
         std::cout << "Phase type: minimum (default)" << std::endl;
     }
     g_config = appConfig;
-    if (g_config.partitionedConvolution.enabled && g_config.eqEnabled) {
-        std::cout << "[Partition] EQ disabled: not yet supported in low-latency mode (see #353)"
-                  << std::endl;
-        g_config.eqEnabled = false;
-    }
-    if (g_config.partitionedConvolution.enabled && g_config.crossfeed.enabled) {
-        std::cout << "[Partition] Crossfeed disabled: not supported in low-latency mode" << std::endl;
-        g_config.crossfeed.enabled = false;
-    }
     g_limiter_gain.store(1.0f, std::memory_order_relaxed);
     g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
     // Input sample rate will be auto-detected from PipeWire stream
@@ -518,6 +512,7 @@ int main(int argc, char* argv[]) {
         delete g_upsampler;
         return 1;
     }
+    PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_upsampler, g_config, "PipeWire");
 
     // Initialize soft mute controller (default fade duration, will be extended for filter
     // switching)

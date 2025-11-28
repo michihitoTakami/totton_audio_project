@@ -100,6 +100,11 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 if (pc.contains("maxPartitions") && pc["maxPartitions"].is_number_integer())
                     outConfig.partitionedConvolution.maxPartitions =
                         std::max(1, pc["maxPartitions"].get<int>());
+                if (pc.contains("tailFftMultiple") && pc["tailFftMultiple"].is_number_integer()) {
+                    int tailMultiple = pc["tailFftMultiple"].get<int>();
+                    outConfig.partitionedConvolution.tailFftMultiple =
+                        std::clamp(tailMultiple, 2, 16);
+                }
             } catch (const std::exception& e) {
                 if (verbose) {
                     std::cerr << "Config: Invalid partitionedConvolution settings, using defaults: "

@@ -302,6 +302,31 @@ cmake --build build -j$(nproc)
 | EQソース | OPRA Project (CC BY-SA 4.0) |
 | 追加フィルタ | PK Fc 5366 Hz Gain 2.8 dB Q 1.5 |
 
+### 低遅延パーティションモード
+
+`config.json` の `partitionedConvolution` セクションで GPU パーティション処理を制御できます。  
+サポートされるキー:
+
+| キー | 説明 | デフォルト |
+|------|------|------------|
+| `enabled` | 低遅延モードの有効/無効 | `false` |
+| `fastPartitionTaps` | 即時出力用パーティションのタップ数 | `32768` |
+| `minPartitionTaps` | tail パーティションの最小タップ数 | `32768` |
+| `maxPartitions` | 生成する最大パーティション数 | `4` |
+| `tailFftMultiple` | tail パーティション FFT サイズをタップ数の何倍にするか（2〜16） | `2` |
+
+```
+"partitionedConvolution": {
+  "enabled": true,
+  "fastPartitionTaps": 32768,
+  "minPartitionTaps": 32768,
+  "maxPartitions": 4,
+  "tailFftMultiple": 4
+}
+```
+
+クロスフィードと EQ は現在の低遅延パスでは未サポートです。設定が衝突する場合はデーモン起動時にログへ警告が出力され、自動的に従来モードへフォールバックします。
+
 ---
 
 ## Web API

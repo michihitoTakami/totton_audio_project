@@ -162,6 +162,7 @@ target_compile_options(gpu_upsampler PRIVATE
 add_executable(gpu_upsampler_daemon
     src/pipewire_daemon.cpp
     src/config_loader.cpp
+    src/partition_runtime_utils.cpp
 )
 
 # Link against core library, PipeWire, SoftMute, and Logging
@@ -181,6 +182,7 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
+    src/partition_runtime_utils.cpp
 )
 
 # Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, SoftMute, FallbackManager, and Logging
