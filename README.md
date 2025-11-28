@@ -367,6 +367,33 @@ cmake --build build -j$(nproc)
 
 クロスフィードは現在の低遅延パスでは未サポートです。クロスフィード設定が有効な場合はデーモン起動時に警告を出して自動的に従来モードへフォールバックします。EQ は低遅延モードでも利用できます。
 
+#### 検証ワークフロー
+
+1. **パーティション構成の確認**
+   ```bash
+   uv run python scripts/inspect_impulse.py \
+     --coeff data/coefficients/filter_44k_16x_2m_min_phase.bin \
+     --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
+     --config config.json --enable-partition \
+     --summary-json plots/analysis/partition_summary.json
+   ```
+   - fast/tailごとのタップ数・FFTサイズ・エネルギー配分をテーブル化
+   - 推定遅延（fastウィンドウ / tail合流ウィンドウ）を自動計算
+2. **周波数応答の比較**
+   ```bash
+   uv run python scripts/verify_frequency_response.py \
+     test_data/low_latency/test_sweep_44100hz.wav \
+     test_output/lowlat_sweep.wav \
+     --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
+     --config config.json \
+     --analysis-window-seconds 1.5 \
+     --compare-fast-tail
+   ```
+   - 自動的に tail 合流までの秒数をスキップし、fast 区間とのスペクトル差分を表示
+   - stopband 減衰とピーク一致を既存モードと比較
+
+詳しいループバック手順やXRUN/GPU監視のポイントは `docs/investigations/low_latency_partition_validation.md` を参照してください。
+
 ---
 
 ## Web API
