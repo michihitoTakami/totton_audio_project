@@ -111,6 +111,33 @@ Jetson環境では PipeWire を介さずにネットワークRTPストリーム�
 
 詳細は `docs/architecture/rtp_session_manager.md` を参照してください。
 
+#### Control Plane (FastAPI) からの制御
+
+FastAPI 側に `/api/rtp/sessions` エンドポイントを追加しました。GUI なしでも以下の手順でセッションを作成／監視できます。
+
+```bash
+uv sync
+uv run uvicorn web.main:app --reload --port 8000
+
+# セッション作成
+curl -X POST http://127.0.0.1:8000/api/rtp/sessions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "aes67-main",
+    "endpoint": {"bind_address": "0.0.0.0", "port": 6000},
+    "format": {"sample_rate": 48000, "channels": 2, "bits_per_sample": 24},
+    "sync": {"target_latency_ms": 5}
+  }'
+
+# 状態確認
+curl http://127.0.0.1:8000/api/rtp/sessions/aes67-main
+
+# 停止
+curl -X DELETE http://127.0.0.1:8000/api/rtp/sessions/aes67-main
+```
+
+`GET /api/rtp/sessions` はバックグラウンドポーラがキャッシュした RTCP テレメトリを返し、Data Plane に負荷を掛けません。
+
 ---
 
 ## 主要機能

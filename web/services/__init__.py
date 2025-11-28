@@ -32,6 +32,14 @@ from .pipewire import (
     setup_pipewire_links,
     wait_for_daemon_node,
 )
+from .rtp import (
+    build_session_config_payload,
+    parse_config_snapshot,
+    parse_metrics_payload,
+    refresh_sessions_from_daemon,
+    telemetry_poller,
+    telemetry_store,
+)
 
 __all__ = [
     # alsa
@@ -67,4 +75,11 @@ __all__ = [
     "setup_audio_routing",
     "setup_pipewire_links",
     "wait_for_daemon_node",
+    # rtp
+    "build_session_config_payload",
+    "parse_config_snapshot",
+    "parse_metrics_payload",
+    "refresh_sessions_from_daemon",
+    "telemetry_poller",
+    "telemetry_store",
 ]
