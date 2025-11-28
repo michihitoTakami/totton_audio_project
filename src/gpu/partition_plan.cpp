@@ -19,12 +19,13 @@ int nextPow2(int value) {
     return result;
 }
 
-PartitionDescriptor makeDescriptor(int taps, bool realtime) {
+PartitionDescriptor makeDescriptor(int taps, bool realtime, int fftMultipleOverride) {
     PartitionDescriptor desc;
     desc.taps = taps;
     desc.realtime = realtime;
     // Require enough FFT bins to accommodate taps + overlap
-    const int fftTarget = std::max(taps * 2, taps + 1);
+    const int fftMultiple = realtime ? 2 : std::max(2, fftMultipleOverride);
+    const int fftTarget = std::max(taps * fftMultiple, taps + 1);
     desc.fftSize = nextPow2(fftTarget);
     desc.validOutput = std::max(1, desc.fftSize - taps + 1);
     return desc;
@@ -50,7 +51,7 @@ PartitionPlan buildPartitionPlan(int totalTaps, int upsampleRatio,
     int fastUpperBound = std::max(fastLowerBound, totalTaps);
     int fastTaps = std::clamp(std::max(config.fastPartitionTaps, 1), fastLowerBound, fastUpperBound);
 
-    plan.partitions.push_back(makeDescriptor(fastTaps, true));
+    plan.partitions.push_back(makeDescriptor(fastTaps, true, config.tailFftMultiple));
     plan.realtimeTaps = fastTaps;
     remaining -= fastTaps;
     if (remaining <= 0) {
@@ -70,14 +71,14 @@ PartitionPlan buildPartitionPlan(int totalTaps, int upsampleRatio,
             taps = remaining;
         }
 
-        plan.partitions.push_back(makeDescriptor(taps, false));
+        plan.partitions.push_back(makeDescriptor(taps, false, config.tailFftMultiple));
         remaining -= taps;
         previousTaps = taps;
         ++partitionsUsed;
     }
 
     if (remaining > 0) {
-        plan.partitions.push_back(makeDescriptor(remaining, false));
+        plan.partitions.push_back(makeDescriptor(remaining, false, config.tailFftMultiple));
     }
 
     // Recompute realtime taps in case fast partition consumed entire filter

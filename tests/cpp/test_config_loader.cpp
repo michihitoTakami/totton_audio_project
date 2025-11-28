@@ -206,6 +206,7 @@ TEST_F(ConfigLoaderTest, PartitionedConvolutionDefaults) {
     EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 32768);
     EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 32768);
     EXPECT_EQ(config.partitionedConvolution.maxPartitions, 4);
+    EXPECT_EQ(config.partitionedConvolution.tailFftMultiple, 2);
 }
 
 TEST_F(ConfigLoaderTest, LoadPartitionedConvolutionSection) {
@@ -214,7 +215,8 @@ TEST_F(ConfigLoaderTest, LoadPartitionedConvolutionSection) {
             "enabled": true,
             "fastPartitionTaps": 48000,
             "minPartitionTaps": 8000,
-            "maxPartitions": 6
+            "maxPartitions": 6,
+            "tailFftMultiple": 6
         }
     })");
 
@@ -225,6 +227,7 @@ TEST_F(ConfigLoaderTest, LoadPartitionedConvolutionSection) {
     EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 48000);
     EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 8000);
     EXPECT_EQ(config.partitionedConvolution.maxPartitions, 6);
+    EXPECT_EQ(config.partitionedConvolution.tailFftMultiple, 6);
 }
 
 TEST_F(ConfigLoaderTest, PartitionedConvolutionInvalidValuesClamped) {
@@ -233,7 +236,8 @@ TEST_F(ConfigLoaderTest, PartitionedConvolutionInvalidValuesClamped) {
             "enabled": true,
             "fastPartitionTaps": 256,
             "minPartitionTaps": -10,
-            "maxPartitions": 0
+            "maxPartitions": 0,
+            "tailFftMultiple": 0
         }
     })");
 
@@ -245,6 +249,7 @@ TEST_F(ConfigLoaderTest, PartitionedConvolutionInvalidValuesClamped) {
     EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 1024);
     EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 1024);
     EXPECT_EQ(config.partitionedConvolution.maxPartitions, 1);
+    EXPECT_EQ(config.partitionedConvolution.tailFftMultiple, 2);
 }
 
 TEST_F(ConfigLoaderTest, LoadConfigWithPhaseTypeMinimum) {

@@ -11,6 +11,7 @@
 #include "filter_headroom.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
+#include "partition_runtime_utils.h"
 #include "playback_buffer.h"
 #include "rtp_session_manager.h"
 #include "soft_mute.h"
@@ -1249,17 +1250,6 @@ static void load_runtime_config() {
 
     if (!found) {
         std::cout << "Config: Using defaults (no config.json found)" << std::endl;
-    }
-
-    if (g_config.partitionedConvolution.enabled && g_config.eqEnabled) {
-        std::cout << "[Partition] EQ disabled: not yet supported in low-latency mode (see #353)"
-                  << std::endl;
-        g_config.eqEnabled = false;
-    }
-
-    if (g_config.partitionedConvolution.enabled && g_config.crossfeed.enabled) {
-        std::cout << "[Partition] Crossfeed disabled: not supported in low-latency mode" << std::endl;
-        g_config.crossfeed.enabled = false;
     }
 
     print_config_summary(g_config);
@@ -2971,6 +2961,10 @@ int main(int argc, char* argv[]) {
             std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
         }
 
+        PartitionRuntime::RuntimeRequest partitionRequest{
+            g_config.partitionedConvolution.enabled, g_config.eqEnabled,
+            g_config.crossfeed.enabled};
+
         initialize_dac_manager();
 
         // Auto-select filter based on sample rate if configured filter doesn't exist
@@ -3143,6 +3137,7 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             break;
         }
+        PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_upsampler, g_config, "ALSA");
 
         // Check for early abort
         if (!g_running) {

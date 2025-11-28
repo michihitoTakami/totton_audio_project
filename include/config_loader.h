@@ -45,6 +45,7 @@ struct AppConfig {
         int fastPartitionTaps = 32768;
         int minPartitionTaps = 32768;
         int maxPartitions = 4;
+        int tailFftMultiple = 2;
     } partitionedConvolution;
 
     // Crossfeed settings (nested struct for clarity)
