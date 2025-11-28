@@ -85,6 +85,30 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("coefficientDir"))
             outConfig.coefficientDir = j["coefficientDir"].get<std::string>();
 
+        // Partitioned convolution settings (Issue #351)
+        if (j.contains("partitionedConvolution") && j["partitionedConvolution"].is_object()) {
+            auto pc = j["partitionedConvolution"];
+            try {
+                if (pc.contains("enabled") && pc["enabled"].is_boolean())
+                    outConfig.partitionedConvolution.enabled = pc["enabled"].get<bool>();
+                if (pc.contains("fastPartitionTaps") && pc["fastPartitionTaps"].is_number_integer())
+                    outConfig.partitionedConvolution.fastPartitionTaps =
+                        std::max(1024, pc["fastPartitionTaps"].get<int>());
+                if (pc.contains("minPartitionTaps") && pc["minPartitionTaps"].is_number_integer())
+                    outConfig.partitionedConvolution.minPartitionTaps =
+                        std::max(1024, pc["minPartitionTaps"].get<int>());
+                if (pc.contains("maxPartitions") && pc["maxPartitions"].is_number_integer())
+                    outConfig.partitionedConvolution.maxPartitions =
+                        std::max(1, pc["maxPartitions"].get<int>());
+            } catch (const std::exception& e) {
+                if (verbose) {
+                    std::cerr << "Config: Invalid partitionedConvolution settings, using defaults: "
+                              << e.what() << std::endl;
+                }
+                outConfig.partitionedConvolution = AppConfig::PartitionedConvolutionConfig{};
+            }
+        }
+
         // EQ settings
         if (j.contains("eqEnabled"))
             outConfig.eqEnabled = j["eqEnabled"].get<bool>();

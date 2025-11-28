@@ -9,6 +9,15 @@ namespace ConvolutionEngine {
 // GPUUpsampler implementation - Streaming methods
 
 bool GPUUpsampler::initializeStreaming() {
+    if (partitionPlan_.enabled) {
+        if (initializePartitionedStreaming()) {
+            return true;
+        }
+        std::cerr << "[Partition] WARNING: Falling back to legacy streaming mode" << std::endl;
+        partitionPlan_ = PartitionPlan{};
+        partitionConfig_.enabled = false;
+    }
+
     if (fftSize_ == 0 || overlapSize_ == 0) {
         std::cerr << "ERROR: GPU resources not initialized. Call initialize() first." << std::endl;
         return false;
@@ -108,6 +117,11 @@ bool GPUUpsampler::initializeStreaming() {
 }
 
 void GPUUpsampler::resetStreaming() {
+    if (partitionPlan_.enabled && partitionStreamingInitialized_) {
+        resetPartitionedStreaming();
+        return;
+    }
+
     // Reset device-resident overlap buffers
     if (d_overlapLeft_) {
         cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float));
@@ -163,6 +177,9 @@ void GPUUpsampler::freeStreamingBuffers() {
     }
 
     streamInitialized_ = false;
+    if (partitionPlan_.enabled) {
+        partitionStreamingInitialized_ = false;
+    }
     fprintf(stderr, "[Streaming] Streaming buffers freed\n");
 }
 
@@ -172,6 +189,11 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                                        cudaStream_t stream,
                                        StreamFloatVector& streamInputBuffer,
                                        size_t& streamInputAccumulated) {
+    if (partitionPlan_.enabled && partitionStreamingInitialized_) {
+        return processPartitionedStreamBlock(inputData, inputFrames, outputData, stream,
+                                             streamInputBuffer, streamInputAccumulated);
+    }
+
     try {
         // Bypass mode: ratio 1 means input is already at output rate
         // Skip GPU convolution ONLY if EQ is not applied
@@ -381,6 +403,89 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
     } catch (const std::exception& e) {
         std::cerr << "Error in processStreamBlock: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool GPUUpsampler::processPartitionedStreamBlock(
+    const float* inputData, size_t inputFrames, StreamFloatVector& outputData,
+    cudaStream_t stream, StreamFloatVector& streamInputBuffer, size_t& streamInputAccumulated) {
+    try {
+        if (upsampleRatio_ == 1 && !eqApplied_) {
+            outputData.assign(inputData, inputData + inputFrames);
+            streamInputAccumulated = 0;
+            return true;
+        }
+
+        if (!partitionStreamingInitialized_) {
+            std::cerr << "ERROR: Partitioned streaming mode not initialized. Call initializeStreaming() first."
+                      << std::endl;
+            return false;
+        }
+
+        if (streamInputBuffer.empty()) {
+            std::cerr << "ERROR: Streaming input buffer not allocated" << std::endl;
+            return false;
+        }
+
+        registerStreamInputBuffer(streamInputBuffer, stream);
+
+        if (streamInputAccumulated + inputFrames > streamInputBuffer.size()) {
+            std::cerr << "ERROR: Stream input buffer overflow" << std::endl;
+            return false;
+        }
+
+        std::copy(inputData, inputData + inputFrames,
+                  streamInputBuffer.begin() + streamInputAccumulated);
+        streamInputAccumulated += inputFrames;
+
+        if (streamInputAccumulated < streamValidInputPerBlock_) {
+            outputData.clear();
+            return false;
+        }
+
+        size_t samplesToProcess = streamValidInputPerBlock_;
+
+        Utils::checkCudaError(
+            cudaMemcpyAsync(d_streamInput_, streamInputBuffer.data(),
+                            samplesToProcess * sizeof(float), cudaMemcpyHostToDevice, stream),
+            "cudaMemcpy partition stream input");
+
+        int threadsPerBlock = 256;
+        int blocks = (samplesToProcess + threadsPerBlock - 1) / threadsPerBlock;
+        zeroPadKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+            d_streamInput_, d_streamUpsampled_, samplesToProcess, upsampleRatio_);
+
+        int newSamples = validOutputPerBlock_;
+
+        outputData.assign(newSamples, 0.0f);
+        registerStreamOutputBuffer(outputData, stream);
+
+        StreamFloatVector partitionTemp;
+        for (auto& state : partitionStates_) {
+            float* overlap =
+                (stream == streamLeft_) ? state.d_overlapLeft
+                                        : (stream == streamRight_) ? state.d_overlapRight
+                                                                   : state.d_overlapLeft;
+            if (!processPartitionBlock(state, stream, d_streamUpsampled_, newSamples, overlap,
+                                       partitionTemp, outputData)) {
+                return false;
+            }
+        }
+
+        // Shift remaining samples in input buffer
+        size_t remaining = streamInputAccumulated - samplesToProcess;
+        if (remaining > 0) {
+            std::copy(streamInputBuffer.begin() + samplesToProcess,
+                      streamInputBuffer.begin() + streamInputAccumulated,
+                      streamInputBuffer.begin());
+        }
+        streamInputAccumulated = remaining;
+
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error in processPartitionedStreamBlock: " << e.what() << std::endl;
         return false;
     }
 }

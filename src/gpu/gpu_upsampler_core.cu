@@ -54,7 +54,12 @@ GPUUpsampler::GPUUpsampler()
       pinnedStreamOutputLeft_(nullptr), pinnedStreamOutputRight_(nullptr),
       pinnedStreamOutputMono_(nullptr),
       pinnedStreamOutputLeftBytes_(0), pinnedStreamOutputRightBytes_(0),
-      pinnedStreamOutputMonoBytes_(0) {
+      pinnedStreamOutputMonoBytes_(0),
+      partitionFastIndex_(0), maxPartitionValidOutput_(0), partitionFastFftSize_(0),
+      partitionFastFftComplexSize_(0), d_tailAccumulator_(nullptr), d_tailMixBuffer_(nullptr),
+      d_upsampledHistory_(nullptr), tailAccumulatorSize_(0), historyBufferSize_(0),
+      tailBaseSample_(0), tailBaseIndex_(0), partitionProcessedSamples_(0),
+      partitionOutputSamples_(0), historyWriteIndex_(0), partitionStreamingInitialized_(false) {
     stats_ = Stats();
     // Initialize multi-rate FFT pointers to nullptr
     for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {
@@ -123,6 +128,38 @@ bool GPUUpsampler::loadFilterCoefficients(const std::string& path) {
     std::cout << "  Filter loaded successfully (" << fileSize / 1024 << " KB)" << std::endl;
     baseFilterCentroid_ = PhaseAlignment::computeEnergyCentroid(h_filterCoeffs_);
     return true;
+}
+
+void GPUUpsampler::setPartitionedConvolutionConfig(
+    const AppConfig::PartitionedConvolutionConfig& config) {
+    partitionConfig_ = config;
+    partitionPlan_ = PartitionPlan{};
+
+    if (!partitionConfig_.enabled) {
+        return;
+    }
+
+    if (filterTaps_ <= 0 || upsampleRatio_ <= 0) {
+        std::cout << "[Partition] Config stored (waiting for filter initialization)" << std::endl;
+        return;
+    }
+
+    if (multiRateEnabled_ || quadPhaseEnabled_) {
+        std::cout << "[Partition] Disabled: incompatible with current multi-rate/quad-phase mode"
+                  << " (see issue #353)" << std::endl;
+        return;
+    }
+
+    partitionPlan_ = buildPartitionPlan(filterTaps_, upsampleRatio_, partitionConfig_);
+    if (!partitionPlan_.enabled || partitionPlan_.partitions.empty()) {
+        std::cerr << "[Partition] Failed to build partition plan (taps=" << filterTaps_ << ")"
+                  << std::endl;
+        partitionPlan_ = PartitionPlan{};
+        return;
+    }
+
+    int outputRate = getOutputSampleRate();
+    std::cout << "[Partition] Enabled: " << partitionPlan_.describe(outputRate) << std::endl;
 }
 
 bool GPUUpsampler::setupGPUResources() {
@@ -295,6 +332,10 @@ bool GPUUpsampler::setupGPUResources() {
 
         cudaFree(d_filterPadded);
         eqApplied_ = false;
+
+        if (partitionConfig_.enabled) {
+            setPartitionedConvolutionConfig(partitionConfig_);
+        }
 
         std::cout << "  GPU resources allocated successfully" << std::endl;
         return true;
@@ -873,6 +914,9 @@ void GPUUpsampler::cleanup() {
     if (d_streamConvResultOld_) cudaFree(d_streamConvResultOld_);
     if (d_overlapLeft_) cudaFree(d_overlapLeft_);
     if (d_overlapRight_) cudaFree(d_overlapRight_);
+    if (d_tailAccumulator_) cudaFree(d_tailAccumulator_);
+    if (d_tailMixBuffer_) cudaFree(d_tailMixBuffer_);
+    if (d_upsampledHistory_) cudaFree(d_upsampledHistory_);
 
     if (fftPlanForward_) cufftDestroy(fftPlanForward_);
     if (fftPlanInverse_) cufftDestroy(fftPlanInverse_);
@@ -931,6 +975,9 @@ void GPUUpsampler::cleanup() {
     d_streamConvResultOld_ = nullptr;
     d_overlapLeft_ = nullptr;
     d_overlapRight_ = nullptr;
+    d_tailAccumulator_ = nullptr;
+    d_tailMixBuffer_ = nullptr;
+    d_upsampledHistory_ = nullptr;
     fftPlanForward_ = 0;
     fftPlanInverse_ = 0;
     stream_ = nullptr;
@@ -940,9 +987,52 @@ void GPUUpsampler::cleanup() {
     validOutputPerBlock_ = 0;
     streamOverlapSize_ = 0;
     streamInitialized_ = false;
+
+    freePartitionStates();
+}
+
+void GPUUpsampler::resetPartitionedStreaming() {
+    if (!partitionStreamingInitialized_) {
+        return;
+    }
+
+    if (d_overlapLeft_) {
+        Utils::checkCudaError(
+            cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float)),
+            "cudaMemset partition reset overlap left");
+    }
+    if (d_overlapRight_) {
+        Utils::checkCudaError(
+            cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float)),
+            "cudaMemset partition reset overlap right");
+    }
+
+    for (auto& state : partitionStates_) {
+        if (state.d_overlapLeft) {
+            Utils::checkCudaError(
+                cudaMemset(state.d_overlapLeft, 0, state.overlapSize * sizeof(float)),
+                "cudaMemset partition state reset overlap left");
+        }
+        if (state.d_overlapRight) {
+            Utils::checkCudaError(
+                cudaMemset(state.d_overlapRight, 0, state.overlapSize * sizeof(float)),
+                "cudaMemset partition state reset overlap right");
+        }
+    }
+
+    tailBaseSample_ = 0;
+    tailBaseIndex_ = 0;
+    partitionProcessedSamples_ = 0;
+    partitionOutputSamples_ = 0;
+    historyWriteIndex_ = 0;
 }
 
 void GPUUpsampler::releaseHostCoefficients() {
+    if (partitionConfig_.enabled) {
+        std::cout << "  Partition mode active: retaining host coefficient buffers for low-latency path"
+                  << std::endl;
+        return;
+    }
     // Release all CPU-side filter coefficient vectors to free memory
     // This is called after GPU transfer is complete and FFT spectra are on GPU
     // Important for Jetson Unified Memory optimization (saves ~100MB)
@@ -993,6 +1083,369 @@ void GPUUpsampler::releaseHostCoefficients() {
         std::cout << "  Released CPU coefficient memory: "
                   << (freedBytes / (1024 * 1024)) << " MB ("
                   << freedBytes << " bytes)" << std::endl;
+    }
+}
+
+bool GPUUpsampler::setupPartitionStates() {
+    freePartitionStates();
+
+    if (!partitionPlan_.enabled) {
+        return true;
+    }
+
+    if (h_filterCoeffs_.empty()) {
+        std::cerr << "[Partition] Host filter coefficients unavailable; disabling partition mode"
+                  << std::endl;
+        partitionPlan_ = PartitionPlan{};
+        return false;
+    }
+
+    partitionStates_.reserve(partitionPlan_.partitions.size());
+    size_t coeffOffset = 0;
+    maxPartitionValidOutput_ = 0;
+
+    for (size_t idx = 0; idx < partitionPlan_.partitions.size(); ++idx) {
+        const auto& descriptor = partitionPlan_.partitions[idx];
+        PartitionState state;
+        state.descriptor = descriptor;
+        state.validOutput = descriptor.validOutput;
+        state.overlapSize = std::max(0, descriptor.taps - 1);
+        state.fftComplexSize = descriptor.fftSize / 2 + 1;
+        state.sampleOffset = static_cast<int64_t>(coeffOffset);
+
+        if (descriptor.taps <= 0 || descriptor.fftSize <= 0 || state.validOutput <= 0) {
+            std::cerr << "[Partition] Invalid descriptor at index " << idx << std::endl;
+            freePartitionStates();
+            partitionPlan_ = PartitionPlan{};
+            return false;
+        }
+
+        if (coeffOffset + descriptor.taps > h_filterCoeffs_.size()) {
+            std::cerr << "[Partition] Descriptor taps exceed available coefficients (idx=" << idx
+                      << ")" << std::endl;
+            freePartitionStates();
+            partitionPlan_ = PartitionPlan{};
+            return false;
+        }
+
+        // Allocate frequency-domain storage for this partition's filter
+        Utils::checkCudaError(
+            cudaMalloc(&state.d_filterFFT, state.fftComplexSize * sizeof(cufftComplex)),
+            "cudaMalloc partition filter FFT");
+
+        float* d_tempTime = nullptr;
+        Utils::checkCudaError(
+            cudaMalloc(&d_tempTime, descriptor.fftSize * sizeof(float)),
+            "cudaMalloc partition temp buffer");
+        Utils::checkCudaError(
+            cudaMemset(d_tempTime, 0, descriptor.fftSize * sizeof(float)),
+            "cudaMemset partition temp buffer");
+
+        // Copy the tap segment to device (remaining samples stay zero-padded)
+        Utils::checkCudaError(
+            cudaMemcpy(d_tempTime, h_filterCoeffs_.data() + coeffOffset,
+                       descriptor.taps * sizeof(float), cudaMemcpyHostToDevice),
+            "cudaMemcpy partition taps");
+
+        cufftHandle plan = 0;
+        Utils::checkCufftError(
+            cufftPlan1d(&plan, descriptor.fftSize, CUFFT_R2C, 1),
+            "cufftPlan1d partition filter");
+        Utils::checkCufftError(
+            cufftExecR2C(plan, d_tempTime, state.d_filterFFT),
+            "cufftExecR2C partition filter");
+        cufftDestroy(plan);
+        cudaFree(d_tempTime);
+
+        coeffOffset += descriptor.taps;
+        maxPartitionValidOutput_ =
+            std::max(maxPartitionValidOutput_, static_cast<size_t>(state.validOutput));
+
+        partitionStates_.push_back(state);
+    }
+
+    partitionFastIndex_ = 0;
+
+    std::cout << "[Partition] Prepared " << partitionStates_.size()
+              << " partition state(s) for streaming" << std::endl;
+    return true;
+}
+
+void GPUUpsampler::freePartitionStates() {
+    for (auto& state : partitionStates_) {
+        if (state.d_filterFFT) {
+            cudaFree(state.d_filterFFT);
+            state.d_filterFFT = nullptr;
+        }
+        if (state.d_timeDomain) {
+            cudaFree(state.d_timeDomain);
+            state.d_timeDomain = nullptr;
+        }
+        if (state.d_inputFFT) {
+            cudaFree(state.d_inputFFT);
+            state.d_inputFFT = nullptr;
+        }
+        if (state.d_overlapLeft) {
+            cudaFree(state.d_overlapLeft);
+            state.d_overlapLeft = nullptr;
+        }
+        if (state.d_overlapRight) {
+            cudaFree(state.d_overlapRight);
+            state.d_overlapRight = nullptr;
+        }
+        if (state.planForward) {
+            cufftDestroy(state.planForward);
+            state.planForward = 0;
+        }
+        if (state.planInverse) {
+            cufftDestroy(state.planInverse);
+            state.planInverse = 0;
+        }
+    }
+    partitionStates_.clear();
+    partitionStreamingInitialized_ = false;
+    partitionFastFftSize_ = 0;
+    partitionFastFftComplexSize_ = 0;
+    maxPartitionValidOutput_ = 0;
+}
+
+bool GPUUpsampler::initializePartitionedStreaming() {
+    if (!partitionPlan_.enabled) {
+        return initializeStreaming();
+    }
+
+    if (partitionStates_.empty() && !setupPartitionStates()) {
+        return false;
+    }
+
+    if (partitionStates_.empty()) {
+        std::cerr << "[Partition] No partition states available" << std::endl;
+        return false;
+    }
+
+    const auto& fastState = partitionStates_.front();
+    int fastValid = fastState.descriptor.fftSize - fastState.overlapSize;
+    int adjustedValid = (fastValid / upsampleRatio_) * upsampleRatio_;
+    if (adjustedValid <= 0) {
+        adjustedValid = fastValid;
+    }
+
+    int blockSamples = adjustedValid;
+    for (auto& state : partitionStates_) {
+        int maxValid = state.descriptor.fftSize - state.overlapSize;
+        if (maxValid <= 0) {
+            std::cerr << "[Partition] Descriptor FFT too small for overlap (taps="
+                      << state.descriptor.taps << ", fft=" << state.descriptor.fftSize << ")"
+                      << std::endl;
+            return false;
+        }
+        state.validOutput = std::min(adjustedValid, maxValid);
+        blockSamples = std::min(blockSamples, state.validOutput);
+    }
+
+    int fastInput = blockSamples / upsampleRatio_;
+    if (fastInput <= 0) {
+        std::cerr << "[Partition] Invalid fast partition configuration (input=0)" << std::endl;
+        return false;
+    }
+
+    blockSamples = fastInput * upsampleRatio_;
+    if (blockSamples <= 0) {
+        blockSamples = adjustedValid;
+    }
+
+    // Free existing streaming buffers before reallocating
+    freeStreamingBuffers();
+
+    streamOverlapSize_ = fastState.overlapSize;
+    validOutputPerBlock_ = blockSamples;
+    streamValidInputPerBlock_ = fastInput;
+    partitionFastFftSize_ = fastState.descriptor.fftSize;
+    partitionFastFftComplexSize_ = fastState.fftComplexSize;
+
+    size_t upsampledSize = static_cast<size_t>(streamValidInputPerBlock_) * upsampleRatio_;
+
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamInput_, streamValidInputPerBlock_ * sizeof(float)),
+        "cudaMalloc partition streaming input");
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamUpsampled_, upsampledSize * sizeof(float)),
+        "cudaMalloc partition streaming upsampled");
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamPadded_, partitionFastFftSize_ * sizeof(float)),
+        "cudaMalloc partition streaming padded");
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamInputFFT_, partitionFastFftComplexSize_ * sizeof(cufftComplex)),
+        "cudaMalloc partition streaming FFT");
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamInputFFTBackup_, partitionFastFftComplexSize_ * sizeof(cufftComplex)),
+        "cudaMalloc partition streaming FFT backup");
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamConvResult_, partitionFastFftSize_ * sizeof(float)),
+        "cudaMalloc partition streaming conv result");
+    Utils::checkCudaError(
+        cudaMalloc(&d_streamConvResultOld_, partitionFastFftSize_ * sizeof(float)),
+        "cudaMalloc partition streaming old conv result");
+
+    Utils::checkCudaError(
+        cudaMalloc(&d_overlapLeft_, streamOverlapSize_ * sizeof(float)),
+        "cudaMalloc partition overlap left");
+    Utils::checkCudaError(
+        cudaMalloc(&d_overlapRight_, streamOverlapSize_ * sizeof(float)),
+        "cudaMalloc partition overlap right");
+    Utils::checkCudaError(
+        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float)),
+        "cudaMemset partition overlap left");
+    Utils::checkCudaError(
+        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float)),
+        "cudaMemset partition overlap right");
+
+    // Allocate runtime buffers for each partition
+    for (size_t idx = 0; idx < partitionStates_.size(); ++idx) {
+        auto& state = partitionStates_[idx];
+
+        if (state.d_timeDomain) {
+            cudaFree(state.d_timeDomain);
+            state.d_timeDomain = nullptr;
+        }
+        if (state.d_inputFFT) {
+            cudaFree(state.d_inputFFT);
+            state.d_inputFFT = nullptr;
+        }
+        if (state.d_overlapLeft) {
+            cudaFree(state.d_overlapLeft);
+            state.d_overlapLeft = nullptr;
+        }
+        if (state.d_overlapRight) {
+            cudaFree(state.d_overlapRight);
+            state.d_overlapRight = nullptr;
+        }
+        if (state.planForward) {
+            cufftDestroy(state.planForward);
+            state.planForward = 0;
+        }
+        if (state.planInverse) {
+            cufftDestroy(state.planInverse);
+            state.planInverse = 0;
+        }
+
+        Utils::checkCudaError(
+            cudaMalloc(&state.d_timeDomain, state.descriptor.fftSize * sizeof(float)),
+            "cudaMalloc partition time buffer");
+        Utils::checkCudaError(
+            cudaMalloc(&state.d_inputFFT, state.fftComplexSize * sizeof(cufftComplex)),
+            "cudaMalloc partition input FFT");
+
+        if (state.overlapSize > 0) {
+            Utils::checkCudaError(
+                cudaMalloc(&state.d_overlapLeft, state.overlapSize * sizeof(float)),
+                "cudaMalloc partition overlap left");
+            Utils::checkCudaError(
+                cudaMalloc(&state.d_overlapRight, state.overlapSize * sizeof(float)),
+                "cudaMalloc partition overlap right");
+            Utils::checkCudaError(
+                cudaMemset(state.d_overlapLeft, 0, state.overlapSize * sizeof(float)),
+                "cudaMemset partition state overlap left");
+            Utils::checkCudaError(
+                cudaMemset(state.d_overlapRight, 0, state.overlapSize * sizeof(float)),
+                "cudaMemset partition state overlap right");
+        }
+
+        Utils::checkCufftError(
+            cufftPlan1d(&state.planForward, state.descriptor.fftSize, CUFFT_R2C, 1),
+            "cufftPlan1d partition forward");
+        Utils::checkCufftError(
+            cufftPlan1d(&state.planInverse, state.descriptor.fftSize, CUFFT_C2R, 1),
+            "cufftPlan1d partition inverse");
+    }
+
+    streamInitialized_ = true;
+    partitionStreamingInitialized_ = true;
+
+    std::cout << "[Partition] Streaming initialized (fast FFT " << partitionFastFftSize_
+              << ", valid output " << validOutputPerBlock_
+              << ", input samples per block " << streamValidInputPerBlock_ << ")" << std::endl;
+    return true;
+}
+
+bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t stream,
+                                         const float* d_newSamples, int newSamples,
+                                         float* d_channelOverlap, StreamFloatVector& tempOutput,
+                                         StreamFloatVector& outputData) {
+    try {
+        int samplesToUse = std::min(newSamples, state.validOutput);
+        if (samplesToUse <= 0) {
+            return true;
+        }
+
+        Utils::checkCudaError(
+            cudaMemsetAsync(state.d_timeDomain, 0, state.descriptor.fftSize * sizeof(float),
+                            stream),
+            "cudaMemset partition time buffer");
+
+        if (state.overlapSize > 0 && d_channelOverlap) {
+            Utils::checkCudaError(
+                cudaMemcpyAsync(state.d_timeDomain, d_channelOverlap,
+                                state.overlapSize * sizeof(float),
+                                cudaMemcpyDeviceToDevice, stream),
+                "cudaMemcpy partition overlap prepend");
+        }
+
+        Utils::checkCudaError(
+            cudaMemcpyAsync(state.d_timeDomain + state.overlapSize, d_newSamples,
+                            samplesToUse * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+            "cudaMemcpy partition block");
+
+        if (state.overlapSize > 0 && d_channelOverlap) {
+            int overlapOffset = state.descriptor.fftSize - state.overlapSize;
+            Utils::checkCudaError(
+                cudaMemcpyAsync(d_channelOverlap, state.d_timeDomain + overlapOffset,
+                                state.overlapSize * sizeof(float),
+                                cudaMemcpyDeviceToDevice, stream),
+                "cudaMemcpy partition overlap save");
+        }
+
+        Utils::checkCufftError(cufftSetStream(state.planForward, stream),
+                               "cufftSetStream partition forward");
+        Utils::checkCufftError(
+            cufftExecR2C(state.planForward, state.d_timeDomain, state.d_inputFFT),
+            "cufftExecR2C partition block");
+
+        int threadsPerBlock = 256;
+        int blocks = (state.fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
+        complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+            state.d_inputFFT, state.d_filterFFT, state.fftComplexSize);
+
+        Utils::checkCufftError(cufftSetStream(state.planInverse, stream),
+                               "cufftSetStream partition inverse");
+        Utils::checkCufftError(
+            cufftExecC2R(state.planInverse, state.d_inputFFT, state.d_timeDomain),
+            "cufftExecC2R partition block");
+
+        float scale = 1.0f / static_cast<float>(state.descriptor.fftSize);
+        int scaleBlocks = (state.descriptor.fftSize + threadsPerBlock - 1) / threadsPerBlock;
+        scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
+            state.d_timeDomain, state.descriptor.fftSize, scale);
+
+        tempOutput.resize(samplesToUse);
+        registerStreamOutputBuffer(tempOutput, stream);
+        Utils::checkCudaError(
+            cudaMemcpyAsync(tempOutput.data(), state.d_timeDomain + state.overlapSize,
+                            samplesToUse * sizeof(float), cudaMemcpyDeviceToHost, stream),
+            "cudaMemcpy partition output");
+        Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize partition");
+
+        if (outputData.size() < static_cast<size_t>(samplesToUse)) {
+            outputData.resize(samplesToUse);
+        }
+        for (int i = 0; i < samplesToUse; ++i) {
+            outputData[i] += tempOutput[i];
+        }
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "[Partition] Error: " << e.what() << std::endl;
+        return false;
     }
 }
 

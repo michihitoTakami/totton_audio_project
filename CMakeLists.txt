@@ -105,6 +105,7 @@ add_library(gpu_upsampler_core STATIC
     src/audio_io.cpp
     src/gpu/convolution_kernels.cu
     src/gpu/cuda_utils.cu
+    src/gpu/partition_plan.cpp
     src/gpu/gpu_upsampler_core.cu
     src/gpu/gpu_upsampler_multi_rate.cu
     src/gpu/gpu_upsampler_streaming.cu
@@ -453,6 +454,7 @@ add_executable(cpu_tests
     tests/cpp/test_eq_parser.cpp
     tests/cpp/test_eq_to_fir.cpp
     tests/cpp/test_config_loader.cpp
+    tests/cpp/test_partition_plan.cpp
     tests/cpp/test_phase_alignment.cpp
     tests/cpp/test_playback_buffer_threshold.cpp
 )

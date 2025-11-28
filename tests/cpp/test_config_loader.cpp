@@ -200,6 +200,53 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultPhaseType) {
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
 }
 
+TEST_F(ConfigLoaderTest, PartitionedConvolutionDefaults) {
+    AppConfig config;
+    EXPECT_FALSE(config.partitionedConvolution.enabled);
+    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 32768);
+    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 32768);
+    EXPECT_EQ(config.partitionedConvolution.maxPartitions, 4);
+}
+
+TEST_F(ConfigLoaderTest, LoadPartitionedConvolutionSection) {
+    writeConfig(R"({
+        "partitionedConvolution": {
+            "enabled": true,
+            "fastPartitionTaps": 48000,
+            "minPartitionTaps": 8000,
+            "maxPartitions": 6
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+
+    EXPECT_TRUE(config.partitionedConvolution.enabled);
+    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 48000);
+    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 8000);
+    EXPECT_EQ(config.partitionedConvolution.maxPartitions, 6);
+}
+
+TEST_F(ConfigLoaderTest, PartitionedConvolutionInvalidValuesClamped) {
+    writeConfig(R"({
+        "partitionedConvolution": {
+            "enabled": true,
+            "fastPartitionTaps": 256,
+            "minPartitionTaps": -10,
+            "maxPartitions": 0
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+
+    EXPECT_TRUE(config.partitionedConvolution.enabled);
+    // fastPartitionTaps/minPartitionTaps are clamped to at least 1024
+    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 1024);
+    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 1024);
+    EXPECT_EQ(config.partitionedConvolution.maxPartitions, 1);
+}
+
 TEST_F(ConfigLoaderTest, LoadConfigWithPhaseTypeMinimum) {
     writeConfig(R"({"phaseType": "minimum"})");
 

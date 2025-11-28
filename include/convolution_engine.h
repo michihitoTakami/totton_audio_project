@@ -2,6 +2,7 @@
 #define CONVOLUTION_ENGINE_H
 
 #include "config_loader.h"  // PhaseType enum
+#include "gpu/partition_plan.h"
 #include "gpu/pinned_allocator.h"
 #include "phase_alignment.h"
 
@@ -233,6 +234,16 @@ class GPUUpsampler {
 
     // Reset streaming state (clears accumulated input and overlap buffers)
     void resetStreaming();
+
+    // Configure partitioned convolution (Issue #351)
+    void setPartitionedConvolutionConfig(
+        const AppConfig::PartitionedConvolutionConfig& config);
+    bool isPartitionedConvolutionEnabled() const {
+        return partitionPlan_.enabled;
+    }
+    const PartitionPlan& getPartitionPlan() const {
+        return partitionPlan_;
+    }
 
     // Free streaming buffers (releases GPU memory)
     // Call this before rate switch or shutdown to free streaming resources
@@ -516,6 +527,55 @@ class GPUUpsampler {
     size_t pinnedStreamOutputLeftBytes_;
     size_t pinnedStreamOutputRightBytes_;
     size_t pinnedStreamOutputMonoBytes_;
+
+    struct PartitionState {
+        PartitionDescriptor descriptor;
+        int validOutput = 0;
+        int overlapSize = 0;
+        size_t fftComplexSize = 0;
+        int64_t sampleOffset = 0;
+        cufftComplex* d_filterFFT = nullptr;
+
+        // Runtime buffers (allocated when streaming is enabled)
+        float* d_timeDomain = nullptr;
+        cufftComplex* d_inputFFT = nullptr;
+        float* d_overlapLeft = nullptr;
+        float* d_overlapRight = nullptr;
+        cufftHandle planForward = 0;
+        cufftHandle planInverse = 0;
+    };
+
+    AppConfig::PartitionedConvolutionConfig partitionConfig_;
+    PartitionPlan partitionPlan_;
+    std::vector<PartitionState> partitionStates_;
+    size_t partitionFastIndex_ = 0;
+    size_t maxPartitionValidOutput_ = 0;
+    int partitionFastFftSize_ = 0;
+    int partitionFastFftComplexSize_ = 0;
+    float* d_tailAccumulator_ = nullptr;
+    float* d_tailMixBuffer_ = nullptr;
+    float* d_upsampledHistory_ = nullptr;
+    size_t tailAccumulatorSize_ = 0;
+    size_t historyBufferSize_ = 0;
+    int64_t tailBaseSample_ = 0;
+    size_t tailBaseIndex_ = 0;
+    int64_t partitionProcessedSamples_ = 0;
+    int64_t partitionOutputSamples_ = 0;
+    size_t historyWriteIndex_ = 0;
+    bool partitionStreamingInitialized_ = false;
+
+    bool setupPartitionStates();
+    void freePartitionStates();
+    bool initializePartitionedStreaming();
+    void resetPartitionedStreaming();
+    bool processPartitionedStreamBlock(const float* inputData, size_t inputFrames,
+                                       StreamFloatVector& outputData, cudaStream_t stream,
+                                       StreamFloatVector& streamInputBuffer,
+                                       size_t& streamInputAccumulated);
+    bool processPartitionBlock(PartitionState& state, cudaStream_t stream,
+                               const float* d_newSamples, int newSamples,
+                               float* d_channelOverlap, StreamFloatVector& tempOutput,
+                               StreamFloatVector& outputData);
 
     struct PhaseCrossfadeState {
         bool active = false;

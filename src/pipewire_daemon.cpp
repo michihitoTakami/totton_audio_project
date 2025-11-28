@@ -458,6 +458,9 @@ int main(int argc, char* argv[]) {
         coefficient_dir = argv[1];
     }
 
+    AppConfig appConfig;
+    bool configLoaded = loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false);
+
     // Install signal handlers
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
@@ -465,6 +468,7 @@ int main(int argc, char* argv[]) {
     // Initialize GPU upsampler (multi-rate mode only)
     std::cout << "Initializing GPU upsampler..." << std::endl;
     g_upsampler = new ConvolutionEngine::GPUUpsampler();
+    g_upsampler->setPartitionedConvolutionConfig(appConfig.partitionedConvolution);
 
     std::cout << "Mode: Multi-Rate (all supported rates: 44.1k/48k families, 16x/8x/4x/2x)"
               << std::endl;
@@ -481,8 +485,7 @@ int main(int argc, char* argv[]) {
               << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
 
     // Load config and set phase type (input sample rate is auto-detected from PipeWire)
-    AppConfig appConfig;
-    if (loadAppConfig(DEFAULT_CONFIG_FILE, appConfig, false)) {
+    if (configLoaded) {
         g_upsampler->setPhaseType(appConfig.phaseType);
         std::cout << "Phase type: " << phaseTypeToString(appConfig.phaseType) << std::endl;
 
@@ -496,6 +499,15 @@ int main(int argc, char* argv[]) {
         std::cout << "Phase type: minimum (default)" << std::endl;
     }
     g_config = appConfig;
+    if (g_config.partitionedConvolution.enabled && g_config.eqEnabled) {
+        std::cout << "[Partition] EQ disabled: not yet supported in low-latency mode (see #353)"
+                  << std::endl;
+        g_config.eqEnabled = false;
+    }
+    if (g_config.partitionedConvolution.enabled && g_config.crossfeed.enabled) {
+        std::cout << "[Partition] Crossfeed disabled: not supported in low-latency mode" << std::endl;
+        g_config.crossfeed.enabled = false;
+    }
     g_limiter_gain.store(1.0f, std::memory_order_relaxed);
     g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
     // Input sample rate will be auto-detected from PipeWire stream
