@@ -1082,17 +1082,16 @@ static void ensure_rtp_manager_initialized() {
         process_interleaved_block(interleaved, static_cast<uint32_t>(frames));
     };
 
-    auto ptpProvider = []() -> Network::PtpSyncState {
-        return {};
-    };
+    auto ptpProvider = []() -> Network::PtpSyncState { return {}; };
 
     auto telemetryCallback = [](const Network::SessionMetrics& metrics) {
+        (void)metrics;  // Suppress unused parameter warning in release builds
         LOG_DEBUG("RTP session {} stats: packets={} dropped={}", metrics.sessionId,
                   metrics.packetsReceived, metrics.packetsDropped);
     };
 
-    g_rtp_manager = std::make_unique<Network::RtpSessionManager>(frameCallback, ptpProvider,
-                                                                 telemetryCallback);
+    g_rtp_manager =
+        std::make_unique<Network::RtpSessionManager>(frameCallback, ptpProvider, telemetryCallback);
 }
 
 static void maybe_start_rtp_from_config() {
@@ -1690,7 +1689,8 @@ static void zeromq_listener_thread() {
                             ensure_rtp_manager_initialized();
                             Network::SessionConfig sessionCfg;
                             std::string parseError;
-                            if (!Network::sessionConfigFromJson(j["params"], sessionCfg, parseError)) {
+                            if (!Network::sessionConfigFromJson(j["params"], sessionCfg,
+                                                                parseError)) {
                                 nlohmann::json resp;
                                 resp["status"] = "error";
                                 resp["error_code"] = "VALIDATION_INVALID_CONFIG";
