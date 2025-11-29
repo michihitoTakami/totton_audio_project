@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <arpa/inet.h>
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -14,14 +15,23 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sstream>
+#include <string_view>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace Network {
 namespace {
 
 constexpr int kDefaultPollTimeoutMs = 50;
+
+struct SdpFormatHint {
+    uint8_t payloadType = 0;
+    uint32_t sampleRate = 0;
+    uint8_t channels = 0;
+    uint8_t bitsPerSample = 0;
+};
 
 std::string errnoMessage(const std::string& prefix) {
     return prefix + ": " + std::strerror(errno);
@@ -72,6 +82,147 @@ int createAndBindSocket(const std::string& bindAddress, uint16_t port, size_t bu
     }
 
     return fd;
+}
+
+std::string trim(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
+        start++;
+    }
+    size_t end = text.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        end--;
+    }
+    return text.substr(start, end - start);
+}
+
+bool parsePositiveInt(const std::string& text, int& out) {
+    try {
+        size_t idx = 0;
+        int value = std::stoi(text, &idx);
+        if (idx != text.size() || value <= 0) {
+            return false;
+        }
+        out = value;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parseRtpmapLine(const std::string& line, SdpFormatHint& out) {
+    // Example: a=rtpmap:96 L24/48000/2
+    static constexpr std::string_view prefix = "a=rtpmap:";
+    if (line.size() < prefix.size() || line.compare(0, prefix.size(), prefix) != 0) {
+        return false;
+    }
+    std::string rest = trim(line.substr(prefix.size()));
+    size_t spacePos = rest.find_first_of(" \t");
+    if (spacePos == std::string::npos) {
+        return false;
+    }
+    std::string payloadText = trim(rest.substr(0, spacePos));
+    std::string encoding = trim(rest.substr(spacePos + 1));
+
+    int payload = 0;
+    if (!parsePositiveInt(payloadText, payload) || payload > 127) {
+        return false;
+    }
+
+    std::vector<std::string> tokens;
+    std::stringstream ss(encoding);
+    std::string token;
+    while (std::getline(ss, token, '/')) {
+        tokens.push_back(token);
+    }
+    if (tokens.size() < 2) {
+        return false;
+    }
+
+    std::string encodingName = tokens[0];
+    for (auto& ch : encodingName) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    if (encodingName.size() < 2 || encodingName[0] != 'L') {
+        return false;
+    }
+
+    int bits = 0;
+    if (!parsePositiveInt(encodingName.substr(1), bits)) {
+        return false;
+    }
+    if (bits != 16 && bits != 24 && bits != 32) {
+        return false;
+    }
+
+    int sampleRate = 0;
+    if (!parsePositiveInt(tokens[1], sampleRate)) {
+        return false;
+    }
+
+    int channels = 0;
+    if (tokens.size() >= 3) {
+        parsePositiveInt(tokens[2], channels);
+    }
+
+    out.payloadType = static_cast<uint8_t>(payload);
+    out.bitsPerSample = static_cast<uint8_t>(bits);
+    out.sampleRate = static_cast<uint32_t>(sampleRate);
+    out.channels = static_cast<uint8_t>(channels);
+    return true;
+}
+
+bool applySdpOverrides(SessionConfig& config) {
+    if (config.sdp.empty()) {
+        return false;
+    }
+
+    SdpFormatHint chosen{};
+    bool hasCandidate = false;
+    bool matchedPayload = false;
+
+    std::stringstream ss(config.sdp);
+    std::string line;
+    while (std::getline(ss, line)) {
+        line = trim(line);
+        if (line.empty()) {
+            continue;
+        }
+
+        SdpFormatHint fmt;
+        if (!parseRtpmapLine(line, fmt)) {
+            continue;
+        }
+
+        bool isPreferred = fmt.payloadType == config.payloadType;
+        if (!hasCandidate || (isPreferred && !matchedPayload)) {
+            chosen = fmt;
+            hasCandidate = true;
+            matchedPayload = isPreferred;
+            if (matchedPayload) {
+                break;  // Prefer exact payload type match
+            }
+        }
+    }
+
+    if (!hasCandidate) {
+        LOG_WARN("RTP session {}: SDP provided but no parsable rtpmap line found",
+                 config.sessionId);
+        return false;
+    }
+
+    config.payloadType = chosen.payloadType;
+    config.sampleRate = chosen.sampleRate > 0 ? chosen.sampleRate : config.sampleRate;
+    if (chosen.channels > 0) {
+        config.channels = chosen.channels;
+    }
+    if (chosen.bitsPerSample > 0) {
+        config.bitsPerSample = chosen.bitsPerSample;
+    }
+
+    LOG_INFO("RTP session {}: applied SDP rtpmap PT{} => {} Hz, {}ch, {}-bit", config.sessionId,
+             chosen.payloadType, config.sampleRate, config.channels, config.bitsPerSample);
+    return true;
 }
 
 void configureQos(const SessionConfig& config, int fd) {
@@ -273,6 +424,7 @@ bool validateSessionConfig(SessionConfig& config, std::string& error) {
         error = "session_id must not be empty";
         return false;
     }
+    applySdpOverrides(config);
     if (config.sampleRate == 0) {
         error = "sample_rate must be greater than 0";
         return false;

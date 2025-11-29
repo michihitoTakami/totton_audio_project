@@ -5,13 +5,9 @@
 using namespace Network;
 
 TEST(RtpSessionConfigTest, ParseValidJson) {
-    nlohmann::json params = {
-        {"session_id", "primary"},
-        {"port", 7000},
-        {"sample_rate", 96000},
-        {"bits_per_sample", 32},
-        {"payload_type", 98},
-        {"enable_rtcp", false}};
+    nlohmann::json params = {{"session_id", "primary"}, {"port", 7000},
+                             {"sample_rate", 96000},    {"bits_per_sample", 32},
+                             {"payload_type", 98},      {"enable_rtcp", false}};
 
     SessionConfig config;
     std::string error;
@@ -32,6 +28,31 @@ TEST(RtpSessionConfigTest, RejectInvalidBitsPerSample) {
     EXPECT_FALSE(error.empty());
 }
 
+TEST(RtpSessionConfigTest, ApplySdpOverrides) {
+    nlohmann::json params = {{"session_id", "sdp"},
+                             {"payload_type", 111},
+                             {"sample_rate", 48000},
+                             {"channels", 2},
+                             {"bits_per_sample", 24},
+                             {"sdp",
+                              "v=0\r\n"
+                              "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                              "s=Test\r\n"
+                              "t=0 0\r\n"
+                              "m=audio 6000 RTP/AVP 112\r\n"
+                              "a=rtpmap:112 L24/96000/6\r\n"
+                              "a=rtpmap:111 L16/44100/2\r\n"}};
+
+    SessionConfig config;
+    std::string error;
+    ASSERT_TRUE(sessionConfigFromJson(params, config, error));
+    // Prefer the rtpmap line that matches payload_type
+    EXPECT_EQ(config.payloadType, 111);
+    EXPECT_EQ(config.sampleRate, 44100u);
+    EXPECT_EQ(config.channels, 2);
+    EXPECT_EQ(config.bitsPerSample, 16);
+}
+
 TEST(RtpSessionMetricsTest, MetricsToJsonIncludesCounters) {
     SessionMetrics metrics;
     metrics.sessionId = "test";
@@ -46,4 +67,3 @@ TEST(RtpSessionMetricsTest, MetricsToJsonIncludesCounters) {
     EXPECT_EQ(json["ssrc"], 42);
     EXPECT_EQ(json["sample_rate"], 48000);
 }
-

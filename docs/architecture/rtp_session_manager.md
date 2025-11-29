@@ -142,7 +142,10 @@ FastAPI (`web/main.py`) から RTP セッションを管理するための REST 
 - `RtpFormatSettings`: `sample_rate`, `channels`, `bits_per_sample`, `payload_type`
 - `RtpSyncSettings`: `target_latency_ms`, `watchdog_timeout_ms`, `enable_ptp`
 - `RtpSecurityConfig`: Optional SRTPキー (`crypto_suite`, `key_base64`)
-- `RtpSdpConfig`: 任意の SDP テンプレート（未指定時は AES67 互換で自動生成）
+- `RtpSdpConfig`: 任意の SDP テンプレート（未指定時は AES67 互換で自動生成）。`a=rtpmap` に
+  `L16/48000/2` などが含まれていれば `payload_type` / `sample_rate` / `channels` /
+  `bits_per_sample` を自動で上書きする（手入力ミス防止）。
+  Multi-rate が有効な場合は `sample_rate` に合わせてアップサンプラ入力レートも自動切り替えする。無効時は警告のみ。
 
 API リクエスト例:
 
@@ -224,4 +227,3 @@ curl -X DELETE http://127.0.0.1:8000/api/rtp/sessions/aes67-main
 ```
 
 この手順を README にも掲載し、受け入れ条件「API を叩きセッション開始／停止を確認できる」に対応した。
-
