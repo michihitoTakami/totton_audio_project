@@ -430,7 +430,7 @@ def get_embedded_html() -> str:
 
     <script>
         const API = '';
-        const RTP_API = API + '/rtp';
+        const RTP_API = '/api/rtp';
         let currentAlsaDevice = '';
         let deviceList = [];
         const rtpState = {

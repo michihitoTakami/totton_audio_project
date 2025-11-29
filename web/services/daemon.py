@@ -24,6 +24,22 @@ from .pipewire import (
 logger = logging.getLogger(__name__)
 
 
+def _is_rtp_enabled() -> bool:
+    """Check if RTP mode is enabled in config.json.
+
+    Returns:
+        True if RTP is enabled and autoStart is true.
+    """
+    from ..constants import CONFIG_PATH
+    try:
+        with open(CONFIG_PATH) as f:
+            config_data = json.load(f)
+        rtp_config = config_data.get("rtp", {})
+        return rtp_config.get("enabled", False) and rtp_config.get("autoStart", False)
+    except (IOError, json.JSONDecodeError):
+        return False
+
+
 def check_daemon_running() -> bool:
     """Check if the daemon process is running."""
     pid = get_daemon_pid()
@@ -89,7 +105,11 @@ def start_daemon() -> tuple[bool, str]:
         )
 
         # Step 3: Wait for daemon to register with PipeWire
-        if not wait_for_daemon_node(timeout_sec=5.0):
+        # Skip PipeWire check if RTP mode is enabled (daemon uses RTP input instead)
+        rtp_enabled = _is_rtp_enabled()
+        if rtp_enabled:
+            logger.info("RTP mode enabled, skipping PipeWire node check")
+        elif not wait_for_daemon_node(timeout_sec=5.0):
             # Cleanup: stop the daemon we just started
             logger.error("Daemon failed to register with PipeWire, cleaning up...")
             _force_stop_daemon()
@@ -97,13 +117,17 @@ def start_daemon() -> tuple[bool, str]:
             return False, "Daemon started but failed to register with PipeWire"
 
         # Step 4: Setup PipeWire links
-        link_success, link_msg = setup_pipewire_links()
-        if not link_success:
-            # Cleanup: stop the daemon we just started
-            logger.error("Failed to setup PipeWire links: %s, cleaning up...", link_msg)
-            _force_stop_daemon()
-            restore_default_sink()
-            return False, f"Daemon started but link setup failed: {link_msg}"
+        # Skip link setup if RTP mode is enabled (daemon uses RTP input instead)
+        if rtp_enabled:
+            logger.info("RTP mode enabled, skipping PipeWire link setup")
+        else:
+            link_success, link_msg = setup_pipewire_links()
+            if not link_success:
+                # Cleanup: stop the daemon we just started
+                logger.error("Failed to setup PipeWire links: %s, cleaning up...", link_msg)
+                _force_stop_daemon()
+                restore_default_sink()
+                return False, f"Daemon started but link setup failed: {link_msg}"
 
         logger.info("Daemon started successfully with audio routing configured")
         return True, "Daemon started with audio routing configured"
