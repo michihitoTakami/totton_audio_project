@@ -11,7 +11,7 @@
 #   [Magic Box] RtpSessionManager
 #
 # Usage:
-#   cd docker
+#   cd docker/raspi
 #   docker compose -f docker-compose.raspi-sender.yml up -d --build
 #
 # 前提条件:
@@ -26,8 +26,8 @@ services:
   rtp-sender:
     image: raspi-rtp-sender:latest
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.rtp-sender
+      context: ../..
+      dockerfile: docker/raspi/Dockerfile.rtp-sender
     container_name: raspi-rtp-sender
     restart: unless-stopped
     network_mode: host  # ホストネットワークを使用してマルチキャスト受信

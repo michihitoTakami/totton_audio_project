@@ -22,6 +22,7 @@
    - マルチキャストグループ: `224.0.0.56`
    - ポート: `46000`
    - フォーマット: `s16be 2ch 44100Hz` (または任意)
+   - **設定方法**: `docs/setup/raspi/pipewire_rtp_sender.md` 参照
 
 2. **Magic Boxが稼働中**
    - IPアドレス: `192.168.1.10` (要変更)
@@ -31,7 +32,7 @@
 
 ### 1. Magic BoxのIPアドレス設定
 
-`docker-compose.raspi-sender.yml` を編集:
+`docker/raspi/docker-compose.raspi-sender.yml` を編集:
 
 ```yaml
 environment:
@@ -41,7 +42,7 @@ environment:
 ### 2. Docker Composeで起動
 
 ```bash
-cd docker
+cd docker/raspi
 docker compose -f docker-compose.raspi-sender.yml up -d --build
 ```
 
@@ -52,7 +53,7 @@ docker compose -f docker-compose.raspi-sender.yml up -d --build
 docker logs -f raspi-rtp-sender
 
 # ファイルから確認
-tail -f docker/logs/rtp-sender/rtp_sender.log
+tail -f logs/rtp-sender/rtp_sender.log
 ```
 
 ## 動作確認
@@ -139,21 +140,36 @@ wpctl status | grep "RTP"
 
 ```bash
 # コンテナ停止・削除
+cd docker/raspi
 docker compose -f docker-compose.raspi-sender.yml down
 
 # イメージ削除
 docker rmi raspi-rtp-sender:latest
 
 # ログ削除
-rm -rf docker/logs/rtp-sender
+rm -rf logs/rtp-sender
+```
+
+## Docker rtp-senderとの連携
+
+1. PipeWireでRTP送信開始（`docs/setup/raspi/pipewire_rtp_sender.md` の設定）
+2. Docker rtp-senderが自動受信＆Magic Boxに転送
+
+```bash
+# Docker起動
+cd docker/raspi
+docker compose -f docker-compose.raspi-sender.yml up -d
+
+# ログ確認（フォーマット検出されるはず）
+docker logs -f raspi-rtp-sender
 ```
 
 ## 本番RasPi展開
 
 本番環境では、このDockerコンテナの代わりに以下を使用:
 
-1. **systemdサービス**: `scripts/rtp_sender.py` を直接実行
+1. **systemdサービス**: `scripts/raspi/rtp_sender.py` を直接実行
 2. **PipeWire設定**: UAC2デバイスから直接RTP送信
 3. **ネットワーク設定**: 静的IPで閉域LAN構築
 
-詳細は `docs/setup/raspi_uac2_rtp.md` を参照（今後作成予定）。
+詳細は `docs/setup/raspi/` 配下のドキュメントを参照。

@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir \
 WORKDIR /app
 
 # RTP中継スクリプトをコピー
-COPY scripts/rtp_sender.py /app/rtp_sender.py
+COPY scripts/raspi/rtp_sender.py /app/rtp_sender.py
 
 # ログディレクトリを作成
 RUN mkdir -p /var/log/rtp-sender

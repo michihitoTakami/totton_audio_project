@@ -27,7 +27,7 @@ PipeWireユーザー設定ディレクトリに設定ファイルを作成しま
 mkdir -p ~/.config/pipewire/pipewire.conf.d
 
 # 設定ファイルをコピー
-cp docs/setup/configs/rtp-sink.conf ~/.config/pipewire/pipewire.conf.d/
+cp docs/setup/raspi/configs/rtp-sink.conf ~/.config/pipewire/pipewire.conf.d/
 ```
 
 ### 2. PipeWireの再起動
