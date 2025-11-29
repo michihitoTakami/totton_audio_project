@@ -511,6 +511,60 @@
         }
       }
     },
+    "/eq/import-text": {
+      "post": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Import Eq Text",
+        "description": "Import an EQ profile from raw text pasted via the API.\n\nMirrors the same validation and overwrite safeguards as file uploads.",
+        "operationId": "import_eq_text_eq_import_text_post",
+        "parameters": [
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Overwrite"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EqTextImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/eq/activate/{name}": {
       "post": {
         "tags": [
@@ -1574,6 +1628,48 @@
         }
       }
     },
+    "/api/input-mode/switch": {
+      "post": {
+        "tags": [
+          "input-mode"
+        ],
+        "summary": "Switch Input Mode",
+        "description": "Toggle PipeWire ⇄ RTP input modes.",
+        "operationId": "switch_input_mode_api_input_mode_switch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputModeSwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputModeSwitchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -2364,6 +2460,16 @@
             "type": "boolean",
             "title": "Pipewire Connected",
             "default": false
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Input Mode",
+            "description": "Current input mode reported by config.json",
+            "default": "pipewire"
           }
         },
         "type": "object",
@@ -2534,6 +2640,29 @@
         "title": "EqProfilesResponse",
         "description": "EQ profiles list response model."
       },
+      "EqTextImportRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "strip_whitespace": true
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Raw EQ profile text content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "EqTextImportRequest",
+        "description": "Request body for text-based EQ profile import."
+      },
       "EqValidationResponse": {
         "properties": {
           "valid": {
@@ -2612,6 +2741,60 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "InputModeSwitchRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Mode",
+            "description": "Target mode: 'pipewire' to use local PipeWire input or 'rtp' for network input"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "InputModeSwitchRequest",
+        "description": "Request body for switching between PipeWire and RTP modes."
+      },
+      "InputModeSwitchResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "current_mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Current Mode",
+            "description": "Mode currently active after the switch"
+          },
+          "restart_required": {
+            "type": "boolean",
+            "title": "Restart Required",
+            "description": "True when the daemon was restarted to apply changes",
+            "default": false
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "current_mode",
+          "message"
+        ],
+        "title": "InputModeSwitchResponse",
+        "description": "Response returned after attempting to switch input modes."
       },
       "OpraEqAttribution": {
         "properties": {
@@ -4024,6 +4207,11 @@
           },
           "crossfeed": {
             "$ref": "#/components/schemas/CrossfeedSettings"
+          },
+          "rtp_enabled": {
+            "type": "boolean",
+            "title": "Rtp Enabled",
+            "default": false
           }
         },
         "type": "object",
@@ -4176,6 +4364,16 @@
           },
           "peaks": {
             "$ref": "#/components/schemas/PeakLevels"
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Input Mode",
+            "description": "Current input mode reported by config.json",
+            "default": "pipewire"
           }
         },
         "type": "object",
@@ -4276,6 +4474,10 @@
     {
       "name": "rtp",
       "description": "RTP session lifecycle management and telemetry"
+    },
+    {
+      "name": "input-mode",
+      "description": "Switch between PipeWire and RTP input sources"
     },
     {
       "name": "legacy",

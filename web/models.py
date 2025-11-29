@@ -4,7 +4,7 @@ import base64
 import binascii
 import ipaddress
 import re
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import (
     BaseModel,
@@ -332,7 +332,7 @@ class EqValidationResponse(BaseModel):
 class EqTextImportRequest(BaseModel):
     """Request body for text-based EQ profile import."""
 
-    name: constr(strip_whitespace=True, min_length=1, max_length=128)
+    name: Annotated[str, Field(strip_whitespace=True, min_length=1, max_length=128)]
     content: str = Field(description="Raw EQ profile text content")
 
 
@@ -450,7 +450,9 @@ class InputModeSwitchResponse(BaseModel):
     """Response returned after attempting to switch input modes."""
 
     success: bool
-    current_mode: InputMode = Field(description="Mode currently active after the switch")
+    current_mode: InputMode = Field(
+        description="Mode currently active after the switch"
+    )
     restart_required: bool = Field(
         default=False, description="True when the daemon was restarted to apply changes"
     )
