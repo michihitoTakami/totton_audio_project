@@ -174,9 +174,9 @@ bool parseEqString(const std::string& content, EqProfile& profile) {
     std::regex preampRegex(R"(Preamp:\s*([-+]?\d+\.?\d*)\s*[dD][bB]?)", std::regex::icase);
 
     // Base filter pattern: Filter N: ON/OFF TYPE Fc FREQ [Hz]
-    // Gain and Q are now optional and parsed separately
+    // Gain and Q are now optional and parsed separately. Filter numbers can be omitted.
     std::regex filterBaseRegex(
-        R"(Filter\s+(\d+):\s*(ON|OFF)\s+(\S+(?:\s+\d+[dD][bB])?)\s+Fc\s+([\d.]+)\s*(?:Hz)?)",
+        R"(Filter\s*(\d+)?\s*:\s*(ON|OFF)\s+(.+?)\s+Fc\s+([\d.]+)\s*(?:Hz)?)",
         std::regex::icase);
 
     // Optional parameter patterns
@@ -200,9 +200,11 @@ bool parseEqString(const std::string& content, EqProfile& profile) {
         // Try to match filter line with base pattern
         if (std::regex_search(line, match, filterBaseRegex)) {
             EqBand band;
-            // match[1] = filter number (not used directly)
-            band.enabled = (match[2].str() == "ON" || match[2].str() == "on");
-            band.type = parseFilterType(match[3].str());
+            std::string state = match[2].str();
+            std::transform(state.begin(), state.end(), state.begin(), ::toupper);
+            band.enabled = (state == "ON");
+            std::string typeStr = trim(match[3].str());
+            band.type = parseFilterType(typeStr);
             band.frequency = std::stod(match[4].str());
 
             // Extract optional Gain parameter
@@ -215,10 +217,32 @@ bool parseEqString(const std::string& content, EqProfile& profile) {
 
             // Extract optional Q parameter
             std::smatch qMatch;
+            bool qProvided = false;
             if (std::regex_search(line, qMatch, qRegex)) {
                 band.q = std::stod(qMatch[1].str());
+                qProvided = true;
             } else {
                 band.q = 1.0;  // Default Q if not specified
+            }
+
+            std::regex bwOctRegex(R"(BW\s+Oct\s+([-+]?\d+\.?\d*))", std::regex::icase);
+            std::smatch bwOctMatch;
+            if (std::regex_search(line, bwOctMatch, bwOctRegex)) {
+                band.hasBandwidthOct = true;
+                band.bandwidthOct = std::stod(bwOctMatch[1].str());
+                if (!qProvided) {
+                    band.q = bandwidthOctToQ(band.bandwidthOct);
+                }
+            }
+
+            std::regex bwRegex(R"(BW\s+([-+]?\d+\.?\d*)\s*(?:Hz)?)", std::regex::icase);
+            std::smatch bwMatch;
+            if (std::regex_search(line, bwMatch, bwRegex)) {
+                band.hasBandwidthHz = true;
+                band.bandwidthHz = std::stod(bwMatch[1].str());
+                if (!qProvided && !band.hasBandwidthOct) {
+                    band.q = bandwidthHzToQ(band.frequency, band.bandwidthHz);
+                }
             }
 
             profile.bands.push_back(band);
