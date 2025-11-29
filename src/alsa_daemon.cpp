@@ -1082,6 +1082,31 @@ static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInput
     return session;
 }
 
+static void maybe_switch_rate_for_rtp(uint32_t sessionRate, const std::string& sessionId) {
+    if (!g_upsampler || sessionRate == 0) {
+        return;
+    }
+
+    int targetRate = static_cast<int>(sessionRate);
+    int currentRate = g_current_input_rate.load(std::memory_order_acquire);
+    if (targetRate == currentRate) {
+        return;
+    }
+
+    if (!g_upsampler->isMultiRateEnabled()) {
+        LOG_WARN("[RTP] Session {} requests {} Hz but multi-rate is disabled (engine at {} Hz)",
+                 sessionId, targetRate, currentRate);
+        return;
+    }
+
+    LOG_INFO("[RTP] Session {} -> switching engine input rate {} -> {} Hz", sessionId, currentRate,
+             targetRate);
+    if (!handle_rate_change(targetRate)) {
+        LOG_ERROR("[RTP] Failed to switch engine rate to {} Hz for session {}", targetRate,
+                  sessionId);
+    }
+}
+
 static void ensure_rtp_manager_initialized() {
     if (g_rtp_manager) {
         return;
@@ -1125,6 +1150,7 @@ static void maybe_start_rtp_from_config() {
     } else {
         LOG_INFO("RTP session '{}' auto-started on {}:{}", sessionCfg.sessionId,
                  sessionCfg.bindAddress, sessionCfg.port);
+        maybe_switch_rate_for_rtp(sessionCfg.sampleRate, sessionCfg.sessionId);
     }
 }
 
