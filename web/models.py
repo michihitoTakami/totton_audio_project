@@ -328,6 +328,13 @@ class EqValidationResponse(BaseModel):
     size_bytes: int
 
 
+class EqTextImportRequest(BaseModel):
+    """Request body for text-based EQ profile import."""
+
+    name: constr(strip_whitespace=True, min_length=1, max_length=128)
+    content: str = Field(description="Raw EQ profile text content")
+
+
 class EqActiveResponse(BaseModel):
     """Active EQ profile response model."""
 
