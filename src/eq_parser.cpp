@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <regex>
@@ -160,6 +161,32 @@ static double extractNumber(const std::string& s) {
         return 0.0;
     }
     return std::stod(num);
+}
+
+static double bandwidthOctToQ(double bandwidthOct) {
+    constexpr double DEFAULT_Q = 1.0;
+    constexpr double LN2_OVER2 = 0.34657359037935203;  // ln(2) / 2
+
+    if (bandwidthOct <= 0.0) {
+        return DEFAULT_Q;
+    }
+
+    double denom = 2.0 * std::sinh(LN2_OVER2 * bandwidthOct);
+    if (denom <= 0.0) {
+        return DEFAULT_Q;
+    }
+
+    return 1.0 / denom;
+}
+
+static double bandwidthHzToQ(double centerFrequency, double bandwidthHz) {
+    constexpr double DEFAULT_Q = 1.0;
+
+    if (centerFrequency <= 0.0 || bandwidthHz <= 0.0) {
+        return DEFAULT_Q;
+    }
+
+    return centerFrequency / bandwidthHz;
 }
 
 bool parseEqString(const std::string& content, EqProfile& profile) {
