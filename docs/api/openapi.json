@@ -511,6 +511,60 @@
         }
       }
     },
+    "/eq/import-text": {
+      "post": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Import Eq Text",
+        "description": "Import an EQ profile from raw text pasted via the API.\n\nMirrors the same validation and overwrite safeguards as file uploads.",
+        "operationId": "import_eq_text_eq_import_text_post",
+        "parameters": [
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Overwrite"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EqTextImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/eq/activate/{name}": {
       "post": {
         "tags": [
@@ -1574,6 +1628,48 @@
         }
       }
     },
+    "/api/input-mode/switch": {
+      "post": {
+        "tags": [
+          "input-mode"
+        ],
+        "summary": "Switch Input Mode",
+        "description": "Toggle PipeWire ⇄ RTP input modes.",
+        "operationId": "switch_input_mode_api_input_mode_switch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputModeSwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputModeSwitchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -2364,6 +2460,16 @@
             "type": "boolean",
             "title": "Pipewire Connected",
             "default": false
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Input Mode",
+            "description": "Current input mode reported by config.json",
+            "default": "pipewire"
           }
         },
         "type": "object",
@@ -2534,6 +2640,28 @@
         "title": "EqProfilesResponse",
         "description": "EQ profiles list response model."
       },
+      "EqTextImportRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Raw EQ profile text content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "EqTextImportRequest",
+        "description": "Request body for text-based EQ profile import."
+      },
       "EqValidationResponse": {
         "properties": {
           "valid": {
@@ -2612,6 +2740,60 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "InputModeSwitchRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Mode",
+            "description": "Target mode: 'pipewire' to use local PipeWire input or 'rtp' for network input"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "InputModeSwitchRequest",
+        "description": "Request body for switching between PipeWire and RTP modes."
+      },
+      "InputModeSwitchResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "current_mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Current Mode",
+            "description": "Mode currently active after the switch"
+          },
+          "restart_required": {
+            "type": "boolean",
+            "title": "Restart Required",
+            "description": "True when the daemon was restarted to apply changes",
+            "default": false
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "current_mode",
+          "message"
+        ],
+        "title": "InputModeSwitchResponse",
+        "description": "Response returned after attempting to switch input modes."
       },
       "OpraEqAttribution": {
         "properties": {
@@ -3793,6 +3975,198 @@
             "type": "string",
             "title": "Session Id"
           },
+          "bind_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bind Address"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "source_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Host"
+          },
+          "multicast": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multicast"
+          },
+          "multicast_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multicast Group"
+          },
+          "interface": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interface"
+          },
+          "payload_type": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Type"
+          },
+          "channels": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channels"
+          },
+          "bits_per_sample": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bits Per Sample"
+          },
+          "big_endian": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Big Endian"
+          },
+          "signed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signed"
+          },
+          "enable_rtcp": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Rtcp"
+          },
+          "rtcp_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rtcp Port"
+          },
+          "enable_ptp": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Ptp"
+          },
+          "target_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Latency Ms"
+          },
+          "watchdog_timeout_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watchdog Timeout Ms"
+          },
+          "telemetry_interval_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telemetry Interval Ms"
+          },
+          "auto_start": {
+            "type": "boolean",
+            "title": "Auto Start",
+            "default": false
+          },
           "ssrc": {
             "anyOf": [
               {
@@ -4024,6 +4398,11 @@
           },
           "crossfeed": {
             "$ref": "#/components/schemas/CrossfeedSettings"
+          },
+          "rtp_enabled": {
+            "type": "boolean",
+            "title": "Rtp Enabled",
+            "default": false
           }
         },
         "type": "object",
@@ -4176,6 +4555,16 @@
           },
           "peaks": {
             "$ref": "#/components/schemas/PeakLevels"
+          },
+          "input_mode": {
+            "type": "string",
+            "enum": [
+              "pipewire",
+              "rtp"
+            ],
+            "title": "Input Mode",
+            "description": "Current input mode reported by config.json",
+            "default": "pipewire"
           }
         },
         "type": "object",
@@ -4276,6 +4665,10 @@
     {
       "name": "rtp",
       "description": "RTP session lifecycle management and telemetry"
+    },
+    {
+      "name": "input-mode",
+      "description": "Switch between PipeWire and RTP input sources"
     },
     {
       "name": "legacy",

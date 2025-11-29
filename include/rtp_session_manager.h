@@ -11,12 +11,11 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 namespace Network {
 
@@ -32,6 +31,7 @@ struct SessionConfig {
     std::string bindAddress = "0.0.0.0";
     uint16_t port = 6000;
     std::string sourceHost;  // Optional sender IP for filtering (empty = accept all)
+    bool autoStart = false;
     bool multicast = false;
     std::string multicastGroup;
     std::string interfaceName;
@@ -58,6 +58,24 @@ struct SessionConfig {
 
 struct SessionMetrics {
     std::string sessionId;
+    std::string bindAddress;
+    uint16_t port = 0;
+    std::string sourceHost;
+    bool multicast = false;
+    std::string multicastGroup;
+    std::string interfaceName;
+    uint8_t payloadType = 0;
+    uint8_t channels = 0;
+    uint8_t bitsPerSample = 0;
+    bool bigEndian = true;
+    bool signedSamples = true;
+    bool enableRtcp = false;
+    uint16_t rtcpPort = 0;
+    bool enablePtp = false;
+    uint32_t targetLatencyMs = 0;
+    uint32_t watchdogTimeoutMs = 0;
+    uint32_t telemetryIntervalMs = 0;
+    bool autoStart = false;
     uint32_t ssrc = 0;
     bool ssrcLocked = false;
     uint16_t lastSequence = 0;
@@ -80,8 +98,7 @@ struct SessionMetrics {
 };
 
 nlohmann::json sessionConfigToJson(const SessionConfig& config);
-bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config,
-                           std::string& error);
+bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config, std::string& error);
 nlohmann::json sessionMetricsToJson(const SessionMetrics& metrics);
 bool validateSessionConfig(SessionConfig& config, std::string& error);
 
@@ -124,4 +141,3 @@ class RtpSessionManager {
 }  // namespace Network
 
 #endif  // RTP_SESSION_MANAGER_H
-

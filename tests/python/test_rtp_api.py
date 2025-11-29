@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("MAGICBOX_DISABLE_RTP_POLLING", "1")
 
 from web.main import app  # noqa: E402
+from web.models import RtpSessionMetrics  # noqa: E402
 from web.services import build_discovery_stream, telemetry_store  # noqa: E402
 from web.services.daemon_client import DaemonError, DaemonResponse  # noqa: E402
 
@@ -252,3 +253,34 @@ def test_build_discovery_stream_preserves_existing_flag():
     assert stream.payload_type == 97
     assert stream.multicast is True
     assert stream.session_id == "aes67-main"
+
+
+def test_session_metrics_preserve_transport_metadata():
+    """Telemetry payload should retain transport/baseline metadata."""
+    payload = {
+        "session_id": "pc_stream",
+        "bind_address": "0.0.0.0",
+        "port": 46000,
+        "source_host": "10.0.0.5",
+        "multicast": False,
+        "payload_type": 127,
+        "channels": 2,
+        "bits_per_sample": 16,
+        "big_endian": True,
+        "signed": True,
+        "enable_rtcp": True,
+        "rtcp_port": 46001,
+        "enable_ptp": False,
+        "target_latency_ms": 5,
+        "watchdog_timeout_ms": 500,
+        "telemetry_interval_ms": 1000,
+        "auto_start": True,
+        "sample_rate": 44100,
+    }
+
+    metrics = RtpSessionMetrics.from_daemon(payload)
+
+    assert metrics.bind_address == "0.0.0.0"
+    assert metrics.port == 46000
+    assert metrics.payload_type == 127
+    assert metrics.auto_start is True
