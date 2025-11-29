@@ -121,20 +121,28 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
     if len(packets) < 2:
         return 44100, 2, 16
 
-    # 最初のパケットを解析
-    header = parse_rtp_header(packets[0])
-    if not header:
+    # 複数パケットのペイロードサイズを収集して最頻値を使用
+    payload_sizes = []
+    headers = []
+    for pkt in packets:
+        h = parse_rtp_header(pkt)
+        if h:
+            headers.append(h)
+            payload_sizes.append(len(pkt) - h["header_size"])
+
+    if len(headers) < 2:
         return 44100, 2, 16
 
-    payload_size = len(packets[0]) - header["header_size"]
+    # ペイロードサイズの最頻値を使用（最後のパケットが短い場合への対策）
+    payload_size = max(set(payload_sizes), key=payload_sizes.count)
 
     # チャンネル数とビット深度の候補
-    # 一般的な組み合わせを試行
+    # 16bitが最も一般的（RFC 3551 L16）、24bit/32bitは稀
     format_candidates = [
-        (2, 16),  # ステレオ 16bit (最も一般的)
-        (2, 24),  # ステレオ 24bit
-        (2, 32),  # ステレオ 32bit
+        (2, 16),  # ステレオ 16bit (最も一般的、RFC 3551 L16)
         (1, 16),  # モノラル 16bit
+        (2, 24),  # ステレオ 24bit (動的PT、稀)
+        (2, 32),  # ステレオ 32bit (動的PT、非常に稀)
         (1, 24),  # モノラル 24bit
     ]
 
@@ -143,26 +151,20 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
 
     # 複数パケットからタイムスタンプ差を収集
     ts_diffs = []
-    for i in range(1, min(len(packets), 5)):  # 最大4ペアを解析
-        h1 = parse_rtp_header(packets[i - 1])
-        h2 = parse_rtp_header(packets[i])
-        if h1 and h2:
-            # タイムスタンプのラップアラウンドに対応
-            ts1, ts2 = h1["timestamp"], h2["timestamp"]
-            if ts2 >= ts1:
-                ts_diff = ts2 - ts1
-            else:
-                # ラップアラウンド発生
-                ts_diff = (0x100000000 - ts1) + ts2
+    for i in range(1, min(len(headers), 5)):  # 最大4ペアを解析
+        ts1, ts2 = headers[i - 1]["timestamp"], headers[i]["timestamp"]
+        # タイムスタンプのラップアラウンドに対応（順方向の差分）
+        ts_diff = (ts2 - ts1) & 0xFFFFFFFF
 
-            if ts_diff > 0 and ts_diff < 100000:  # 異常値を除外
-                ts_diffs.append(ts_diff)
+        if ts_diff > 0 and ts_diff < 100000:  # 異常値を除外
+            ts_diffs.append(ts_diff)
 
     if not ts_diffs:
         return 44100, 2, 16
 
-    # タイムスタンプ差の平均（= パケットあたりのサンプル数）
-    avg_ts_diff = sum(ts_diffs) // len(ts_diffs)
+    # タイムスタンプ差の中央値を使用（外れ値に強い）
+    ts_diffs_sorted = sorted(ts_diffs)
+    avg_ts_diff = ts_diffs_sorted[len(ts_diffs_sorted) // 2]
 
     # 各フォーマット候補について、一貫性をチェック
     best_match = None
@@ -170,8 +172,14 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
 
     for channels, bits_per_sample in format_candidates:
         bytes_per_sample = bits_per_sample // 8
+        bytes_per_frame = channels * bytes_per_sample
+
+        # ペイロードサイズがフレームサイズで割り切れるか確認
+        if payload_size % bytes_per_frame != 0:
+            continue
+
         # このフォーマットでのパケットあたりのサンプル数
-        samples_in_packet = payload_size // (channels * bytes_per_sample)
+        samples_in_packet = payload_size // bytes_per_frame
 
         if samples_in_packet <= 0:
             continue
@@ -179,17 +187,18 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
         # タイムスタンプ差がサンプル数と一致するか確認
         # L16/L24の場合、RTP clock rate = sample rateなので、
         # ts_diff ≈ samples_in_packet のはず
-        if abs(avg_ts_diff - samples_in_packet) > samples_in_packet * 0.1:
+        ts_sample_diff = abs(avg_ts_diff - samples_in_packet)
+        if ts_sample_diff > samples_in_packet * 0.1:
             # 10%以上のずれは不整合
             continue
 
         # このフォーマットが妥当なので、サンプルレートを推定
-        # 一般的なパケット間隔（5ms, 10ms, 20ms）を想定
-        packet_intervals_ms = [5, 10, 20, 2.5]  # ms
+        # 逆算: ts_diff サンプル / interval_ms ミリ秒 = sample_rate / 1000
+        # → sample_rate = ts_diff * 1000 / interval_ms
+        # 一般的なパケット間隔を試行
+        packet_intervals_ms = [10, 5, 20, 2.5, 1]  # ms (10msが最も一般的)
 
         for interval_ms in packet_intervals_ms:
-            # interval_ms ミリ秒でavg_ts_diffサンプル
-            # → 1秒あたり: avg_ts_diff * (1000 / interval_ms)
             estimated_rate = int(avg_ts_diff * (1000 / interval_ms))
 
             # 最も近い一般的なレートを探す
@@ -199,9 +208,13 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
             error = abs(closest_rate - estimated_rate)
             relative_error = error / closest_rate
 
-            # 相対誤差が5%以下なら候補とする
-            if relative_error < 0.05:
-                score = relative_error
+            # 相対誤差が2%以下なら候補とする（より厳しく）
+            if relative_error < 0.02:
+                # スコア = 相対誤差 + フォーマット優先度補正
+                # 16bitを優先（24bit/32bitはペナルティ）
+                format_penalty = 0 if bits_per_sample == 16 else 0.01
+                score = relative_error + format_penalty
+
                 if score < best_score:
                     best_score = score
                     best_match = (closest_rate, channels, bits_per_sample)
@@ -209,13 +222,17 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
     if best_match:
         return best_match
 
-    # フォールバック: タイムスタンプ差が小さい場合、10ms間隔と仮定
+    # フォールバック: タイムスタンプ差から10ms間隔と仮定（PipeWireのデフォルト）
     if avg_ts_diff < 10000:
         estimated_rate = avg_ts_diff * 100
         sample_rate = min(common_rates, key=lambda x: abs(x - estimated_rate))
+        logger.warning(
+            f"Using fallback detection: ts_diff={avg_ts_diff}, estimated_rate={sample_rate}"
+        )
         return sample_rate, 2, 16
 
     # デフォルト
+    logger.warning("Could not detect format, using default 44100Hz/2ch/16bit")
     return 44100, 2, 16
 
 
@@ -360,12 +377,13 @@ def main():
                 if last_seq_num is not None:
                     expected_seq = (last_seq_num + 1) & 0xFFFF
                     actual_seq = header["sequence_number"]
-                    seq_diff = abs(actual_seq - expected_seq)
+                    # 順方向の差分を計算（ラップアラウンド対応）
+                    seq_diff = (actual_seq - expected_seq) & 0xFFFF
 
-                    # 10パケット以上の飛びはストリーム切り替えの可能性
-                    if seq_diff > 10 and seq_diff < 60000:  # ラップアラウンドを考慮
+                    # 10パケット以上の飛び（半周以内）はストリーム切り替えの可能性
+                    if seq_diff > 10 and seq_diff < 32768:
                         logger.warning(
-                            f"Sequence discontinuity detected: expected {expected_seq}, got {actual_seq}"
+                            f"Sequence discontinuity detected: expected {expected_seq}, got {actual_seq} (gap={seq_diff})"
                         )
                         # 再検出モードに移行
                         detection_packets = [data]
