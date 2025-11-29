@@ -34,7 +34,8 @@ def _patch_config_paths(monkeypatch: pytest.MonkeyPatch, config_file: Path) -> N
     """Ensure every module reads the temporary config file."""
     monkeypatch.setattr("web.constants.CONFIG_PATH", config_file)
     monkeypatch.setattr("web.services.config.CONFIG_PATH", config_file)
-    monkeypatch.setattr("web.services.daemon.CONFIG_PATH", config_file)
+    # Note: web.services.daemon imports CONFIG_PATH from web.constants internally,
+    # so patching web.constants.CONFIG_PATH is sufficient
 
 
 @pytest.fixture
@@ -116,4 +117,3 @@ def test_status_endpoints_report_input_mode(client):
     daemon_resp = client.get("/daemon/status")
     assert daemon_resp.status_code == 200
     assert daemon_resp.json()["input_mode"] == "rtp"
-
