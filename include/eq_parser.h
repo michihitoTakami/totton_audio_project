@@ -43,6 +43,10 @@ struct EqBand {
     double frequency = 1000.0;  // Center frequency (Hz)
     double gain = 0.0;          // Gain (dB)
     double q = 1.0;             // Q factor (bandwidth)
+    bool hasBandwidthHz = false;
+    double bandwidthHz = 0.0;       // Alternative bandwidth in Hz
+    bool hasBandwidthOct = false;
+    double bandwidthOct = 0.0;      // Alternative bandwidth in octaves
 };
 
 // Complete EQ profile

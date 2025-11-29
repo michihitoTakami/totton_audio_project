@@ -34,22 +34,22 @@ FILTER_TYPE_PARAMS = {
     "PEQ": {"fc": True, "gain": True, "q": True},
     # Low-pass filters
     "LP": {"fc": True, "gain": False, "q": False},  # Basic low-pass, no Q
-    "LPQ": {"fc": True, "gain": False, "q": True},  # Low-pass with Q
+    "LPQ": {"fc": True, "gain": False, "q": False},  # Low-pass with optional Q
     # High-pass filters
     "HP": {"fc": True, "gain": False, "q": False},  # Basic high-pass, no Q
-    "HPQ": {"fc": True, "gain": False, "q": True},  # High-pass with Q
+    "HPQ": {"fc": True, "gain": False, "q": False},  # High-pass with optional Q
     # Band-pass filter
-    "BP": {"fc": True, "gain": False, "q": True},
+    "BP": {"fc": True, "gain": False, "q": False},
     # Notch filter
-    "NO": {"fc": True, "gain": False, "q": True},
+    "NO": {"fc": True, "gain": False, "q": False},
     # All-pass filter
     "AP": {"fc": True, "gain": True, "q": True},
     # Shelf filters (generic)
     "LS": {"fc": True, "gain": True, "q": True},  # Low-shelf
     "HS": {"fc": True, "gain": True, "q": True},  # High-shelf
     # Shelf filters with specific Q characteristics
-    "LSC": {"fc": True, "gain": True, "q": True},  # Low-shelf constant Q
-    "HSC": {"fc": True, "gain": True, "q": True},  # High-shelf constant Q
+    "LSC": {"fc": True, "gain": True, "q": False},  # Low-shelf constant Q
+    "HSC": {"fc": True, "gain": True, "q": False},  # High-shelf constant Q
     "LSQ": {"fc": True, "gain": True, "q": True},  # Low-shelf with Q
     "HSQ": {"fc": True, "gain": True, "q": True},  # High-shelf with Q
     # Fixed-slope shelf filters
@@ -125,15 +125,15 @@ def _parse_filter_line(line: str) -> dict[str, Any] | None:
 
     Returns dict with parsed values or None if parsing fails.
     """
-    # Basic pattern: Filter N: [ON|OFF] TYPE Fc FREQ [Hz]
-    base_pattern = r"Filter\s+(\d+):\s+(ON|OFF)\s+(\S+(?:\s+\d+[Dd][Bb])?)\s+Fc\s+([\d.]+)\s*(?:Hz)?"
+    # Basic pattern: Filter N: [ON|OFF] TYPE Fc FREQ [Hz] (N optional)
+    base_pattern = r"Filter\s*(\d+)?\s*:\s+(ON|OFF)\s+(.+?)\s+Fc\s+([\d.]+)\s*(?:Hz)?"
 
     match = re.match(base_pattern, line, re.IGNORECASE)
     if not match:
         return None
 
     result = {
-        "filter_num": int(match.group(1)),
+        "filter_num": int(match.group(1)) if match.group(1) else None,
         "enabled": match.group(2).upper() == "ON",
         "filter_type": match.group(3).strip().upper(),
         "frequency": float(match.group(4)),
@@ -157,7 +157,7 @@ def _parse_filter_line(line: str) -> dict[str, Any] | None:
         result["q"] = float(q_match.group(1))
 
     # Try to extract BW (bandwidth)
-    bw_match = re.search(r"BW\s+([\d.]+)", remainder, re.IGNORECASE)
+    bw_match = re.search(r"BW\s+([\d.]+)\s*(?:Hz)?", remainder, re.IGNORECASE)
     if bw_match:
         result["bw"] = float(bw_match.group(1))
 
@@ -233,17 +233,18 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
     # Parse and validate filter lines
     for line in lines:
         stripped = line.strip()
+        lower = stripped.lower()
 
         # Skip comments and empty lines
         if not stripped or stripped.startswith("#"):
             continue
 
         # Skip Preamp line (already processed)
-        if stripped.startswith("Preamp:"):
+        if lower.startswith("preamp:"):
             continue
 
         # Check if it's a Filter line
-        if stripped.startswith("Filter "):
+        if lower.startswith("filter ") or lower.startswith("filter:"):
             filter_count += 1
             parsed = _parse_filter_line(stripped)
 
@@ -254,6 +255,7 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
                 continue
 
             filter_num = parsed["filter_num"]
+            filter_label = filter_num if filter_num is not None else filter_count
             filter_type = parsed["filter_type"]
             freq = parsed["frequency"]
             gain = parsed["gain"]
@@ -261,7 +263,7 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
 
             # Validate filter type
             if filter_type not in FILTER_TYPE_PARAMS:
-                warnings.append(f"Filter {filter_num}: Unknown type '{filter_type}'")
+                warnings.append(f"Filter {filter_label}: Unknown type '{filter_type}'")
             else:
                 # Check parameter requirements for this filter type
                 params = FILTER_TYPE_PARAMS[filter_type]
@@ -269,7 +271,7 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
                 # Check Gain requirement
                 if params["gain"] and gain is None:
                     errors.append(
-                        f"Filter {filter_num}: Type '{filter_type}' requires Gain parameter"
+                        f"Filter {filter_label}: Type '{filter_type}' requires Gain parameter"
                     )
 
                 # Check Q requirement (or BW/Oct alternatives)
@@ -280,13 +282,13 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
                     and parsed["oct"] is None
                 ):
                     errors.append(
-                        f"Filter {filter_num}: Type '{filter_type}' requires Q (or BW/Oct) parameter"
+                        f"Filter {filter_label}: Type '{filter_type}' requires Q (or BW/Oct) parameter"
                     )
 
             # Validate frequency
             if freq < FREQ_MIN_HZ or freq > FREQ_MAX_HZ:
                 errors.append(
-                    f"Filter {filter_num}: Frequency {freq}Hz out of range "
+                    f"Filter {filter_label}: Frequency {freq}Hz out of range "
                     f"({FREQ_MIN_HZ}Hz to {FREQ_MAX_HZ}Hz)"
                 )
 
@@ -294,7 +296,7 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
             if gain is not None:
                 if gain < GAIN_MIN_DB or gain > GAIN_MAX_DB:
                     errors.append(
-                        f"Filter {filter_num}: Gain {gain}dB out of range "
+                        f"Filter {filter_label}: Gain {gain}dB out of range "
                         f"({GAIN_MIN_DB}dB to {GAIN_MAX_DB}dB)"
                     )
 
@@ -302,7 +304,7 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
             if q is not None:
                 if q < Q_MIN or q > Q_MAX:
                     errors.append(
-                        f"Filter {filter_num}: Q {q} out of range ({Q_MIN} to {Q_MAX})"
+                        f"Filter {filter_label}: Q {q} out of range ({Q_MIN} to {Q_MAX})"
                     )
 
     # Check filter count limit

@@ -374,3 +374,35 @@ Filter 8: ON LS 6DB Fc 200 Hz Gain 4.0 dB
     EXPECT_EQ(profile.bands[6].type, FilterType::AP);
     EXPECT_EQ(profile.bands[7].type, FilterType::LS_6DB);
 }
+
+TEST_F(EqParserTest, ParseEqStringBandwidthHzFallback) {
+    EqProfile profile;
+    std::string content = "Filter 1: ON PK Fc 1000 Hz Gain -3 dB BW 100 Hz";
+
+    EXPECT_TRUE(parseEqString(content, profile));
+    ASSERT_EQ(profile.bands.size(), 1u);
+    EXPECT_TRUE(profile.bands[0].hasBandwidthHz);
+    EXPECT_DOUBLE_EQ(profile.bands[0].bandwidthHz, 100.0);
+    EXPECT_DOUBLE_EQ(profile.bands[0].q, 10.0);
+}
+
+TEST_F(EqParserTest, ParseEqStringBandwidthOctFallback) {
+    EqProfile profile;
+    std::string content = "Filter 1: ON PK Fc 1000 Hz Gain -3 dB BW Oct 1.0";
+
+    EXPECT_TRUE(parseEqString(content, profile));
+    ASSERT_EQ(profile.bands.size(), 1u);
+    EXPECT_TRUE(profile.bands[0].hasBandwidthOct);
+    EXPECT_DOUBLE_EQ(profile.bands[0].bandwidthOct, 1.0);
+    double expectedQ = std::pow(2.0, 0.5) / (std::pow(2.0, 1.0) - 1.0);
+    EXPECT_NEAR(profile.bands[0].q, expectedQ, 1e-9);
+}
+
+TEST_F(EqParserTest, ParseEqStringWithoutFilterNumber) {
+    EqProfile profile;
+    std::string content = "Filter: ON PK Fc 500 Hz Gain -2 dB Q 1.2";
+
+    EXPECT_TRUE(parseEqString(content, profile));
+    ASSERT_EQ(profile.bands.size(), 1u);
+    EXPECT_DOUBLE_EQ(profile.bands[0].frequency, 500.0);
+}

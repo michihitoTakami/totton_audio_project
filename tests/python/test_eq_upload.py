@@ -297,6 +297,38 @@ Filter 3: ON BP Fc 1000 Hz Q 2.0
         assert result["valid"] is True
         assert result["filter_count"] == 3
 
+    def test_bw_oct_parameter(self):
+        """BW Oct parameter should satisfy Q requirement."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 3.0 dB BW Oct 1.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 1
+
+    def test_bw_hz_parameter(self):
+        """BW parameter in Hz should satisfy Q requirement."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 3.0 dB BW 100 Hz
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 1
+
+    def test_filters_with_optional_q(self):
+        """LPQ/HPQ/BP/NO/LSC/HSC should accept missing Q."""
+        content = """Preamp: -6 dB
+Filter 1: ON LPQ Fc 12000 Hz
+Filter 2: ON HPQ Fc 25 Hz
+Filter 3: ON BP Fc 1000 Hz
+Filter 4: ON NO Fc 500 Hz
+Filter 5: ON LSC Fc 300 Hz Gain 3.0 dB
+Filter 6: ON HSC Fc 6000 Hz Gain -2.0 dB
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 6
+
     def test_missing_required_gain(self):
         """Filters requiring Gain but missing it should fail."""
         content = """Preamp: -6 dB
@@ -324,6 +356,15 @@ Filter 1: ON UNKNOWN Fc 100 Hz Gain -2.0 dB Q 1.0
         # Should be valid but with warning
         assert result["valid"] is True
         assert any("Unknown type" in w for w in result["warnings"])
+
+    def test_filter_without_number(self):
+        """Filter definition without number should still parse."""
+        content = """Preamp: -6 dB
+Filter: ON PK Fc 1000 Hz Gain -2.0 dB Q 1.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 1
 
     def test_comments_ignored(self):
         """Comments should be ignored."""
