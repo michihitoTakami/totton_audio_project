@@ -1,0 +1,57 @@
+# Docker Compose for RasPi RTP Sender (Development/Testing)
+#
+# このファイルは現在のPCをRasPiに見立てて、PipeWireのRTPストリームを
+# Magic Boxに中継するテスト環境を構築します。
+#
+# 構成:
+#   [PC PipeWire] → RTP (224.0.0.56:46000)
+#   ↓ (このコンテナが受信)
+#   [rtp-sender] → REST API経由でSDP送信 + RTP転送
+#   ↓
+#   [Magic Box] RtpSessionManager
+#
+# Usage:
+#   cd docker
+#   docker compose -f docker-compose.raspi-sender.yml up -d --build
+#
+# 前提条件:
+#   - PCのPipeWireが224.0.0.56:46000にRTP送信している (既に設定済み)
+#   - Magic BoxがREST APIで待機している
+#
+
+services:
+  # ==========================================================================
+  # RTP Sender (RasPi役割)
+  # ==========================================================================
+  rtp-sender:
+    image: raspi-rtp-sender:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rtp-sender
+    container_name: raspi-rtp-sender
+    restart: unless-stopped
+    network_mode: host  # ホストネットワークを使用してマルチキャスト受信
+    environment:
+      # 受信設定（PC PipeWireから）
+      - RTP_RECV_MULTICAST_GROUP=224.0.0.56
+      - RTP_RECV_PORT=46000
+
+      # 送信設定（Magic Boxへ）
+      - MAGIC_BOX_HOST=192.168.1.10  # Magic BoxのIPアドレス（要変更）
+      - MAGIC_BOX_API_PORT=8000
+      - RTP_SEND_PORT=46001  # 送信ポート
+
+      # 動作モード
+      - AUTO_REGISTER=true  # 起動時に自動的にMagic BoxにSDP送信
+      - SEND_SDP_ON_RATE_CHANGE=true  # レート変更時にSDP再送信
+
+      # ログレベル
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs/rtp-sender:/var/log/rtp-sender
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "rtp_sender"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
