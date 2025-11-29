@@ -1,8 +1,8 @@
-# Docker Compose for Magic Box - Local x86_64 development/testing
+# Docker Compose for Magic Box - Local x86_64 PipeWire development
 #
 # Usage:
-#   cd docker
-#   docker compose -f docker-compose.local.yml up -d --build
+#   cd docker/local/pipewire
+#   docker compose up -d --build
 #
 
 services:
@@ -12,8 +12,8 @@ services:
   audio-daemon:
     image: magicbox-local:latest
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.jetson
+      context: ../../..
+      dockerfile: docker/jetson/Dockerfile.jetson
       args:
         BASE_IMAGE_DEVEL: nvidia/cuda:12.6.2-devel-ubuntu22.04
         BASE_IMAGE_RUNTIME: nvidia/cuda:12.6.2-runtime-ubuntu22.04

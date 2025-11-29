@@ -11,8 +11,8 @@
 #   [Magic Box] RtpSessionManager
 #
 # Usage:
-#   cd docker/raspi
-#   docker compose -f docker-compose.raspi-sender.yml up -d --build
+#   cd docker/local/raspi-simulation
+#   docker compose up -d --build
 #
 # 前提条件:
 #   - PCのPipeWireが224.0.0.56:46000にRTP送信している (既に設定済み)
@@ -26,7 +26,7 @@ services:
   rtp-sender:
     image: raspi-rtp-sender:latest
     build:
-      context: ../..
+      context: ../../..
       dockerfile: docker/raspi/Dockerfile.rtp-sender
     container_name: raspi-rtp-sender
     restart: unless-stopped
