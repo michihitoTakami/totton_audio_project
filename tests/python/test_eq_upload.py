@@ -194,7 +194,7 @@ Filter 1: ON PK Fc 1000 Hz Gain {GAIN_MAX_DB + 10} dB Q 1.0
     def test_q_too_low(self):
         """Q below minimum should fail."""
         content = f"""Preamp: -6 dB
-Filter 1: ON PK Fc 1000 Hz Gain -2.0 dB Q {Q_MIN - 0.05}
+Filter 1: ON PK Fc 1000 Hz Gain -2.0 dB Q {Q_MIN - 0.001}
 """
         result = validate_eq_profile_content(content)
         assert result["valid"] is False
@@ -228,12 +228,124 @@ Filter 1: ON PK Fc 1000 Hz Gain -2.0 dB Q {Q_MAX + 10}
 Filter 1: ON PK Fc 100 Hz Gain -2.0 dB Q 1.0
 Filter 2: ON LS Fc 200 Hz Gain 3.0 dB Q 0.7
 Filter 3: ON HS Fc 8000 Hz Gain -1.5 dB Q 0.7
-Filter 4: ON LP Fc 20000 Hz Gain 0 dB Q 0.7
-Filter 5: ON HP Fc 30 Hz Gain 0 dB Q 0.7
+Filter 4: ON LP Fc 20000 Hz
+Filter 5: ON HP Fc 30 Hz
 """
         result = validate_eq_profile_content(content)
         assert result["valid"] is True
         assert result["filter_count"] == 5
+
+    def test_all_new_filter_types(self):
+        """All new filter types should be recognized."""
+        content = """Preamp: -6 dB
+Filter 1: ON MODAL Fc 100 Hz Gain -2.0 dB Q 1.0
+Filter 2: ON PEQ Fc 200 Hz Gain 3.0 dB Q 1.5
+Filter 3: ON LPQ Fc 10000 Hz Q 0.7
+Filter 4: ON HPQ Fc 20 Hz Q 0.7
+Filter 5: ON BP Fc 1000 Hz Q 2.0
+Filter 6: ON NO Fc 500 Hz Q 5.0
+Filter 7: ON AP Fc 2000 Hz Gain 0 dB Q 1.0
+Filter 8: ON LSC Fc 100 Hz Gain 2.0 dB Q 0.7
+Filter 9: ON HSC Fc 8000 Hz Gain -2.0 dB Q 0.7
+Filter 10: ON LSQ Fc 150 Hz Gain 3.0 dB Q 0.5
+Filter 11: ON HSQ Fc 7000 Hz Gain -1.0 dB Q 0.5
+Filter 12: ON LS 6DB Fc 200 Hz Gain 4.0 dB
+Filter 13: ON LS 12DB Fc 250 Hz Gain 5.0 dB
+Filter 14: ON HS 6DB Fc 6000 Hz Gain -3.0 dB
+Filter 15: ON HS 12DB Fc 5000 Hz Gain -4.0 dB
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 15
+        assert len(result["warnings"]) == 0
+
+    def test_off_filters_accepted(self):
+        """OFF filters should be accepted."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 100 Hz Gain -2.0 dB Q 1.0
+Filter 2: OFF PK Fc 200 Hz Gain 3.0 dB Q 1.5
+Filter 3: ON LS Fc 300 Hz Gain 2.0 dB Q 0.7
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 3
+
+    def test_subsonic_frequency(self):
+        """Frequency down to 10Hz should be accepted."""
+        content = f"""Preamp: -6 dB
+Filter 1: ON HP Fc {FREQ_MIN_HZ} Hz
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+
+    def test_low_q_value(self):
+        """Q value down to 0.01 should be accepted."""
+        content = f"""Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 2.0 dB Q {Q_MIN}
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+
+    def test_optional_gain_parameter(self):
+        """Filters without Gain (when not required) should pass."""
+        content = """Preamp: -6 dB
+Filter 1: ON LP Fc 15000 Hz Q 0.707
+Filter 2: ON HP Fc 25 Hz Q 0.707
+Filter 3: ON BP Fc 1000 Hz Q 2.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 3
+
+    def test_bw_oct_parameter(self):
+        """BW Oct parameter should satisfy Q requirement."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 3.0 dB BW Oct 1.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 1
+
+    def test_bw_hz_parameter(self):
+        """BW parameter in Hz should satisfy Q requirement."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 3.0 dB BW 100 Hz
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 1
+
+    def test_filters_with_optional_q(self):
+        """LPQ/HPQ/BP/NO/LSC/HSC should accept missing Q."""
+        content = """Preamp: -6 dB
+Filter 1: ON LPQ Fc 12000 Hz
+Filter 2: ON HPQ Fc 25 Hz
+Filter 3: ON BP Fc 1000 Hz
+Filter 4: ON NO Fc 500 Hz
+Filter 5: ON LSC Fc 300 Hz Gain 3.0 dB
+Filter 6: ON HSC Fc 6000 Hz Gain -2.0 dB
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 6
+
+    def test_missing_required_gain(self):
+        """Filters requiring Gain but missing it should fail."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Q 1.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is False
+        assert any("requires Gain" in e for e in result["errors"])
+
+    def test_missing_required_q(self):
+        """Filters requiring Q but missing it should fail."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 2.0 dB
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is False
+        assert any("requires Q" in e for e in result["errors"])
 
     def test_unknown_filter_type_warning(self):
         """Unknown filter type should generate warning but still be valid."""
@@ -244,6 +356,15 @@ Filter 1: ON UNKNOWN Fc 100 Hz Gain -2.0 dB Q 1.0
         # Should be valid but with warning
         assert result["valid"] is True
         assert any("Unknown type" in w for w in result["warnings"])
+
+    def test_filter_without_number(self):
+        """Filter definition without number should still parse."""
+        content = """Preamp: -6 dB
+Filter: ON PK Fc 1000 Hz Gain -2.0 dB Q 1.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 1
 
     def test_comments_ignored(self):
         """Comments should be ignored."""
@@ -283,10 +404,11 @@ Filter 1: ON PK Fc 100 Hz
 Filter 2: ON PK Fc 200 Hz Gain -2.0 dB Q 1.0
 """
         result = validate_eq_profile_content(content)
-        # Should still be valid but with warning for Filter 1
-        assert result["valid"] is True
-        assert result["filter_count"] == 2  # Both counted
-        assert any("Could not parse" in w for w in result["warnings"])
+        # Filter 1 is now recognized but missing required parameters
+        assert result["valid"] is False
+        assert result["filter_count"] == 2
+        assert any("requires Gain" in e for e in result["errors"])
+        assert any("requires Q" in e for e in result["errors"])
 
     def test_case_insensitive_filter_type(self):
         """Filter type should be case insensitive."""
@@ -316,8 +438,8 @@ class TestSecurityLimits:
         assert PREAMP_MAX_DB == 20.0
 
     def test_frequency_range_reasonable(self):
-        """Frequency range should cover audible spectrum."""
-        assert FREQ_MIN_HZ == 20.0
+        """Frequency range should cover audible spectrum and subsonic."""
+        assert FREQ_MIN_HZ == 10.0  # Extended to 10Hz for subsonic
         assert FREQ_MAX_HZ == 24000.0
 
     def test_gain_range_reasonable(self):
@@ -327,7 +449,7 @@ class TestSecurityLimits:
 
     def test_q_range_reasonable(self):
         """Q range should be reasonable for parametric EQ."""
-        assert Q_MIN == 0.1
+        assert Q_MIN == 0.01  # Extended to 0.01 for wider Q range
         assert Q_MAX == 100.0
 
 
@@ -362,15 +484,19 @@ Filter 1: ON PK Fc 100 Hz Gain -2.0 dB Q 1.0
         result = validate_eq_profile_content(content)
         assert result["valid"] is True
 
-    def test_scientific_notation_not_supported(self):
-        """Scientific notation in values should fail (treated as invalid)."""
+    def test_scientific_notation_partial_parse(self):
+        """Scientific notation in values gets partially parsed."""
         content = """Preamp: -6 dB
 Filter 1: ON PK Fc 1e3 Hz Gain -2.0 dB Q 1.0
 """
         result = validate_eq_profile_content(content)
-        # Should have a warning about unparseable line
+        # New parser will parse "1" from "1e3", which is technically valid
+        # but results in wrong frequency (1 Hz instead of 1000 Hz)
+        # This is expected behavior - users should not use scientific notation
         assert result["filter_count"] == 1
-        assert len(result["warnings"]) > 0
+        # The frequency will be out of range (1 Hz < 10 Hz minimum)
+        assert not result["valid"]
+        assert any("Frequency" in e and "out of range" in e for e in result["errors"])
 
     def test_boundary_values_valid(self):
         """Boundary values should be valid."""

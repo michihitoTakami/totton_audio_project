@@ -21,6 +21,44 @@ from ..constants import (
     SAFE_PROFILE_NAME_PATTERN,
 )
 
+# ============================================================================
+# Filter Type Definitions
+# ============================================================================
+
+# Equalizer APO filter type parameter requirements
+# Reference: https://sourceforge.net/p/equalizerapo/wiki/Configuration%20reference/
+FILTER_TYPE_PARAMS = {
+    # Peaking filters - require Fc, Gain, Q
+    "PK": {"fc": True, "gain": True, "q": True},
+    "MODAL": {"fc": True, "gain": True, "q": True},
+    "PEQ": {"fc": True, "gain": True, "q": True},
+    # Low-pass filters
+    "LP": {"fc": True, "gain": False, "q": False},  # Basic low-pass, no Q
+    "LPQ": {"fc": True, "gain": False, "q": False},  # Low-pass with optional Q
+    # High-pass filters
+    "HP": {"fc": True, "gain": False, "q": False},  # Basic high-pass, no Q
+    "HPQ": {"fc": True, "gain": False, "q": False},  # High-pass with optional Q
+    # Band-pass filter
+    "BP": {"fc": True, "gain": False, "q": False},
+    # Notch filter
+    "NO": {"fc": True, "gain": False, "q": False},
+    # All-pass filter
+    "AP": {"fc": True, "gain": True, "q": True},
+    # Shelf filters (generic)
+    "LS": {"fc": True, "gain": True, "q": True},  # Low-shelf
+    "HS": {"fc": True, "gain": True, "q": True},  # High-shelf
+    # Shelf filters with specific Q characteristics
+    "LSC": {"fc": True, "gain": True, "q": False},  # Low-shelf constant Q
+    "HSC": {"fc": True, "gain": True, "q": False},  # High-shelf constant Q
+    "LSQ": {"fc": True, "gain": True, "q": True},  # Low-shelf with Q
+    "HSQ": {"fc": True, "gain": True, "q": True},  # High-shelf with Q
+    # Fixed-slope shelf filters
+    "LS 6DB": {"fc": True, "gain": True, "q": False},  # 6dB/oct low-shelf
+    "LS 12DB": {"fc": True, "gain": True, "q": False},  # 12dB/oct low-shelf
+    "HS 6DB": {"fc": True, "gain": True, "q": False},  # 6dB/oct high-shelf
+    "HS 12DB": {"fc": True, "gain": True, "q": False},  # 12dB/oct high-shelf
+}
+
 
 def is_safe_profile_name(name: str | None) -> bool:
     """
@@ -75,9 +113,71 @@ def sanitize_filename(filename: str) -> str | None:
     return basename
 
 
+def _parse_filter_line(line: str) -> dict[str, Any] | None:
+    """
+    Parse a single filter line with flexible parameter matching.
+
+    Supports:
+    - ON/OFF state
+    - Optional Gain and Q parameters
+    - BW (bandwidth) as alternative to Q
+    - Oct (octaves) as alternative to Q
+
+    Returns dict with parsed values or None if parsing fails.
+    """
+    # Basic pattern: Filter N: [ON|OFF] TYPE Fc FREQ [Hz] (N optional)
+    base_pattern = r"Filter\s*(\d+)?\s*:\s+(ON|OFF)\s+(.+?)\s+Fc\s+([\d.]+)\s*(?:Hz)?"
+
+    match = re.match(base_pattern, line, re.IGNORECASE)
+    if not match:
+        return None
+
+    result = {
+        "filter_num": int(match.group(1)) if match.group(1) else None,
+        "enabled": match.group(2).upper() == "ON",
+        "filter_type": match.group(3).strip().upper(),
+        "frequency": float(match.group(4)),
+        "gain": None,
+        "q": None,
+        "bw": None,
+        "oct": None,
+    }
+
+    # Extract remaining part after frequency
+    remainder = line[match.end() :].strip()
+
+    # Try to extract Gain
+    gain_match = re.search(r"Gain\s+([-+]?\d+\.?\d*)\s*dB", remainder, re.IGNORECASE)
+    if gain_match:
+        result["gain"] = float(gain_match.group(1))
+
+    # Try to extract Q
+    q_match = re.search(r"Q\s+([\d.]+)", remainder, re.IGNORECASE)
+    if q_match:
+        result["q"] = float(q_match.group(1))
+
+    # Try to extract BW (bandwidth)
+    bw_match = re.search(r"BW\s+([\d.]+)\s*(?:Hz)?", remainder, re.IGNORECASE)
+    if bw_match:
+        result["bw"] = float(bw_match.group(1))
+
+    # Try to extract Oct (octaves)
+    oct_match = re.search(r"BW\s+oct\s+([\d.]+)", remainder, re.IGNORECASE)
+    if oct_match:
+        result["oct"] = float(oct_match.group(1))
+
+    return result
+
+
 def validate_eq_profile_content(content: str) -> dict[str, Any]:
     """
     Validate EQ profile content for correctness and safety.
+
+    Enhanced validation supporting:
+    - All Equalizer APO filter types
+    - ON/OFF filter states
+    - Optional Gain and Q parameters (filter-type dependent)
+    - BW and Oct alternatives to Q
 
     Returns:
         dict with keys:
@@ -131,64 +231,81 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
         errors.append("Missing 'Preamp:' line")
 
     # Parse and validate filter lines
-    filter_pattern = re.compile(
-        r"Filter\s+(\d+):\s+ON\s+(\w+)\s+Fc\s+([\d.]+)\s*Hz?\s+"
-        r"Gain\s+([-+]?\d+\.?\d*)\s*dB\s+Q\s+([\d.]+)",
-        re.IGNORECASE,
-    )
-
     for line in lines:
         stripped = line.strip()
+        lower = stripped.lower()
 
         # Skip comments and empty lines
         if not stripped or stripped.startswith("#"):
             continue
 
         # Skip Preamp line (already processed)
-        if stripped.startswith("Preamp:"):
+        if lower.startswith("preamp:"):
             continue
 
         # Check if it's a Filter line
-        if stripped.startswith("Filter "):
+        if lower.startswith("filter ") or lower.startswith("filter:"):
             filter_count += 1
-            match = filter_pattern.match(stripped)
-            if match:
-                filter_num = int(match.group(1))
-                filter_type = match.group(2).upper()
-                freq = float(match.group(3))
-                gain = float(match.group(4))
-                q = float(match.group(5))
+            parsed = _parse_filter_line(stripped)
 
-                # Validate filter type
-                valid_types = {"PK", "LS", "HS", "LP", "HP", "LSC", "HSC", "LSQ", "HSQ"}
-                if filter_type not in valid_types:
-                    warnings.append(
-                        f"Filter {filter_num}: Unknown type '{filter_type}'"
-                    )
-
-                # Validate frequency
-                if freq < FREQ_MIN_HZ or freq > FREQ_MAX_HZ:
-                    errors.append(
-                        f"Filter {filter_num}: Frequency {freq}Hz out of range "
-                        f"({FREQ_MIN_HZ}Hz to {FREQ_MAX_HZ}Hz)"
-                    )
-
-                # Validate gain
-                if gain < GAIN_MIN_DB or gain > GAIN_MAX_DB:
-                    errors.append(
-                        f"Filter {filter_num}: Gain {gain}dB out of range "
-                        f"({GAIN_MIN_DB}dB to {GAIN_MAX_DB}dB)"
-                    )
-
-                # Validate Q
-                if q < Q_MIN or q > Q_MAX:
-                    errors.append(
-                        f"Filter {filter_num}: Q {q} out of range ({Q_MIN} to {Q_MAX})"
-                    )
-            else:
+            if not parsed:
                 # Truncate long lines for readability
                 display_line = stripped[:50] + "..." if len(stripped) > 50 else stripped
                 warnings.append(f"Could not parse filter line: {display_line}")
+                continue
+
+            filter_num = parsed["filter_num"]
+            filter_label = filter_num if filter_num is not None else filter_count
+            filter_type = parsed["filter_type"]
+            freq = parsed["frequency"]
+            gain = parsed["gain"]
+            q = parsed["q"]
+
+            # Validate filter type
+            if filter_type not in FILTER_TYPE_PARAMS:
+                warnings.append(f"Filter {filter_label}: Unknown type '{filter_type}'")
+            else:
+                # Check parameter requirements for this filter type
+                params = FILTER_TYPE_PARAMS[filter_type]
+
+                # Check Gain requirement
+                if params["gain"] and gain is None:
+                    errors.append(
+                        f"Filter {filter_label}: Type '{filter_type}' requires Gain parameter"
+                    )
+
+                # Check Q requirement (or BW/Oct alternatives)
+                if (
+                    params["q"]
+                    and q is None
+                    and parsed["bw"] is None
+                    and parsed["oct"] is None
+                ):
+                    errors.append(
+                        f"Filter {filter_label}: Type '{filter_type}' requires Q (or BW/Oct) parameter"
+                    )
+
+            # Validate frequency
+            if freq < FREQ_MIN_HZ or freq > FREQ_MAX_HZ:
+                errors.append(
+                    f"Filter {filter_label}: Frequency {freq}Hz out of range "
+                    f"({FREQ_MIN_HZ}Hz to {FREQ_MAX_HZ}Hz)"
+                )
+
+            # Validate gain if present
+            if gain is not None:
+                if gain < GAIN_MIN_DB or gain > GAIN_MAX_DB:
+                    errors.append(
+                        f"Filter {filter_label}: Gain {gain}dB out of range "
+                        f"({GAIN_MIN_DB}dB to {GAIN_MAX_DB}dB)"
+                    )
+
+            # Validate Q if present
+            if q is not None:
+                if q < Q_MIN or q > Q_MAX:
+                    errors.append(
+                        f"Filter {filter_label}: Q {q} out of range ({Q_MIN} to {Q_MAX})"
+                    )
 
     # Check filter count limit
     if filter_count > MAX_EQ_FILTERS:

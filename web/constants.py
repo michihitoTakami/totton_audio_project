@@ -43,11 +43,11 @@ MAX_EQ_FILE_SIZE = 1 * 1024 * 1024  # 1MB
 MAX_EQ_FILTERS = 100
 PREAMP_MIN_DB = -100.0
 PREAMP_MAX_DB = 20.0
-FREQ_MIN_HZ = 20.0
+FREQ_MIN_HZ = 10.0  # Expanded from 20Hz to support subsonic filters
 FREQ_MAX_HZ = 24000.0
 GAIN_MIN_DB = -30.0
 GAIN_MAX_DB = 30.0
-Q_MIN = 0.1
+Q_MIN = 0.01  # Expanded from 0.1 to support wider Q range
 Q_MAX = 100.0
 
 # Allowed filename pattern: alphanumeric, underscore, hyphen, dot (with .txt extension)
