@@ -203,8 +203,7 @@ bool parseEqString(const std::string& content, EqProfile& profile) {
     // Base filter pattern: Filter N: ON/OFF TYPE Fc FREQ [Hz]
     // Gain and Q are now optional and parsed separately. Filter numbers can be omitted.
     std::regex filterBaseRegex(
-        R"(Filter\s*(\d+)?\s*:\s*(ON|OFF)\s+(.+?)\s+Fc\s+([\d.]+)\s*(?:Hz)?)",
-        std::regex::icase);
+        R"(Filter\s*(\d+)?\s*:\s*(ON|OFF)\s+(.+?)\s+Fc\s+([\d.]+)\s*(?:Hz)?)", std::regex::icase);
 
     // Optional parameter patterns
     std::regex gainRegex(R"(Gain\s+([-+]?\d+\.?\d*)\s*dB)", std::regex::icase);
