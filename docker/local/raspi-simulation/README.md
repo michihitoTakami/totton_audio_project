@@ -70,6 +70,44 @@ docker logs -f raspi-rtp-sender
 tail -f logs/rtp-sender/rtp_sender.log
 ```
 
+## 動的レート変更テスト
+
+PipeWire側のレートを変更してテストする場合：
+
+### 手順
+
+1. PipeWireの設定を変更（例: 44100Hz → 96000Hz）
+   ```bash
+   vim ~/.config/pipewire/pipewire.conf.d/rtp-sink.conf
+   systemctl --user restart pipewire
+   ```
+
+2. docker-compose.ymlの環境変数を更新
+   ```bash
+   # RTP_SAMPLE_RATE=96000 に変更
+   vim docker-compose.yml
+   ```
+
+3. コンテナを再作成
+   ```bash
+   docker compose up -d
+   ```
+
+4. ログで確認
+   ```bash
+   docker logs raspi-rtp-sender | grep "Successfully registered"
+   # [INFO] Successfully registered RTP session: 96000Hz, 2ch, 16bit, PT127
+   ```
+
+### SDP再送信（上級者向け）
+
+SIGHUPシグナルでSDPを再送信できます（環境変数は変わらない）：
+```bash
+docker kill -s HUP raspi-rtp-sender
+```
+
+これはMagic Box側でセッションを再作成したい場合に使用します。
+
 ## 動作確認
 
 ### 1. SDP送信確認

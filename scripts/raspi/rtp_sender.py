@@ -13,10 +13,16 @@
 1. 起動時にMagic BoxへSDP送信（セッション確立）
 2. マルチキャストグループ (224.0.0.56:46000) でRTPパケットを受信
 3. 受信したRTPパケットをMagic Boxに転送
+
+SDP再送信:
+- SIGHUPシグナルを送信すると、SDPを再送信します
+- 環境変数を変更後、コンテナ再起動なしでレート変更をテストできます
+- 使用方法: docker kill -s HUP raspi-rtp-sender
 """
 
 import logging
 import os
+import signal
 import socket
 import struct
 import sys
@@ -84,6 +90,21 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# グローバル状態
+# =============================================================================
+
+# SIGHUP受信フラグ（SDP再送信トリガー）
+_resend_sdp_requested = False
+
+
+def _handle_sighup(signum: int, frame: object) -> None:
+    """SIGHUPハンドラ: SDP再送信をリクエスト"""
+    global _resend_sdp_requested
+    _resend_sdp_requested = True
+    logger.info("SIGHUP received, will resend SDP")
+
+
+# =============================================================================
 # SDP送信
 # =============================================================================
 
@@ -140,12 +161,18 @@ a=rtpmap:{PAYLOAD_TYPE} L{BITS_PER_SAMPLE}/{SAMPLE_RATE}/{CHANNELS}
 
 def main() -> None:
     """メイン処理"""
+    global _resend_sdp_requested
+
     logger.info("Starting RTP Sender (RasPi simulation)...")
     logger.info(f"Receiving from: {RTP_RECV_MULTICAST_GROUP}:{RTP_RECV_PORT}")
     logger.info(f"Sending to Magic Box: {MAGIC_BOX_HOST}:{RTP_SEND_PORT}")
     logger.info(
         f"Audio format: {SAMPLE_RATE}Hz, {CHANNELS}ch, {BITS_PER_SAMPLE}bit, PT{PAYLOAD_TYPE}"
     )
+
+    # SIGHUPハンドラを設定（SDP再送信用）
+    signal.signal(signal.SIGHUP, _handle_sighup)
+    logger.info("SIGHUP handler registered (send SIGHUP to resend SDP)")
 
     # 起動時にSDPを送信
     if not send_sdp_to_magicbox():
@@ -171,6 +198,15 @@ def main() -> None:
 
     try:
         while True:
+            # SIGHUP再送信チェック
+            if _resend_sdp_requested:
+                _resend_sdp_requested = False
+                logger.info("Resending SDP due to SIGHUP...")
+                if send_sdp_to_magicbox():
+                    logger.info("SDP resent successfully")
+                else:
+                    logger.warning("Failed to resend SDP, continuing...")
+
             # RTPパケット受信
             data, addr = recv_sock.recvfrom(2048)
 
