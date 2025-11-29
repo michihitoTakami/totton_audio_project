@@ -29,15 +29,32 @@ RTP_SEND_PORT = int(os.getenv("RTP_SEND_PORT", "46001"))
 AUTO_REGISTER = os.getenv("AUTO_REGISTER", "true").lower() == "true"
 SEND_SDP_ON_RATE_CHANGE = os.getenv("SEND_SDP_ON_RATE_CHANGE", "true").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_FILE = os.getenv("LOG_FILE", "/var/log/rtp-sender/rtp_sender.log")
+
+# ログディレクトリを自動作成
+log_dir = os.path.dirname(LOG_FILE)
+if log_dir and not os.path.exists(log_dir):
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except OSError as e:
+        print(
+            f"Warning: Could not create log directory {log_dir}: {e}", file=sys.stderr
+        )
+        print("Logging to stdout only", file=sys.stderr)
+        LOG_FILE = None
 
 # ログ設定
+handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+if LOG_FILE:
+    try:
+        handlers.append(logging.FileHandler(LOG_FILE))
+    except OSError as e:
+        print(f"Warning: Could not open log file {LOG_FILE}: {e}", file=sys.stderr)
+
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("/var/log/rtp-sender/rtp_sender.log"),
-    ],
+    handlers=handlers,
 )
 logger = logging.getLogger(__name__)
 
@@ -118,18 +135,43 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
     channels = 2
 
     # サンプルレート推定
-    # 2パケット目のタイムスタンプ差から計算
+    # RTPタイムスタンプの差からサンプルレートを逆算
+    # L16の場合、RTP clock rate = sample rate なので、
+    # ts_diff = パケット間のサンプル数
     if len(packets) >= 2:
         header2 = parse_rtp_header(packets[1])
         if header2:
             ts_diff = header2["timestamp"] - header["timestamp"]
-            frame_count = payload_size // (channels * (bits_per_sample // 8))
-            if frame_count > 0 and ts_diff > 0:
-                # タイムスタンプの差 = フレーム数
-                sample_rate = ts_diff
-                # 一般的なレートに丸める
+            # ペイロードから実際のサンプル数を計算
+            samples_in_packet = payload_size // (channels * (bits_per_sample // 8))
+
+            if samples_in_packet > 0 and ts_diff > 0:
+                # タイムスタンプ差 ≈ パケット内サンプル数 であるべき
+                # タイムスタンプ差をそのままサンプルレートの候補として扱う
+                # 複数パケットから平均を取るのが理想だが、ここでは ts_diff を基準にする
+
+                # RTPのタイムスタンプはclock rate単位なので、
+                # 実際のサンプルレートはパケット送信間隔から推定
+                # 一般的なレートとの最近傍マッチング
                 common_rates = [44100, 48000, 88200, 96000, 176400, 192000]
-                sample_rate = min(common_rates, key=lambda x: abs(x - sample_rate))
+
+                # ts_diff が非常に小さい場合（例: 480サンプル/10ms @ 48kHz）、
+                # これは1パケットあたりのサンプル数を示している
+                # 実際のサンプルレートは、パケット送信レートから推定する必要がある
+
+                # ヒューリスティック: ts_diff が一般的なレートより小さい場合は
+                # パケット間隔から推定（例: 480サンプル/パケット → 48000Hz）
+                if ts_diff < 10000:
+                    # パケット間隔を仮定（典型的には10ms）
+                    # ts_diff サンプル/10ms → ts_diff * 100 サンプル/秒
+                    estimated_rate = ts_diff * 100
+                    sample_rate = min(
+                        common_rates, key=lambda x: abs(x - estimated_rate)
+                    )
+                else:
+                    # ts_diff が大きい場合は直接使用
+                    sample_rate = min(common_rates, key=lambda x: abs(x - ts_diff))
+
                 return sample_rate, channels, bits_per_sample
 
     # デフォルト
@@ -151,10 +193,12 @@ def send_sdp_to_magicbox(
         成功した場合True
     """
     # SDP生成
+    # c=行の形式: c=IN IP4 <address> または c=IN IP4 <address>/<ttl> (マルチキャストの場合)
+    # ポート番号はm=行で指定する
     sdp = f"""v=0
 o=- 0 0 IN IP4 {MAGIC_BOX_HOST}
 s=RasPi UAC2 Stream
-c=IN IP4 {MAGIC_BOX_HOST}/{RTP_SEND_PORT}
+c=IN IP4 {MAGIC_BOX_HOST}
 t=0 0
 m=audio {RTP_SEND_PORT} RTP/AVP {payload_type}
 a=rtpmap:{payload_type} L{bits_per_sample}/{sample_rate}/{channels}
@@ -211,6 +255,9 @@ def main():
     # フォーマット検出用のバッファ
     detection_packets = []
     detected = False
+    current_sample_rate = None
+    packet_count = 0
+    rate_check_interval = 1000  # 1000パケットごとにレート変更をチェック
 
     logger.info("Waiting for RTP packets...")
 
@@ -218,8 +265,9 @@ def main():
         while True:
             # RTPパケット受信
             data, addr = recv_sock.recvfrom(2048)
+            packet_count += 1
 
-            # フォーマット検出
+            # 初回フォーマット検出
             if not detected and len(detection_packets) < 10:
                 detection_packets.append(data)
                 if len(detection_packets) == 10:
@@ -238,9 +286,47 @@ def main():
                             sample_rate, channels, bits_per_sample, payload_type
                         ):
                             detected = True
+                            current_sample_rate = sample_rate
                         else:
                             logger.warning("Failed to register session, will retry...")
                             detection_packets = []  # リトライのためリセット
+
+            # 動的レート変更検出（SEND_SDP_ON_RATE_CHANGE が有効な場合）
+            elif (
+                detected
+                and SEND_SDP_ON_RATE_CHANGE
+                and packet_count % rate_check_interval == 0
+            ):
+                # 定期的に最新のパケットバッファでレート再推定
+                recent_packets = (
+                    detection_packets[-10:]
+                    if len(detection_packets) >= 10
+                    else detection_packets
+                )
+                if len(recent_packets) >= 2:
+                    new_rate, channels, bits_per_sample = detect_format_from_rtp(
+                        recent_packets
+                    )
+                    header = parse_rtp_header(data)
+                    payload_type = header["payload_type"] if header else 127
+
+                    if new_rate != current_sample_rate:
+                        logger.info(
+                            f"Rate change detected: {current_sample_rate}Hz → {new_rate}Hz"
+                        )
+                        if send_sdp_to_magicbox(
+                            new_rate, channels, bits_per_sample, payload_type
+                        ):
+                            current_sample_rate = new_rate
+                            logger.info("SDP updated successfully")
+                        else:
+                            logger.warning("Failed to update SDP")
+
+            # パケットバッファを更新（直近10パケットを保持）
+            if detected:
+                detection_packets.append(data)
+                if len(detection_packets) > 10:
+                    detection_packets.pop(0)
 
             # RTPパケットをMagic Boxに転送
             if detected:
