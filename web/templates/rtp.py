@@ -381,11 +381,12 @@ def get_rtp_sessions_html() -> str:
                     </div>
                 </div>
 
-                <div class="form-group" style="margin-top:16px;" data-field="sdpBody">
-                    <label for="sdpBody">SDP (任意)</label>
-                    <textarea id="sdpBody" name="sdpBody" placeholder="ここに手動SDPを貼り付けると自動生成が上書きされます。"></textarea>
-                    <div class="field-error" id="sdpBodyError"></div>
-                </div>
+                    <div class="form-group" style="margin-top:16px;" data-field="sdpBody">
+                        <label for="sdpBody">SDP (任意)</label>
+                        <textarea id="sdpBody" name="sdpBody" placeholder="ここに手動SDPを貼り付けると自動生成が上書きされます。"></textarea>
+                        <div class="hint">`a=rtpmap` に <code>L16/48000/2</code> などを含めると、サンプルレート/チャネル/ビット深度/ペイロードタイプを自動で反映します。</div>
+                        <div class="field-error" id="sdpBodyError"></div>
+                    </div>
 
                 <div style="margin-top:16px;">
                     <label style="display:flex; gap:8px; align-items:center; font-size:0.9rem;">
