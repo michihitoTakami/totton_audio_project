@@ -28,8 +28,14 @@ MAGIC_BOX_API_PORT = int(os.getenv("MAGIC_BOX_API_PORT", "8000"))
 RTP_SEND_PORT = int(os.getenv("RTP_SEND_PORT", "46001"))
 AUTO_REGISTER = os.getenv("AUTO_REGISTER", "true").lower() == "true"
 SEND_SDP_ON_RATE_CHANGE = os.getenv("SEND_SDP_ON_RATE_CHANGE", "true").lower() == "true"
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE = os.getenv("LOG_FILE", "/var/log/rtp-sender/rtp_sender.log")
+
+# ログレベルの検証
+VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+if LOG_LEVEL not in VALID_LOG_LEVELS:
+    print(f"Warning: Invalid LOG_LEVEL '{LOG_LEVEL}', using INFO", file=sys.stderr)
+    LOG_LEVEL = "INFO"
 
 # ログディレクトリを自動作成
 log_dir = os.path.dirname(LOG_FILE)
@@ -95,6 +101,42 @@ def parse_rtp_header(packet: bytes) -> Optional[dict]:
 
     seq_num, timestamp, ssrc = struct.unpack("!HII", packet[2:12])
 
+    # 基本ヘッダーサイズ = 12 + CSRC数 * 4
+    header_size = 12 + csrc_count * 4
+
+    # 拡張ヘッダーがある場合（RFC 3550 Section 5.3.1）
+    # Extension header:
+    #  0                   1                   2                   3
+    #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    # |      defined by profile       |           length              |
+    # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    # |                        header extension                       |
+    # |                             ....                              |
+    extension_size = 0
+    if extension:
+        ext_header_offset = header_size
+        if len(packet) >= ext_header_offset + 4:
+            # length は 32bit ワード数（4バイト単位）
+            ext_length = struct.unpack(
+                "!H", packet[ext_header_offset + 2 : ext_header_offset + 4]
+            )[0]
+            extension_size = 4 + ext_length * 4  # 4バイトヘッダー + データ
+        else:
+            # パケットが短すぎる
+            return None
+
+    header_size += extension_size
+
+    # パディングサイズを計算（RFC 3550 Section 5.1）
+    # パディングの最後のバイトがパディング長を示す
+    padding_size = 0
+    if padding and len(packet) > header_size:
+        padding_size = packet[-1]
+        # パディングサイズが異常な場合は無視
+        if padding_size > len(packet) - header_size:
+            padding_size = 0
+
     return {
         "version": version,
         "padding": padding,
@@ -105,7 +147,8 @@ def parse_rtp_header(packet: bytes) -> Optional[dict]:
         "sequence_number": seq_num,
         "timestamp": timestamp,
         "ssrc": ssrc,
-        "header_size": 12 + csrc_count * 4,
+        "header_size": header_size,
+        "padding_size": padding_size,
     }
 
 
@@ -122,13 +165,16 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
         return 44100, 2, 16
 
     # 複数パケットのペイロードサイズを収集して最頻値を使用
+    # ペイロードサイズ = パケット長 - ヘッダーサイズ - パディングサイズ
     payload_sizes = []
     headers = []
     for pkt in packets:
         h = parse_rtp_header(pkt)
         if h:
             headers.append(h)
-            payload_sizes.append(len(pkt) - h["header_size"])
+            payload_size = len(pkt) - h["header_size"] - h["padding_size"]
+            if payload_size > 0:
+                payload_sizes.append(payload_size)
 
     if len(headers) < 2:
         return 44100, 2, 16
