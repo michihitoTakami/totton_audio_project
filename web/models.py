@@ -795,6 +795,24 @@ class RtpSessionMetrics(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     session_id: str
+    bind_address: Optional[str] = None
+    port: Optional[int] = None
+    source_host: Optional[str] = None
+    multicast: Optional[bool] = None
+    multicast_group: Optional[str] = None
+    interface: Optional[str] = None
+    payload_type: Optional[int] = None
+    channels: Optional[int] = None
+    bits_per_sample: Optional[int] = None
+    big_endian: Optional[bool] = None
+    signed: Optional[bool] = None
+    enable_rtcp: Optional[bool] = None
+    rtcp_port: Optional[int] = None
+    enable_ptp: Optional[bool] = None
+    target_latency_ms: Optional[int] = None
+    watchdog_timeout_ms: Optional[int] = None
+    telemetry_interval_ms: Optional[int] = None
+    auto_start: bool = False
     ssrc: Optional[int] = None
     ssrc_locked: bool = False
     packets_received: int = 0

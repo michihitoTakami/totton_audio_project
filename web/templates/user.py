@@ -124,6 +124,10 @@ def get_embedded_html() -> str:
             background: #00ff8840;
             color: #00ff88;
         }
+        .pill-auto {
+            background: #ffd54f33;
+            color: #ffd54f;
+        }
         .rtp-active {
             margin-top: 10px;
             font-size: 12px;
@@ -158,6 +162,11 @@ def get_embedded_html() -> str:
             display: none;
         }
         .warning-banner.visible { display: block; }
+        .rtp-note {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #ffd54f;
+        }
         /* Crossfeed Toggle Switch */
         .toggle-container {
             display: flex;
@@ -531,6 +540,108 @@ def get_embedded_html() -> str:
         const rtpActiveSession = document.getElementById('rtpActiveSession');
         const rtpScanStatus = document.getElementById('rtpScanStatus');
 
+        function normalizePort(value) {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+        }
+
+        function sessionMetricsToStream(session) {
+            const sessionId = session?.session_id || session?.sessionId;
+            if (!sessionId) {
+                return null;
+            }
+            const fallbackPort = session?.rtcp_port ? normalizePort(Number(session.rtcp_port) - 1) : null;
+            const port = normalizePort(session?.port) ?? fallbackPort;
+            return {
+                session_id: sessionId,
+                display_name: sessionId,
+                source_host: session?.source_host || null,
+                bind_address: session?.bind_address || null,
+                port,
+                sample_rate: session?.sample_rate || null,
+                channels: session?.channels || null,
+                payload_type: session?.payload_type ?? null,
+                multicast: Boolean(session?.multicast),
+                multicast_group: session?.multicast_group || null,
+                status: 'active',
+                existing_session: true,
+                synthetic: true,
+                auto_start: Boolean(session?.auto_start),
+            };
+        }
+
+        function mergeStreamMetadata(target, source) {
+            if (!source) {
+                return;
+            }
+            const fields = [
+                'display_name',
+                'source_host',
+                'bind_address',
+                'port',
+                'sample_rate',
+                'channels',
+                'payload_type',
+                'multicast',
+                'multicast_group',
+            ];
+            fields.forEach((field) => {
+                if (
+                    (target[field] === undefined ||
+                        target[field] === null ||
+                        target[field] === '' ||
+                        (typeof target[field] === 'number' && Number.isNaN(target[field]))) &&
+                    source[field] !== undefined &&
+                    source[field] !== null &&
+                    source[field] !== ''
+                ) {
+                    target[field] = source[field];
+                }
+            });
+        }
+
+        function mergeActiveSessionsIntoStreams() {
+            const map = new Map();
+            rtpState.streams.forEach((stream) => {
+                map.set(stream.session_id, { ...stream });
+            });
+
+            const activeIds = new Set();
+
+            rtpState.activeSessions.forEach((session) => {
+                const synthetic = sessionMetricsToStream(session);
+                if (!synthetic) {
+                    return;
+                }
+                activeIds.add(synthetic.session_id);
+                if (map.has(synthetic.session_id)) {
+                    const current = map.get(synthetic.session_id);
+                    const merged = { ...current };
+                    mergeStreamMetadata(merged, synthetic);
+                    merged.status = 'active';
+                    merged.existing_session = true;
+                    merged.synthetic = current.synthetic || synthetic.synthetic;
+                    merged.auto_start = merged.auto_start || synthetic.auto_start;
+                    map.set(synthetic.session_id, merged);
+                } else {
+                    map.set(synthetic.session_id, synthetic);
+                }
+            });
+
+            for (const [sessionId, stream] of map.entries()) {
+                if (!activeIds.has(sessionId)) {
+                    if (stream.synthetic) {
+                        map.delete(sessionId);
+                        continue;
+                    }
+                    stream.existing_session = false;
+                    stream.auto_start = false;
+                }
+            }
+
+            rtpState.streams = Array.from(map.values());
+        }
+
         async function fetchDevices() {
             try {
                 const res = await fetch(API + '/devices');
@@ -724,15 +835,25 @@ def get_embedded_html() -> str:
             rtpState.streams.forEach((stream) => {
                 const opt = document.createElement('option');
                 opt.value = stream.session_id;
-                const status = stream.existing_session ? ' (稼働中)' : '';
-                opt.textContent = `${stream.display_name} • ${stream.source_host || '-'}:${stream.port}${status}`;
+                const hostLabel = stream.source_host || stream.bind_address || '-';
+                const portLabel = stream.port ?? '-';
+                const badges = [];
+                if (stream.existing_session) {
+                    badges.push('稼働中');
+                }
+                if (stream.auto_start) {
+                    badges.push('自動起動');
+                }
+                const suffix = badges.length ? ` (${badges.join(' / ')})` : '';
+                opt.textContent = `${stream.display_name} • ${hostLabel}:${portLabel}${suffix}`;
                 rtpSelect.appendChild(opt);
             });
             if (!rtpState.selectedId || !rtpState.streams.some((s) => s.session_id === rtpState.selectedId)) {
                 rtpState.selectedId = rtpState.streams[0].session_id;
             }
             rtpSelect.value = rtpState.selectedId;
-            rtpStartBtn.disabled = false;
+            const selectedStream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
+            rtpStartBtn.disabled = !selectedStream || (selectedStream.synthetic && selectedStream.existing_session);
             updateRtpDetails();
         }
 
@@ -746,17 +867,25 @@ def get_embedded_html() -> str:
             if (stream.existing_session) {
                 tags.push('<span class="pill pill-active">稼働中</span>');
             }
+            if (stream.auto_start) {
+                tags.push('<span class="pill pill-auto">自動起動</span>');
+            }
             const infoBits = [];
             if (stream.sample_rate) infoBits.push(`${stream.sample_rate} Hz`);
             if (stream.channels) infoBits.push(`${stream.channels}ch`);
             if (stream.payload_type !== null && stream.payload_type !== undefined) {
                 infoBits.push(`PT${stream.payload_type}`);
             }
+            const listenHost = stream.bind_address || stream.source_host || '-';
+            const listenPort = stream.port ?? '-';
+            const sourceHost = stream.source_host || '-';
             rtpDetails.innerHTML = `
                 <div><strong>${stream.display_name}</strong></div>
-                <div>ソース: <strong>${stream.source_host || '-'}</strong>:${stream.port}</div>
+                <div>受信: <strong>${listenHost}</strong>${listenPort !== '-' ? ':' + listenPort : ''}</div>
+                <div>ソース: <strong>${sourceHost}</strong></div>
                 <div>${tags.join(' ')}</div>
                 <div>${infoBits.length ? infoBits.join(' / ') : '詳細情報なし'}</div>
+                ${stream.synthetic ? '<div class="rtp-note">自動起動済みのセッションを監視中です。停止ボタンで制御できます。</div>' : ''}
             `;
         }
 
@@ -767,7 +896,12 @@ def get_embedded_html() -> str:
                 delete rtpStopBtn.dataset.targetId;
                 return;
             }
-            const labels = rtpState.activeSessions.map((session) => session.session_id).join(', ');
+            const labels = rtpState.activeSessions
+                .map((session) => {
+                    const auto = session.auto_start ? '（自動起動）' : '';
+                    return `${session.session_id}${auto}`;
+                })
+                .join(', ');
             rtpActiveSession.innerHTML = `稼働中のRTPセッション: <span>${labels}</span>`;
             rtpStopBtn.disabled = false;
             rtpStopBtn.dataset.targetId = rtpState.activeSessions[0].session_id;
@@ -780,12 +914,8 @@ def get_embedded_html() -> str:
                     return;
                 }
                 const data = await res.json();
-                rtpState.activeSessions = data.sessions || [];
-                const activeIds = new Set(rtpState.activeSessions.map((session) => session.session_id));
-                rtpState.streams = rtpState.streams.map((stream) => ({
-                    ...stream,
-                    existing_session: activeIds.has(stream.session_id),
-                }));
+                rtpState.activeSessions = Array.isArray(data.sessions) ? data.sessions : [];
+                mergeActiveSessionsIntoStreams();
                 renderRtpOptions();
                 updateActiveSessionText();
             } catch (e) {
@@ -830,7 +960,10 @@ def get_embedded_html() -> str:
                 if (!res.ok) {
                     throw new Error(data.detail || data.message || 'スキャンに失敗しました');
                 }
-                rtpState.streams = data.streams || [];
+                rtpState.streams = (data.streams || []).map((stream) => ({
+                    ...stream,
+                    synthetic: Boolean(stream.synthetic),
+                }));
                 rtpState.selectedId = rtpState.streams[0]?.session_id || '';
                 rtpState.lastScanAt = data.scanned_at_unix_ms || Date.now();
                 renderRtpOptions();
@@ -949,7 +1082,8 @@ def get_embedded_html() -> str:
         rtpStopBtn.addEventListener('click', stopActiveRtpSession);
         rtpSelect.addEventListener('change', (event) => {
             rtpState.selectedId = event.target.value;
-            rtpStartBtn.disabled = !rtpState.selectedId;
+            const selectedStream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
+            rtpStartBtn.disabled = !selectedStream || (selectedStream.synthetic && selectedStream.existing_session);
             updateRtpDetails();
         });
 

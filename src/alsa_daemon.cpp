@@ -1056,6 +1056,7 @@ static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInput
     session.bindAddress = cfg.bindAddress;
     session.port = cfg.port;
     session.sourceHost = cfg.sourceHost;
+    session.autoStart = cfg.autoStart;
     session.multicast = cfg.multicast;
     session.multicastGroup = cfg.multicastGroup;
     session.interfaceName = cfg.interfaceName;

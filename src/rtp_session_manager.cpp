@@ -263,6 +263,7 @@ nlohmann::json sessionConfigToJson(const SessionConfig& config) {
     j["ptp_interface"] = config.ptpInterface;
     j["ptp_domain"] = config.ptpDomain;
     j["sdp"] = config.sdp;
+    j["auto_start"] = config.autoStart;
     return j;
 }
 
@@ -319,6 +320,9 @@ bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config,
         }
         if (input.contains("multicast")) {
             parsed.multicast = input.at("multicast").get<bool>();
+        }
+        if (input.contains("auto_start")) {
+            parsed.autoStart = input.at("auto_start").get<bool>();
         }
         if (input.contains("multicast_group")) {
             parsed.multicastGroup = input.at("multicast_group").get<std::string>();
@@ -398,6 +402,30 @@ bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config,
 nlohmann::json sessionMetricsToJson(const SessionMetrics& metrics) {
     nlohmann::json j;
     j["session_id"] = metrics.sessionId;
+    j["bind_address"] = metrics.bindAddress;
+    j["port"] = metrics.port;
+    if (!metrics.sourceHost.empty()) {
+        j["source_host"] = metrics.sourceHost;
+    }
+    j["multicast"] = metrics.multicast;
+    if (!metrics.multicastGroup.empty()) {
+        j["multicast_group"] = metrics.multicastGroup;
+    }
+    if (!metrics.interfaceName.empty()) {
+        j["interface"] = metrics.interfaceName;
+    }
+    j["payload_type"] = metrics.payloadType;
+    j["channels"] = metrics.channels;
+    j["bits_per_sample"] = metrics.bitsPerSample;
+    j["big_endian"] = metrics.bigEndian;
+    j["signed"] = metrics.signedSamples;
+    j["enable_rtcp"] = metrics.enableRtcp;
+    j["rtcp_port"] = metrics.rtcpPort;
+    j["enable_ptp"] = metrics.enablePtp;
+    j["target_latency_ms"] = metrics.targetLatencyMs;
+    j["watchdog_timeout_ms"] = metrics.watchdogTimeoutMs;
+    j["telemetry_interval_ms"] = metrics.telemetryIntervalMs;
+    j["auto_start"] = metrics.autoStart;
     j["ssrc"] = metrics.ssrc;
     j["ssrc_locked"] = metrics.ssrcLocked;
     j["packets_received"] = metrics.packetsReceived;
@@ -445,6 +473,24 @@ bool RtpSessionManager::startSession(const SessionConfig& config, std::string& e
     auto session = std::make_shared<Session>();
     session->config = normalized;
     session->metrics.sessionId = normalized.sessionId;
+    session->metrics.bindAddress = normalized.bindAddress;
+    session->metrics.port = normalized.port;
+    session->metrics.sourceHost = normalized.sourceHost;
+    session->metrics.multicast = normalized.multicast;
+    session->metrics.multicastGroup = normalized.multicastGroup;
+    session->metrics.interfaceName = normalized.interfaceName;
+    session->metrics.payloadType = normalized.payloadType;
+    session->metrics.channels = normalized.channels;
+    session->metrics.bitsPerSample = normalized.bitsPerSample;
+    session->metrics.bigEndian = normalized.bigEndian;
+    session->metrics.signedSamples = normalized.signedSamples;
+    session->metrics.enableRtcp = normalized.enableRtcp;
+    session->metrics.rtcpPort = normalized.rtcpPort;
+    session->metrics.enablePtp = normalized.enablePtp;
+    session->metrics.targetLatencyMs = normalized.targetLatencyMs;
+    session->metrics.watchdogTimeoutMs = normalized.watchdogTimeoutMs;
+    session->metrics.telemetryIntervalMs = normalized.telemetryIntervalMs;
+    session->metrics.autoStart = normalized.autoStart;
     session->metrics.sampleRate = normalized.sampleRate;
     session->lastTelemetry = std::chrono::steady_clock::now();
     session->lastWatchdog = session->lastTelemetry;
