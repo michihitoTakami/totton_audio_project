@@ -20,6 +20,20 @@ APIへの重要な変更はこのファイルに記録されます。
   - `scripts/inspect_impulse.py` に partition summary / latency 推定を追加
   - `scripts/verify_frequency_response.py` に fast/tail スペクトル比較と自動スキップ機能を追加
   - `docs/investigations/low_latency_partition_validation.md` にループバック手順とQA基準を掲載
+- **RTP Session Metadata Enhancement** (#381)
+  - `GET /api/rtp/sessions` レスポンスに自動起動フラグと全トランスポート情報を追加
+  - `RtpSessionMetrics` に以下のフィールドを追加：
+    - `auto_start`: セッションが自動起動設定されているか
+    - `bind_address`, `port`, `source_host`: トランスポート情報
+    - `payload_type`, `channels`, `bits_per_sample`: フォーマット情報
+    - `multicast`, `multicast_group`, `interface`: ネットワーク設定
+    - `enable_rtcp`, `rtcp_port`, `enable_ptp`: 詳細設定
+    - `target_latency_ms`, `watchdog_timeout_ms`, `telemetry_interval_ms`: タイミング設定
+  - Web UIで自動起動セッションを初回ロード時から可視化
+
+### Changed
+- **FastAPI Lifespan Migration**: `@router.on_event("startup"/"shutdown")` から `lifespan` コンテキストマネージャへ移行
+  - RTPテレメトリポーラーのライフサイクル管理を `web/main.py` の `lifespan` 関数に統合
 
 ### Security
 - ALSAデバイス名のバリデーション追加（パストラバーサル防止）

@@ -540,16 +540,29 @@ def get_embedded_html() -> str:
         const rtpActiveSession = document.getElementById('rtpActiveSession');
         const rtpScanStatus = document.getElementById('rtpScanStatus');
 
+        /**
+         * Normalize port number to valid integer or null.
+         * @param {any} value - Port number candidate
+         * @returns {number|null} Normalized port or null if invalid
+         */
         function normalizePort(value) {
             const parsed = Number(value);
             return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
         }
 
+        /**
+         * Convert RTP session metrics (from daemon telemetry) to discovery stream format.
+         * This enables auto-started sessions to appear in the UI alongside scanned streams.
+         * @param {Object} session - Session metrics from daemon
+         * @returns {Object|null} Discovery stream object or null if invalid
+         */
         function sessionMetricsToStream(session) {
             const sessionId = session?.session_id || session?.sessionId;
             if (!sessionId) {
                 return null;
             }
+            // Fallback: infer RTP port from RTCP port (typically RTCP = RTP + 1)
+            // If session.port is missing but rtcp_port exists, derive RTP port
             const fallbackPort = session?.rtcp_port ? normalizePort(Number(session.rtcp_port) - 1) : null;
             const port = normalizePort(session?.port) ?? fallbackPort;
             return {
@@ -570,6 +583,12 @@ def get_embedded_html() -> str:
             };
         }
 
+        /**
+         * Merge metadata from source stream into target stream.
+         * Only overwrites fields that are missing or invalid in target.
+         * @param {Object} target - Target stream object (mutated in place)
+         * @param {Object} source - Source stream object (read-only)
+         */
         function mergeStreamMetadata(target, source) {
             if (!source) {
                 return;
@@ -600,14 +619,26 @@ def get_embedded_html() -> str:
             });
         }
 
+        /**
+         * Merge active RTP sessions (from daemon telemetry) into scanned streams.
+         * This ensures auto-started sessions appear in the UI without requiring a scan.
+         *
+         * Logic:
+         * 1. Convert active sessions to synthetic streams
+         * 2. Merge with existing scanned streams by session_id
+         * 3. Remove synthetic entries that are no longer active
+         * 4. Mark all active streams with existing_session=true
+         */
         function mergeActiveSessionsIntoStreams() {
             const map = new Map();
+            // Start with all scanned streams
             rtpState.streams.forEach((stream) => {
                 map.set(stream.session_id, { ...stream });
             });
 
             const activeIds = new Set();
 
+            // Process active sessions from daemon
             rtpState.activeSessions.forEach((session) => {
                 const synthetic = sessionMetricsToStream(session);
                 if (!synthetic) {
@@ -615,6 +646,7 @@ def get_embedded_html() -> str:
                 }
                 activeIds.add(synthetic.session_id);
                 if (map.has(synthetic.session_id)) {
+                    // Merge metadata from telemetry into existing stream
                     const current = map.get(synthetic.session_id);
                     const merged = { ...current };
                     mergeStreamMetadata(merged, synthetic);
@@ -624,16 +656,20 @@ def get_embedded_html() -> str:
                     merged.auto_start = merged.auto_start || synthetic.auto_start;
                     map.set(synthetic.session_id, merged);
                 } else {
+                    // Add new synthetic stream (auto-started, not yet scanned)
                     map.set(synthetic.session_id, synthetic);
                 }
             });
 
+            // Clean up: remove synthetic streams that are no longer active
             for (const [sessionId, stream] of map.entries()) {
                 if (!activeIds.has(sessionId)) {
                     if (stream.synthetic) {
+                        // Synthetic stream no longer active - remove from UI
                         map.delete(sessionId);
                         continue;
                     }
+                    // Scanned stream not active - keep but mark as inactive
                     stream.existing_session = false;
                     stream.auto_start = false;
                 }

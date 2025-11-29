@@ -16,14 +16,13 @@ from ..models import (
     RtpSessionListResponse,
 )
 from ..services import (
-    flag_existing_sessions,
     build_session_config_payload,
+    flag_existing_sessions,
     get_daemon_client,
     parse_config_snapshot,
     parse_discovery_streams,
     parse_metrics_payload,
     refresh_sessions_from_daemon,
-    telemetry_poller,
     telemetry_store,
 )
 
@@ -39,16 +38,6 @@ SESSION_ID_PARAM = Path(
 async def _execute_daemon(callable_fn: Callable[[], Any]):
     """Run blocking ZeroMQ calls on a worker thread."""
     return await asyncio.to_thread(callable_fn)
-
-
-@router.on_event("startup")
-async def _start_poller():
-    await telemetry_poller.start()
-
-
-@router.on_event("shutdown")
-async def _stop_poller():
-    await telemetry_poller.stop()
 
 
 @router.post(

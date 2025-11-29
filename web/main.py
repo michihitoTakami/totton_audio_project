@@ -3,6 +3,7 @@ GPU Upsampler Web Control API
 FastAPI-based control interface for the GPU audio upsampler daemon.
 """
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ from .routers import (
     rtp_router,
     status_router,
 )
+from .services import telemetry_poller
 from .templates import get_admin_html, get_rtp_sessions_html
 
 # OpenAPI tag descriptions
@@ -64,7 +66,19 @@ tags_metadata = [
     },
 ]
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage RTP telemetry poller lifecycle."""
+    # Startup: start telemetry polling
+    await telemetry_poller.start()
+    yield
+    # Shutdown: stop telemetry polling
+    await telemetry_poller.stop()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="GPU Upsampler Control",
     description="""
 ## GPU Audio Upsampler Web API
