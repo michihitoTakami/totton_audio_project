@@ -125,8 +125,9 @@ FilterType parseFilterType(const std::string& typeStr) {
 // Helper to trim whitespace
 static std::string trim(const std::string& s) {
     auto start = s.find_first_not_of(" \t\r\n");
-    if (start == std::string::npos)
+    if (start == std::string::npos) {
         return "";
+    }
     auto end = s.find_last_not_of(" \t\r\n");
     return s.substr(start, end - start + 1);
 }
@@ -155,8 +156,9 @@ static double extractNumber(const std::string& s) {
         }
     }
 
-    if (num.empty() || num == "-" || num == "+")
+    if (num.empty() || num == "-" || num == "+") {
         return 0.0;
+    }
     return std::stod(num);
 }
 
@@ -236,10 +238,11 @@ bool parseEqFile(const std::string& filePath, EqProfile& profile) {
     // Extract profile name from filename
     size_t lastSlash = filePath.find_last_of("/\\");
     size_t lastDot = filePath.find_last_of('.');
-    if (lastSlash == std::string::npos)
+    if (lastSlash == std::string::npos) {
         lastSlash = 0;
-    else
+    } else {
         lastSlash++;
+    }
 
     if (lastDot != std::string::npos && lastDot > lastSlash) {
         profile.name = filePath.substr(lastSlash, lastDot - lastSlash);
