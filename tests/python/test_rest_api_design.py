@@ -109,7 +109,7 @@ class TestOpenAPISchema:
         tags = {tag["name"]: tag for tag in schema.get("tags", [])}
 
         # Should have all expected tags
-        expected_tags = ["status", "daemon", "eq", "opra", "legacy"]
+        expected_tags = ["status", "daemon", "eq", "opra", "input-mode", "legacy"]
         for tag_name in expected_tags:
             assert tag_name in tags, f"Missing tag: {tag_name}"
             assert (
@@ -127,6 +127,7 @@ class TestOpenAPISchema:
             ("/devices", "get"),
             ("/daemon/status", "get"),
             ("/daemon/zmq/ping", "get"),
+            ("/api/input-mode/switch", "post"),
             ("/eq/profiles", "get"),
             ("/eq/active", "get"),
         ]
@@ -165,6 +166,7 @@ class TestResponseModels:
             "clip_rate",
             "clip_count",
             "total_samples",
+            "input_mode",
         ]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"
@@ -196,7 +198,13 @@ class TestResponseModels:
         data = response.json()
 
         # Should have DaemonStatus model fields
-        required_fields = ["running", "pid_file", "binary_path", "pipewire_connected"]
+        required_fields = [
+            "running",
+            "pid_file",
+            "binary_path",
+            "pipewire_connected",
+            "input_mode",
+        ]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"
 

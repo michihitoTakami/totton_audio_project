@@ -2,9 +2,11 @@
 
 from .alsa import get_alsa_devices
 from .config import (
+    get_input_mode,
     load_config,
     load_partitioned_convolution_settings,
     save_config,
+    save_input_mode,
     save_partitioned_convolution_settings,
     save_phase_type,
 )
@@ -57,6 +59,8 @@ __all__ = [
     "load_config",
     "load_partitioned_convolution_settings",
     "save_config",
+    "get_input_mode",
+    "save_input_mode",
     "save_partitioned_convolution_settings",
     "save_phase_type",
     # dac

@@ -34,6 +34,7 @@ async def get_status():
     daemon_running = check_daemon_running()
     pipewire_connected = check_pipewire_sink() if daemon_running else False
     stats = load_stats()
+    input_mode = "rtp" if settings.rtp_enabled else "pipewire"
 
     return Status(
         settings=settings,
@@ -46,6 +47,7 @@ async def get_status():
         input_rate=stats["input_rate"],
         output_rate=stats["output_rate"],
         peaks=stats["peaks"],
+        input_mode=input_mode,
     )
 
 
