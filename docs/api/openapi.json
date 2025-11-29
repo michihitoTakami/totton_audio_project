@@ -2583,6 +2583,11 @@
           "size_bytes": {
             "type": "integer",
             "title": "Size Bytes"
+          },
+          "recommended_preamp_db": {
+            "type": "number",
+            "title": "Recommended Preamp Db",
+            "default": 0.0
           }
         },
         "type": "object",
