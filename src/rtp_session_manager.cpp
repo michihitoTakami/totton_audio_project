@@ -113,7 +113,7 @@ bool parsePositiveInt(const std::string& text, int& out) {
 bool parseRtpmapLine(const std::string& line, SdpFormatHint& out) {
     // Example: a=rtpmap:96 L24/48000/2
     static constexpr std::string_view prefix = "a=rtpmap:";
-    if (!line.starts_with(prefix)) {
+    if (line.size() < prefix.size() || line.compare(0, prefix.size(), prefix) != 0) {
         return false;
     }
     std::string rest = trim(line.substr(prefix.size()));
