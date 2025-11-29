@@ -1,0 +1,37 @@
+# Dockerfile for RasPi RTP Sender (Development/Testing)
+#
+# このイメージはPCをRasPiに見立てて、PipeWireのRTPストリームを
+# Magic Boxに中継するテスト用コンテナです。
+
+FROM python:3.11-slim
+
+LABEL maintainer="Magic Box Project"
+LABEL description="RTP Sender for RasPi simulation (Development)"
+
+# 必要なパッケージをインストール
+RUN apt-get update && apt-get install -y \
+    curl \
+    net-tools \
+    iproute2 \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pythonパッケージをインストール
+RUN pip install --no-cache-dir \
+    requests \
+    python-daemon
+
+# アプリケーションディレクトリを作成
+WORKDIR /app
+
+# RTP中継スクリプトをコピー
+COPY scripts/raspi/rtp_sender.py /app/rtp_sender.py
+
+# ログディレクトリを作成
+RUN mkdir -p /var/log/rtp-sender
+
+# スクリプトに実行権限を付与
+RUN chmod +x /app/rtp_sender.py
+
+# エントリポイント
+ENTRYPOINT ["python3", "/app/rtp_sender.py"]
