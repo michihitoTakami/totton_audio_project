@@ -79,6 +79,8 @@ async def daemon_status():
     running = check_daemon_running()
     pid = get_daemon_pid()
     pipewire_connected = check_pipewire_sink() if running else False
+    settings = load_config()
+    input_mode = "rtp" if settings.rtp_enabled else "pipewire"
 
     return DaemonStatus(
         running=running,
@@ -86,6 +88,7 @@ async def daemon_status():
         pid_file=str(PID_FILE_PATH),
         binary_path=str(DAEMON_BINARY),
         pipewire_connected=pipewire_connected,
+        input_mode=input_mode,
     )
 
 

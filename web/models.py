@@ -50,6 +50,9 @@ class CrossfeedSettingsUpdate(BaseModel):
     hrtf_path: Optional[str] = None
 
 
+InputMode = Literal["pipewire", "rtp"]
+
+
 class Settings(BaseModel):
     """Application settings model."""
 
@@ -61,6 +64,7 @@ class Settings(BaseModel):
     input_rate: int = 44100
     output_rate: int = 352800
     crossfeed: CrossfeedSettings = Field(default_factory=CrossfeedSettings)
+    rtp_enabled: bool = False
 
 
 class SettingsUpdate(BaseModel):
@@ -128,6 +132,9 @@ class Status(BaseModel):
     input_rate: int = 0
     output_rate: int = 0
     peaks: PeakLevels = Field(default_factory=PeakLevels)
+    input_mode: InputMode = Field(
+        default="pipewire", description="Current input mode reported by config.json"
+    )
 
 
 class DaemonStatus(BaseModel):
@@ -138,6 +145,9 @@ class DaemonStatus(BaseModel):
     pid_file: str
     binary_path: str
     pipewire_connected: bool = False
+    input_mode: InputMode = Field(
+        default="pipewire", description="Current input mode reported by config.json"
+    )
 
 
 class ZmqPingResponse(BaseModel):
@@ -413,6 +423,30 @@ class ApiResponse(BaseModel):
     message: str
     data: Optional[dict[str, Any]] = None
     restart_required: bool = False
+
+
+# ============================================================================
+# Input Mode Models
+# ============================================================================
+
+
+class InputModeSwitchRequest(BaseModel):
+    """Request body for switching between PipeWire and RTP modes."""
+
+    mode: InputMode = Field(
+        description="Target mode: 'pipewire' to use local PipeWire input or 'rtp' for network input"
+    )
+
+
+class InputModeSwitchResponse(BaseModel):
+    """Response returned after attempting to switch input modes."""
+
+    success: bool
+    current_mode: InputMode = Field(description="Mode currently active after the switch")
+    restart_required: bool = Field(
+        default=False, description="True when the daemon was restarted to apply changes"
+    )
+    message: str
 
 
 # ============================================================================

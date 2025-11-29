@@ -288,6 +288,55 @@ def get_embedded_html() -> str:
             40% { content: '..'; }
             60%, 100% { content: '...'; }
         }
+        /* Input Mode */
+        .input-mode-options {
+            display: flex;
+            gap: 12px;
+        }
+        .input-mode-option {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .input-mode-option input[type="radio"] {
+            appearance: none;
+            width: 0;
+            height: 0;
+            margin: 0;
+        }
+        .input-mode-option .option-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .input-mode-option .option-desc {
+            font-size: 12px;
+            color: #888;
+        }
+        .input-mode-option.active {
+            border-color: #00d4ff;
+            background: #10294a;
+        }
+        .input-mode-option.disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .input-mode-info {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #9ec9ff;
+        }
+        .input-mode-info .note {
+            color: #666;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -309,6 +358,27 @@ def get_embedded_html() -> str:
                 <div class="value">-</div>
             </div>
         </div>
+    </div>
+
+    <h2>Input Mode</h2>
+    <div class="card">
+        <div class="input-mode-options" id="inputModeOptions">
+            <label class="input-mode-option" data-mode="pipewire">
+                <input type="radio" name="inputMode" value="pipewire">
+                <span class="option-title">PipeWire</span>
+                <span class="option-desc">ローカル入力（最小遅延）</span>
+            </label>
+            <label class="input-mode-option" data-mode="rtp">
+                <input type="radio" name="inputMode" value="rtp">
+                <span class="option-title">RTP</span>
+                <span class="option-desc">ネットワーク入力</span>
+            </label>
+        </div>
+        <div class="input-mode-info">
+            <div id="inputModeStatusText">現在: -</div>
+            <div class="note" id="inputModeRestartHint">切り替え時にデーモンを自動再起動します</div>
+        </div>
+        <div id="inputModeMessage" class="message"></div>
     </div>
 
     <h2>RTP Input</h2>
@@ -431,8 +501,14 @@ def get_embedded_html() -> str:
     <script>
         const API = '';
         const RTP_API = '/api/rtp';
+        const INPUT_MODE_API = '/api/input-mode';
         let currentAlsaDevice = '';
         let deviceList = [];
+        let lastPipewireConnected = false;
+        const inputModeState = {
+            current: 'pipewire',
+            switching: false,
+        };
         const rtpState = {
             streams: [],
             selectedId: '',
@@ -440,6 +516,12 @@ def get_embedded_html() -> str:
             lastScanAt: null,
             activeSessions: [],
         };
+        const inputModeOptions = document.querySelectorAll('.input-mode-option');
+        const inputModeRadios = document.querySelectorAll('input[name="inputMode"]');
+        const inputModeMessage = document.getElementById('inputModeMessage');
+        const inputModeStatusText = document.getElementById('inputModeStatusText');
+        const inputModeRestartHint = document.getElementById('inputModeRestartHint');
+        const pwStatusLabel = document.querySelector('#pwStatus .label');
         const rtpSelect = document.getElementById('rtpStreamSelect');
         const rtpScanBtn = document.getElementById('rtpScanBtn');
         const rtpStartBtn = document.getElementById('rtpStartBtn');
@@ -492,8 +574,11 @@ def get_embedded_html() -> str:
                 const data = await res.json();
 
                 setStatus('daemonStatus', data.daemon_running ? 'Running' : 'Stopped', data.daemon_running);
-                setStatus('pwStatus', data.pipewire_connected ? 'OK' : 'N/A', data.pipewire_connected);
                 setStatus('eqStatus', data.eq_active ? 'ON' : 'OFF', data.eq_active);
+                const inputMode = data.input_mode || (data.settings?.rtp_enabled ? 'rtp' : 'pipewire');
+                lastPipewireConnected = data.pipewire_connected;
+                updatePipewireCard(inputMode, lastPipewireConnected);
+                setInputModeStatus(inputMode, lastPipewireConnected);
 
                 if (currentAlsaDevice !== data.settings.alsa_device) {
                     currentAlsaDevice = data.settings.alsa_device;
@@ -509,6 +594,88 @@ def get_embedded_html() -> str:
             el.querySelector('.value').textContent = text;
             el.classList.remove('ok', 'error');
             el.classList.add(ok ? 'ok' : 'error');
+        }
+
+        let inputModeMessageTimeout = null;
+
+        function updateInputModeOptionStyles() {
+            inputModeOptions.forEach(option => {
+                const mode = option.dataset.mode;
+                const radio = option.querySelector('input[type="radio"]');
+                const isActive = mode === inputModeState.current;
+                option.classList.toggle('active', isActive);
+                option.classList.toggle('disabled', inputModeState.switching);
+                if (radio) {
+                    radio.checked = isActive;
+                    radio.disabled = inputModeState.switching;
+                }
+            });
+        }
+
+        function showInputModeMessage(text, success) {
+            if (inputModeMessageTimeout) {
+                clearTimeout(inputModeMessageTimeout);
+            }
+            inputModeMessage.textContent = text || '';
+            inputModeMessage.classList.remove('success', 'error');
+            if (text) {
+                inputModeMessage.classList.add(success ? 'success' : 'error');
+                inputModeMessageTimeout = setTimeout(() => {
+                    inputModeMessage.classList.remove('success', 'error');
+                }, 4000);
+            }
+        }
+
+        function setInputModeStatus(mode, pipewireConnected) {
+            const normalized = mode === 'rtp' ? 'rtp' : 'pipewire';
+            if (!inputModeState.switching) {
+                inputModeState.current = normalized;
+            }
+            const description = normalized === 'rtp'
+                ? '現在: RTP (ネットワーク入力)'
+                : `現在: PipeWire (${pipewireConnected ? '接続済み' : '未接続'})`;
+            inputModeStatusText.textContent = description;
+            updateInputModeOptionStyles();
+        }
+
+        function updatePipewireCard(normalizedMode, pipewireConnected) {
+            if (normalizedMode === 'rtp') {
+                pwStatusLabel.textContent = 'Input Mode';
+                setStatus('pwStatus', 'RTP Active', true);
+            } else {
+                pwStatusLabel.textContent = 'PipeWire';
+                setStatus('pwStatus', pipewireConnected ? 'OK' : 'N/A', pipewireConnected);
+            }
+        }
+
+        async function requestInputModeChange(mode) {
+            if (!mode || mode === inputModeState.current || inputModeState.switching) {
+                return;
+            }
+            inputModeState.switching = true;
+            updateInputModeOptionStyles();
+            inputModeRestartHint.textContent = 'デーモンを再起動しています...';
+            showInputModeMessage('モード切り替え中...', true);
+            try {
+                const res = await fetch(INPUT_MODE_API + '/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.success) {
+                    throw new Error(data.detail || data.message || '切り替えに失敗しました');
+                }
+                inputModeState.current = data.current_mode || mode;
+                showInputModeMessage(data.message || 'モードを切り替えました', true);
+            } catch (e) {
+                showInputModeMessage('エラー: ' + e.message, false);
+            } finally {
+                inputModeState.switching = false;
+                inputModeRestartHint.textContent = '切り替え時にデーモンを自動再起動します';
+                updateInputModeOptionStyles();
+                fetchStatus();
+            }
         }
 
         function showMessage(text, success) {
@@ -768,6 +935,13 @@ def get_embedded_html() -> str:
                 btn.disabled = false;
                 btn.textContent = 'Save & Restart';
             }
+        });
+
+        inputModeRadios.forEach(radio => {
+            radio.addEventListener('change', (event) => {
+                const mode = event.target.value;
+                requestInputModeChange(mode);
+            });
         });
 
         rtpScanBtn.addEventListener('click', scanRtpStreams);
@@ -1184,6 +1358,7 @@ def get_embedded_html() -> str:
         });
 
         // Initial load
+        setInputModeStatus('pipewire', false);
         fetchDevices();
         fetchStatus();
         fetchPhaseType();
