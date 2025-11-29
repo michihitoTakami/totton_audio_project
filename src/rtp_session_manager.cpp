@@ -16,10 +16,10 @@
 #include <poll.h>
 #include <sstream>
 #include <string_view>
-#include <vector>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace Network {
 namespace {

@@ -5,13 +5,9 @@
 using namespace Network;
 
 TEST(RtpSessionConfigTest, ParseValidJson) {
-    nlohmann::json params = {
-        {"session_id", "primary"},
-        {"port", 7000},
-        {"sample_rate", 96000},
-        {"bits_per_sample", 32},
-        {"payload_type", 98},
-        {"enable_rtcp", false}};
+    nlohmann::json params = {{"session_id", "primary"}, {"port", 7000},
+                             {"sample_rate", 96000},    {"bits_per_sample", 32},
+                             {"payload_type", 98},      {"enable_rtcp", false}};
 
     SessionConfig config;
     std::string error;
@@ -33,20 +29,19 @@ TEST(RtpSessionConfigTest, RejectInvalidBitsPerSample) {
 }
 
 TEST(RtpSessionConfigTest, ApplySdpOverrides) {
-    nlohmann::json params = {
-        {"session_id", "sdp"},
-        {"payload_type", 111},
-        {"sample_rate", 48000},
-        {"channels", 2},
-        {"bits_per_sample", 24},
-        {"sdp",
-         "v=0\r\n"
-         "o=- 0 0 IN IP4 127.0.0.1\r\n"
-         "s=Test\r\n"
-         "t=0 0\r\n"
-         "m=audio 6000 RTP/AVP 112\r\n"
-         "a=rtpmap:112 L24/96000/6\r\n"
-         "a=rtpmap:111 L16/44100/2\r\n"}};
+    nlohmann::json params = {{"session_id", "sdp"},
+                             {"payload_type", 111},
+                             {"sample_rate", 48000},
+                             {"channels", 2},
+                             {"bits_per_sample", 24},
+                             {"sdp",
+                              "v=0\r\n"
+                              "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                              "s=Test\r\n"
+                              "t=0 0\r\n"
+                              "m=audio 6000 RTP/AVP 112\r\n"
+                              "a=rtpmap:112 L24/96000/6\r\n"
+                              "a=rtpmap:111 L16/44100/2\r\n"}};
 
     SessionConfig config;
     std::string error;
