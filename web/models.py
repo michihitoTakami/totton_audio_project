@@ -450,7 +450,9 @@ class InputModeSwitchResponse(BaseModel):
     """Response returned after attempting to switch input modes."""
 
     success: bool
-    current_mode: InputMode = Field(description="Mode currently active after the switch")
+    current_mode: InputMode = Field(
+        description="Mode currently active after the switch"
+    )
     restart_required: bool = Field(
         default=False, description="True when the daemon was restarted to apply changes"
     )
