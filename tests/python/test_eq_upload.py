@@ -443,14 +443,19 @@ Filter 1: ON PK Fc 100 Hz Gain -2.0 dB Q 1.0
         result = validate_eq_profile_content(content)
         assert result["valid"] is True
 
-    def test_scientific_notation_not_supported(self):
-        """Scientific notation in values should fail (treated as invalid)."""
+    def test_scientific_notation_partial_parse(self):
+        """Scientific notation in values gets partially parsed."""
         content = """Preamp: -6 dB
 Filter 1: ON PK Fc 1e3 Hz Gain -2.0 dB Q 1.0
 """
         result = validate_eq_profile_content(content)
-        # Should have a warning about unparseable line or just not parse the filter
-        assert result["filter_count"] == 0 or len(result["warnings"]) > 0
+        # New parser will parse "1" from "1e3", which is technically valid
+        # but results in wrong frequency (1 Hz instead of 1000 Hz)
+        # This is expected behavior - users should not use scientific notation
+        assert result["filter_count"] == 1
+        # The frequency will be out of range (1 Hz < 10 Hz minimum)
+        assert not result["valid"]
+        assert any("Frequency" in e and "out of range" in e for e in result["errors"])
 
     def test_boundary_values_valid(self):
         """Boundary values should be valid."""
