@@ -7,12 +7,33 @@
 namespace EQ {
 
 // Filter types supported by Equalizer APO format
+// Reference: https://sourceforge.net/p/equalizerapo/wiki/Configuration%20reference/
 enum class FilterType {
-    PK,  // Peaking (parametric)
-    LS,  // Low Shelf
-    HS,  // High Shelf
-    LP,  // Low Pass (future)
-    HP,  // High Pass (future)
+    // Peaking filters
+    PK,     // Peaking (parametric)
+    MODAL,  // Modal filter (same as PK)
+    PEQ,    // Parametric EQ (same as PK)
+    // Pass filters
+    LP,   // Low Pass
+    LPQ,  // Low Pass with Q
+    HP,   // High Pass
+    HPQ,  // High Pass with Q
+    BP,   // Band Pass
+    // Notch and All-pass
+    NO,  // Notch
+    AP,  // All-pass
+    // Shelf filters
+    LS,   // Low Shelf
+    HS,   // High Shelf
+    LSC,  // Low Shelf Constant Q
+    HSC,  // High Shelf Constant Q
+    LSQ,  // Low Shelf with Q
+    HSQ,  // High Shelf with Q
+    // Fixed-slope shelf filters
+    LS_6DB,   // Low Shelf 6dB/oct
+    LS_12DB,  // Low Shelf 12dB/oct
+    HS_6DB,   // High Shelf 6dB/oct
+    HS_12DB,  // High Shelf 12dB/oct
 };
 
 // Single EQ band parameters

@@ -236,3 +236,145 @@ TEST_F(EqParserTest, EqBandDefaultValues) {
     EXPECT_DOUBLE_EQ(band.gain, 0.0);
     EXPECT_DOUBLE_EQ(band.q, 1.0);
 }
+
+// ============================================================
+// New filter types tests (Issue #293)
+// ============================================================
+
+TEST_F(EqParserTest, ParseFilterTypeModal) {
+    EXPECT_EQ(parseFilterType("MODAL"), FilterType::MODAL);
+    EXPECT_EQ(parseFilterType("modal"), FilterType::MODAL);
+}
+
+TEST_F(EqParserTest, ParseFilterTypePEQ) {
+    EXPECT_EQ(parseFilterType("PEQ"), FilterType::PEQ);
+    EXPECT_EQ(parseFilterType("peq"), FilterType::PEQ);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeLPQ) {
+    EXPECT_EQ(parseFilterType("LPQ"), FilterType::LPQ);
+    EXPECT_EQ(parseFilterType("lpq"), FilterType::LPQ);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeHPQ) {
+    EXPECT_EQ(parseFilterType("HPQ"), FilterType::HPQ);
+    EXPECT_EQ(parseFilterType("hpq"), FilterType::HPQ);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeBP) {
+    EXPECT_EQ(parseFilterType("BP"), FilterType::BP);
+    EXPECT_EQ(parseFilterType("BANDPASS"), FilterType::BP);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeNO) {
+    EXPECT_EQ(parseFilterType("NO"), FilterType::NO);
+    EXPECT_EQ(parseFilterType("NOTCH"), FilterType::NO);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeAP) {
+    EXPECT_EQ(parseFilterType("AP"), FilterType::AP);
+    EXPECT_EQ(parseFilterType("ALLPASS"), FilterType::AP);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeLSC) {
+    EXPECT_EQ(parseFilterType("LSC"), FilterType::LSC);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeHSC) {
+    EXPECT_EQ(parseFilterType("HSC"), FilterType::HSC);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeLSQ) {
+    EXPECT_EQ(parseFilterType("LSQ"), FilterType::LSQ);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeHSQ) {
+    EXPECT_EQ(parseFilterType("HSQ"), FilterType::HSQ);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeLS6DB) {
+    EXPECT_EQ(parseFilterType("LS 6DB"), FilterType::LS_6DB);
+    EXPECT_EQ(parseFilterType("LS6DB"), FilterType::LS_6DB);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeLS12DB) {
+    EXPECT_EQ(parseFilterType("LS 12DB"), FilterType::LS_12DB);
+    EXPECT_EQ(parseFilterType("LS12DB"), FilterType::LS_12DB);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeHS6DB) {
+    EXPECT_EQ(parseFilterType("HS 6DB"), FilterType::HS_6DB);
+    EXPECT_EQ(parseFilterType("HS6DB"), FilterType::HS_6DB);
+}
+
+TEST_F(EqParserTest, ParseFilterTypeHS12DB) {
+    EXPECT_EQ(parseFilterType("HS 12DB"), FilterType::HS_12DB);
+    EXPECT_EQ(parseFilterType("HS12DB"), FilterType::HS_12DB);
+}
+
+// ============================================================
+// Optional parameter tests (Issue #293)
+// ============================================================
+
+TEST_F(EqParserTest, ParseEqStringOptionalGain) {
+    EqProfile profile;
+    std::string content = "Filter 1: ON LP Fc 15000 Hz";
+
+    EXPECT_TRUE(parseEqString(content, profile));
+    EXPECT_EQ(profile.bands.size(), 1u);
+    EXPECT_EQ(profile.bands[0].type, FilterType::LP);
+    EXPECT_DOUBLE_EQ(profile.bands[0].frequency, 15000.0);
+    EXPECT_DOUBLE_EQ(profile.bands[0].gain, 0.0);  // Default
+    EXPECT_DOUBLE_EQ(profile.bands[0].q, 1.0);     // Default
+}
+
+TEST_F(EqParserTest, ParseEqStringOptionalQ) {
+    EqProfile profile;
+    std::string content = "Filter 1: ON HP Fc 25 Hz";
+
+    EXPECT_TRUE(parseEqString(content, profile));
+    EXPECT_EQ(profile.bands.size(), 1u);
+    EXPECT_EQ(profile.bands[0].type, FilterType::HP);
+    EXPECT_DOUBLE_EQ(profile.bands[0].frequency, 25.0);
+    EXPECT_DOUBLE_EQ(profile.bands[0].gain, 0.0);  // Default
+    EXPECT_DOUBLE_EQ(profile.bands[0].q, 1.0);     // Default
+}
+
+TEST_F(EqParserTest, ParseEqStringWithQButNoGain) {
+    EqProfile profile;
+    std::string content = "Filter 1: ON LPQ Fc 10000 Hz Q 0.707";
+
+    EXPECT_TRUE(parseEqString(content, profile));
+    EXPECT_EQ(profile.bands.size(), 1u);
+    EXPECT_EQ(profile.bands[0].type, FilterType::LPQ);
+    EXPECT_DOUBLE_EQ(profile.bands[0].frequency, 10000.0);
+    EXPECT_DOUBLE_EQ(profile.bands[0].gain, 0.0);  // Default
+    EXPECT_DOUBLE_EQ(profile.bands[0].q, 0.707);
+}
+
+TEST_F(EqParserTest, ParseEqStringNewFilterTypes) {
+    EqProfile profile;
+    std::string content = R"(
+Preamp: -6 dB
+Filter 1: ON MODAL Fc 100 Hz Gain -2.0 dB Q 1.0
+Filter 2: ON PEQ Fc 200 Hz Gain 3.0 dB Q 1.5
+Filter 3: ON LPQ Fc 10000 Hz Q 0.7
+Filter 4: ON HPQ Fc 20 Hz Q 0.7
+Filter 5: ON BP Fc 1000 Hz Q 2.0
+Filter 6: ON NO Fc 500 Hz Q 5.0
+Filter 7: ON AP Fc 2000 Hz Gain 0 dB Q 1.0
+Filter 8: ON LS 6DB Fc 200 Hz Gain 4.0 dB
+)";
+
+    EXPECT_TRUE(parseEqString(content, profile));
+    EXPECT_DOUBLE_EQ(profile.preampDb, -6.0);
+    EXPECT_EQ(profile.bands.size(), 8u);
+    EXPECT_EQ(profile.bands[0].type, FilterType::MODAL);
+    EXPECT_EQ(profile.bands[1].type, FilterType::PEQ);
+    EXPECT_EQ(profile.bands[2].type, FilterType::LPQ);
+    EXPECT_EQ(profile.bands[3].type, FilterType::HPQ);
+    EXPECT_EQ(profile.bands[4].type, FilterType::BP);
+    EXPECT_EQ(profile.bands[5].type, FilterType::NO);
+    EXPECT_EQ(profile.bands[6].type, FilterType::AP);
+    EXPECT_EQ(profile.bands[7].type, FilterType::LS_6DB);
+}

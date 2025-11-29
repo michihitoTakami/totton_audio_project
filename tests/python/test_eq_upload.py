@@ -228,12 +228,92 @@ Filter 1: ON PK Fc 1000 Hz Gain -2.0 dB Q {Q_MAX + 10}
 Filter 1: ON PK Fc 100 Hz Gain -2.0 dB Q 1.0
 Filter 2: ON LS Fc 200 Hz Gain 3.0 dB Q 0.7
 Filter 3: ON HS Fc 8000 Hz Gain -1.5 dB Q 0.7
-Filter 4: ON LP Fc 20000 Hz Gain 0 dB Q 0.7
-Filter 5: ON HP Fc 30 Hz Gain 0 dB Q 0.7
+Filter 4: ON LP Fc 20000 Hz
+Filter 5: ON HP Fc 30 Hz
 """
         result = validate_eq_profile_content(content)
         assert result["valid"] is True
         assert result["filter_count"] == 5
+
+    def test_all_new_filter_types(self):
+        """All new filter types should be recognized."""
+        content = """Preamp: -6 dB
+Filter 1: ON MODAL Fc 100 Hz Gain -2.0 dB Q 1.0
+Filter 2: ON PEQ Fc 200 Hz Gain 3.0 dB Q 1.5
+Filter 3: ON LPQ Fc 10000 Hz Q 0.7
+Filter 4: ON HPQ Fc 20 Hz Q 0.7
+Filter 5: ON BP Fc 1000 Hz Q 2.0
+Filter 6: ON NO Fc 500 Hz Q 5.0
+Filter 7: ON AP Fc 2000 Hz Gain 0 dB Q 1.0
+Filter 8: ON LSC Fc 100 Hz Gain 2.0 dB Q 0.7
+Filter 9: ON HSC Fc 8000 Hz Gain -2.0 dB Q 0.7
+Filter 10: ON LSQ Fc 150 Hz Gain 3.0 dB Q 0.5
+Filter 11: ON HSQ Fc 7000 Hz Gain -1.0 dB Q 0.5
+Filter 12: ON LS 6DB Fc 200 Hz Gain 4.0 dB
+Filter 13: ON LS 12DB Fc 250 Hz Gain 5.0 dB
+Filter 14: ON HS 6DB Fc 6000 Hz Gain -3.0 dB
+Filter 15: ON HS 12DB Fc 5000 Hz Gain -4.0 dB
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 15
+        assert len(result["warnings"]) == 0
+
+    def test_off_filters_accepted(self):
+        """OFF filters should be accepted."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 100 Hz Gain -2.0 dB Q 1.0
+Filter 2: OFF PK Fc 200 Hz Gain 3.0 dB Q 1.5
+Filter 3: ON LS Fc 300 Hz Gain 2.0 dB Q 0.7
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 3
+
+    def test_subsonic_frequency(self):
+        """Frequency down to 10Hz should be accepted."""
+        content = f"""Preamp: -6 dB
+Filter 1: ON HP Fc {FREQ_MIN_HZ} Hz
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+
+    def test_low_q_value(self):
+        """Q value down to 0.01 should be accepted."""
+        content = f"""Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 2.0 dB Q {Q_MIN}
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+
+    def test_optional_gain_parameter(self):
+        """Filters without Gain (when not required) should pass."""
+        content = """Preamp: -6 dB
+Filter 1: ON LP Fc 15000 Hz Q 0.707
+Filter 2: ON HP Fc 25 Hz Q 0.707
+Filter 3: ON BP Fc 1000 Hz Q 2.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is True
+        assert result["filter_count"] == 3
+
+    def test_missing_required_gain(self):
+        """Filters requiring Gain but missing it should fail."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Q 1.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is False
+        assert any("requires Gain" in e for e in result["errors"])
+
+    def test_missing_required_q(self):
+        """Filters requiring Q but missing it should fail."""
+        content = """Preamp: -6 dB
+Filter 1: ON PK Fc 1000 Hz Gain 2.0 dB
+"""
+        result = validate_eq_profile_content(content)
+        assert result["valid"] is False
+        assert any("requires Q" in e for e in result["errors"])
 
     def test_unknown_filter_type_warning(self):
         """Unknown filter type should generate warning but still be valid."""
