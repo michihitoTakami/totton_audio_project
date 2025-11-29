@@ -326,6 +326,7 @@ class EqValidationResponse(BaseModel):
     filename: str
     file_exists: bool
     size_bytes: int
+    recommended_preamp_db: float = 0.0
 
 
 class EqActiveResponse(BaseModel):
