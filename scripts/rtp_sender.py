@@ -18,7 +18,7 @@ import struct
 import sys
 from typing import Optional, Tuple
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 # 環境変数から設定を読み込み
 RTP_RECV_MULTICAST_GROUP = os.getenv("RTP_RECV_MULTICAST_GROUP", "224.0.0.56")
