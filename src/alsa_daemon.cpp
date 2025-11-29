@@ -1249,14 +1249,14 @@ static void join_discovery_multicast_group(int fd, const std::string& group,
         return;
     }
 
-    ip_mreq mreq {};
+    ip_mreq mreq{};
     if (::inet_pton(AF_INET, group.c_str(), &mreq.imr_multiaddr) != 1) {
         LOG_WARN("RTP discovery: invalid multicast group {}", group);
         return;
     }
 
     if (!interfaceName.empty()) {
-        in_addr ifaceAddr {};
+        in_addr ifaceAddr{};
         if (::inet_pton(AF_INET, interfaceName.c_str(), &ifaceAddr) == 1) {
             mreq.imr_interface = ifaceAddr;
         } else {
@@ -1324,7 +1324,7 @@ static std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_c
 #ifdef SO_REUSEPORT
         ::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
 #endif
-        sockaddr_in addr {};
+        sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
         addr.sin_port = htons(port);
@@ -1361,7 +1361,7 @@ static std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_c
     std::unordered_map<std::string, RtpDiscoveryCandidate> candidates;
     auto start = std::chrono::steady_clock::now();
     auto deadline = start + std::chrono::milliseconds(durationMs);
-    std::array<uint8_t, 2048> buffer {};
+    std::array<uint8_t, 2048> buffer{};
 
     while (std::chrono::steady_clock::now() < deadline) {
         auto now = std::chrono::steady_clock::now();
@@ -1391,7 +1391,7 @@ static std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_c
             if (!(pollFds[i].revents & POLLIN)) {
                 continue;
             }
-            sockaddr_in remote {};
+            sockaddr_in remote{};
             socklen_t len = sizeof(remote);
             ssize_t bytes = ::recvfrom(pollFds[i].fd, buffer.data(), buffer.size(), 0,
                                        reinterpret_cast<sockaddr*>(&remote), &len);
@@ -1438,13 +1438,13 @@ static std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_c
     for (auto& kv : candidates) {
         result.push_back(kv.second);
     }
-    std::sort(result.begin(), result.end(), [](const RtpDiscoveryCandidate& lhs,
-                                               const RtpDiscoveryCandidate& rhs) {
-        if (lhs.packets == rhs.packets) {
-            return lhs.lastSeenMs > rhs.lastSeenMs;
-        }
-        return lhs.packets > rhs.packets;
-    });
+    std::sort(result.begin(), result.end(),
+              [](const RtpDiscoveryCandidate& lhs, const RtpDiscoveryCandidate& rhs) {
+                  if (lhs.packets == rhs.packets) {
+                      return lhs.lastSeenMs > rhs.lastSeenMs;
+                  }
+                  return lhs.packets > rhs.packets;
+              });
     return result;
 }
 
@@ -1469,9 +1469,9 @@ static nlohmann::json build_discovery_response(const std::vector<RtpDiscoveryCan
             build_discovery_display_name(candidate.host, candidate.port, candidate.payloadType);
         stream["source_host"] = candidate.host;
         stream["port"] = candidate.port;
-        stream["status"] = candidate.packets >= 4 ? "active"
-                          : candidate.packets >= 2 ? "detected"
-                                                   : "probing";
+        stream["status"] = candidate.packets >= 4   ? "active"
+                           : candidate.packets >= 2 ? "detected"
+                                                    : "probing";
         stream["existing_session"] = existing;
         stream["sample_rate"] = g_config.rtp.sampleRate;
         stream["channels"] = g_config.rtp.channels;
@@ -2238,8 +2238,7 @@ static void zeromq_listener_thread() {
                                 response = resp.dump();
                             }
                         }
-                    } else if (cmdType == "RTP_DISCOVER_STREAMS" ||
-                               cmdType == "DiscoverStreams") {
+                    } else if (cmdType == "RTP_DISCOVER_STREAMS" || cmdType == "DiscoverStreams") {
                         nlohmann::json resp = get_or_run_rtp_discovery();
                         response = resp.dump();
                     } else if (cmdType == "SWITCH_RATE") {
@@ -3405,9 +3404,9 @@ int main(int argc, char* argv[]) {
             std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
         }
 
-        PartitionRuntime::RuntimeRequest partitionRequest{
-            g_config.partitionedConvolution.enabled, g_config.eqEnabled,
-            g_config.crossfeed.enabled};
+        PartitionRuntime::RuntimeRequest partitionRequest{g_config.partitionedConvolution.enabled,
+                                                          g_config.eqEnabled,
+                                                          g_config.crossfeed.enabled};
 
         initialize_dac_manager();
 
@@ -3641,9 +3640,9 @@ int main(int argc, char* argv[]) {
                 g_hrtf_processor = new CrossfeedEngine::HRTFProcessor();
 
                 // Determine rate family based on input sample rate
-                CrossfeedEngine::RateFamily rateFamily = (g_input_sample_rate == 48000)
-                                                             ? CrossfeedEngine::RateFamily::RATE_48K
-                                                             : CrossfeedEngine::RateFamily::RATE_44K;
+                CrossfeedEngine::RateFamily rateFamily =
+                    (g_input_sample_rate == 48000) ? CrossfeedEngine::RateFamily::RATE_48K
+                                                   : CrossfeedEngine::RateFamily::RATE_44K;
 
                 if (g_hrtf_processor->initialize(hrtfDir, g_config.blockSize,
                                                  CrossfeedEngine::HeadSize::M, rateFamily)) {
@@ -3686,9 +3685,10 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cout << "HRTF directory not found (" << hrtfDir
                           << "), crossfeed feature disabled" << std::endl;
-                std::cout << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
-                             "filters"
-                          << std::endl;
+                std::cout
+                    << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
+                       "filters"
+                    << std::endl;
             }
         } else {
             std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)"

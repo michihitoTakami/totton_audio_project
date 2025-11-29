@@ -4,12 +4,13 @@ import base64
 import binascii
 import ipaddress
 import re
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import (
     BaseModel,
     Field,
     ConfigDict,
+    StringConstraints,
     conint,
     constr,
     field_validator,
@@ -332,7 +333,9 @@ class EqValidationResponse(BaseModel):
 class EqTextImportRequest(BaseModel):
     """Request body for text-based EQ profile import."""
 
-    name: constr(strip_whitespace=True, min_length=1, max_length=128)
+    name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)
+    ]
     content: str = Field(description="Raw EQ profile text content")
 
 

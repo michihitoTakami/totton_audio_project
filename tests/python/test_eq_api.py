@@ -291,9 +291,7 @@ class TestImportTextEndpoint:
         assert response.status_code == 400
         assert ".." in response.json()["detail"]
 
-    def test_import_text_too_large(
-        self, client, eq_profile_dir, config_path
-    ):
+    def test_import_text_too_large(self, client, eq_profile_dir, config_path):
         """Payload larger than MAX_EQ_FILE_SIZE should be rejected."""
         payload = {
             "name": "huge",

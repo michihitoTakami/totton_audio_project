@@ -511,6 +511,60 @@
         }
       }
     },
+    "/eq/import-text": {
+      "post": {
+        "tags": [
+          "eq"
+        ],
+        "summary": "Import Eq Text",
+        "description": "Import an EQ profile from raw text pasted via the API.\n\nMirrors the same validation and overwrite safeguards as file uploads.",
+        "operationId": "import_eq_text_eq_import_text_post",
+        "parameters": [
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Overwrite"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EqTextImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/eq/activate/{name}": {
       "post": {
         "tags": [
@@ -2585,6 +2639,28 @@
         ],
         "title": "EqProfilesResponse",
         "description": "EQ profiles list response model."
+      },
+      "EqTextImportRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Raw EQ profile text content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "EqTextImportRequest",
+        "description": "Request body for text-based EQ profile import."
       },
       "EqValidationResponse": {
         "properties": {

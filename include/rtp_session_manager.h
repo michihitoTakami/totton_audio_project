@@ -11,12 +11,11 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 namespace Network {
 
@@ -99,8 +98,7 @@ struct SessionMetrics {
 };
 
 nlohmann::json sessionConfigToJson(const SessionConfig& config);
-bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config,
-                           std::string& error);
+bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config, std::string& error);
 nlohmann::json sessionMetricsToJson(const SessionMetrics& metrics);
 bool validateSessionConfig(SessionConfig& config, std::string& error);
 
@@ -143,4 +141,3 @@ class RtpSessionManager {
 }  // namespace Network
 
 #endif  // RTP_SESSION_MANAGER_H
-

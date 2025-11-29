@@ -2,22 +2,21 @@
 
 #include "logging/logger.h"
 
+#include <algorithm>
 #include <arpa/inet.h>
+#include <cerrno>
+#include <cmath>
+#include <cstring>
 #include <fcntl.h>
+#include <mutex>
 #include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include <algorithm>
-#include <cerrno>
-#include <cmath>
-#include <cstring>
-#include <mutex>
 #include <sstream>
+#include <sys/socket.h>
 #include <thread>
+#include <unistd.h>
 
 namespace Network {
 namespace {
@@ -52,7 +51,7 @@ int createAndBindSocket(const std::string& bindAddress, uint16_t port, size_t bu
         ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf, sizeof(buf));
     }
 
-    sockaddr_in addr {};
+    sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (!parseIpv4(bindAddress, addr.sin_addr)) {
@@ -92,7 +91,7 @@ void configureMulticast(const SessionConfig& config, int fd) {
         return;
     }
 
-    ip_mreq mreq {};
+    ip_mreq mreq{};
     if (::inet_pton(AF_INET, config.multicastGroup.c_str(), &mreq.imr_multiaddr) != 1) {
         LOG_WARN("RTP session {}: invalid multicast group {}", config.sessionId,
                  config.multicastGroup);
@@ -100,14 +99,14 @@ void configureMulticast(const SessionConfig& config, int fd) {
     }
 
     if (!config.interfaceName.empty()) {
-        in_addr ifaceAddr {};
+        in_addr ifaceAddr{};
         if (::inet_pton(AF_INET, config.interfaceName.c_str(), &ifaceAddr) == 1) {
             mreq.imr_interface = ifaceAddr;
         } else {
             unsigned int index = ::if_nametoindex(config.interfaceName.c_str());
             if (index > 0) {
 #ifdef IP_MULTICAST_IF
-                ip_mreqn reqn {};
+                ip_mreqn reqn{};
                 reqn.imr_multiaddr = mreq.imr_multiaddr;
                 reqn.imr_address.s_addr = INADDR_ANY;
                 reqn.imr_ifindex = static_cast<int>(index);
@@ -127,7 +126,8 @@ void configureMulticast(const SessionConfig& config, int fd) {
     }
 }
 
-float decodePcmSample(const uint8_t* data, uint8_t bitsPerSample, bool bigEndian, bool signedSample) {
+float decodePcmSample(const uint8_t* data, uint8_t bitsPerSample, bool bigEndian,
+                      bool signedSample) {
     switch (bitsPerSample) {
     case 16: {
         int16_t value;
@@ -197,7 +197,8 @@ bool parseRtpHeader(const uint8_t* data, size_t length, RtpHeader& header) {
     header.marker = (data[1] & 0b10000000) != 0;
     header.payloadType = data[1] & 0b01111111;
     header.sequenceNumber = static_cast<uint16_t>((data[2] << 8) | data[3]);
-    header.timestamp = (static_cast<uint32_t>(data[4]) << 24) | (static_cast<uint32_t>(data[5]) << 16) |
+    header.timestamp = (static_cast<uint32_t>(data[4]) << 24) |
+                       (static_cast<uint32_t>(data[5]) << 16) |
                        (static_cast<uint32_t>(data[6]) << 8) | static_cast<uint32_t>(data[7]);
     header.ssrc = (static_cast<uint32_t>(data[8]) << 24) | (static_cast<uint32_t>(data[9]) << 16) |
                   (static_cast<uint32_t>(data[10]) << 8) | static_cast<uint32_t>(data[11]);
@@ -293,7 +294,7 @@ bool validateSessionConfig(SessionConfig& config, std::string& error) {
         config.rtcpPort = static_cast<uint16_t>(config.port + 1);
     }
     if (!config.sourceHost.empty()) {
-        in_addr addr {};
+        in_addr addr{};
         if (::inet_pton(AF_INET, config.sourceHost.c_str(), &addr) != 1) {
             error = "source_host must be IPv4 literal";
             return false;
@@ -302,8 +303,7 @@ bool validateSessionConfig(SessionConfig& config, std::string& error) {
     return true;
 }
 
-bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config,
-                           std::string& error) {
+bool sessionConfigFromJson(const nlohmann::json& input, SessionConfig& config, std::string& error) {
     SessionConfig parsed;
     try {
         if (input.contains("session_id")) {
@@ -495,9 +495,8 @@ bool RtpSessionManager::startSession(const SessionConfig& config, std::string& e
     session->lastTelemetry = std::chrono::steady_clock::now();
     session->lastWatchdog = session->lastTelemetry;
 
-    session->rtpSocket =
-        createAndBindSocket(normalized.bindAddress, normalized.port, normalized.socketBufferBytes,
-                            errorMessage);
+    session->rtpSocket = createAndBindSocket(normalized.bindAddress, normalized.port,
+                                             normalized.socketBufferBytes, errorMessage);
     if (session->rtpSocket < 0) {
         return false;
     }
@@ -542,9 +541,9 @@ bool RtpSessionManager::startSession(const SessionConfig& config, std::string& e
         sessions_[normalized.sessionId] = session;
     }
 
-    LOG_INFO("RTP session {} listening on {}:{} (payload PT {}, {} ch @ {} Hz)", normalized.sessionId,
-             normalized.bindAddress, normalized.port, normalized.payloadType, normalized.channels,
-             normalized.sampleRate);
+    LOG_INFO("RTP session {} listening on {}:{} (payload PT {}, {} ch @ {} Hz)",
+             normalized.sessionId, normalized.bindAddress, normalized.port, normalized.payloadType,
+             normalized.channels, normalized.sampleRate);
     return true;
 }
 
@@ -627,7 +626,7 @@ bool RtpSessionManager::hasSession(const std::string& sessionId) const {
 void RtpSessionManager::receiverLoop(std::shared_ptr<Session> session) {
     std::vector<uint8_t> packet(session->config.mtuBytes);
     while (session->running.load()) {
-        pollfd pfd {session->rtpSocket, POLLIN, 0};
+        pollfd pfd{session->rtpSocket, POLLIN, 0};
         int pollResult = ::poll(&pfd, 1, kDefaultPollTimeoutMs);
         if (!session->running.load()) {
             break;
@@ -647,7 +646,7 @@ void RtpSessionManager::receiverLoop(std::shared_ptr<Session> session) {
             continue;
         }
 
-        sockaddr_in remote {};
+        sockaddr_in remote{};
         socklen_t remoteLen = sizeof(remote);
         ssize_t bytes = ::recvfrom(session->rtpSocket, packet.data(), packet.size(), 0,
                                    reinterpret_cast<sockaddr*>(&remote), &remoteLen);
@@ -661,7 +660,7 @@ void RtpSessionManager::receiverLoop(std::shared_ptr<Session> session) {
         }
 
         if (!session->config.sourceHost.empty()) {
-            char addrBuffer[INET_ADDRSTRLEN] {};
+            char addrBuffer[INET_ADDRSTRLEN]{};
             ::inet_ntop(AF_INET, &remote.sin_addr, addrBuffer, sizeof(addrBuffer));
             if (session->config.sourceHost != addrBuffer) {
                 session->metrics.packetsDropped++;
@@ -718,8 +717,8 @@ void RtpSessionManager::receiverLoop(std::shared_ptr<Session> session) {
         for (size_t frame = 0; frame < frames; ++frame) {
             for (uint8_t ch = 0; ch < session->config.channels; ++ch) {
                 interleaved[frame * session->config.channels + ch] =
-                    decodePcmSample(cursor, session->config.bitsPerSample, session->config.bigEndian,
-                                    session->config.signedSamples);
+                    decodePcmSample(cursor, session->config.bitsPerSample,
+                                    session->config.bigEndian, session->config.signedSamples);
                 cursor += session->config.bitsPerSample / 8;
             }
         }
@@ -745,7 +744,7 @@ void RtpSessionManager::receiverLoop(std::shared_ptr<Session> session) {
 void RtpSessionManager::rtcpLoop(std::shared_ptr<Session> session) {
     std::vector<uint8_t> buffer(1024);
     while (session->running.load()) {
-        pollfd pfd {session->rtcpSocket, POLLIN, 0};
+        pollfd pfd{session->rtcpSocket, POLLIN, 0};
         int pollResult = ::poll(&pfd, 1, kDefaultPollTimeoutMs);
         if (!session->running.load()) {
             break;
@@ -792,7 +791,8 @@ void RtpSessionManager::emitTelemetry(Session& session) {
         return;
     }
     auto now = std::chrono::steady_clock::now();
-    if (now - session.lastTelemetry < std::chrono::milliseconds(session.config.telemetryIntervalMs)) {
+    if (now - session.lastTelemetry <
+        std::chrono::milliseconds(session.config.telemetryIntervalMs)) {
         return;
     }
     SessionMetrics snapshot;
@@ -805,4 +805,3 @@ void RtpSessionManager::emitTelemetry(Session& session) {
 }
 
 }  // namespace Network
-
