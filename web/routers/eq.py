@@ -4,12 +4,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile
 
-from ..constants import EQ_PROFILES_DIR
+from ..constants import EQ_PROFILES_DIR, MAX_EQ_FILE_SIZE
 from ..models import (
     ApiResponse,
     EqActiveResponse,
     EqProfileInfo,
     EqProfilesResponse,
+    EqTextImportRequest,
     EqValidationResponse,
 )
 from ..services import (
@@ -18,22 +19,63 @@ from ..services import (
     parse_eq_profile_content,
     read_and_validate_upload,
     save_config,
+    validate_eq_profile_content,
 )
 
 router = APIRouter(prefix="/eq", tags=["eq"])
 
 
-def validate_profile_name(name: str) -> None:
+def validate_profile_name(name: str) -> str:
     """
     Validate profile name to prevent path traversal attacks.
 
     Raises HTTPException 400 if name contains unsafe characters.
     """
-    if not is_safe_profile_name(name):
+    sanitized = name.strip()
+
+    if not sanitized:
+        raise HTTPException(status_code=400, detail="Profile name is required")
+
+    if not is_safe_profile_name(sanitized):
         raise HTTPException(
             status_code=400,
             detail="Invalid profile name. Cannot start with '.' or contain '..'.",
         )
+
+    return sanitized
+
+
+def _save_profile_file(
+    safe_filename: str, content: str, validation: dict, overwrite: bool
+) -> ApiResponse:
+    """
+    Common persistence logic shared by file-upload and text-import flows.
+    """
+    EQ_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+
+    dest_path = EQ_PROFILES_DIR / safe_filename
+    if dest_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Profile '{safe_filename}' already exists. Set overwrite=true to replace.",
+        )
+
+    try:
+        dest_path.write_text(content, encoding="utf-8")
+    except IOError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
+
+    return ApiResponse(
+        success=True,
+        message=f"Profile '{safe_filename}' imported successfully",
+        data={
+            "path": str(dest_path),
+            "filename": safe_filename,
+            "filter_count": validation["filter_count"],
+            "preamp_db": validation["preamp_db"],
+            "warnings": validation["warnings"],
+        },
+    )
 
 
 @router.get("/profiles", response_model=EqProfilesResponse)
@@ -125,50 +167,68 @@ async def import_eq_profile(file: UploadFile, overwrite: bool = False):
             detail=f"Invalid EQ profile: {'; '.join(validation['errors'])}",
         )
 
-    # Ensure EQ profiles directory exists
-    EQ_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    return _save_profile_file(safe_filename, content, validation, overwrite)
 
-    # Check for existing file
-    dest_path = EQ_PROFILES_DIR / safe_filename
-    if dest_path.exists() and not overwrite:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Profile '{safe_filename}' already exists. Set overwrite=true to replace.",
-        )
 
-    # Save file
+@router.post("/import-text", response_model=ApiResponse)
+async def import_eq_text(request: EqTextImportRequest, overwrite: bool = False):
+    """
+    Import an EQ profile from raw text pasted via the API.
+
+    Mirrors the same validation and overwrite safeguards as file uploads.
+    """
+    profile_name = request.name.strip()
+    if profile_name.lower().endswith(".txt"):
+        profile_name = profile_name[: -len(".txt")]
+
+    sanitized_name = validate_profile_name(profile_name)
+
+    if not request.content or not request.content.strip():
+        raise HTTPException(status_code=400, detail="EQ content cannot be empty")
+
+    content = request.content
     try:
-        dest_path.write_text(content, encoding="utf-8")
-        return ApiResponse(
-            success=True,
-            message=f"Profile '{safe_filename}' imported successfully",
-            data={
-                "path": str(dest_path),
-                "filename": safe_filename,
-                "filter_count": validation["filter_count"],
-                "preamp_db": validation["preamp_db"],
-                "warnings": validation["warnings"],
-            },
+        content_bytes = content.encode("utf-8")
+    except UnicodeEncodeError as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=400, detail=f"Invalid text encoding: {exc}")
+
+    if len(content_bytes) > MAX_EQ_FILE_SIZE:
+        max_mb = MAX_EQ_FILE_SIZE // (1024 * 1024)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Content too large. Maximum size: {max_mb}MB",
         )
-    except IOError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    validation = validate_eq_profile_content(content)
+    validation["size_bytes"] = len(content_bytes)
+
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid EQ profile: {'; '.join(validation['errors'])}",
+        )
+
+    safe_filename = f"{sanitized_name}.txt"
+    return _save_profile_file(safe_filename, content, validation, overwrite)
 
 
 @router.post("/activate/{name}", response_model=ApiResponse)
 async def activate_eq_profile(name: str):
     """Activate an EQ profile by name."""
     # Validate profile name (prevent path traversal)
-    validate_profile_name(name)
+    sanitized_name = validate_profile_name(name)
 
     # Find profile file
-    profile_path = EQ_PROFILES_DIR / f"{name}.txt"
+    profile_path = EQ_PROFILES_DIR / f"{sanitized_name}.txt"
     if not profile_path.exists():
-        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Profile '{sanitized_name}' not found"
+        )
 
     # Update config
     config = load_config()
     config.eq_enabled = True
-    config.eq_profile = name
+    config.eq_profile = sanitized_name
     config.eq_profile_path = str(profile_path)
     if save_config(config):
         return ApiResponse(
@@ -199,15 +259,17 @@ async def deactivate_eq():
 async def delete_eq_profile(name: str):
     """Delete an EQ profile."""
     # Validate profile name (prevent path traversal)
-    validate_profile_name(name)
+    sanitized_name = validate_profile_name(name)
 
-    profile_path = EQ_PROFILES_DIR / f"{name}.txt"
+    profile_path = EQ_PROFILES_DIR / f"{sanitized_name}.txt"
     if not profile_path.exists():
-        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Profile '{sanitized_name}' not found"
+        )
 
     # Check if currently active
     config = load_config()
-    if config.eq_profile == name:
+    if config.eq_profile == sanitized_name:
         config.eq_enabled = False
         config.eq_profile = None
         config.eq_profile_path = None

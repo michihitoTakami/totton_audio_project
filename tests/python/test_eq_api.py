@@ -4,6 +4,7 @@ Integration tests for EQ profile API endpoints.
 Tests the following endpoints:
 - POST /eq/validate - Validate uploaded file
 - POST /eq/import - Import profile
+- POST /eq/import-text - Import profile from pasted text
 - GET /eq/profiles - List profiles
 - POST /eq/activate/{name} - Activate profile
 - POST /eq/deactivate - Deactivate EQ
@@ -24,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from web.main import app  # noqa: E402
 from web.services.config import load_config  # noqa: E402
+from web.constants import MAX_EQ_FILE_SIZE  # noqa: E402
 
 
 @pytest.fixture
@@ -208,6 +210,99 @@ class TestImportEndpoint:
 
         # Verify content was updated
         assert existing_file.read_text() == valid_eq_content
+
+
+class TestImportTextEndpoint:
+    """Tests for POST /eq/import-text endpoint."""
+
+    def test_import_text_valid_profile(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Should import text payload successfully."""
+        payload = {"name": "text_profile", "content": valid_eq_content}
+        response = client.post("/eq/import-text", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert (eq_profile_dir / "text_profile.txt").read_text() == valid_eq_content
+
+    def test_import_text_accepts_name_with_extension(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Name ending with .txt should be normalized."""
+        payload = {"name": "text_profile.txt", "content": valid_eq_content}
+        response = client.post("/eq/import-text", json=payload)
+
+        assert response.status_code == 200
+        assert (eq_profile_dir / "text_profile.txt").exists()
+
+    def test_import_text_invalid_content_rejected(
+        self, client, invalid_eq_content, eq_profile_dir, config_path
+    ):
+        """Invalid EQ content should return HTTP 400."""
+        payload = {"name": "bad_profile", "content": invalid_eq_content}
+        response = client.post("/eq/import-text", json=payload)
+
+        assert response.status_code == 400
+        assert "invalid" in response.json()["detail"].lower()
+
+    def test_import_text_empty_content_rejected(
+        self, client, eq_profile_dir, config_path
+    ):
+        """Blank content should be rejected."""
+        payload = {"name": "blank_profile", "content": "   "}
+        response = client.post("/eq/import-text", json=payload)
+
+        assert response.status_code == 400
+        assert "empty" in response.json()["detail"].lower()
+
+    def test_import_text_overwrite_protection(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Existing file should not be overwritten without flag."""
+        (eq_profile_dir / "text_profile.txt").write_text("original")
+
+        payload = {"name": "text_profile", "content": valid_eq_content}
+        response = client.post("/eq/import-text", json=payload)
+
+        assert response.status_code == 409
+        assert (eq_profile_dir / "text_profile.txt").read_text() == "original"
+
+    def test_import_text_overwrite_with_flag(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Existing file should overwrite when flag is true."""
+        (eq_profile_dir / "text_profile.txt").write_text("original")
+
+        payload = {"name": "text_profile", "content": valid_eq_content}
+        response = client.post("/eq/import-text?overwrite=true", json=payload)
+
+        assert response.status_code == 200
+        assert (eq_profile_dir / "text_profile.txt").read_text() == valid_eq_content
+
+    def test_import_text_invalid_name_rejected(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Unsafe profile names should be rejected."""
+        payload = {"name": "..bad", "content": valid_eq_content}
+        response = client.post("/eq/import-text", json=payload)
+
+        assert response.status_code == 400
+        assert ".." in response.json()["detail"]
+
+    def test_import_text_too_large(
+        self, client, eq_profile_dir, config_path
+    ):
+        """Payload larger than MAX_EQ_FILE_SIZE should be rejected."""
+        payload = {
+            "name": "huge",
+            "content": "x" * (MAX_EQ_FILE_SIZE + 1),
+        }
+        response = client.post("/eq/import-text", json=payload)
+
+        assert response.status_code == 400
+        assert "too large" in response.json()["detail"].lower()
 
 
 class TestProfilesEndpoint:
