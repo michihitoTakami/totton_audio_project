@@ -186,11 +186,14 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
         - warnings: list[str] (non-fatal issues)
         - preamp_db: float | None
         - filter_count: int
+        - recommended_preamp_db: float
     """
     errors: list[str] = []
     warnings: list[str] = []
     preamp_db: float | None = None
     filter_count = 0
+    max_positive_gain = 0.0
+    recommended_preamp_db = 0.0
 
     if not content or not content.strip():
         return {
@@ -199,6 +202,7 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
             "warnings": [],
             "preamp_db": None,
             "filter_count": 0,
+            "recommended_preamp_db": 0.0,
         }
 
     lines = content.strip().split("\n")
@@ -299,6 +303,8 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
                         f"Filter {filter_label}: Gain {gain}dB out of range "
                         f"({GAIN_MIN_DB}dB to {GAIN_MAX_DB}dB)"
                     )
+                elif parsed["enabled"] and gain > max_positive_gain:
+                    max_positive_gain = gain
 
             # Validate Q if present
             if q is not None:
@@ -316,12 +322,23 @@ def validate_eq_profile_content(content: str) -> dict[str, Any]:
     if filter_count == 0 and preamp_found:
         warnings.append("No filter lines found (only Preamp)")
 
+    if max_positive_gain > 0:
+        recommended_preamp_db = -max_positive_gain
+        if preamp_db is not None and preamp_db > recommended_preamp_db:
+            warnings.append(
+                (
+                    f"Preamp {preamp_db}dB may clip (max boost +{max_positive_gain}dB). "
+                    f"Recommended Preamp: {recommended_preamp_db}dB or lower."
+                )
+            )
+
     return {
         "valid": len(errors) == 0,
         "errors": errors,
         "warnings": warnings,
         "preamp_db": preamp_db,
         "filter_count": filter_count,
+        "recommended_preamp_db": recommended_preamp_db,
     }
 
 

@@ -1016,6 +1016,9 @@ def get_admin_html() -> str:
             html += '<div class="details">';
             html += 'フィルター数: ' + result.filter_count;
             if (result.preamp_db !== null) html += ' / Preamp: ' + result.preamp_db + 'dB';
+            if (typeof result.recommended_preamp_db === 'number') {
+                html += ' / 推奨Preamp: ' + result.recommended_preamp_db + 'dB';
+            }
             html += ' / サイズ: ' + formatBytes(result.size_bytes);
             html += '</div>';
 

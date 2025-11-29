@@ -117,7 +117,28 @@ Filter 2: ON PK Fc 1000 Hz Gain 3.5 dB Q 2.0
         assert result["valid"] is True
         assert result["filter_count"] == 2
         assert result["preamp_db"] == -6.5
+        assert result["recommended_preamp_db"] == -3.5
         assert len(result["errors"]) == 0
+
+    def test_recommended_preamp_zero_for_negative_filters(self):
+        """Recommended preamp should be zero when no positive gain exists."""
+        content = """Preamp: -3 dB
+Filter 1: ON PK Fc 200 Hz Gain -2.0 dB Q 1.0
+Filter 2: ON PK Fc 1000 Hz Gain -1.5 dB Q 2.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["recommended_preamp_db"] == 0.0
+        assert all("may clip" not in w for w in result["warnings"])
+
+    def test_preamp_warning_when_insufficient(self):
+        """A warning should be added when preamp is insufficient for boosts."""
+        content = """Preamp: -2 dB
+Filter 1: ON PK Fc 2000 Hz Gain 5.0 dB Q 1.0
+Filter 2: ON PK Fc 3000 Hz Gain 3.0 dB Q 1.0
+"""
+        result = validate_eq_profile_content(content)
+        assert result["recommended_preamp_db"] == -5.0
+        assert any("may clip" in w for w in result["warnings"])
 
     def test_empty_content(self):
         """Empty content should fail."""

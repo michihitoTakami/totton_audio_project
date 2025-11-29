@@ -143,6 +143,7 @@ async def validate_eq_profile(file: UploadFile):
         filename=safe_filename,
         file_exists=file_exists,
         size_bytes=validation["size_bytes"],
+        recommended_preamp_db=validation["recommended_preamp_db"],
     )
 
 
