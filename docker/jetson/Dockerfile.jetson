@@ -7,7 +7,7 @@
 # Target: Jetson Orin Nano Super (SM 8.7 Ampere, 1024 CUDA cores)
 #
 # Build on Jetson:
-#   docker build -f docker/Dockerfile.jetson -t magicbox:latest .
+#   docker build -f docker/jetson/Dockerfile.jetson -t magicbox:latest .
 #
 # Run:
 #   docker run --runtime=nvidia --device /dev/snd -p 80:80 magicbox:latest
@@ -157,7 +157,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # USER magicbox
 
 # Entry point script
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY docker/jetson/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

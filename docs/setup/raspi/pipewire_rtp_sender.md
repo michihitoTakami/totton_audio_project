@@ -236,10 +236,10 @@ stream.props = {
 
 ```bash
 # Docker起動
-cd docker
-docker compose -f docker-compose.raspi-sender.yml up -d
+cd docker/local/raspi-simulation
+docker compose up -d --build
 
-# ログ確認（フォーマット検出されるはず）
+# ログ確認（SDP送信と転送開始を確認）
 docker logs -f raspi-rtp-sender
 ```
 

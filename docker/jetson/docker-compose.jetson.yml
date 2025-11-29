@@ -4,13 +4,13 @@
 #
 # Usage:
 #   cd docker
-#   docker compose up -d
+#   docker compose -f jetson/docker-compose.jetson.yml up -d --build
 #
 # Logs:
-#   docker compose logs -f
+#   docker compose -f jetson/docker-compose.jetson.yml logs -f
 #
 # Stop:
-#   docker compose down
+#   docker compose -f jetson/docker-compose.jetson.yml down
 #
 
 services:
@@ -20,8 +20,8 @@ services:
   audio-daemon:
     image: magicbox:latest
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.jetson
+      context: ../..
+      dockerfile: docker/jetson/Dockerfile.jetson
       args:
         BASE_IMAGE_DEVEL: ${BASE_IMAGE_DEVEL:-nvcr.io/nvidia/l4t-cuda:12.6.68-devel}
         BASE_IMAGE_RUNTIME: ${BASE_IMAGE_RUNTIME:-nvcr.io/nvidia/l4t-cuda:12.6.68-runtime}

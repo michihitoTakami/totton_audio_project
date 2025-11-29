@@ -40,7 +40,7 @@ docker run --rm --runtime=nvidia nvidia-smi
 
 ```bash
 # プロジェクトルートで実行
-docker build -f docker/Dockerfile.jetson -t magicbox:latest .
+docker build -f docker/jetson/Dockerfile.jetson -t magicbox:latest .
 ```
 
 ビルド時間目安: 約15-30分（初回）
@@ -53,7 +53,7 @@ Jetson用JetPackイメージはARM64専用のため、x86では`nvidia/cuda`ベ�
 docker build \
   --build-arg BASE_IMAGE_DEVEL=nvidia/cuda:12.6.2-devel-ubuntu22.04 \
   --build-arg BASE_IMAGE_RUNTIME=nvidia/cuda:12.6.2-runtime-ubuntu22.04 \
-  -f docker/Dockerfile.jetson \
+  -f docker/jetson/Dockerfile.jetson \
   -t magicbox:x86 .
 ```
 
@@ -85,18 +85,18 @@ Jetson向けとx86ローカル向けでComposeファイルを分けています�
 
 ```bash
 cd docker
-docker compose -f docker-compose.jetson.yml up -d
-docker compose -f docker-compose.jetson.yml logs -f
-docker compose -f docker-compose.jetson.yml down
+docker compose -f jetson/docker-compose.jetson.yml up -d --build
+docker compose -f jetson/docker-compose.jetson.yml logs -f
+docker compose -f jetson/docker-compose.jetson.yml down
 ```
 
 #### x86_64ローカル検証
 
 ```bash
-cd docker
-docker compose -f docker-compose.local.yml up -d --build
-docker compose -f docker-compose.local.yml logs -f
-docker compose -f docker-compose.local.yml down
+cd docker/local/pipewire
+docker compose up -d --build
+docker compose logs -f
+docker compose down
 ```
 
 ## ポート一覧
@@ -140,7 +140,7 @@ docker run --device /dev/snd -it magicbox:latest aplay -l
 
 ```bash
 # キャッシュをクリアして再ビルド
-docker build --no-cache -f docker/Dockerfile.jetson -t magicbox:latest .
+docker build --no-cache -f docker/jetson/Dockerfile.jetson -t magicbox:latest .
 ```
 
 ## 開発ワークフロー

@@ -10,7 +10,7 @@
 ```
 [PC PipeWire] → RTP (224.0.0.56:46000)
     ↓
-[Docker: RTP Sender] フォーマット検出 → SDP送信
+[Docker: RTP Sender] 環境変数指定 → SDP送信
     ↓
 [Magic Box] RtpSessionManager → GPU処理
 ```
@@ -22,10 +22,10 @@
 - 設定: `docs/setup/raspi/pipewire_rtp_sender.md`
 
 ### 2. RTP Senderコンテナ
-- RTPストリームを受信
-- フォーマット自動検出（sample_rate, channels, bits_per_sample）
-- SDP自動生成・Magic Box REST APIに送信
-- RTPパケット転送
+- RTPストリームを受信しMagic Boxに転送
+- PipeWire設定と一致するフォーマットを環境変数で指定
+- 起動時（およびSIGHUP受信時）にSDPをMagic Box REST APIへ送信
+- RTPパケットを解析せずそのまま転送
 
 ### 3. Magic Box（オプション）
 - 同じPC上で動かす場合は別途起動
@@ -77,19 +77,25 @@ docker compose up -d --build
 docker logs -f raspi-rtp-sender
 
 # 期待される出力:
-# [INFO] Detected format: 44100Hz, 2ch, 16bit, PT127
-# [INFO] Successfully registered RTP session: 44100Hz, 2ch, 16bit
+# [INFO] Successfully registered RTP session: 44100Hz, 2ch, 16bit, PT127
+# [INFO] Forwarding RTP packets...
 ```
 
 ## 動作確認
 
-### 1. RTP受信確認
+### 1. SDP送信確認
 
 ```bash
-docker logs raspi-rtp-sender | grep "Detected format"
+docker logs raspi-rtp-sender | grep "Successfully registered"
 ```
 
-### 2. Magic Box側でセッション確認
+### 2. RTP転送確認
+
+```bash
+docker logs raspi-rtp-sender | grep "Forwarding RTP packets"
+```
+
+### 3. Magic Box側でセッション確認
 
 ```bash
 curl http://192.168.1.10:8000/api/rtp/sessions
@@ -132,16 +138,25 @@ sudo ip route add 224.0.0.0/4 dev eth0  # eth0 を実際のインターフェー
 docker exec raspi-rtp-sender curl -v http://192.168.1.10:8000/status
 ```
 
-### フォーマット検出が失敗する
+### フォーマット設定が一致しない
 
-```bash
-# PipeWireの送信を確認
-pactl list sinks | grep -A 5 "RTP Network Sink"
-wpctl status | grep "RTP"
+PipeWireの送信設定と `docker/local/raspi-simulation/docker-compose.yml` に記載した `RTP_*` 環境変数が一致しないとMagic Box側で音が出ません。
 
-# tcpdumpでRTPパケット確認
-sudo tcpdump -i any -n udp port 46000
-```
+1. PipeWireの設定を確認:
+   ```bash
+   cat ~/.config/pipewire/pipewire.conf.d/rtp-sink.conf
+   ```
+2. docker-compose.ymlの環境変数を再確認:
+   ```bash
+   grep RTP_ docker/local/raspi-simulation/docker-compose.yml
+   ```
+3. 値を揃えたらコンテナを再作成するか、SIGHUPでSDPを再送信:
+   ```bash
+   cd docker/local/raspi-simulation
+   docker compose up -d
+   # もしくは再送信のみ
+   docker kill -s HUP raspi-rtp-sender
+   ```
 
 ## 同じPC上でMagic Boxも動かす場合
 
