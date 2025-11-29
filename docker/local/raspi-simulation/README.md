@@ -7,10 +7,17 @@
 ```
 [PC PipeWire] --RTP--> [Docker: rtp-sender] --RTP+SDP--> [Magic Box]
      ↓                      ↓                              ↓
-224.0.0.56:46000     マルチキャスト受信         RtpSessionManager
-                     フォーマット検出
-                     SDP自動生成・送信
+224.0.0.56:46000      パケット転送              RtpSessionManager
+                      (環境変数でフォーマット指定)
 ```
+
+## 設計方針
+
+**重要**: RTPパケットからオーディオフォーマット（サンプルレート、チャンネル数、ビット深度）を推定することは原理的に不可能です。そのため、このrtp-senderは以下の方針で設計されています：
+
+1. **フォーマットは環境変数で明示的に指定** - PipeWireの設定と同じ値を指定
+2. **起動時にSDPを送信** - Magic BoxのREST APIにフォーマット情報を送信
+3. **RTPパケットはそのまま転送** - 受信したパケットに対する解析・変更は行わない
 
 ## 前提条件
 
@@ -21,8 +28,8 @@
    ```
    - マルチキャストグループ: `224.0.0.56`
    - ポート: `46000`
-   - フォーマット: `s16be 2ch 44100Hz` (または任意)
-   - **設定方法**: `docs/setup/raspi/pipewire_rtp_sender.md` 参照
+   - フォーマット: PipeWire設定に依存
+   - **設定方法**: `docs/setup/configs/` 配下のサンプル設定参照
 
 2. **Magic Boxが稼働中**
    - IPアドレス: `192.168.1.10` (要変更)
@@ -30,20 +37,27 @@
 
 ## セットアップ
 
-### 1. Magic BoxのIPアドレス設定
+### 1. 環境変数をPipeWire設定と一致させる
 
-`docker/raspi/docker-compose.raspi-sender.yml` を編集:
+`docker-compose.yml` を編集して、PipeWireの `rtp-sink.conf` と同じ値を設定:
 
 ```yaml
 environment:
+  # ⚠️ PipeWireのrtp-sink.conf設定と一致させること！
+  - RTP_SAMPLE_RATE=44100    # audio.rate と一致
+  - RTP_CHANNELS=2           # audio.channels と一致
+  - RTP_BITS_PER_SAMPLE=16   # format: S16=16, S24=24, S32=32
+  - RTP_PAYLOAD_TYPE=127     # 動的ペイロードタイプ
+
+  # Magic Box接続設定
   - MAGIC_BOX_HOST=192.168.1.10  # ← 実際のMagic BoxのIPに変更
 ```
 
 ### 2. Docker Composeで起動
 
 ```bash
-cd docker/raspi
-docker compose -f docker-compose.raspi-sender.yml up -d --build
+cd docker/local/raspi-simulation
+docker compose up -d --build
 ```
 
 ### 3. ログ確認
@@ -58,16 +72,15 @@ tail -f logs/rtp-sender/rtp_sender.log
 
 ## 動作確認
 
-### 1. RTP受信確認
+### 1. SDP送信確認
 
 ```bash
-docker logs raspi-rtp-sender | grep "Detected format"
+docker logs raspi-rtp-sender | grep "Successfully registered"
 ```
 
 期待される出力:
 ```
-[INFO] Detected format: 44100Hz, 2ch, 16bit, PT127
-[INFO] Successfully registered RTP session: 44100Hz, 2ch, 16bit
+[INFO] Successfully registered RTP session: 44100Hz, 2ch, 16bit, PT127
 ```
 
 ### 2. Magic Box側でセッション確認
@@ -91,6 +104,39 @@ curl http://192.168.1.10:8000/api/rtp/sessions
 }
 ```
 
+## 環境変数一覧
+
+### 受信設定（PC PipeWireから）
+
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `RTP_RECV_MULTICAST_GROUP` | `224.0.0.56` | PipeWireのマルチキャストグループ |
+| `RTP_RECV_PORT` | `46000` | 受信ポート |
+
+### 送信設定（Magic Boxへ）
+
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `MAGIC_BOX_HOST` | `192.168.1.10` | Magic BoxのIPアドレス |
+| `MAGIC_BOX_API_PORT` | `8000` | Magic BoxのREST APIポート |
+| `RTP_SEND_PORT` | `46001` | Magic Boxへの送信ポート |
+
+### オーディオフォーマット設定
+
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `RTP_SAMPLE_RATE` | `44100` | サンプルレート（Hz） |
+| `RTP_CHANNELS` | `2` | チャンネル数 |
+| `RTP_BITS_PER_SAMPLE` | `16` | ビット深度（16/24/32） |
+| `RTP_PAYLOAD_TYPE` | `127` | RTPペイロードタイプ |
+
+### セッション設定
+
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `RTP_SESSION_ID` | `raspi-uac2` | セッション識別子 |
+| `LOG_LEVEL` | `INFO` | ログレベル (DEBUG/INFO/WARNING/ERROR) |
+
 ## トラブルシューティング
 
 ### マルチキャストが受信できない
@@ -110,58 +156,29 @@ ip route | grep 224
 docker exec raspi-rtp-sender curl -v http://192.168.1.10:8000/status
 ```
 
-### フォーマット検出が失敗する
+### フォーマット不一致で音が出ない
 
-ログに以下が出ない場合:
-```
-[INFO] Detected format: ...
-```
+SDPのフォーマット情報がPipeWire設定と異なると、Magic Box側で正しくデコードできません。
 
-PipeWireの送信を確認:
-```bash
-pactl list sinks | grep -A 5 "RTP Network Sink"
-wpctl status | grep "RTP"
-```
+1. PipeWireの設定を確認:
+   ```bash
+   cat ~/.config/pipewire/pipewire.conf.d/rtp-sink.conf
+   ```
 
-## 環境変数一覧
-
-| 変数 | デフォルト | 説明 |
-|------|-----------|------|
-| `RTP_RECV_MULTICAST_GROUP` | `224.0.0.56` | PipeWireのマルチキャストグループ |
-| `RTP_RECV_PORT` | `46000` | 受信ポート |
-| `MAGIC_BOX_HOST` | `192.168.1.10` | Magic BoxのIPアドレス |
-| `MAGIC_BOX_API_PORT` | `8000` | Magic BoxのREST APIポート |
-| `RTP_SEND_PORT` | `46001` | Magic Boxへの送信ポート |
-| `AUTO_REGISTER` | `true` | 起動時に自動登録 |
-| `SEND_SDP_ON_RATE_CHANGE` | `true` | レート変更時にSDP再送信 |
-| `LOG_LEVEL` | `INFO` | ログレベル (DEBUG/INFO/WARNING/ERROR) |
+2. docker-compose.ymlの環境変数と比較して一致させる
 
 ## クリーンアップ
 
 ```bash
 # コンテナ停止・削除
-cd docker/raspi
-docker compose -f docker-compose.raspi-sender.yml down
+cd docker/local/raspi-simulation
+docker compose down
 
 # イメージ削除
 docker rmi raspi-rtp-sender:latest
 
 # ログ削除
 rm -rf logs/rtp-sender
-```
-
-## Docker rtp-senderとの連携
-
-1. PipeWireでRTP送信開始（`docs/setup/raspi/pipewire_rtp_sender.md` の設定）
-2. Docker rtp-senderが自動受信＆Magic Boxに転送
-
-```bash
-# Docker起動
-cd docker/raspi
-docker compose -f docker-compose.raspi-sender.yml up -d
-
-# ログ確認（フォーマット検出されるはず）
-docker logs -f raspi-rtp-sender
 ```
 
 ## 本番RasPi展開

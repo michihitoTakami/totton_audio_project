@@ -15,8 +15,9 @@
 #   docker compose up -d --build
 #
 # 前提条件:
-#   - PCのPipeWireが224.0.0.56:46000にRTP送信している (既に設定済み)
+#   - PCのPipeWireが224.0.0.56:46000にRTP送信している
 #   - Magic BoxがREST APIで待機している
+#   - オーディオフォーマット設定がPipeWire設定と一致していること
 #
 
 services:
@@ -39,11 +40,17 @@ services:
       # 送信設定（Magic Boxへ）
       - MAGIC_BOX_HOST=192.168.1.10  # Magic BoxのIPアドレス（要変更）
       - MAGIC_BOX_API_PORT=8000
-      - RTP_SEND_PORT=46001  # 送信ポート
+      - RTP_SEND_PORT=46001
 
-      # 動作モード
-      - AUTO_REGISTER=true  # 起動時に自動的にMagic BoxにSDP送信
-      - SEND_SDP_ON_RATE_CHANGE=true  # レート変更時にSDP再送信
+      # オーディオフォーマット設定
+      # ⚠️ PipeWireのrtp-sink.conf設定と一致させること！
+      - RTP_SAMPLE_RATE=44100    # audio.rate と一致
+      - RTP_CHANNELS=2           # audio.channels と一致
+      - RTP_BITS_PER_SAMPLE=16   # format: S16=16, S24=24, S32=32
+      - RTP_PAYLOAD_TYPE=127     # 動的ペイロードタイプ
+
+      # セッションID
+      - RTP_SESSION_ID=raspi-uac2
 
       # ログレベル
       - LOG_LEVEL=INFO
