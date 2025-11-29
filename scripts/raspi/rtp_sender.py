@@ -113,12 +113,12 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
     """複数のRTPパケットからフォーマットを推定
 
     Args:
-        packets: RTPパケットのリスト
+        packets: RTPパケットのリスト（最低2パケット推奨）
 
     Returns:
         (sample_rate, channels, bits_per_sample)
     """
-    if not packets:
+    if len(packets) < 2:
         return 44100, 2, 16
 
     # 最初のパケットを解析
@@ -128,51 +128,92 @@ def detect_format_from_rtp(packets: list) -> Tuple[int, int, int]:
 
     payload_size = len(packets[0]) - header["header_size"]
 
-    # L16フォーマット推定 (Big Endian, 16bit)
-    bits_per_sample = 16
+    # チャンネル数とビット深度の候補
+    # 一般的な組み合わせを試行
+    format_candidates = [
+        (2, 16),  # ステレオ 16bit (最も一般的)
+        (2, 24),  # ステレオ 24bit
+        (2, 32),  # ステレオ 32bit
+        (1, 16),  # モノラル 16bit
+        (1, 24),  # モノラル 24bit
+    ]
 
-    # チャンネル数推定（仮定: ステレオ）
-    channels = 2
+    # サンプルレート候補
+    common_rates = [44100, 48000, 88200, 96000, 176400, 192000]
 
-    # サンプルレート推定
-    # RTPタイムスタンプの差からサンプルレートを逆算
-    # L16の場合、RTP clock rate = sample rate なので、
-    # ts_diff = パケット間のサンプル数
-    if len(packets) >= 2:
-        header2 = parse_rtp_header(packets[1])
-        if header2:
-            ts_diff = header2["timestamp"] - header["timestamp"]
-            # ペイロードから実際のサンプル数を計算
-            samples_in_packet = payload_size // (channels * (bits_per_sample // 8))
+    # 複数パケットからタイムスタンプ差を収集
+    ts_diffs = []
+    for i in range(1, min(len(packets), 5)):  # 最大4ペアを解析
+        h1 = parse_rtp_header(packets[i - 1])
+        h2 = parse_rtp_header(packets[i])
+        if h1 and h2:
+            # タイムスタンプのラップアラウンドに対応
+            ts1, ts2 = h1["timestamp"], h2["timestamp"]
+            if ts2 >= ts1:
+                ts_diff = ts2 - ts1
+            else:
+                # ラップアラウンド発生
+                ts_diff = (0x100000000 - ts1) + ts2
 
-            if samples_in_packet > 0 and ts_diff > 0:
-                # タイムスタンプ差 ≈ パケット内サンプル数 であるべき
-                # タイムスタンプ差をそのままサンプルレートの候補として扱う
-                # 複数パケットから平均を取るのが理想だが、ここでは ts_diff を基準にする
+            if ts_diff > 0 and ts_diff < 100000:  # 異常値を除外
+                ts_diffs.append(ts_diff)
 
-                # RTPのタイムスタンプはclock rate単位なので、
-                # 実際のサンプルレートはパケット送信間隔から推定
-                # 一般的なレートとの最近傍マッチング
-                common_rates = [44100, 48000, 88200, 96000, 176400, 192000]
+    if not ts_diffs:
+        return 44100, 2, 16
 
-                # ts_diff が非常に小さい場合（例: 480サンプル/10ms @ 48kHz）、
-                # これは1パケットあたりのサンプル数を示している
-                # 実際のサンプルレートは、パケット送信レートから推定する必要がある
+    # タイムスタンプ差の平均（= パケットあたりのサンプル数）
+    avg_ts_diff = sum(ts_diffs) // len(ts_diffs)
 
-                # ヒューリスティック: ts_diff が一般的なレートより小さい場合は
-                # パケット間隔から推定（例: 480サンプル/パケット → 48000Hz）
-                if ts_diff < 10000:
-                    # パケット間隔を仮定（典型的には10ms）
-                    # ts_diff サンプル/10ms → ts_diff * 100 サンプル/秒
-                    estimated_rate = ts_diff * 100
-                    sample_rate = min(
-                        common_rates, key=lambda x: abs(x - estimated_rate)
-                    )
-                else:
-                    # ts_diff が大きい場合は直接使用
-                    sample_rate = min(common_rates, key=lambda x: abs(x - ts_diff))
+    # 各フォーマット候補について、一貫性をチェック
+    best_match = None
+    best_score = float("inf")
 
-                return sample_rate, channels, bits_per_sample
+    for channels, bits_per_sample in format_candidates:
+        bytes_per_sample = bits_per_sample // 8
+        # このフォーマットでのパケットあたりのサンプル数
+        samples_in_packet = payload_size // (channels * bytes_per_sample)
+
+        if samples_in_packet <= 0:
+            continue
+
+        # タイムスタンプ差がサンプル数と一致するか確認
+        # L16/L24の場合、RTP clock rate = sample rateなので、
+        # ts_diff ≈ samples_in_packet のはず
+        if abs(avg_ts_diff - samples_in_packet) > samples_in_packet * 0.1:
+            # 10%以上のずれは不整合
+            continue
+
+        # このフォーマットが妥当なので、サンプルレートを推定
+        # 一般的なパケット間隔（5ms, 10ms, 20ms）を想定
+        packet_intervals_ms = [5, 10, 20, 2.5]  # ms
+
+        for interval_ms in packet_intervals_ms:
+            # interval_ms ミリ秒でavg_ts_diffサンプル
+            # → 1秒あたり: avg_ts_diff * (1000 / interval_ms)
+            estimated_rate = int(avg_ts_diff * (1000 / interval_ms))
+
+            # 最も近い一般的なレートを探す
+            closest_rate = min(common_rates, key=lambda x: abs(x - estimated_rate))
+
+            # 誤差を計算
+            error = abs(closest_rate - estimated_rate)
+            relative_error = error / closest_rate
+
+            # 相対誤差が5%以下なら候補とする
+            if relative_error < 0.05:
+                score = relative_error
+                if score < best_score:
+                    best_score = score
+                    best_match = (closest_rate, channels, bits_per_sample)
+
+    if best_match:
+        return best_match
+
+    # フォールバック: タイムスタンプ差が小さい場合、10ms間隔と仮定
+    if avg_ts_diff < 10000:
+        estimated_rate = avg_ts_diff * 100
+        sample_rate = min(common_rates, key=lambda x: abs(x - estimated_rate))
+        return sample_rate, 2, 16
 
     # デフォルト
     return 44100, 2, 16
@@ -256,8 +297,11 @@ def main():
     detection_packets = []
     detected = False
     current_sample_rate = None
+    current_channels = None
+    current_bits_per_sample = None
+    current_ssrc = None
+    last_seq_num = None
     packet_count = 0
-    rate_check_interval = 1000  # 1000パケットごとにレート変更をチェック
 
     logger.info("Waiting for RTP packets...")
 
@@ -267,6 +311,11 @@ def main():
             data, addr = recv_sock.recvfrom(2048)
             packet_count += 1
 
+            # 現在のパケットのヘッダーを解析
+            header = parse_rtp_header(data)
+            if not header:
+                continue
+
             # 初回フォーマット検出
             if not detected and len(detection_packets) < 10:
                 detection_packets.append(data)
@@ -274,8 +323,7 @@ def main():
                     sample_rate, channels, bits_per_sample = detect_format_from_rtp(
                         detection_packets
                     )
-                    header = parse_rtp_header(data)
-                    payload_type = header["payload_type"] if header else 127
+                    payload_type = header["payload_type"]
 
                     logger.info(
                         f"Detected format: {sample_rate}Hz, {channels}ch, {bits_per_sample}bit, PT{payload_type}"
@@ -287,46 +335,77 @@ def main():
                         ):
                             detected = True
                             current_sample_rate = sample_rate
+                            current_channels = channels
+                            current_bits_per_sample = bits_per_sample
+                            current_ssrc = header["ssrc"]
+                            last_seq_num = header["sequence_number"]
                         else:
                             logger.warning("Failed to register session, will retry...")
                             detection_packets = []  # リトライのためリセット
 
             # 動的レート変更検出（SEND_SDP_ON_RATE_CHANGE が有効な場合）
-            elif (
-                detected
-                and SEND_SDP_ON_RATE_CHANGE
-                and packet_count % rate_check_interval == 0
-            ):
-                # 定期的に最新のパケットバッファでレート再推定
-                recent_packets = (
-                    detection_packets[-10:]
-                    if len(detection_packets) >= 10
-                    else detection_packets
-                )
-                if len(recent_packets) >= 2:
-                    new_rate, channels, bits_per_sample = detect_format_from_rtp(
-                        recent_packets
+            elif detected and SEND_SDP_ON_RATE_CHANGE:
+                # SSRC変更を検出（ストリーム切り替えの兆候）
+                if header["ssrc"] != current_ssrc:
+                    logger.info(
+                        f"SSRC change detected: {current_ssrc} → {header['ssrc']}"
                     )
-                    header = parse_rtp_header(data)
-                    payload_type = header["payload_type"] if header else 127
+                    # 新しいストリームとして再検出
+                    detection_packets = [data]
+                    detected = False
+                    current_ssrc = header["ssrc"]
+                    continue
 
-                    if new_rate != current_sample_rate:
-                        logger.info(
-                            f"Rate change detected: {current_sample_rate}Hz → {new_rate}Hz"
+                # シーケンス番号の大幅な不連続を検出
+                if last_seq_num is not None:
+                    expected_seq = (last_seq_num + 1) & 0xFFFF
+                    actual_seq = header["sequence_number"]
+                    seq_diff = abs(actual_seq - expected_seq)
+
+                    # 10パケット以上の飛びはストリーム切り替えの可能性
+                    if seq_diff > 10 and seq_diff < 60000:  # ラップアラウンドを考慮
+                        logger.warning(
+                            f"Sequence discontinuity detected: expected {expected_seq}, got {actual_seq}"
                         )
-                        if send_sdp_to_magicbox(
-                            new_rate, channels, bits_per_sample, payload_type
-                        ):
-                            current_sample_rate = new_rate
-                            logger.info("SDP updated successfully")
-                        else:
-                            logger.warning("Failed to update SDP")
+                        # 再検出モードに移行
+                        detection_packets = [data]
+                        detected = False
+                        last_seq_num = actual_seq
+                        continue
 
-            # パケットバッファを更新（直近10パケットを保持）
-            if detected:
+                last_seq_num = header["sequence_number"]
+
+                # パケットバッファを更新（直近10パケットを保持）
                 detection_packets.append(data)
                 if len(detection_packets) > 10:
                     detection_packets.pop(0)
+
+                # 定期的にフォーマット再確認（100パケットごと）
+                if packet_count % 100 == 0 and len(detection_packets) >= 10:
+                    new_rate, new_channels, new_bits = detect_format_from_rtp(
+                        detection_packets
+                    )
+
+                    # フォーマット変更を検出
+                    if (
+                        new_rate != current_sample_rate
+                        or new_channels != current_channels
+                        or new_bits != current_bits_per_sample
+                    ):
+                        logger.info(
+                            f"Format change detected: {current_sample_rate}Hz/{current_channels}ch/{current_bits_per_sample}bit "
+                            f"→ {new_rate}Hz/{new_channels}ch/{new_bits}bit"
+                        )
+                        payload_type = header["payload_type"]
+                        if send_sdp_to_magicbox(
+                            new_rate, new_channels, new_bits, payload_type
+                        ):
+                            current_sample_rate = new_rate
+                            current_channels = new_channels
+                            current_bits_per_sample = new_bits
+                            logger.info("SDP updated successfully")
+                        else:
+                            logger.warning("Failed to update SDP")
 
             # RTPパケットをMagic Boxに転送
             if detected:
