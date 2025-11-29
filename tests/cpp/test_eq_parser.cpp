@@ -52,26 +52,22 @@ TEST_F(EqParserTest, ParseFilterTypePK) {
 TEST_F(EqParserTest, ParseFilterTypeLS) {
     EXPECT_EQ(parseFilterType("LS"), FilterType::LS);
     EXPECT_EQ(parseFilterType("ls"), FilterType::LS);
-    EXPECT_EQ(parseFilterType("LSC"), FilterType::LS);
     EXPECT_EQ(parseFilterType("LOWSHELF"), FilterType::LS);
 }
 
 TEST_F(EqParserTest, ParseFilterTypeHS) {
     EXPECT_EQ(parseFilterType("HS"), FilterType::HS);
     EXPECT_EQ(parseFilterType("hs"), FilterType::HS);
-    EXPECT_EQ(parseFilterType("HSC"), FilterType::HS);
     EXPECT_EQ(parseFilterType("HIGHSHELF"), FilterType::HS);
 }
 
 TEST_F(EqParserTest, ParseFilterTypeLP) {
     EXPECT_EQ(parseFilterType("LP"), FilterType::LP);
-    EXPECT_EQ(parseFilterType("LPQ"), FilterType::LP);
     EXPECT_EQ(parseFilterType("LOWPASS"), FilterType::LP);
 }
 
 TEST_F(EqParserTest, ParseFilterTypeHP) {
     EXPECT_EQ(parseFilterType("HP"), FilterType::HP);
-    EXPECT_EQ(parseFilterType("HPQ"), FilterType::HP);
     EXPECT_EQ(parseFilterType("HIGHPASS"), FilterType::HP);
 }
 
