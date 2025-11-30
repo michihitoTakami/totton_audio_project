@@ -1676,7 +1676,7 @@
           "mockup"
         ],
         "summary": "Get Dashboard",
-        "description": "Return dashboard mockup page",
+        "description": "Return dashboard mockup page (static HTML)",
         "operationId": "get_dashboard_mockup_dashboard_get",
         "responses": {
           "200": {

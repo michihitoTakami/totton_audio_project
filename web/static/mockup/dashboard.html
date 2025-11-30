@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Box - Dashboard</title>
+    <link rel="stylesheet" href="/static/mockup/styles.css">
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="logo">
+            <h1>MAGIC BOX</h1>
+            <div class="tagline">Ultimate Audio Experience</div>
+        </div>
+        <a href="dashboard.html" class="nav-item active">📊 ダッシュボード</a>
+        <a href="headphones.html" class="nav-item">🎧 ヘッドホン選択</a>
+        <a href="eq.html" class="nav-item">🎚️ EQ設定</a>
+        <a href="system.html" class="nav-item">⚙️ システム設定</a>
+        <a href="status.html" class="nav-item">📈 ステータス監視</a>
+        <a href="rtp.html" class="nav-item">🌐 RTP設定</a>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="page-header">
+            <h2>Dashboard</h2>
+            <div class="subtitle">システム概要と主要機能</div>
+        </div>
+
+        <!-- Current Status (bigger text, outside card) -->
+        <div class="current-status">
+            <h3>現在の設定</h3>
+            <div class="status-display">
+                <div class="status-display-item">
+                    <div class="label">ヘッドホン</div>
+                    <div class="value" id="currentHeadphone">Sony MDR-Z1R</div>
+                </div>
+                <div class="status-display-item">
+                    <div class="label">処理モード</div>
+                    <div class="value" id="processingMode">Low Latency</div>
+                </div>
+                <div class="status-display-item">
+                    <div class="label">クロスフィード</div>
+                    <div class="value" id="crossfeedStatus">OFF</div>
+                </div>
+                <div class="status-display-item">
+                    <div class="label">サンプリングレート</div>
+                    <div class="value">44.1k → 705.6k</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Headphone Selection (bigger title) -->
+        <div class="control-section">
+            <h2>🎧 ヘッドホン選択</h2>
+            <div class="description">使用するヘッドホンを検索・選択してください</div>
+            <div class="search-container">
+                <input type="text" id="headphoneSearch" class="search-input" placeholder="ヘッドホン名で検索..." autocomplete="off">
+                <div class="search-icon">🔍</div>
+            </div>
+            <div class="search-results" id="searchResults">
+                <div class="search-result-item" data-name="Sony MDR-Z1R">
+                    <div class="result-name">Sony MDR-Z1R</div>
+                    <div class="result-meta">OPRA • KB5000_7</div>
+                </div>
+                <div class="search-result-item" data-name="Sennheiser HD 800">
+                    <div class="result-name">Sennheiser HD 800</div>
+                    <div class="result-meta">OPRA • KB5000_7</div>
+                </div>
+                <div class="search-result-item" data-name="Audeze LCD-5">
+                    <div class="result-name">Audeze LCD-5</div>
+                    <div class="result-meta">OPRA • KB5000_7</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Crossfeed (bigger title, toggle separate) -->
+        <div class="control-section">
+            <h2>🎚️ クロスフィード</h2>
+            <div class="description">HRTF処理による自然な音場再現</div>
+
+            <!-- On/Off Toggle -->
+            <div class="toggle-group">
+                <label class="toggle-label">
+                    <input type="checkbox" id="crossfeedToggle">
+                    <span class="toggle-switch"></span>
+                    <span class="toggle-text">クロスフィードを有効化</span>
+                </label>
+            </div>
+
+            <!-- Head Size (shown when enabled) -->
+            <div id="headSizeSection" style="display:none; margin-top: 24px;">
+                <div class="head-size-label">頭のサイズ</div>
+                <div class="control-buttons">
+                    <button class="control-btn" data-size="xs">XS</button>
+                    <button class="control-btn active" data-size="s">S</button>
+                    <button class="control-btn" data-size="m">M</button>
+                    <button class="control-btn" data-size="l">L</button>
+                    <button class="control-btn" data-size="xl">XL</button>
+                </div>
+                <div class="control-hint">極小 (XS) から 極大 (XL) まで選択可能</div>
+            </div>
+        </div>
+
+        <!-- Low Latency Mode (bigger title) -->
+        <div class="control-section">
+            <h2>⚡ 低遅延モード</h2>
+            <div class="description">パーティション処理による低レイテンシ動作</div>
+            <div class="toggle-group">
+                <label class="toggle-label">
+                    <input type="checkbox" id="lowLatencyToggle" checked>
+                    <span class="toggle-switch"></span>
+                    <span class="toggle-text">低遅延モードを有効化</span>
+                </label>
+            </div>
+            <div class="control-hint">※ クロスフィード有効時は使用できません</div>
+        </div>
+
+        <!-- System Status -->
+        <div class="status-grid">
+            <div class="status-card ok">
+                <div class="card-title">エンジン状態</div>
+                <div class="card-value">RUNNING</div>
+                <div class="card-subtitle">正常動作中</div>
+            </div>
+            <div class="status-card ok">
+                <div class="card-title">処理速度</div>
+                <div class="card-value">28.5x</div>
+                <div class="card-subtitle">Realtime</div>
+            </div>
+            <div class="status-card ok">
+                <div class="card-title">バッファレイテンシ</div>
+                <div class="card-value">12ms</div>
+                <div class="card-subtitle">Low Latency</div>
+            </div>
+            <div class="status-card">
+                <div class="card-title">エラーカウント</div>
+                <div class="card-value">0</div>
+                <div class="card-subtitle">No Errors</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/mockup/dashboard.js"></script>
+</body>
+</html>

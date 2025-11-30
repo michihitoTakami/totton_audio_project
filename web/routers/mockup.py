@@ -1,10 +1,11 @@
 """Router for UI mockup pages."""
 
+from pathlib import Path
+
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 
 from web.templates.mockup import (
-    get_dashboard_html,
     get_eq_html,
     get_headphones_html,
     get_rtp_html,
@@ -17,8 +18,11 @@ router = APIRouter(prefix="/mockup", tags=["mockup"])
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
-    """Return dashboard mockup page"""
-    return get_dashboard_html()
+    """Return dashboard mockup page (static HTML)"""
+    dashboard_path = (
+        Path(__file__).parent.parent / "static" / "mockup" / "dashboard.html"
+    )
+    return FileResponse(dashboard_path)
 
 
 @router.get("/headphones", response_class=HTMLResponse)
