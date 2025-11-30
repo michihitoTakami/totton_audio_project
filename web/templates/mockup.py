@@ -1,9 +1,12 @@
 """Magic Box UI Mockup Templates."""
 
+from .mockup_styles import get_common_styles
+
 
 def get_dashboard_html() -> str:
     """Return dashboard page HTML (top page with main features)"""
-    return """
+    common_styles = get_common_styles()
+    return f"""
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -11,154 +14,7 @@ def get_dashboard_html() -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Magic Box - Dashboard</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #eee;
-            display: flex;
-            min-height: 100vh;
-        }
-
-        /* Sidebar */
-        .sidebar {
-            width: 240px;
-            background: #0f1419;
-            border-right: 1px solid #1e2a3a;
-            display: flex;
-            flex-direction: column;
-            padding: 20px 0;
-        }
-        .logo {
-            padding: 0 20px 30px;
-            border-bottom: 1px solid #1e2a3a;
-            margin-bottom: 20px;
-        }
-        .logo h1 {
-            color: #00d4ff;
-            font-size: 1.4em;
-            margin-bottom: 4px;
-        }
-        .logo .tagline {
-            color: #666;
-            font-size: 11px;
-        }
-        .nav-item {
-            padding: 12px 20px;
-            color: #aaa;
-            text-decoration: none;
-            display: block;
-            transition: all 0.2s;
-            border-left: 3px solid transparent;
-        }
-        .nav-item:hover {
-            background: #1a2332;
-            color: #00d4ff;
-        }
-        .nav-item.active {
-            background: #1a2332;
-            color: #00d4ff;
-            border-left-color: #00d4ff;
-        }
-
-        /* Main content */
-        .main-content {
-            flex: 1;
-            padding: 40px;
-            overflow-y: auto;
-        }
-        .page-header {
-            margin-bottom: 30px;
-        }
-        .page-header h2 {
-            font-size: 2em;
-            margin-bottom: 8px;
-        }
-        .page-header .subtitle {
-            color: #888;
-            font-size: 14px;
-        }
-
-        /* Quick status cards */
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .status-card {
-            background: rgba(22, 33, 62, 0.6);
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid rgba(0, 212, 255, 0.1);
-        }
-        .status-card .card-title {
-            font-size: 12px;
-            color: #888;
-            text-transform: uppercase;
-            margin-bottom: 12px;
-            letter-spacing: 1px;
-        }
-        .status-card .card-value {
-            font-size: 28px;
-            font-weight: 600;
-            color: #00d4ff;
-            margin-bottom: 8px;
-        }
-        .status-card .card-subtitle {
-            font-size: 13px;
-            color: #666;
-        }
-        .status-card.ok .card-value { color: #00ff88; }
-        .status-card.warning .card-value { color: #ffaa00; }
-
-        /* Quick action buttons */
-        .quick-actions {
-            background: rgba(22, 33, 62, 0.6);
-            border-radius: 12px;
-            padding: 24px;
-            border: 1px solid rgba(0, 212, 255, 0.1);
-        }
-        .quick-actions h3 {
-            font-size: 14px;
-            color: #888;
-            text-transform: uppercase;
-            margin-bottom: 16px;
-            letter-spacing: 1px;
-        }
-        .action-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 12px;
-        }
-        .action-btn {
-            padding: 20px;
-            border: 1px solid #1e2a3a;
-            border-radius: 8px;
-            background: #0f3460;
-            color: #eee;
-            text-decoration: none;
-            display: block;
-            transition: all 0.2s;
-        }
-        .action-btn:hover {
-            background: #1a4b7c;
-            border-color: #00d4ff;
-            transform: translateY(-2px);
-        }
-        .action-btn .icon {
-            font-size: 24px;
-            margin-bottom: 8px;
-        }
-        .action-btn .title {
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        .action-btn .desc {
-            font-size: 11px;
-            color: #888;
-        }
+{common_styles}
     </style>
 </head>
 <body>
@@ -168,12 +24,12 @@ def get_dashboard_html() -> str:
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <nav>
-            <a href="/dashboard" class="nav-item active">📊 ダッシュボード</a>
-            <a href="/headphones" class="nav-item">🎧 ヘッドホン選択</a>
-            <a href="/eq" class="nav-item">🎚️ EQ設定</a>
-            <a href="/system" class="nav-item">⚙️ システム設定</a>
-            <a href="/status" class="nav-item">📈 ステータス監視</a>
-            <a href="/rtp" class="nav-item">🌐 RTP設定</a>
+            <a href="/mockup/dashboard" class="nav-item active">📊 ダッシュボード</a>
+            <a href="/mockup/headphones" class="nav-item">🎧 ヘッドホン選択</a>
+            <a href="/mockup/eq" class="nav-item">🎚️ EQ設定</a>
+            <a href="/mockup/system" class="nav-item">⚙️ システム設定</a>
+            <a href="/mockup/status" class="nav-item">📈 ステータス監視</a>
+            <a href="/mockup/rtp" class="nav-item">🌐 RTP設定</a>
         </nav>
     </aside>
 
@@ -212,25 +68,25 @@ def get_dashboard_html() -> str:
         <div class="quick-actions">
             <h3>クイックアクション</h3>
             <div class="action-grid">
-                <a href="/headphones" class="action-btn">
+                <a href="/mockup/headphones" class="action-btn">
                     <div class="icon">🎧</div>
                     <div class="title">ヘッドホンを選ぶ</div>
                     <div class="desc">OPRAデータベースから選択</div>
                 </a>
 
-                <a href="/eq" class="action-btn">
+                <a href="/mockup/eq" class="action-btn">
                     <div class="icon">🎚️</div>
                     <div class="title">EQを調整</div>
                     <div class="desc">お好みに合わせて微調整</div>
                 </a>
 
-                <a href="/system" class="action-btn">
+                <a href="/mockup/system" class="action-btn">
                     <div class="icon">⚙️</div>
                     <div class="title">システム設定</div>
                     <div class="desc">詳細な動作設定</div>
                 </a>
 
-                <a href="/status" class="action-btn">
+                <a href="/mockup/status" class="action-btn">
                     <div class="icon">📈</div>
                     <div class="title">ステータス確認</div>
                     <div class="desc">リアルタイム監視</div>
@@ -432,12 +288,12 @@ def get_headphones_html() -> str:
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <nav>
-            <a href="/dashboard" class="nav-item">📊 ダッシュボード</a>
-            <a href="/headphones" class="nav-item active">🎧 ヘッドホン選択</a>
-            <a href="/eq" class="nav-item">🎚️ EQ設定</a>
-            <a href="/system" class="nav-item">⚙️ システム設定</a>
-            <a href="/status" class="nav-item">📈 ステータス監視</a>
-            <a href="/rtp" class="nav-item">🌐 RTP設定</a>
+            <a href="/mockup/dashboard" class="nav-item">📊 ダッシュボード</a>
+            <a href="/mockup/headphones" class="nav-item active">🎧 ヘッドホン選択</a>
+            <a href="/mockup/eq" class="nav-item">🎚️ EQ設定</a>
+            <a href="/mockup/system" class="nav-item">⚙️ システム設定</a>
+            <a href="/mockup/status" class="nav-item">📈 ステータス監視</a>
+            <a href="/mockup/rtp" class="nav-item">🌐 RTP設定</a>
         </nav>
     </aside>
 
@@ -765,12 +621,12 @@ def get_eq_html() -> str:
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <nav>
-            <a href="/dashboard" class="nav-item">📊 ダッシュボード</a>
-            <a href="/headphones" class="nav-item">🎧 ヘッドホン選択</a>
-            <a href="/eq" class="nav-item active">🎚️ EQ設定</a>
-            <a href="/system" class="nav-item">⚙️ システム設定</a>
-            <a href="/status" class="nav-item">📈 ステータス監視</a>
-            <a href="/rtp" class="nav-item">🌐 RTP設定</a>
+            <a href="/mockup/dashboard" class="nav-item">📊 ダッシュボード</a>
+            <a href="/mockup/headphones" class="nav-item">🎧 ヘッドホン選択</a>
+            <a href="/mockup/eq" class="nav-item active">🎚️ EQ設定</a>
+            <a href="/mockup/system" class="nav-item">⚙️ システム設定</a>
+            <a href="/mockup/status" class="nav-item">📈 ステータス監視</a>
+            <a href="/mockup/rtp" class="nav-item">🌐 RTP設定</a>
         </nav>
     </aside>
 
@@ -1094,12 +950,12 @@ def get_system_html() -> str:
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <nav>
-            <a href="/dashboard" class="nav-item">📊 ダッシュボード</a>
-            <a href="/headphones" class="nav-item">🎧 ヘッドホン選択</a>
-            <a href="/eq" class="nav-item">🎚️ EQ設定</a>
-            <a href="/system" class="nav-item active">⚙️ システム設定</a>
-            <a href="/status" class="nav-item">📈 ステータス監視</a>
-            <a href="/rtp" class="nav-item">🌐 RTP設定</a>
+            <a href="/mockup/dashboard" class="nav-item">📊 ダッシュボード</a>
+            <a href="/mockup/headphones" class="nav-item">🎧 ヘッドホン選択</a>
+            <a href="/mockup/eq" class="nav-item">🎚️ EQ設定</a>
+            <a href="/mockup/system" class="nav-item active">⚙️ システム設定</a>
+            <a href="/mockup/status" class="nav-item">📈 ステータス監視</a>
+            <a href="/mockup/rtp" class="nav-item">🌐 RTP設定</a>
         </nav>
     </aside>
 
@@ -1389,12 +1245,12 @@ def get_status_html() -> str:
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <nav>
-            <a href="/dashboard" class="nav-item">📊 ダッシュボード</a>
-            <a href="/headphones" class="nav-item">🎧 ヘッドホン選択</a>
-            <a href="/eq" class="nav-item">🎚️ EQ設定</a>
-            <a href="/system" class="nav-item">⚙️ システム設定</a>
-            <a href="/status" class="nav-item active">📈 ステータス監視</a>
-            <a href="/rtp" class="nav-item">🌐 RTP設定</a>
+            <a href="/mockup/dashboard" class="nav-item">📊 ダッシュボード</a>
+            <a href="/mockup/headphones" class="nav-item">🎧 ヘッドホン選択</a>
+            <a href="/mockup/eq" class="nav-item">🎚️ EQ設定</a>
+            <a href="/mockup/system" class="nav-item">⚙️ システム設定</a>
+            <a href="/mockup/status" class="nav-item active">📈 ステータス監視</a>
+            <a href="/mockup/rtp" class="nav-item">🌐 RTP設定</a>
         </nav>
     </aside>
 
@@ -1746,12 +1602,12 @@ def get_rtp_html() -> str:
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <nav>
-            <a href="/dashboard" class="nav-item">📊 ダッシュボード</a>
-            <a href="/headphones" class="nav-item">🎧 ヘッドホン選択</a>
-            <a href="/eq" class="nav-item">🎚️ EQ設定</a>
-            <a href="/system" class="nav-item">⚙️ システム設定</a>
-            <a href="/status" class="nav-item">📈 ステータス監視</a>
-            <a href="/rtp" class="nav-item active">🌐 RTP設定</a>
+            <a href="/mockup/dashboard" class="nav-item">📊 ダッシュボード</a>
+            <a href="/mockup/headphones" class="nav-item">🎧 ヘッドホン選択</a>
+            <a href="/mockup/eq" class="nav-item">🎚️ EQ設定</a>
+            <a href="/mockup/system" class="nav-item">⚙️ システム設定</a>
+            <a href="/mockup/status" class="nav-item">📈 ステータス監視</a>
+            <a href="/mockup/rtp" class="nav-item active">🌐 RTP設定</a>
         </nav>
     </aside>
 
