@@ -1670,6 +1670,138 @@
         }
       }
     },
+    "/mockup/dashboard": {
+      "get": {
+        "tags": [
+          "mockup"
+        ],
+        "summary": "Get Dashboard",
+        "description": "Return dashboard mockup page",
+        "operationId": "get_dashboard_mockup_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mockup/headphones": {
+      "get": {
+        "tags": [
+          "mockup"
+        ],
+        "summary": "Get Headphones",
+        "description": "Return headphones selection mockup page",
+        "operationId": "get_headphones_mockup_headphones_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mockup/eq": {
+      "get": {
+        "tags": [
+          "mockup"
+        ],
+        "summary": "Get Eq",
+        "description": "Return EQ settings mockup page",
+        "operationId": "get_eq_mockup_eq_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mockup/system": {
+      "get": {
+        "tags": [
+          "mockup"
+        ],
+        "summary": "Get System",
+        "description": "Return system settings mockup page",
+        "operationId": "get_system_mockup_system_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mockup/status": {
+      "get": {
+        "tags": [
+          "mockup"
+        ],
+        "summary": "Get Status",
+        "description": "Return status monitoring mockup page",
+        "operationId": "get_status_mockup_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mockup/rtp": {
+      "get": {
+        "tags": [
+          "mockup"
+        ],
+        "summary": "Get Rtp",
+        "description": "Return RTP settings mockup page",
+        "operationId": "get_rtp_mockup_rtp_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -4669,6 +4801,10 @@
     {
       "name": "input-mode",
       "description": "Switch between PipeWire and RTP input sources"
+    },
+    {
+      "name": "mockup",
+      "description": "UI mockup pages for Magic Box management interface"
     },
     {
       "name": "legacy",
