@@ -131,15 +131,14 @@ body::before {
 
 /* Current Status (dashboard specific) */
 .current-status {
-    margin-bottom: 40px;
+    margin-bottom: 48px;
 }
 
 .current-status h3 {
-    font-size: 14px;
-    color: rgba(128, 160, 160, 0.8);
-    margin-bottom: 16px;
-    text-transform: uppercase;
-    letter-spacing: 2px;
+    font-size: 24px;
+    color: #00ffff;
+    margin-bottom: 20px;
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
 }
 
 .status-display {
@@ -445,6 +444,283 @@ body::before {
 .status-card.warning .card-value {
     color: #ffaa00;
     text-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+}
+
+/* EQ Page Styles */
+.eq-profile-card {
+    background: rgba(18, 22, 26, 0.9);
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 4px;
+    padding: 20px;
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
+}
+
+.profile-header {
+    margin-bottom: 12px;
+}
+
+.profile-name {
+    font-size: 20px;
+    color: #00ffff;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.profile-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.meta-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    background: rgba(0, 255, 136, 0.2);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    border-radius: 2px;
+    font-size: 10px;
+    color: #00ff88;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.meta-author {
+    font-size: 12px;
+    color: rgba(128, 160, 160, 0.8);
+}
+
+.profile-license {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(0, 255, 255, 0.1);
+    font-size: 11px;
+    color: rgba(128, 160, 160, 0.7);
+}
+
+.license-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    background: rgba(0, 212, 255, 0.2);
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    border-radius: 2px;
+    font-size: 9px;
+    color: #00d4ff;
+    margin-right: 8px;
+    font-weight: 600;
+}
+
+/* Preamp Control */
+.preamp-control {
+    background: rgba(18, 22, 26, 0.6);
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    border-radius: 4px;
+    padding: 20px;
+}
+
+.preamp-display {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.preamp-label {
+    font-size: 13px;
+    color: rgba(128, 160, 160, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.preamp-value {
+    font-size: 24px;
+    color: #00ff88;
+    font-weight: 600;
+    text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+    font-family: 'Courier New', monospace;
+}
+
+.preamp-slider {
+    width: 100%;
+    height: 6px;
+    background: rgba(10, 14, 18, 0.8);
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 3px;
+    outline: none;
+    -webkit-appearance: none;
+    margin-bottom: 12px;
+}
+
+.preamp-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #00ff88;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+    transition: all 0.2s;
+}
+
+.preamp-slider::-webkit-slider-thumb:hover {
+    background: #00ffaa;
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.7);
+    transform: scale(1.1);
+}
+
+.preamp-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: #00ff88;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+    transition: all 0.2s;
+}
+
+.preamp-hint {
+    font-size: 11px;
+    color: rgba(128, 160, 160, 0.6);
+}
+
+.hint-value {
+    color: #00ff88;
+    font-weight: 600;
+}
+
+/* EQ Filters Display */
+.eq-filters-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.eq-filter-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(10, 14, 18, 0.6);
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    border-radius: 4px;
+    padding: 12px 16px;
+    transition: all 0.2s;
+}
+
+.eq-filter-item:hover {
+    border-color: rgba(0, 255, 255, 0.4);
+    background: rgba(10, 14, 18, 0.8);
+}
+
+.filter-index {
+    font-size: 11px;
+    color: rgba(128, 160, 160, 0.7);
+    text-transform: uppercase;
+    min-width: 60px;
+    font-weight: 600;
+}
+
+.filter-params {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.param {
+    padding: 4px 8px;
+    background: rgba(0, 255, 255, 0.1);
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    border-radius: 2px;
+    font-size: 11px;
+    color: rgba(224, 224, 224, 0.9);
+    font-family: 'Courier New', monospace;
+}
+
+.param.type {
+    background: rgba(0, 212, 255, 0.15);
+    border-color: rgba(0, 212, 255, 0.3);
+    color: #00d4ff;
+    font-weight: 600;
+}
+
+.param.gain {
+    background: rgba(0, 255, 136, 0.15);
+    border-color: rgba(0, 255, 136, 0.3);
+    color: #00ff88;
+    font-weight: 600;
+}
+
+/* Action Buttons */
+.action-buttons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+}
+
+.action-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 20px;
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 4px;
+    background: rgba(10, 14, 18, 0.8);
+    cursor: pointer;
+    transition: all 0.3s;
+    font-family: 'Courier New', monospace;
+}
+
+.action-btn .btn-icon {
+    font-size: 24px;
+    filter: drop-shadow(0 0 5px rgba(0, 255, 255, 0.3));
+}
+
+.action-btn .btn-text {
+    font-size: 13px;
+    color: rgba(224, 224, 224, 0.9);
+    font-weight: 600;
+}
+
+.action-btn:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+}
+
+.action-btn.primary {
+    border-color: rgba(0, 255, 136, 0.5);
+}
+
+.action-btn.primary:hover {
+    background: rgba(0, 255, 136, 0.1);
+    border-color: #00ff88;
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+}
+
+.action-btn.primary .btn-text {
+    color: #00ff88;
+}
+
+.action-btn.secondary:hover {
+    background: rgba(0, 255, 255, 0.05);
+    border-color: #00ffff;
+}
+
+.action-btn.danger {
+    border-color: rgba(255, 68, 68, 0.5);
+}
+
+.action-btn.danger:hover {
+    background: rgba(255, 68, 68, 0.1);
+    border-color: #ff4444;
+    box-shadow: 0 0 20px rgba(255, 68, 68, 0.3);
+}
+
+.action-btn.danger .btn-text {
+    color: #ff6b6b;
 }
 
 /* Toast Notifications (animations) */

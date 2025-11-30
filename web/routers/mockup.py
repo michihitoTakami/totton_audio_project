@@ -6,7 +6,6 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, FileResponse
 
 from web.templates.mockup import (
-    get_eq_html,
     get_headphones_html,
     get_rtp_html,
     get_status_html,
@@ -33,8 +32,9 @@ async def get_headphones():
 
 @router.get("/eq", response_class=HTMLResponse)
 async def get_eq():
-    """Return EQ settings mockup page"""
-    return get_eq_html()
+    """Return EQ settings mockup page (static HTML)"""
+    eq_path = Path(__file__).parent.parent / "static" / "mockup" / "eq.html"
+    return FileResponse(eq_path)
 
 
 @router.get("/system", response_class=HTMLResponse)

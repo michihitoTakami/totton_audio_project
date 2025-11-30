@@ -1720,7 +1720,7 @@
           "mockup"
         ],
         "summary": "Get Eq",
-        "description": "Return EQ settings mockup page",
+        "description": "Return EQ settings mockup page (static HTML)",
         "operationId": "get_eq_mockup_eq_get",
         "responses": {
           "200": {
