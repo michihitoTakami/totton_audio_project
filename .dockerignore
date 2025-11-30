@@ -7,11 +7,15 @@
 .gitattributes
 
 # Build artifacts
-build/
 cmake-build-*/
 *.o
 *.a
 *.so
+
+# Exclude most of build/ but keep binaries for Docker
+build/*
+!build/gpu_upsampler_alsa
+!build/gpu_upsampler_daemon
 
 # IDE
 .idea/

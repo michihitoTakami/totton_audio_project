@@ -14,69 +14,9 @@
 #
 
 # =============================================================================
-# Base image selection (override via --build-arg for x86 testing)
+# Runtime Image - Uses pre-built binaries from host
 # =============================================================================
-ARG BASE_IMAGE_DEVEL=nvcr.io/nvidia/l4t-cuda:12.6.68-devel
-ARG BASE_IMAGE_RUNTIME=nvcr.io/nvidia/l4t-cuda:12.6.68-runtime
-
-# =============================================================================
-# Stage 1: Builder
-# =============================================================================
-FROM ${BASE_IMAGE_DEVEL} AS builder
-
-LABEL maintainer="Magic Box Project"
-LABEL stage="builder"
-
-# Environment variables
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Tokyo
-
-# CUDA environment (Jetson Orin = SM 8.7)
-ENV CUDA_ARCHITECTURES=87
-ENV PATH=/usr/local/cuda/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build tools
-    build-essential \
-    cmake \
-    ninja-build \
-    pkg-config \
-    git \
-    # Audio libraries
-    libasound2-dev \
-    libpipewire-0.3-dev \
-    libsndfile1-dev \
-    # ZeroMQ for IPC
-    libzmq3-dev \
-    # Systemd development (for Type=notify)
-    libsystemd-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create build directory
-WORKDIR /build
-
-# Copy project files
-COPY CMakeLists.txt ./
-COPY include/ include/
-COPY src/ src/
-COPY tests/ tests/
-COPY systemd/ systemd/
-
-# Build C++/CUDA components
-RUN cmake -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_ARCHITECTURES=87 \
-    -DCMAKE_INSTALL_PREFIX=/opt/magicbox \
-    -G Ninja \
-    && cmake --build build --parallel $(nproc) \
-    && cmake --install build
-
-# =============================================================================
-# Stage 2: Runtime
-# =============================================================================
-FROM ${BASE_IMAGE_RUNTIME} AS runtime
+FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
 
 LABEL maintainer="Magic Box Project"
 LABEL description="Magic Box Audio Processor for Jetson Orin Nano Super"
@@ -111,32 +51,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built binaries from builder stage
-COPY --from=builder /opt/magicbox /opt/magicbox
-
 # Create app directory
 WORKDIR /opt/magicbox
+RUN mkdir -p bin
+
+# Copy pre-built binaries from host (same architecture)
+COPY build/gpu_upsampler_alsa bin/gpu_upsampler_alsa
+COPY build/gpu_upsampler_daemon bin/gpu_upsampler_daemon
+RUN chmod +x bin/gpu_upsampler_alsa bin/gpu_upsampler_daemon
 
 # Copy data files (filter coefficients + EQ)
 COPY data/coefficients/ data/coefficients/
 COPY data/EQ/ data/EQ/
-COPY config.json ./
+# Use Docker-specific config (pipewireEnabled: false)
+COPY docker/jetson/config.docker.json ./config.json
 
 # Copy Python Control Plane
 COPY web/ web/
-COPY pyproject.toml ./
+COPY scripts/ scripts/
+COPY pyproject.toml uv.lock ./
 
-# Setup Python environment for Control Plane
-RUN python3 -m venv /opt/magicbox/venv \
-    && /opt/magicbox/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/magicbox/venv/bin/pip install --no-cache-dir \
-        fastapi \
-        uvicorn[standard] \
-        httpx \
-        pydantic \
-        numpy \
-        scipy \
-        pyzmq
+# Install uv and setup Python environment
+ENV UV_PROJECT_ENVIRONMENT=/opt/magicbox/venv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && export PATH="$HOME/.local/bin:$PATH" \
+    && uv venv /opt/magicbox/venv \
+    && uv sync --frozen
+
+ENV PATH="/opt/magicbox/venv/bin:$PATH"
 
 # Create non-root user for security
 RUN useradd -m -s /bin/bash -G audio magicbox
