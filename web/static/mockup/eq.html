@@ -14,7 +14,6 @@
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <a href="/mockup/dashboard" class="nav-item">📊 ダッシュボード</a>
-        <a href="/mockup/headphones" class="nav-item">🎧 ヘッドホン選択</a>
         <a href="/mockup/eq" class="nav-item active">🎚️ EQ設定</a>
         <a href="/mockup/system" class="nav-item">⚙️ システム設定</a>
         <a href="/mockup/status" class="nav-item">📈 ステータス監視</a>
@@ -26,33 +25,6 @@
         <div class="page-header">
             <h2>Equalizer Settings</h2>
             <div class="subtitle">OPRAデータベースによる最適化されたヘッドホン補正</div>
-        </div>
-
-        <!-- Search Section -->
-        <div class="control-section">
-            <h2>🔍 ヘッドホン検索</h2>
-            <div class="description">OPRAデータベースから使用するヘッドホンを検索</div>
-            <div class="search-container">
-                <input type="text" id="headphoneSearch" class="search-input"
-                       placeholder="ヘッドホン名で検索... (例: Sony MDR-Z1R, Sennheiser HD 800)"
-                       autocomplete="off">
-                <div class="search-icon">🔍</div>
-            </div>
-            <div class="search-results" id="searchResults" style="display:none;">
-                <!-- Mock results -->
-                <div class="search-result-item" data-name="Sony MDR-Z1R" data-author="oratory1990">
-                    <div class="result-name">Sony MDR-Z1R</div>
-                    <div class="result-meta">OPRA • KB5000_7 • oratory1990</div>
-                </div>
-                <div class="search-result-item" data-name="Sennheiser HD 800" data-author="crinacle">
-                    <div class="result-name">Sennheiser HD 800</div>
-                    <div class="result-meta">OPRA • KB5000_7 • crinacle</div>
-                </div>
-                <div class="search-result-item" data-name="Audeze LCD-5" data-author="oratory1990">
-                    <div class="result-name">Audeze LCD-5</div>
-                    <div class="result-meta">OPRA • KB5000_7 • oratory1990</div>
-                </div>
-            </div>
         </div>
 
         <!-- Current Profile -->
@@ -74,106 +46,35 @@
             </div>
         </div>
 
-        <!-- Preamp Section -->
+        <!-- EQ Profile Input -->
         <div class="control-section">
-            <h2>🎚️ プリアンプ調整</h2>
-            <div class="description">ヘッドルームを確保するための全体ゲイン調整</div>
-            <div class="preamp-control">
-                <div class="preamp-display">
-                    <div class="preamp-label">Preamp Gain</div>
-                    <div class="preamp-value" id="preampValue">-6.0 dB</div>
-                </div>
-                <input type="range" id="preampSlider" class="preamp-slider"
-                       min="-20" max="0" step="0.1" value="-6.0">
-                <div class="preamp-hint">
-                    推奨値: <span class="hint-value">-6.0 dB</span> (最大ブースト量に基づく)
-                </div>
-            </div>
-        </div>
-
-        <!-- EQ Filters Display -->
-        <div class="control-section">
-            <h2>📊 EQフィルター</h2>
-            <div class="description">Parametric EQ設定（Equalizer APO形式）</div>
-            <div class="eq-filters-container" id="eqFilters">
-                <!-- Mock EQ filters -->
-                <div class="eq-filter-item">
-                    <div class="filter-index">Filter 1:</div>
-                    <div class="filter-params">
-                        <span class="param">ON</span>
-                        <span class="param type">PK</span>
-                        <span class="param">Fc 105 Hz</span>
-                        <span class="param gain">Gain -3.9 dB</span>
-                        <span class="param">Q 0.7</span>
-                    </div>
-                </div>
-                <div class="eq-filter-item">
-                    <div class="filter-index">Filter 2:</div>
-                    <div class="filter-params">
-                        <span class="param">ON</span>
-                        <span class="param type">PK</span>
-                        <span class="param">Fc 720 Hz</span>
-                        <span class="param gain">Gain -1.8 dB</span>
-                        <span class="param">Q 1.1</span>
-                    </div>
-                </div>
-                <div class="eq-filter-item">
-                    <div class="filter-index">Filter 3:</div>
-                    <div class="filter-params">
-                        <span class="param">ON</span>
-                        <span class="param type">PK</span>
-                        <span class="param">Fc 2170 Hz</span>
-                        <span class="param gain">Gain 3.8 dB</span>
-                        <span class="param">Q 2.9</span>
-                    </div>
-                </div>
-                <div class="eq-filter-item">
-                    <div class="filter-index">Filter 4:</div>
-                    <div class="filter-params">
-                        <span class="param">ON</span>
-                        <span class="param type">PK</span>
-                        <span class="param">Fc 3270 Hz</span>
-                        <span class="param gain">Gain -4.5 dB</span>
-                        <span class="param">Q 3.5</span>
-                    </div>
-                </div>
-                <div class="eq-filter-item">
-                    <div class="filter-index">Filter 5:</div>
-                    <div class="filter-params">
-                        <span class="param">ON</span>
-                        <span class="param type">PK</span>
-                        <span class="param">Fc 5366 Hz</span>
-                        <span class="param gain">Gain 2.8 dB</span>
-                        <span class="param">Q 1.5</span>
-                    </div>
-                </div>
-                <div class="eq-filter-item">
-                    <div class="filter-index">Filter 6:</div>
-                    <div class="filter-params">
-                        <span class="param">ON</span>
-                        <span class="param type">PK</span>
-                        <span class="param">Fc 7800 Hz</span>
-                        <span class="param gain">Gain 5.2 dB</span>
-                        <span class="param">Q 4.8</span>
-                    </div>
-                </div>
-            </div>
+            <h2>📝 EQプロファイル</h2>
+            <div class="description">Equalizer APO形式のEQ設定をペーストしてデプロイ</div>
+            <textarea id="eqProfile" class="eq-textarea" rows="12" placeholder="Preamp: -6.0 dB
+Filter 1: ON PK Fc 105 Hz Gain -3.9 dB Q 0.7
+Filter 2: ON PK Fc 720 Hz Gain -1.8 dB Q 1.1
+Filter 3: ON PK Fc 2170 Hz Gain 3.8 dB Q 2.9
+Filter 4: ON PK Fc 3270 Hz Gain -4.5 dB Q 3.5
+Filter 5: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5
+Filter 6: ON PK Fc 7800 Hz Gain 5.2 dB Q 4.8">Preamp: -6.0 dB
+Filter 1: ON PK Fc 105 Hz Gain -3.9 dB Q 0.7
+Filter 2: ON PK Fc 720 Hz Gain -1.8 dB Q 1.1
+Filter 3: ON PK Fc 2170 Hz Gain 3.8 dB Q 2.9
+Filter 4: ON PK Fc 3270 Hz Gain -4.5 dB Q 3.5
+Filter 5: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5
+Filter 6: ON PK Fc 7800 Hz Gain 5.2 dB Q 4.8</textarea>
         </div>
 
         <!-- Action Buttons -->
         <div class="control-section">
             <div class="action-buttons">
-                <button class="action-btn primary">
-                    <div class="btn-icon">✓</div>
-                    <div class="btn-text">適用</div>
+                <button class="action-btn primary" id="deployBtn">
+                    <div class="btn-icon">🚀</div>
+                    <div class="btn-text">デプロイ</div>
                 </button>
-                <button class="action-btn secondary">
+                <button class="action-btn secondary" id="copyBtn">
                     <div class="btn-icon">📋</div>
                     <div class="btn-text">コピー</div>
-                </button>
-                <button class="action-btn danger">
-                    <div class="btn-icon">✕</div>
-                    <div class="btn-text">無効化</div>
                 </button>
             </div>
         </div>

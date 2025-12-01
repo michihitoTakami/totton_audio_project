@@ -14,7 +14,6 @@
             <div class="tagline">Ultimate Audio Experience</div>
         </div>
         <a href="/mockup/dashboard" class="nav-item active">📊 ダッシュボード</a>
-        <a href="/mockup/headphones" class="nav-item">🎧 ヘッドホン選択</a>
         <a href="/mockup/eq" class="nav-item">🎚️ EQ設定</a>
         <a href="/mockup/system" class="nav-item">⚙️ システム設定</a>
         <a href="/mockup/status" class="nav-item">📈 ステータス監視</a>
@@ -33,25 +32,33 @@
             <h3>現在の設定</h3>
             <div class="status-display">
                 <div class="status-display-item">
-                    <div class="label">イコライザ設定</div>
-                    <div class="value" id="currentHeadphone">Sony MDR-Z1R</div>
+                    <div class="label">エンジン状態</div>
+                    <div class="value ok">RUNNING</div>
                 </div>
                 <div class="status-display-item">
-                    <div class="label">処理モード</div>
-                    <div class="value" id="processingMode">Low Latency</div>
+                    <div class="label">入力デバイス</div>
+                    <div class="value">PipeWire (MacBook Pro)</div>
+                </div>
+                <div class="status-display-item">
+                    <div class="label">出力デバイス</div>
+                    <div class="value">SMSL SU-9 Pro</div>
+                </div>
+                <div class="status-display-item">
+                    <div class="label">サンプリングレート</div>
+                    <div class="value">44.1k → 705.6k (16x)</div>
+                </div>
+                <div class="status-display-item">
+                    <div class="label">イコライザ設定</div>
+                    <div class="value" id="currentHeadphone">Sony MDR-Z1R</div>
                 </div>
                 <div class="status-display-item">
                     <div class="label">クロスフィード</div>
                     <div class="value" id="crossfeedStatus">OFF</div>
                 </div>
-                <div class="status-display-item">
-                    <div class="label">サンプリングレート</div>
-                    <div class="value">44.1k → 705.6k</div>
-                </div>
             </div>
         </div>
 
-        <!-- Headphone Selection (bigger title) -->
+        <!-- EQ Selection -->
         <div class="control-section">
             <h2>🎧 最適イコライザ設定</h2>
             <div class="description">使用するヘッドホンを検索・選択してください</div>
@@ -73,14 +80,19 @@
                     <div class="result-meta">OPRA • KB5000_7</div>
                 </div>
             </div>
+            <div class="license-note">
+                <span class="license-badge-inline">OPRA</span>
+                <span class="license-badge-inline">CC BY-SA 4.0</span>
+                商用利用OK、帰属表示必須 ·
+                <a href="https://github.com/opra-project/OPRA" target="_blank" class="license-link">OPRA Project</a>
+            </div>
         </div>
 
-        <!-- Crossfeed (bigger title, toggle separate) -->
+        <!-- Crossfeed -->
         <div class="control-section">
             <h2>🎚️ クロスフィード</h2>
             <div class="description">HRTF処理による自然な音場再現</div>
 
-            <!-- On/Off Toggle -->
             <div class="toggle-group">
                 <label class="toggle-label">
                     <input type="checkbox" id="crossfeedToggle">
@@ -89,7 +101,6 @@
                 </label>
             </div>
 
-            <!-- Head Size (shown when enabled) -->
             <div id="headSizeSection" style="display:none; margin-top: 24px;">
                 <div class="head-size-label">頭のサイズ</div>
                 <div class="control-buttons">
@@ -101,12 +112,18 @@
                 </div>
                 <div class="control-hint">極小 (XS) から 極大 (XL) まで選択可能</div>
             </div>
+
+            <div class="license-note">
+                <span class="license-badge-inline">SADIE II Database</span>
+                <span class="license-badge-inline">CC BY 4.0</span>
+                商用利用OK、帰属表示必須 ·
+                <a href="https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960" target="_blank" class="license-link">SADIE II Database</a>
+            </div>
         </div>
 
-        <!-- Low Latency Mode (bigger title) -->
+        <!-- Low Latency Mode -->
         <div class="control-section">
             <h2>⚡ 低遅延モード</h2>
-            <div class="description">パーティション処理による低レイテンシ動作</div>
             <div class="toggle-group">
                 <label class="toggle-label">
                     <input type="checkbox" id="lowLatencyToggle" checked>
@@ -115,30 +132,6 @@
                 </label>
             </div>
             <div class="control-hint">※ クロスフィード有効時は使用できません</div>
-        </div>
-
-        <!-- System Status -->
-        <div class="status-grid">
-            <div class="status-card ok">
-                <div class="card-title">エンジン状態</div>
-                <div class="card-value">RUNNING</div>
-                <div class="card-subtitle">正常動作中</div>
-            </div>
-            <div class="status-card ok">
-                <div class="card-title">処理速度</div>
-                <div class="card-value">28.5x</div>
-                <div class="card-subtitle">Realtime</div>
-            </div>
-            <div class="status-card ok">
-                <div class="card-title">バッファレイテンシ</div>
-                <div class="card-value">12ms</div>
-                <div class="card-subtitle">Low Latency</div>
-            </div>
-            <div class="status-card">
-                <div class="card-title">エラーカウント</div>
-                <div class="card-value">0</div>
-                <div class="card-subtitle">No Errors</div>
-            </div>
         </div>
     </div>
 
