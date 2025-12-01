@@ -36,6 +36,9 @@ struct AppConfig {
     bool multiRateEnabled = false;  // Enable multi-rate mode with all 10 filter FFTs preloaded
     std::string coefficientDir = "data/coefficients";  // Directory containing filter files
 
+    // PipeWire input (disable for Docker/RTP-only mode)
+    bool pipewireEnabled = true;  // Set to false for RTP-only mode (Docker)
+
     // EQ settings
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)

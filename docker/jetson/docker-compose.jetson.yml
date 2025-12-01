@@ -22,22 +22,20 @@ services:
     build:
       context: ../..
       dockerfile: docker/jetson/Dockerfile.jetson
-      args:
-        BASE_IMAGE_DEVEL: ${BASE_IMAGE_DEVEL:-nvcr.io/nvidia/l4t-cuda:12.6.68-devel}
-        BASE_IMAGE_RUNTIME: ${BASE_IMAGE_RUNTIME:-nvcr.io/nvidia/l4t-cuda:12.6.68-runtime}
     container_name: magicbox-audio
     command: daemon
     restart: unless-stopped
 
     # NVIDIA runtime for GPU access
     runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
     # Audio device access
     devices:
       - /dev/snd:/dev/snd
+
+    # RTP input port
+    ports:
+      - "46000:46000/udp"
 
     # Shared memory for audio buffers
     shm_size: '256m'
@@ -46,17 +44,22 @@ services:
     volumes:
       - zmq-socket:/tmp
 
-    # Real-time priority (requires privileged or CAP_SYS_NICE)
+    # Environment (NVIDIA)
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+    # Real-time priority (requires CAP_SYS_NICE)
     cap_add:
       - SYS_NICE
 
-    # Health check
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "gpu_upsampler_alsa"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    # Health check (temporarily disabled for debugging)
+    # healthcheck:
+    #   test: ["CMD", "pgrep", "-f", "gpu_upsampler_alsa"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 10s
 
     logging:
       driver: "json-file"
@@ -73,8 +76,7 @@ services:
     command: web
     restart: unless-stopped
     depends_on:
-      audio-daemon:
-        condition: service_healthy
+      - audio-daemon
 
     # Port mapping
     ports:
