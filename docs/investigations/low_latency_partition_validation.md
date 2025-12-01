@@ -74,8 +74,8 @@ Artifacts:
 
 ```bash
 uv run python scripts/inspect_impulse.py \
-  --coeff data/coefficients/filter_44k_16x_2m_min_phase.bin \
-  --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
+  --coeff data/coefficients/filter_44k_16x_2m_hybrid_phase.bin \
+  --metadata data/coefficients/filter_44k_16x_2m_hybrid_phase.json \
   --config config.json \
   --enable-partition \
   --summary-json plots/analysis/partition_summary.json
@@ -95,7 +95,7 @@ Outputs:
 uv run python scripts/verify_frequency_response.py \
   test_data/low_latency/test_sweep_44100hz.wav \
   test_output/lowlat_sweep.wav \
-  --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
+  --metadata data/coefficients/filter_44k_16x_2m_hybrid_phase.json \
   --config config.json \
   --analysis-window-seconds 1.5 \
   --compare-fast-tail
@@ -110,7 +110,7 @@ For impulse captures:
 uv run python scripts/verify_frequency_response.py \
   test_data/low_latency/test_impulse_44100hz.wav \
   test_output/lowlat_impulse.wav \
-  --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
+  --metadata data/coefficients/filter_44k_16x_2m_hybrid_phase.json \
   --config config.json \
   --settling-seconds 0.015 \
   --plot plots/analysis/lowlat_impulse_spectrum.png

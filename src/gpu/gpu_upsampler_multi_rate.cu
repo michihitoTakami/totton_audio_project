@@ -317,7 +317,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
             continue;
         }
 
-        // Construct filename: e.g., filter_44k_16x_1024_min_phase.bin
+        // Construct filename: e.g., filter_44k_16x_1024_hybrid_phase.bin
         std::string filename = coefficientDir + "/filter_" + familyStr + "_" +
                                std::to_string(config.ratio) + "x_";
 
@@ -325,7 +325,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
         std::string foundPath;
         for (int taps :
              {1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2000000}) {
-            std::string testPath = filename + std::to_string(taps) + "_min_phase.bin";
+            std::string testPath = filename + std::to_string(taps) + "_hybrid_phase.bin";
             std::ifstream testFile(testPath, std::ios::binary);
             if (testFile.good()) {
                 foundPath = testPath;

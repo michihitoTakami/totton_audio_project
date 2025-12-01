@@ -27,7 +27,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--coeff",
         type=Path,
-        default=Path("data/coefficients/filter_44k_16x_2m_min_phase.bin"),
+        default=Path("data/coefficients/filter_44k_16x_2m_hybrid_phase.bin"),
         help="解析対象のFIR係数(.bin)",
     )
     parser.add_argument(

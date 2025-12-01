@@ -250,21 +250,21 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 # 環境セットアップ
 uv sync
 
-# 44.1k系 2M-tap 最小位相フィルタ生成
-uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
+# 44.1k系 2M-tap ハイブリッドフィルタ生成（≤100Hz最小位相/10ms整列）
+uv run python scripts/generate_filter.py --taps 2000000 --phase-type hybrid
 
 # 全構成（44k/48k × 2x/4x/8x/16x）一括生成（マルチレート対応）
-uv run python scripts/generate_filter.py --generate-all --phase-type minimum
+uv run python scripts/generate_filter.py --generate-all --phase-type hybrid
 
 # 生成されるフィルタ:
-# - filter_44k_16x_2m_min_phase.bin (44.1kHz → 705.6kHz)
-# - filter_44k_8x_2m_min_phase.bin  (88.2kHz → 705.6kHz)
-# - filter_44k_4x_2m_min_phase.bin  (176.4kHz → 705.6kHz)
-# - filter_44k_2x_2m_min_phase.bin  (352.8kHz → 705.6kHz)
-# - filter_48k_16x_2m_min_phase.bin (48kHz → 768kHz)
-# - filter_48k_8x_2m_min_phase.bin  (96kHz → 768kHz)
-# - filter_48k_4x_2m_min_phase.bin  (192kHz → 768kHz)
-# - filter_48k_2x_2m_min_phase.bin  (384kHz → 768kHz)
+# - filter_44k_16x_2m_hybrid_phase.bin (44.1kHz → 705.6kHz)
+# - filter_44k_8x_2m_hybrid_phase.bin  (88.2kHz → 705.6kHz)
+# - filter_44k_4x_2m_hybrid_phase.bin  (176.4kHz → 705.6kHz)
+# - filter_44k_2x_2m_hybrid_phase.bin  (352.8kHz → 705.6kHz)
+# - filter_48k_16x_2m_hybrid_phase.bin (48kHz → 768kHz)
+# - filter_48k_8x_2m_hybrid_phase.bin  (96kHz → 768kHz)
+# - filter_48k_4x_2m_hybrid_phase.bin  (192kHz → 768kHz)
+# - filter_48k_2x_2m_hybrid_phase.bin  (384kHz → 768kHz)
 # 各フィルタには対応するメタデータJSON（DCゲイン・レート情報含む）が生成されます
 ```
 
@@ -307,8 +307,8 @@ cmake --build build -j$(nproc)
 | 項目 | 仕様 |
 |-----|-----|
 | FIRフィルタ | 2,000,000タップ |
-| 位相タイプ | 最小位相（デフォルト）/ 線形位相（オプション） |
-| ストップバンド減衰 | 44.1k系: 197dB / 48k系: 191dB |
+| 位相タイプ | ハイブリッド（デフォルト）/ 最小位相（オプション） |
+| ストップバンド減衰 | ハイブリッド: 50–67dB（100Hzクロスオーバ） |
 | ウィンドウ関数 | Kaiser (β=25, Float32 GPU実装に最適化) |
 | DCゲイン | アップサンプリング倍率 × 0.99（全レートで音量統一） |
 | メタデータ | 各フィルタに`.json`ファイル（DCゲイン、入力/出力レート、倍率を含む） |
@@ -319,18 +319,18 @@ cmake --build build -j$(nproc)
 
 | 入力レート | 出力レート | 倍率 | 使用フィルタ |
 |-----------|----------|------|------------|
-| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_min_phase.bin |
-| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_min_phase.bin |
-| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_min_phase.bin |
-| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_min_phase.bin |
-| 48kHz | 768kHz | 16x | filter_48k_16x_2m_min_phase.bin |
-| 96kHz | 768kHz | 8x | filter_48k_8x_2m_min_phase.bin |
-| 192kHz | 768kHz | 4x | filter_48k_4x_2m_min_phase.bin |
-| 384kHz | 768kHz | 2x | filter_48k_2x_2m_min_phase.bin |
+| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_hybrid_phase.bin |
+| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_hybrid_phase.bin |
+| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_hybrid_phase.bin |
+| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_hybrid_phase.bin |
+| 48kHz | 768kHz | 16x | filter_48k_16x_2m_hybrid_phase.bin |
+| 96kHz | 768kHz | 8x | filter_48k_8x_2m_hybrid_phase.bin |
+| 192kHz | 768kHz | 4x | filter_48k_4x_2m_hybrid_phase.bin |
+| 384kHz | 768kHz | 2x | filter_48k_2x_2m_hybrid_phase.bin |
 
 **フィルタ配布**: 各レート・倍率に対応するフィルタ係数ファイル（`.bin`）とメタデータ（`.json`）が`data/coefficients/`に配置されています。メタデータにはDCゲイン、入力/出力レート、アップサンプリング倍率が記載されています。
 
-**ゲイン設定**: `config.json`の`gain`パラメータはデフォルトで`1.0`に設定されており、全レートで適切に動作します。フィルタ係数は各レートで正規化されているため、追加のゲイン調整は通常不要です。
+**ゲイン設定**: `config.json`の`gain`パラメータはフィルタの`max_coefficient_amplitude`に応じて設定してください。ハイブリッド係数では `calculate_safe_gain` の推奨値（例: 44k/16xで約`0.285`）を採用することで、全レートでクリッピングを防げます。
 
 **ヘッドルーム設定**: `headroomTarget`（デフォルト`0.92`）は出力リミッターのターゲットピークを線形値で指定します。サンプリングレートや使用フィルタに依存せず一定音量を維持しつつ、ピークを0dBFS未満に抑えてクリッピングを防ぎます。0.5–0.999の範囲で設定可能です。
 
@@ -372,8 +372,8 @@ cmake --build build -j$(nproc)
 1. **パーティション構成の確認**
    ```bash
    uv run python scripts/inspect_impulse.py \
-     --coeff data/coefficients/filter_44k_16x_2m_min_phase.bin \
-     --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
+     --coeff data/coefficients/filter_44k_16x_2m_hybrid_phase.bin \
+     --metadata data/coefficients/filter_44k_16x_2m_hybrid_phase.json \
      --config config.json --enable-partition \
      --summary-json plots/analysis/partition_summary.json
    ```
@@ -384,7 +384,7 @@ cmake --build build -j$(nproc)
    uv run python scripts/verify_frequency_response.py \
      test_data/low_latency/test_sweep_44100hz.wav \
      test_output/lowlat_sweep.wav \
-     --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
+     --metadata data/coefficients/filter_44k_16x_2m_hybrid_phase.json \
      --config config.json \
      --analysis-window-seconds 1.5 \
      --compare-fast-tail

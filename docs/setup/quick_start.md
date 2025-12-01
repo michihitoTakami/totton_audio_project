@@ -41,8 +41,8 @@ uv sync
 uv run python scripts/generate_filter.py --generate-all --phase-type minimum
 
 # 生成されるファイル:
-# data/coefficients/filter_44k_{2,4,8,16}x_2m_min_phase.bin
-# data/coefficients/filter_48k_{2,4,8,16}x_2m_min_phase.bin
+# data/coefficients/filter_44k_{2,4,8,16}x_2m_hybrid_phase.bin
+# data/coefficients/filter_48k_{2,4,8,16}x_2m_hybrid_phase.bin
 # 各ファイルに対応する.jsonメタデータ
 ```
 

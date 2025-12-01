@@ -86,7 +86,7 @@ constexpr const char* ZEROMQ_PUB_SUFFIX = ".pub";
 using namespace DaemonConstants;
 using StreamFloatVector = ConvolutionEngine::StreamFloatVector;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
-constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)

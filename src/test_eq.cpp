@@ -88,7 +88,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  EQ Effect Verification Test" << std::endl;
     std::cout << "========================================" << std::endl;
 
-    std::string filterPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    std::string filterPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     std::string eqPath = "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt";
 
     if (argc > 1)
