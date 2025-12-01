@@ -182,21 +182,21 @@ class TestFilterDesigner:
             phase_type=PhaseType.MINIMUM,
         )
 
-        @pytest.fixture
-        def hybrid_config(self):
-            """Hybrid config with enough taps for 10ms delay."""
-            from generate_filter import FilterConfig, PhaseType
+    @pytest.fixture
+    def hybrid_config(self):
+        """Hybrid config with enough taps for 10ms delay."""
+        from generate_filter import FilterConfig, PhaseType
 
-            return FilterConfig(
-                n_taps=8192,
-                input_rate=44100,
-                upsample_ratio=16,
-                passband_end=20000,
-                stopband_start=22050,
-                kaiser_beta=14,
-                phase_type=PhaseType.HYBRID,
-                hybrid_fast_window_samples=4096,
-            )
+        return FilterConfig(
+            n_taps=8192,
+            input_rate=44100,
+            upsample_ratio=16,
+            passband_end=20000,
+            stopband_start=22050,
+            kaiser_beta=14,
+            phase_type=PhaseType.HYBRID,
+            hybrid_fast_window_samples=4096,
+        )
 
     def test_design_linear_phase(self, small_config):
         """design_linear_phase should create valid filter."""
@@ -241,21 +241,21 @@ class TestFilterDesigner:
         peak_idx = np.argmax(np.abs(h_final))
         assert peak_idx < len(h_final) * 0.1
 
-        def test_design_returns_hybrid_phase(self, hybrid_config):
-            """design() with HYBRID should align peak near delay samples."""
-            from generate_filter import FilterDesigner
+    def test_design_returns_hybrid_phase(self, hybrid_config):
+        """design() with HYBRID should align peak near delay samples."""
+        from generate_filter import FilterDesigner
 
-            designer = FilterDesigner(hybrid_config)
-            h_final, h_linear = designer.design()
+        designer = FilterDesigner(hybrid_config)
+        h_final, h_linear = designer.design()
 
-            assert h_linear is not None
-            assert len(h_final) == hybrid_config.n_taps
+        assert h_linear is not None
+        assert len(h_final) == hybrid_config.n_taps
 
-            peak_idx = int(np.argmax(np.abs(h_final)))
-            delta = abs(peak_idx - hybrid_config.hybrid_delay_samples)
-            # Allow 2 ms tolerance due to windowing
-            tolerance = int(hybrid_config.output_rate * 0.002)
-            assert delta < tolerance
+        peak_idx = int(np.argmax(np.abs(h_final)))
+        delta = abs(peak_idx - hybrid_config.hybrid_delay_samples)
+        # Allow 2 ms tolerance due to windowing
+        tolerance = int(hybrid_config.output_rate * 0.002)
+        assert delta < tolerance
 
 
 class TestFilterValidator:
@@ -719,13 +719,15 @@ class TestCoefficientFileNaming:
         """Coefficient files should use '2m' instead of '2000000' in filenames."""
         # Check that old naming convention files don't exist
         old_format_files = list(coefficients_dir.glob("*_2000000_*.bin"))
-        assert not old_format_files, f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
+        assert not old_format_files, (
+            f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
+        )
 
         # Check that new naming convention files exist
         new_format_files = list(coefficients_dir.glob("*_2m_*.bin"))
-        assert (
-            len(new_format_files) >= 8
-        ), f"Expected at least 8 files with '2m' naming, found {len(new_format_files)}"
+        assert len(new_format_files) >= 8, (
+            f"Expected at least 8 files with '2m' naming, found {len(new_format_files)}"
+        )
 
     def test_json_metadata_files_match_bin_files(self, coefficients_dir):
         """Each .bin file should have a corresponding .json metadata file."""
@@ -759,9 +761,9 @@ class TestCoefficientFileNaming:
                 upsample_ratio=ratio,
                 phase_type=PhaseType.MINIMUM,
             )
-            assert (
-                config.base_name == expected_basename
-            ), f"Expected {expected_basename}, got {config.base_name}"
+            assert config.base_name == expected_basename, (
+                f"Expected {expected_basename}, got {config.base_name}"
+            )
 
     def test_non_2m_taps_use_numeric_format(self):
         """Non-2M tap counts should use numeric format in filename."""
@@ -849,9 +851,9 @@ class TestMultiRateConfigs:
 
         for name, config in MULTI_RATE_CONFIGS.items():
             expected_stopband = config["input_rate"] // 2
-            assert (
-                config["stopband"] == expected_stopband
-            ), f"{name}: stopband {config['stopband']} != input_nyquist {expected_stopband}"
+            assert config["stopband"] == expected_stopband, (
+                f"{name}: stopband {config['stopband']} != input_nyquist {expected_stopband}"
+            )
 
     def test_output_rate_consistency(self):
         """All configs in same family should produce same output rate."""
@@ -923,7 +925,6 @@ class TestValidateTapCountMultiRate:
         # 1025 IS divisible by... nothing here that we use
         with pytest.raises(ValueError):
             validate_tap_count(1025, 2)  # Not divisible by 2
-
 
 
 class TestFilterGenerator:
@@ -1111,9 +1112,9 @@ class TestCoefficientDcGain:
                 pytest.skip(f"{filename} not found")
             data = np.fromfile(filepath, dtype=np.float32)
             dc_gain = float(np.sum(data))
-            assert np.isclose(
-                dc_gain, expected_dc, rtol=1e-3
-            ), f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
+            assert np.isclose(dc_gain, expected_dc, rtol=1e-3), (
+                f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
+            )
 
 
 class TestValidateTapCountErrorHandling:
