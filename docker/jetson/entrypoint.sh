@@ -89,7 +89,7 @@ start_daemon() {
         log_error "Config file not found: $CONFIG"
         exit 1
     fi
-    exec "$DAEMON" --config "$CONFIG"
+    exec "$DAEMON"
 }
 
 # Start both services (production mode)
@@ -98,7 +98,7 @@ start_all() {
 
     # Start daemon in background
     log_info "Starting Audio Daemon in background..."
-    "$DAEMON" --config "$CONFIG" &
+    "$DAEMON" &
     DAEMON_PID=$!
 
     # Wait a bit for daemon to initialize
