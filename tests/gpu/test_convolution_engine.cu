@@ -57,7 +57,7 @@ public:
 
         for (const char* config : configs) {
             std::string filename = path_ + "/filter_" + config + "_" +
-                                   std::to_string(TEST_TAPS) + "_min_phase.bin";
+                                   std::to_string(TEST_TAPS) + "_hybrid_phase.bin";
             if (!writeCoeffFile(filename, impulse)) {
                 error_ = "Failed to write coefficient file: " + filename;
                 cleanup();
@@ -100,7 +100,7 @@ public:
 
     // Helper methods for quad-phase tests
     std::string getMinPhasePath(const std::string& rateFamily) const {
-        return path_ + "/filter_" + rateFamily + "_16x_" + std::to_string(TEST_TAPS) + "_min_phase.bin";
+        return path_ + "/filter_" + rateFamily + "_16x_" + std::to_string(TEST_TAPS) + "_hybrid_phase.bin";
     }
 
     std::string getLinearPhasePath(const std::string& rateFamily) const {
@@ -167,7 +167,7 @@ TEST_F(ConvolutionEngineTest, ConstructorDestructor) {
 TEST_F(ConvolutionEngineTest, InitializeWithCoefficients) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -183,8 +183,8 @@ TEST_F(ConvolutionEngineTest, InitializeWithCoefficients) {
 TEST_F(ConvolutionEngineTest, DualRateInitialize) {
     GPUUpsampler upsampler;
 
-    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_min_phase.bin";
+    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
 
     // Check if files exist
     FILE* f44 = fopen(coeff44k, "rb");
@@ -207,8 +207,8 @@ TEST_F(ConvolutionEngineTest, DualRateInitialize) {
 TEST_F(ConvolutionEngineTest, SwitchRateFamily) {
     GPUUpsampler upsampler;
 
-    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_min_phase.bin";
+    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
 
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
@@ -243,7 +243,7 @@ TEST_F(ConvolutionEngineTest, SwitchRateFamily) {
 TEST_F(ConvolutionEngineTest, ProcessImpulse) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -273,7 +273,7 @@ TEST_F(ConvolutionEngineTest, ProcessImpulse) {
 TEST_F(ConvolutionEngineTest, ProcessStereo) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -317,7 +317,7 @@ TEST_F(ConvolutionEngineTest, ProcessStereo) {
 TEST_F(ConvolutionEngineTest, InitializeStreaming) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -334,7 +334,7 @@ TEST_F(ConvolutionEngineTest, InitializeStreaming) {
 TEST_F(ConvolutionEngineTest, ResetStreaming) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -404,7 +404,7 @@ TEST_F(ConvolutionEngineTest, PartitionModeSupportsMultiRateSwitch) {
 TEST_F(ConvolutionEngineTest, EqInitiallyNotApplied) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -420,7 +420,7 @@ TEST_F(ConvolutionEngineTest, EqInitiallyNotApplied) {
 TEST_F(ConvolutionEngineTest, ApplyFlatEq) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -442,7 +442,7 @@ TEST_F(ConvolutionEngineTest, ApplyFlatEq) {
 TEST_F(ConvolutionEngineTest, RestoreOriginalFilter) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -478,7 +478,7 @@ TEST_F(ConvolutionEngineTest, StatsInitiallyZero) {
 TEST_F(ConvolutionEngineTest, StatsAfterProcessing) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -502,7 +502,7 @@ TEST_F(ConvolutionEngineTest, StatsAfterProcessing) {
 TEST_F(ConvolutionEngineTest, ResetStats) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -530,7 +530,7 @@ TEST_F(ConvolutionEngineTest, ResetStats) {
 TEST_F(ConvolutionEngineTest, GetUpsampleRatio) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -546,8 +546,8 @@ TEST_F(ConvolutionEngineTest, GetUpsampleRatio) {
 TEST_F(ConvolutionEngineTest, GetSampleRates) {
     GPUUpsampler upsampler;
 
-    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_min_phase.bin";
+    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
 
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
@@ -574,7 +574,7 @@ TEST_F(ConvolutionEngineTest, GetSampleRates) {
 TEST_F(ConvolutionEngineTest, GetFftSizes) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -601,7 +601,7 @@ TEST_F(ConvolutionEngineTest, GetFftSizes) {
 TEST_F(ConvolutionEngineTest, OutputNotAllZeros) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -629,7 +629,7 @@ TEST_F(ConvolutionEngineTest, OutputNotAllZeros) {
 TEST_F(ConvolutionEngineTest, OutputFiniteValues) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -842,7 +842,7 @@ TEST_F(ConvolutionEngineTest, SwitchToInvalidInputRate) {
 TEST_F(ConvolutionEngineTest, SwitchToInputRateWithoutMultiRateInit) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -879,7 +879,7 @@ TEST_F(ConvolutionEngineTest, SetPhaseType) {
 TEST_F(ConvolutionEngineTest, SetInputSampleRate44k) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -896,7 +896,7 @@ TEST_F(ConvolutionEngineTest, SetInputSampleRate44k) {
 TEST_F(ConvolutionEngineTest, SetInputSampleRate48k) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -913,7 +913,7 @@ TEST_F(ConvolutionEngineTest, SetInputSampleRate48k) {
 TEST_F(ConvolutionEngineTest, LatencyMinimumPhaseIsZero) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -930,7 +930,7 @@ TEST_F(ConvolutionEngineTest, LatencyMinimumPhaseIsZero) {
 TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -953,7 +953,7 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
 TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -976,7 +976,7 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
 TEST_F(ConvolutionEngineTest, ApplyEqLinearPhase) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -1002,7 +1002,7 @@ TEST_F(ConvolutionEngineTest, ApplyEqLinearPhase) {
 TEST_F(ConvolutionEngineTest, ApplyEqLinearPhaseWithBoost) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -1027,7 +1027,7 @@ TEST_F(ConvolutionEngineTest, ApplyEqLinearPhaseWithBoost) {
 TEST_F(ConvolutionEngineTest, RestoreFilterAfterLinearPhaseEq) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -1125,7 +1125,7 @@ TEST_F(ConvolutionEngineTest, SwitchPhaseTypeInQuadPhase) {
 TEST_F(ConvolutionEngineTest, SwitchPhaseTypeFailsWithoutQuadPhase) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
