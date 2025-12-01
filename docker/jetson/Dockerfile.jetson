@@ -53,12 +53,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create app + log directories
 WORKDIR /opt/magicbox
-RUN mkdir -p bin && mkdir -p /var/log/gpu_upsampler
+RUN mkdir -p bin build && mkdir -p /var/log/gpu_upsampler
 
 # Copy pre-built binaries from host (same architecture)
-COPY build/gpu_upsampler_alsa bin/gpu_upsampler_alsa
-COPY build/gpu_upsampler_daemon bin/gpu_upsampler_daemon
-RUN chmod +x bin/gpu_upsampler_alsa bin/gpu_upsampler_daemon
+COPY build/gpu_upsampler_alsa build/gpu_upsampler_alsa
+COPY build/gpu_upsampler_daemon build/gpu_upsampler_daemon
+RUN chmod +x build/gpu_upsampler_alsa build/gpu_upsampler_daemon \
+    && ln -sf ../build/gpu_upsampler_alsa bin/gpu_upsampler_alsa \
+    && ln -sf ../build/gpu_upsampler_daemon bin/gpu_upsampler_daemon
 
 # Copy data files (filter coefficients + EQ)
 COPY data/coefficients/ data/coefficients/
