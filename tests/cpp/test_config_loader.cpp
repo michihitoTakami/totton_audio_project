@@ -181,6 +181,10 @@ TEST_F(ConfigLoaderTest, ParsePhaseTypeLinear) {
     EXPECT_EQ(parsePhaseType("linear"), PhaseType::Linear);
 }
 
+TEST_F(ConfigLoaderTest, ParsePhaseTypeHybridAlias) {
+    EXPECT_EQ(parsePhaseType("hybrid"), PhaseType::Linear);
+}
+
 TEST_F(ConfigLoaderTest, ParsePhaseTypeInvalidDefaultsToMinimum) {
     EXPECT_EQ(parsePhaseType("invalid"), PhaseType::Minimum);
     EXPECT_EQ(parsePhaseType(""), PhaseType::Minimum);
@@ -192,7 +196,7 @@ TEST_F(ConfigLoaderTest, PhaseTypeToStringMinimum) {
 }
 
 TEST_F(ConfigLoaderTest, PhaseTypeToStringLinear) {
-    EXPECT_STREQ(phaseTypeToString(PhaseType::Linear), "linear");
+    EXPECT_STREQ(phaseTypeToString(PhaseType::Linear), "hybrid");
 }
 
 TEST_F(ConfigLoaderTest, AppConfigDefaultPhaseType) {
@@ -264,6 +268,16 @@ TEST_F(ConfigLoaderTest, LoadConfigWithPhaseTypeMinimum) {
 
 TEST_F(ConfigLoaderTest, LoadConfigWithPhaseTypeLinear) {
     writeConfig(R"({"phaseType": "linear"})");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(config.phaseType, PhaseType::Linear);
+}
+
+TEST_F(ConfigLoaderTest, LoadConfigWithPhaseTypeHybridAlias) {
+    writeConfig(R"({"phaseType": "hybrid"})");
 
     AppConfig config;
     bool result = loadAppConfig(testConfigPath, config, false);

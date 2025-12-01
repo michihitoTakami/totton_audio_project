@@ -8,7 +8,7 @@
 #include <nlohmann/json.hpp>
 
 PhaseType parsePhaseType(const std::string& str) {
-    if (str == "linear") {
+    if (str == "linear" || str == "hybrid") {
         return PhaseType::Linear;
     }
     // Default to Minimum for "minimum" or any invalid value
@@ -18,7 +18,7 @@ PhaseType parsePhaseType(const std::string& str) {
 const char* phaseTypeToString(PhaseType type) {
     switch (type) {
     case PhaseType::Linear:
-        return "linear";
+        return "hybrid";
     case PhaseType::Minimum:
     default:
         return "minimum";
