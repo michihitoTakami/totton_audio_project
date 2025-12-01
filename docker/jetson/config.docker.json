@@ -1,0 +1,73 @@
+{
+  "alsaDevice": "hw:AUDIO",
+  "bufferSize": 262144,
+  "periodSize": 32768,
+  "upsampleRatio": 16,
+  "blockSize": 4096,
+  "gain": 1.0,
+  "headroomTarget": 0.92,
+  "phaseType": "minimum",
+  "filterPath": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
+  "quadPhaseEnabled": false,
+  "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
+  "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_min_phase.bin",
+  "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
+  "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
+  "pipewireEnabled": false,
+  "eqEnabled": true,
+  "eqProfilePath": "data/EQ/Sample_EQ.txt",
+  "partitionedConvolution": {
+    "enabled": true,
+    "fastPartitionTaps": 32768,
+    "minPartitionTaps": 32768,
+    "maxPartitions": 4,
+    "tailFftMultiple": 2
+  },
+  "crossfeed": {
+    "enabled": false,
+    "headSize": "m",
+    "hrtfPath": "data/crossfeed/hrtf/"
+  },
+  "fallback": {
+    "enabled": true,
+    "gpuThreshold": 80.0,
+    "gpuThresholdCount": 3,
+    "gpuRecoveryThreshold": 70.0,
+    "gpuRecoveryCount": 5,
+    "xrunTriggersFallback": true,
+    "monitorIntervalMs": 100
+  },
+  "logging": {
+    "level": "info",
+    "filePath": "/var/log/gpu_upsampler/daemon.log",
+    "maxFileSize": 10485760,
+    "maxBackups": 5,
+    "consoleOutput": true,
+    "coloredOutput": true
+  },
+  "rtp": {
+    "enabled": true,
+    "autoStart": true,
+    "sessionId": "pc_stream",
+    "bindAddress": "0.0.0.0",
+    "port": 46000,
+    "payloadType": 127,
+    "sampleRate": 44100,
+    "channels": 2,
+    "bitsPerSample": 16,
+    "bigEndian": true,
+    "signedSamples": true,
+    "targetLatencyMs": 5,
+    "watchdogTimeoutMs": 500,
+    "enableRtcp": true,
+    "discovery": {
+      "scanDurationMs": 250,
+      "cooldownMs": 1500,
+      "maxStreams": 12,
+      "enableMulticast": true,
+      "enableUnicast": true,
+      "ports": [5004, 6000]
+    }
+  },
+  "statsFilePath": "/tmp/gpu_upsampler_stats.json"
+}

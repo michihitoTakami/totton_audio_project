@@ -45,6 +45,18 @@ docker build -f docker/jetson/Dockerfile.jetson -t magicbox:latest .
 
 ビルド時間目安: 約15-30分（初回）
 
+#### 事前準備（Jetsonネイティブバイナリの配置）
+
+Jetson用Dockerイメージは**ホストでビルド済みのバイナリ**を取り込む構成です。`docker build`の前に必ずジェットソン本体で通常のCMakeビルドを完了させ、`build/gpu_upsampler_alsa` と `build/gpu_upsampler_daemon` を生成してください。
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=87
+cmake --build build -j$(nproc)
+ls -l build/gpu_upsampler_alsa build/gpu_upsampler_daemon
+```
+
+上記ファイルが存在しない場合、Dockerビルド時の `COPY build/gpu_upsampler_*` ステップで失敗します。
+
 ### x86ホストでのビルド
 
 Jetson用JetPackイメージはARM64専用のため、x86では`nvidia/cuda`ベースに切り替えてビルドします。
@@ -89,6 +101,8 @@ docker compose -f jetson/docker-compose.jetson.yml up -d --build
 docker compose -f jetson/docker-compose.jetson.yml logs -f
 docker compose -f jetson/docker-compose.jetson.yml down
 ```
+
+`docker/jetson/config.docker.json` が自動的にコピーされ、PipeWireを無効化したRTP入力モード・Jetson向けパラメータで起動します。必要に応じて同ファイルを編集してください。
 
 #### x86_64ローカル検証
 
