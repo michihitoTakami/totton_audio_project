@@ -25,7 +25,7 @@ static AppConfig g_config;
 
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
-        std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
+        std::cout << "[Partition] Hybrid phase is incompatible with low-latency mode. "
                   << "Switching to minimum phase." << std::endl;
         config.phaseType = PhaseType::Minimum;
     }
@@ -505,7 +505,7 @@ int main(int argc, char* argv[]) {
         // Log latency warning for linear phase
         if (appConfig.phaseType == PhaseType::Linear) {
             double latencySec = g_upsampler->getLatencySeconds();
-            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
+            std::cout << "  WARNING: Hybrid phase latency: " << latencySec << " seconds ("
                       << g_upsampler->getLatencySamples() << " samples)" << std::endl;
         }
     } else {

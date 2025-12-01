@@ -69,7 +69,7 @@ constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
-        std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
+        std::cout << "[Partition] Hybrid phase is incompatible with low-latency mode. "
                   << "Switching to minimum phase." << std::endl;
         config.phaseType = PhaseType::Minimum;
     }
@@ -2410,7 +2410,7 @@ static void zeromq_listener_thread() {
                     response = "ERR:Upsampler not initialized";
                 }
             } else if (cmd.rfind("PHASE_TYPE_SET:", 0) == 0) {
-                // Set phase type: PHASE_TYPE_SET:minimum or PHASE_TYPE_SET:linear
+                // Set phase type: PHASE_TYPE_SET:minimum or PHASE_TYPE_SET:hybrid
                 // Requires quad-phase mode to be enabled (4 filter variants preloaded)
                 std::string phaseStr = cmd.substr(15);  // Extract after "PHASE_TYPE_SET:"
                 if (!g_upsampler) {
@@ -2466,7 +2466,7 @@ static void zeromq_listener_thread() {
                         if (switch_success) {
                             if (newPhase == PhaseType::Linear &&
                                 g_config.partitionedConvolution.enabled) {
-                                std::cout << "[Partition] Linear phase selected, disabling "
+                                std::cout << "[Partition] Hybrid phase selected, disabling "
                                              "low-latency partitioned convolution."
                                           << std::endl;
                                 g_config.partitionedConvolution.enabled = false;
@@ -3595,7 +3595,7 @@ int main(int argc, char* argv[]) {
         // Log latency warning for linear phase
         if (g_config.phaseType == PhaseType::Linear) {
             double latencySec = g_upsampler->getLatencySeconds();
-            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
+            std::cout << "  WARNING: Hybrid phase latency: " << latencySec << " seconds ("
                       << g_upsampler->getLatencySamples() << " samples)" << std::endl;
         }
 
