@@ -116,11 +116,15 @@ static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 static std::unique_ptr<Network::RtpSessionManager> g_rtp_manager;
 static std::mutex g_input_process_mutex;
 
-static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
 static void ensure_rtp_manager_initialized();
 static void maybe_start_rtp_from_config();
 static void shutdown_rtp_manager();
 static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInputConfig& cfg);
+
+namespace pipewire_support {
+void process_interleaved_block(const float* input_samples, uint32_t n_frames);
+bool handle_rate_change(int detected_sample_rate);
+}  // namespace pipewire_support
 
 struct DacDeviceRuntimeInfo {
     std::string id;
@@ -240,10 +244,6 @@ static SoftMute::Controller* g_soft_mute = nullptr;
 
 // Helper function for soft mute during filter switching (Issue #266)
 // Fade-out: 1.5 seconds, perform filter switch, fade-in: 1.5 seconds
-// Forward declaration for handle_rate_change (Issue #219)
-// Defined later in file, but called from ZeroMQ handler
-static bool handle_rate_change(int detected_sample_rate);
-
 // Thread safety: This function is called from ZeroMQ command thread.
 // Fade parameter changes leverage the atomic configuration inside SoftMute::Controller, and
 // we still wait for fade-out completion before manipulating filters to avoid artifacts.
@@ -1101,7 +1101,7 @@ static void maybe_switch_rate_for_rtp(uint32_t sessionRate, const std::string& s
 
     LOG_INFO("[RTP] Session {} -> switching engine input rate {} -> {} Hz", sessionId, currentRate,
              targetRate);
-    if (!handle_rate_change(targetRate)) {
+    if (!pipewire_support::handle_rate_change(targetRate)) {
         LOG_ERROR("[RTP] Failed to switch engine rate to {} Hz for session {}", targetRate,
                   sessionId);
     }
@@ -1122,7 +1122,7 @@ static void ensure_rtp_manager_initialized() {
                         "Reconfigure engine to avoid drift.",
                         sampleRate, g_input_sample_rate);
         }
-        process_interleaved_block(interleaved, static_cast<uint32_t>(frames));
+        pipewire_support::process_interleaved_block(interleaved, static_cast<uint32_t>(frames));
     };
 
     auto ptpProvider = []() -> Network::PtpSyncState { return {}; };
@@ -2303,7 +2303,8 @@ static void zeromq_listener_thread() {
                                 response = resp.dump();
                             } else {
                                 // Perform rate switch
-                                bool switch_success = handle_rate_change(targetRate);
+                                bool switch_success =
+                                    pipewire_support::handle_rate_change(targetRate);
 
                                 if (switch_success) {
                                     nlohmann::json resp;
@@ -2504,13 +2505,7 @@ static void zeromq_listener_thread() {
     }
 }
 
-// PipeWire objects
-struct Data {
-    struct pw_main_loop* loop;
-    struct pw_stream* input_stream;
-    struct spa_source* signal_check_timer;  // Timer for checking signal flags
-    bool gpu_ready;
-};
+#include "daemon/pipewire_support.h"
 
 // ========== Async-Signal-Safe Signal Handler ==========
 // This handler ONLY sets flags. All other processing is done in the main loop.
@@ -2591,265 +2586,6 @@ static void on_signal_check_timer(void* userdata, uint64_t expirations) {
 #endif
 }
 
-// Input stream process callback (44.1kHz audio from PipeWire)
-static void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
-    if (!input_samples || n_frames == 0 || !g_upsampler) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
-
-    std::vector<float> left(n_frames);
-    std::vector<float> right(n_frames);
-    AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
-    float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
-    update_peak_level(g_peak_input_level, inputPeak);
-
-    StreamFloatVector& output_left = g_upsampler_output_left;
-    StreamFloatVector& output_right = g_upsampler_output_right;
-
-    bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
-    bool left_generated = false;
-    bool right_generated = false;
-
-    if (use_fallback) {
-        size_t output_frames = static_cast<size_t>(n_frames) * g_config.upsampleRatio;
-        output_left.assign(output_frames, 0.0f);
-        output_right.assign(output_frames, 0.0f);
-        for (size_t i = 0; i < n_frames; ++i) {
-            output_left[i * g_config.upsampleRatio] = left[i];
-            output_right[i * g_config.upsampleRatio] = right[i];
-        }
-        left_generated = true;
-        right_generated = true;
-    } else {
-        left_generated = g_upsampler->processStreamBlock(
-            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
-            g_stream_accumulated_left);
-        right_generated = g_upsampler->processStreamBlock(
-            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
-            g_stream_accumulated_right);
-    }
-
-    if (!left_generated || !right_generated) {
-        return;
-    }
-
-    size_t frames_generated = std::min(output_left.size(), output_right.size());
-    if (frames_generated > 0) {
-        float upsamplerPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_upsampler_level, upsamplerPeak);
-    }
-
-    if (g_crossfeed_enabled.load()) {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-            bool cf_generated = g_hrtf_processor->processStreamBlock(
-                output_left.data(), output_right.data(), output_left.size(), g_cf_output_left,
-                g_cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
-
-            if (cf_generated) {
-                size_t cf_frames = std::min(g_cf_output_left.size(), g_cf_output_right.size());
-                if (cf_frames > 0) {
-                    float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
-                                                       g_cf_output_right.data(), cf_frames);
-                    update_peak_level(g_peak_post_crossfeed_level, cfPeak);
-                }
-                std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                g_output_buffer_left.insert(g_output_buffer_left.end(), g_cf_output_left.begin(),
-                                            g_cf_output_left.end());
-                g_output_buffer_right.insert(g_output_buffer_right.end(), g_cf_output_right.begin(),
-                                             g_cf_output_right.end());
-                g_buffer_cv.notify_one();
-                return;
-            }
-        }
-        // Crossfeed disabled or not ready: fall through and store original upsampler output.
-    }
-
-    std::lock_guard<std::mutex> lock(g_buffer_mutex);
-    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(), output_left.end());
-    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
-                                 output_right.end());
-    g_buffer_cv.notify_one();
-    if (frames_generated > 0) {
-        float postPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_post_crossfeed_level, postPeak);
-    }
-}
-
-static void on_input_process(void* userdata) {
-    Data* data = static_cast<Data*>(userdata);
-
-    struct pw_buffer* buf = pw_stream_dequeue_buffer(data->input_stream);
-    if (!buf) {
-        return;
-    }
-
-    struct spa_buffer* spa_buf = buf->buffer;
-    float* input_samples = static_cast<float*>(spa_buf->datas[0].data);
-    uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
-
-    if (input_samples && n_frames > 0 && data->gpu_ready) {
-        process_interleaved_block(input_samples, n_frames);
-    }
-
-    pw_stream_queue_buffer(data->input_stream, buf);
-}
-
-// Stream state changed callback
-static void on_stream_state_changed(void* userdata, enum pw_stream_state old_state,
-                                    enum pw_stream_state state, const char* error) {
-    (void)userdata;
-    (void)old_state;
-
-    std::cout << "PipeWire input stream state: " << pw_stream_state_as_string(state);
-    if (error) {
-        std::cout << " (error: " << error << ")";
-    }
-    std::cout << std::endl;
-}
-
-// PipeWire format/param changed callback (Issue #219)
-// Detects input sample rate changes from the source stream
-static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* param) {
-    (void)userdata;
-
-    // Only process format changes
-    if (id != SPA_PARAM_Format || param == nullptr) {
-        return;
-    }
-
-    // Parse audio format info
-    struct spa_audio_info_raw info;
-    if (spa_format_audio_raw_parse(param, &info) < 0) {
-        return;
-    }
-
-    int detected_rate = static_cast<int>(info.rate);
-    int current_rate = g_current_input_rate.load(std::memory_order_acquire);
-
-    // Check if rate actually changed
-    if (detected_rate != current_rate && detected_rate > 0) {
-        LOG_INFO("[PipeWire] Sample rate change detected: {} -> {} Hz", current_rate,
-                 detected_rate);
-        // Set pending rate change for main loop to process
-        // (avoid blocking in real-time callback)
-        g_pending_rate_change.store(detected_rate, std::memory_order_release);
-    }
-}
-
-static const struct pw_stream_events input_stream_events = {
-    .version = PW_VERSION_STREAM_EVENTS,
-    .state_changed = on_stream_state_changed,
-    .param_changed = on_param_changed,
-    .process = on_input_process,
-};
-
-// Handle sample rate change detected by PipeWire (Issue #219)
-// This function is called from the main loop when g_pending_rate_change is set
-static bool handle_rate_change(int detected_sample_rate) {
-    if (!g_upsampler) {
-        return false;
-    }
-
-    // Multi-rate mode: use switchToInputRate() for dynamic rate switching
-    if (!g_upsampler->isMultiRateEnabled()) {
-        LOG_ERROR("[Rate] Multi-rate mode not enabled. Rate switching requires multi-rate mode.");
-        return false;
-    }
-
-    // Save previous state for rollback
-    int prev_input_rate = g_current_input_rate.load(std::memory_order_acquire);
-    int prev_output_rate = g_current_output_rate.load(std::memory_order_acquire);
-
-    bool switch_success = false;
-
-    // Use soft mute for filter switching (fade-out, switch, fade-in)
-    applySoftMuteForFilterSwitch([&]() {
-        // Perform filter switch
-        if (!g_upsampler->switchToInputRate(detected_sample_rate)) {
-            LOG_ERROR("[Rate] Failed to switch to input rate: {} Hz", detected_sample_rate);
-            return false;
-        }
-
-        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
-
-        // Output rate is dynamically calculated (input_rate × upsample_ratio)
-        int new_output_rate = g_upsampler->getOutputSampleRate();
-        g_current_output_rate.store(new_output_rate, std::memory_order_release);
-
-        // Update rate family
-        g_set_rate_family(ConvolutionEngine::detectRateFamily(detected_sample_rate));
-
-        // Re-initialize streaming after rate switch (Issue #219)
-        if (!g_upsampler->initializeStreaming()) {
-            LOG_ERROR("[Rate] Failed to reinitialize streaming, rolling back...");
-            // Rollback: switch back to previous rate
-            if (g_upsampler->switchToInputRate(prev_input_rate)) {
-                g_upsampler->initializeStreaming();
-            }
-            g_current_input_rate.store(prev_input_rate, std::memory_order_release);
-            g_current_output_rate.store(prev_output_rate, std::memory_order_release);
-            return false;
-        }
-
-        // Resize streaming input buffers based on new streamValidInputPerBlock (Issue #219)
-        size_t new_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
-        g_stream_input_left.resize(new_capacity, 0.0f);
-        g_stream_input_right.resize(new_capacity, 0.0f);
-
-        // Clear accumulated samples (old rate data is invalid)
-        g_stream_accumulated_left = 0;
-        g_stream_accumulated_right = 0;
-
-        LOG_INFO("[Rate] Streaming buffers resized to {} samples (streamValidInputPerBlock={})",
-                 new_capacity, g_upsampler->getStreamValidInputPerBlock());
-
-        // Clear output ring buffers to discard old rate samples (Issue #219)
-        g_output_buffer_left.clear();
-        g_output_buffer_right.clear();
-        LOG_INFO("[Rate] Output ring buffers cleared");
-
-        // Re-apply EQ if enabled (Issue #219: EQ state auto-restore)
-        // EQ magnitude depends on output sample rate, so we must recalculate
-        if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
-            EQ::EqProfile eqProfile;
-            if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
-                size_t filterFftSize = g_upsampler->getFilterFftSize();
-                size_t fullFftSize = g_upsampler->getFullFftSize();
-                double outputSampleRate = static_cast<double>(new_output_rate);
-                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
-                                                                outputSampleRate, eqProfile);
-
-                if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                    LOG_INFO("[Rate] EQ re-applied for new output rate {} Hz", new_output_rate);
-                } else {
-                    LOG_WARN("[Rate] Failed to re-apply EQ after rate switch");
-                }
-            }
-        }
-
-        // Schedule ALSA reconfiguration if output rate changed
-        if (new_output_rate != prev_output_rate) {
-            g_alsa_reconfigure_needed.store(true, std::memory_order_release);
-            g_alsa_new_output_rate.store(new_output_rate, std::memory_order_release);
-            LOG_INFO("[Rate] ALSA reconfiguration scheduled for {} Hz ({} -> {}x upsampling)",
-                     new_output_rate, detected_sample_rate, g_upsampler->getUpsampleRatio());
-        } else {
-            LOG_INFO("[Rate] Rate switched to {} Hz -> {} Hz ({}x upsampling)",
-                     detected_sample_rate, new_output_rate, g_upsampler->getUpsampleRatio());
-        }
-
-        switch_success = true;
-        return true;
-    });
-
-    return switch_success;
-}
 
 // Open and configure ALSA device. Returns nullptr on failure.
 static snd_pcm_t* open_and_configure_pcm(const std::string& device) {
@@ -3112,7 +2848,7 @@ void alsa_output_thread() {
         int pending_rate = g_pending_rate_change.exchange(0, std::memory_order_acquire);
         if (pending_rate > 0 && g_config.multiRateEnabled) {
             LOG_INFO("[Main] Processing pending rate change to {} Hz", pending_rate);
-            if (!handle_rate_change(pending_rate)) {
+            if (!pipewire_support::handle_rate_change(pending_rate)) {
                 LOG_ERROR("[Main] Failed to handle rate change to {} Hz", pending_rate);
             }
         }
@@ -3782,8 +3518,8 @@ int main(int argc, char* argv[]) {
 
         maybe_start_rtp_from_config();
 
-        Data data = {};
-        data.gpu_ready = true;
+        pipewire_support::InputContext pipewire_ctx = {};
+        pipewire_ctx.gpu_ready = true;
         struct pw_loop* loop = nullptr;
 
         // Start ZeroMQ listener thread
@@ -3794,21 +3530,21 @@ int main(int argc, char* argv[]) {
             pw_init(&argc, &argv);
 
             // Create main loop (store globally for signal handler access)
-            data.loop = pw_main_loop_new(nullptr);
-            g_pw_loop = data.loop;
+            pipewire_ctx.loop = pw_main_loop_new(nullptr);
+            g_pw_loop = pipewire_ctx.loop;
 
-            loop = pw_main_loop_get_loop(data.loop);
+            loop = pw_main_loop_get_loop(pipewire_ctx.loop);
 
             // Create Capture stream from gpu_upsampler_sink.monitor
             std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..." << std::endl;
-            data.input_stream = pw_stream_new_simple(
+            pipewire_ctx.input_stream = pw_stream_new_simple(
                 loop, "GPU Upsampler Input",
                 pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
                                   PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
                                   "GPU Upsampler Input", PW_KEY_NODE_TARGET,
                                   "gpu_upsampler_sink.monitor", "audio.channels", "2", "audio.position",
                                   "FL,FR", nullptr),
-                &input_stream_events, &data);
+                &pipewire_support::kInputStreamEvents, &pipewire_ctx);
 
             // Configure input stream audio format (32-bit float stereo)
             uint8_t input_buffer[1024];
@@ -3834,9 +3570,11 @@ int main(int argc, char* argv[]) {
             // Add timer to check signal flags periodically (100ms interval)
             // This enables async-signal-safe shutdown by polling flags from main loop
             struct timespec interval = {0, 100000000};  // 100ms in nanoseconds
-            data.signal_check_timer = pw_loop_add_timer(loop, on_signal_check_timer, &data);
-            if (data.signal_check_timer) {
-                pw_loop_update_timer(loop, data.signal_check_timer, &interval, &interval, false);
+            pipewire_ctx.signal_check_timer =
+                pw_loop_add_timer(loop, on_signal_check_timer, nullptr);
+            if (pipewire_ctx.signal_check_timer) {
+                pw_loop_update_timer(loop, pipewire_ctx.signal_check_timer, &interval, &interval,
+                                     false);
                 std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
             } else {
                 std::cerr << "Warning: Failed to create signal check timer" << std::endl;
@@ -3882,7 +3620,7 @@ int main(int argc, char* argv[]) {
             // Run main loop (only if not already requested to reload/stop)
             g_main_loop_running = true;
             if (g_config.pipewireEnabled) {
-                pw_main_loop_run(data.loop);
+                pw_main_loop_run(pipewire_ctx.loop);
             } else {
                 // RTP-only mode: simple signal wait loop
                 std::cout << "Entering RTP-only event loop..." << std::endl;
@@ -3909,9 +3647,9 @@ int main(int argc, char* argv[]) {
 #endif
 
         // Step 1: Stop signal check timer (PipeWire only)
-        if (g_config.pipewireEnabled && data.signal_check_timer) {
-            pw_loop_destroy_source(loop, data.signal_check_timer);
-            data.signal_check_timer = nullptr;
+        if (g_config.pipewireEnabled && pipewire_ctx.signal_check_timer) {
+            pw_loop_destroy_source(loop, pipewire_ctx.signal_check_timer);
+            pipewire_ctx.signal_check_timer = nullptr;
         }
 
         // Step 2: Wait for soft mute fade-out to complete (with 100ms timeout)
@@ -3930,15 +3668,15 @@ int main(int argc, char* argv[]) {
         }
 
         // Step 3: Destroy PipeWire stream (stops audio input)
-        if (g_config.pipewireEnabled && data.input_stream) {
+        if (g_config.pipewireEnabled && pipewire_ctx.input_stream) {
             std::cout << "  Step 3: Destroying PipeWire stream..." << std::endl;
-            pw_stream_destroy(data.input_stream);
+            pw_stream_destroy(pipewire_ctx.input_stream);
         }
 
         // Step 4: Destroy PipeWire main loop
-        if (g_config.pipewireEnabled && data.loop) {
+        if (g_config.pipewireEnabled && pipewire_ctx.loop) {
             std::cout << "  Step 4: Destroying PipeWire main loop..." << std::endl;
-            pw_main_loop_destroy(data.loop);
+            pw_main_loop_destroy(pipewire_ctx.loop);
             g_pw_loop = nullptr;
         }
 
