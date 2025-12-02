@@ -118,10 +118,10 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             }
         }
 
-        // EQ settings
-        if (j.contains("eqEnabled"))
+        // EQ settings (type-safe parse to avoid null/number crashes)
+        if (j.contains("eqEnabled") && j["eqEnabled"].is_boolean())
             outConfig.eqEnabled = j["eqEnabled"].get<bool>();
-        if (j.contains("eqProfilePath"))
+        if (j.contains("eqProfilePath") && j["eqProfilePath"].is_string())
             outConfig.eqProfilePath = j["eqProfilePath"].get<std::string>();
 
         // Crossfeed settings (with type error handling)
