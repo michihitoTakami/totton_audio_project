@@ -2705,6 +2705,8 @@ static void zeromq_listener_thread() {
                     PhaseType newPhase =
                         (phaseStr == "minimum") ? PhaseType::Minimum : PhaseType::Linear;
                     PhaseType oldPhase = g_upsampler->getPhaseType();
+                    std::string oldPhaseStr =
+                        (oldPhase == PhaseType::Minimum) ? "minimum" : "linear";
 
                     if (oldPhase == newPhase) {
                         response = "OK:Phase type already " + phaseStr;
@@ -2712,12 +2714,9 @@ static void zeromq_listener_thread() {
                         // Switch phase type (changes actual filter FFT in quad-phase mode)
                         bool switch_success = false;
                         applySoftMuteForFilterSwitch([&]() {
-                            bool partitionEnabledBeforeSwitch = g_config.partitionedConvolution.enabled;
-                            switch_success = g_upsampler->switchPhaseType(newPhase);
-                            if (switch_success) {
-                                g_active_phase_type = newPhase;
-                                refresh_current_headroom("phase switch");
-                                // Re-apply EQ if enabled (switchPhaseType clears eqApplied_)
+                            bool partitionEnabledBeforeSwitch =
+                                g_config.partitionedConvolution.enabled;
+                            auto reapplyEqForPhase = [&](const std::string& label) {
                                 if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
                                     EQ::EqProfile eqProfile;
                                     if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
@@ -2730,7 +2729,7 @@ static void zeromq_listener_thread() {
                                             filterFftSize, fullFftSize, outputSampleRate,
                                             eqProfile);
                                         if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                                            std::cout << "ZeroMQ: EQ re-applied with " << phaseStr
+                                            std::cout << "ZeroMQ: EQ re-applied with " << label
                                                       << " phase" << std::endl;
                                         } else {
                                             std::cerr << "ZeroMQ: Warning - EQ re-apply failed"
@@ -2742,6 +2741,14 @@ static void zeromq_listener_thread() {
                                             << g_config.eqProfilePath << std::endl;
                                     }
                                 }
+                            };
+
+                            switch_success = g_upsampler->switchPhaseType(newPhase);
+                            if (switch_success) {
+                                g_active_phase_type = newPhase;
+                                refresh_current_headroom("phase switch");
+                                // Re-apply EQ if enabled (switchPhaseType clears eqApplied_)
+                                reapplyEqForPhase(phaseStr);
 
                                 if (newPhase == PhaseType::Linear && partitionEnabledBeforeSwitch) {
                                     std::cout << "[Partition] Hybrid phase selected, disabling "
@@ -2758,7 +2765,18 @@ static void zeromq_listener_thread() {
                                         g_config.partitionedConvolution.enabled = true;
                                         g_upsampler->setPartitionedConvolutionConfig(
                                             g_config.partitionedConvolution);
-                                        if (!rebuild_streaming_buffers("partition rollback")) {
+                                        if (g_upsampler->switchPhaseType(oldPhase)) {
+                                            g_active_phase_type = oldPhase;
+                                            refresh_current_headroom("phase rollback");
+                                            reapplyEqForPhase(oldPhaseStr);
+                                        } else {
+                                            std::cerr << "[Partition] Rollback phase switch to "
+                                                      << oldPhaseStr
+                                                      << " failed; audio pipeline requires restart"
+                                                      << std::endl;
+                                        }
+                                        if (!rebuild_streaming_buffers(
+                                                "phase/partition rollback")) {
                                             std::cerr << "[Partition] Rollback streaming re-init "
                                                       << "failed; audio pipeline requires restart"
                                                       << std::endl;
