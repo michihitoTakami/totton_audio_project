@@ -273,7 +273,7 @@
           "daemon"
         ],
         "summary": "Get Phase Type",
-        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid combines minimum phase below 100 Hz with linear phase above 100 Hz (10 ms alignment) to retain imaging while keeping bass tight.",
+        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid combines minimum phase below 100 Hz with linear phase above 100 Hz\n(10 ms alignment) to retain imaging while keeping bass tight.",
         "operationId": "get_phase_type_daemon_phase_type_get",
         "responses": {
           "200": {

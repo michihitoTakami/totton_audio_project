@@ -174,7 +174,9 @@ class FilterConfig:
             if self.hybrid_delay_ms <= 0:
                 raise ValueError("hybrid_delay_ms は正の値である必要があります")
             if self.hybrid_fast_window_samples <= 0:
-                raise ValueError("hybrid_fast_window_samples は正の整数である必要があります")
+                raise ValueError(
+                    "hybrid_fast_window_samples は正の整数である必要があります"
+                )
             if self.hybrid_delay_samples >= self.n_taps:
                 raise ValueError(
                     f"hybrid_delay_ms に対応するサンプル数 ({self.hybrid_delay_samples}) がタップ数 ({self.n_taps}) 以上です"
@@ -255,7 +257,9 @@ class FilterDesigner:
 
         # 偶数タップの場合は+1して奇数長を作り、後段の最小位相変換/ハイブリッド化でトリミング
         numtaps = (
-            self.config.n_taps if self.config.n_taps % 2 == 1 else self.config.n_taps + 1
+            self.config.n_taps
+            if self.config.n_taps % 2 == 1
+            else self.config.n_taps + 1
         )
 
         h_linear = signal.firwin(

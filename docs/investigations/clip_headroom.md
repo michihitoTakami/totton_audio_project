@@ -64,4 +64,3 @@
   automatic limiter that trims `g_peak_post_gain` back under a target threshold.
 - Extend the headroom script to run the same inspection across both 44.1 kHz and 48 kHz
   filter families to guarantee coverage before shipping new coefficients.
-

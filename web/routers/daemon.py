@@ -192,7 +192,9 @@ async def get_phase_type():
             if phase_type_raw in (DAEMON_PHASE_LINEAR, PHASE_TYPE_HYBRID)
             else PHASE_TYPE_MINIMUM
         )
-        latency_warning = HYBRID_PHASE_WARNING if ui_phase_type == PHASE_TYPE_HYBRID else None
+        latency_warning = (
+            HYBRID_PHASE_WARNING if ui_phase_type == PHASE_TYPE_HYBRID else None
+        )
 
         return PhaseTypeResponse(
             phase_type=ui_phase_type,

@@ -4,7 +4,7 @@
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
-#include "daemon/pipewire_support.h"
+#include "daemon/rtp_engine_coordinator.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -70,7 +70,7 @@ constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
-        std::cout << "[Partition] Hybrid phase is incompatible with low-latency mode. "
+        std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
                   << "Switching to minimum phase." << std::endl;
         config.phaseType = PhaseType::Minimum;
     }
@@ -87,7 +87,7 @@ constexpr const char* ZEROMQ_PUB_SUFFIX = ".pub";
 using namespace DaemonConstants;
 using StreamFloatVector = ConvolutionEngine::StreamFloatVector;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
-constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 // Runtime configuration (loaded from config.json)
@@ -114,18 +114,10 @@ static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
-static std::unique_ptr<Network::RtpSessionManager> g_rtp_manager;
+static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
-static void ensure_rtp_manager_initialized();
-static void maybe_start_rtp_from_config();
-static void shutdown_rtp_manager();
-static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInputConfig& cfg);
-
-namespace pipewire_support {
-void process_interleaved_block(const float* input_samples, uint32_t n_frames);
-bool handle_rate_change(int detected_sample_rate);
-}  // namespace pipewire_support
+static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
 
 struct DacDeviceRuntimeInfo {
     std::string id;
@@ -245,6 +237,10 @@ static SoftMute::Controller* g_soft_mute = nullptr;
 
 // Helper function for soft mute during filter switching (Issue #266)
 // Fade-out: 1.5 seconds, perform filter switch, fade-in: 1.5 seconds
+// Forward declaration for handle_rate_change (Issue #219)
+// Defined later in file, but called from ZeroMQ handler
+static bool handle_rate_change(int detected_sample_rate);
+
 // Thread safety: This function is called from ZeroMQ command thread.
 // Fade parameter changes leverage the atomic configuration inside SoftMute::Controller, and
 // we still wait for fade-out completion before manipulating filters to avoid artifacts.
@@ -342,42 +338,6 @@ static std::mutex g_streaming_mutex;  // Protects streaming buffer state during 
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
 
-static bool rebuild_streaming_buffers(const std::string& reason) {
-    if (!g_upsampler) {
-        std::cerr << "[Streaming] Cannot rebuild buffers (" << reason << "): upsampler missing"
-                  << std::endl;
-        return false;
-    }
-
-    std::lock_guard<std::mutex> streamLock(g_streaming_mutex);
-
-    g_upsampler->resetStreaming();
-
-    {
-        std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
-        g_output_buffer_left.clear();
-        g_output_buffer_right.clear();
-        g_output_read_pos = 0;
-    }
-    g_stream_input_left.clear();
-    g_stream_input_right.clear();
-    g_stream_accumulated_left = 0;
-    g_stream_accumulated_right = 0;
-
-    if (!g_upsampler->initializeStreaming()) {
-        std::cerr << "[Streaming] Failed to initialize streaming after " << reason << std::endl;
-        return false;
-    }
-
-    size_t newCapacity = g_upsampler->getStreamValidInputPerBlock() * 2;
-    g_stream_input_left.resize(newCapacity, 0.0f);
-    g_stream_input_right.resize(newCapacity, 0.0f);
-
-    std::cout << "[Streaming] Reinitialized buffers (" << reason << ") capacity=" << newCapacity
-              << " samples" << std::endl;
-    return true;
-}
-
 static void elevate_realtime_priority(const char* name, int priority = 65) {
 #ifdef __linux__
     sched_param params{};
@@ -440,250 +400,6 @@ static void reset_crossfeed_stream_state_locked() {
         g_hrtf_processor->resetStreaming();
     }
 }
-
-namespace pipewire_support {
-
-void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
-    if (!input_samples || n_frames == 0 || !g_upsampler) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
-
-    std::vector<float> left(n_frames);
-    std::vector<float> right(n_frames);
-    AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
-    float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
-    update_peak_level(g_peak_input_level, inputPeak);
-
-    StreamFloatVector& output_left = g_upsampler_output_left;
-    StreamFloatVector& output_right = g_upsampler_output_right;
-
-    bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
-    bool left_generated = false;
-    bool right_generated = false;
-
-    if (use_fallback) {
-        size_t output_frames = static_cast<size_t>(n_frames) * g_config.upsampleRatio;
-        output_left.assign(output_frames, 0.0f);
-        output_right.assign(output_frames, 0.0f);
-        for (size_t i = 0; i < n_frames; ++i) {
-            output_left[i * g_config.upsampleRatio] = left[i];
-            output_right[i * g_config.upsampleRatio] = right[i];
-        }
-        left_generated = true;
-        right_generated = true;
-    } else {
-        left_generated = g_upsampler->processStreamBlock(
-            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
-            g_stream_accumulated_left);
-        right_generated = g_upsampler->processStreamBlock(
-            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
-            g_stream_accumulated_right);
-    }
-
-    if (!left_generated || !right_generated) {
-        return;
-    }
-
-    size_t frames_generated = std::min(output_left.size(), output_right.size());
-    if (frames_generated > 0) {
-        float upsamplerPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_upsampler_level, upsamplerPeak);
-    }
-
-    if (g_crossfeed_enabled.load()) {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-            bool cf_generated = g_hrtf_processor->processStreamBlock(
-                output_left.data(), output_right.data(), output_left.size(), g_cf_output_left,
-                g_cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
-
-            if (cf_generated) {
-                size_t cf_frames = std::min(g_cf_output_left.size(), g_cf_output_right.size());
-                if (cf_frames > 0) {
-                    float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
-                                                       g_cf_output_right.data(), cf_frames);
-                    update_peak_level(g_peak_post_crossfeed_level, cfPeak);
-                }
-                std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                g_output_buffer_left.insert(g_output_buffer_left.end(), g_cf_output_left.begin(),
-                                            g_cf_output_left.end());
-                g_output_buffer_right.insert(g_output_buffer_right.end(), g_cf_output_right.begin(),
-                                             g_cf_output_right.end());
-                g_buffer_cv.notify_one();
-                return;
-            }
-        }
-    }
-
-    std::lock_guard<std::mutex> lock(g_buffer_mutex);
-    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(), output_left.end());
-    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
-                                 output_right.end());
-    g_buffer_cv.notify_one();
-    if (frames_generated > 0) {
-        float postPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_post_crossfeed_level, postPeak);
-    }
-}
-
-namespace {
-
-void on_input_process(void* userdata) {
-    InputContext* data = static_cast<InputContext*>(userdata);
-    if (!data || !data->input_stream) {
-        return;
-    }
-
-    struct pw_buffer* buf = pw_stream_dequeue_buffer(data->input_stream);
-    if (!buf) {
-        return;
-    }
-
-    struct spa_buffer* spa_buf = buf->buffer;
-    float* input_samples = static_cast<float*>(spa_buf->datas[0].data);
-    uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
-
-    if (input_samples && n_frames > 0 && data->gpu_ready) {
-        process_interleaved_block(input_samples, n_frames);
-    }
-
-    pw_stream_queue_buffer(data->input_stream, buf);
-}
-
-void on_stream_state_changed(void* userdata, enum pw_stream_state old_state,
-                             enum pw_stream_state state, const char* error) {
-    (void)userdata;
-    (void)old_state;
-
-    std::cout << "PipeWire input stream state: " << pw_stream_state_as_string(state);
-    if (error) {
-        std::cout << " (error: " << error << ")";
-    }
-    std::cout << std::endl;
-}
-
-void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* param) {
-    (void)userdata;
-
-    if (id != SPA_PARAM_Format || param == nullptr) {
-        return;
-    }
-
-    struct spa_audio_info_raw info;
-    if (spa_format_audio_raw_parse(param, &info) < 0) {
-        return;
-    }
-
-    int detected_rate = static_cast<int>(info.rate);
-    int current_rate = g_current_input_rate.load(std::memory_order_acquire);
-
-    if (detected_rate != current_rate && detected_rate > 0) {
-        LOG_INFO("[PipeWire] Sample rate change detected: {} -> {} Hz", current_rate,
-                 detected_rate);
-        g_pending_rate_change.store(detected_rate, std::memory_order_release);
-    }
-}
-
-}  // namespace
-
-const struct pw_stream_events kInputStreamEvents = {
-    .version = PW_VERSION_STREAM_EVENTS,
-    .state_changed = on_stream_state_changed,
-    .param_changed = on_param_changed,
-    .process = on_input_process,
-};
-
-bool handle_rate_change(int detected_sample_rate) {
-    if (!g_upsampler) {
-        return false;
-    }
-
-    if (!g_upsampler->isMultiRateEnabled()) {
-        LOG_ERROR("[Rate] Multi-rate mode not enabled. Rate switching requires multi-rate mode.");
-        return false;
-    }
-
-    int prev_input_rate = g_current_input_rate.load(std::memory_order_acquire);
-    int prev_output_rate = g_current_output_rate.load(std::memory_order_acquire);
-
-    bool switch_success = false;
-
-    applySoftMuteForFilterSwitch([&]() {
-        if (!g_upsampler->switchToInputRate(detected_sample_rate)) {
-            LOG_ERROR("[Rate] Failed to switch to input rate: {} Hz", detected_sample_rate);
-            return false;
-        }
-
-        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
-
-        int new_output_rate = g_upsampler->getOutputSampleRate();
-        g_current_output_rate.store(new_output_rate, std::memory_order_release);
-
-        g_set_rate_family(ConvolutionEngine::detectRateFamily(detected_sample_rate));
-
-        if (!g_upsampler->initializeStreaming()) {
-            LOG_ERROR("[Rate] Failed to reinitialize streaming, rolling back...");
-            if (g_upsampler->switchToInputRate(prev_input_rate)) {
-                g_upsampler->initializeStreaming();
-            }
-            g_current_input_rate.store(prev_input_rate, std::memory_order_release);
-            g_current_output_rate.store(prev_output_rate, std::memory_order_release);
-            return false;
-        }
-
-        size_t new_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
-        g_stream_input_left.resize(new_capacity, 0.0f);
-        g_stream_input_right.resize(new_capacity, 0.0f);
-        g_stream_accumulated_left = 0;
-        g_stream_accumulated_right = 0;
-
-        LOG_INFO("[Rate] Streaming buffers resized to {} samples (streamValidInputPerBlock={})",
-                 new_capacity, g_upsampler->getStreamValidInputPerBlock());
-
-        g_output_buffer_left.clear();
-        g_output_buffer_right.clear();
-        LOG_INFO("[Rate] Output ring buffers cleared");
-
-        if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
-            EQ::EqProfile eqProfile;
-            if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
-                size_t filterFftSize = g_upsampler->getFilterFftSize();
-                size_t fullFftSize = g_upsampler->getFullFftSize();
-                double outputSampleRate = static_cast<double>(new_output_rate);
-                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
-                                                                outputSampleRate, eqProfile);
-
-                if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                    LOG_INFO("[Rate] EQ re-applied for new output rate {} Hz", new_output_rate);
-                } else {
-                    LOG_WARN("[Rate] Failed to re-apply EQ after rate switch");
-                }
-            }
-        }
-
-        if (new_output_rate != prev_output_rate) {
-            g_alsa_reconfigure_needed.store(true, std::memory_order_release);
-            g_alsa_new_output_rate.store(new_output_rate, std::memory_order_release);
-            LOG_INFO("[Rate] ALSA reconfiguration scheduled for {} Hz ({} -> {}x upsampling)",
-                     new_output_rate, detected_sample_rate, g_upsampler->getUpsampleRatio());
-        } else {
-            LOG_INFO("[Rate] Rate switched to {} Hz -> {} Hz ({}x upsampling)",
-                     detected_sample_rate, new_output_rate, g_upsampler->getUpsampleRatio());
-        }
-
-        switch_success = true;
-        return true;
-    });
-
-    return switch_success;
-}
-
-}  // namespace pipewire_support
 
 // ========== DAC Device Monitoring & ZeroMQ PUB ==========
 
@@ -1331,532 +1047,6 @@ static void reset_runtime_state() {
     g_cf_output_buffer_right.clear();
 }
 
-static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInputConfig& cfg) {
-    Network::SessionConfig session;
-    session.sessionId = cfg.sessionId;
-    session.bindAddress = cfg.bindAddress;
-    session.port = cfg.port;
-    session.sourceHost = cfg.sourceHost;
-    session.autoStart = cfg.autoStart;
-    session.multicast = cfg.multicast;
-    session.multicastGroup = cfg.multicastGroup;
-    session.interfaceName = cfg.interfaceName;
-    session.ttl = cfg.ttl;
-    session.dscp = cfg.dscp;
-    session.sampleRate = cfg.sampleRate;
-    session.channels = cfg.channels;
-    session.bitsPerSample = cfg.bitsPerSample;
-    session.bigEndian = cfg.bigEndian;
-    session.signedSamples = cfg.signedSamples;
-    session.payloadType = cfg.payloadType;
-    session.socketBufferBytes = cfg.socketBufferBytes;
-    session.mtuBytes = cfg.mtuBytes;
-    session.targetLatencyMs = cfg.targetLatencyMs;
-    session.watchdogTimeoutMs = cfg.watchdogTimeoutMs;
-    session.telemetryIntervalMs = cfg.telemetryIntervalMs;
-    session.enableRtcp = cfg.enableRtcp;
-    session.rtcpPort = cfg.rtcpPort;
-    session.enablePtp = cfg.enablePtp;
-    session.ptpInterface = cfg.ptpInterface;
-    session.ptpDomain = cfg.ptpDomain;
-    session.sdp = cfg.sdp;
-    return session;
-}
-
-static void maybe_switch_rate_for_rtp(uint32_t sessionRate, const std::string& sessionId) {
-    if (!g_upsampler || sessionRate == 0) {
-        return;
-    }
-
-    int targetRate = static_cast<int>(sessionRate);
-    int currentRate = g_current_input_rate.load(std::memory_order_acquire);
-    if (targetRate == currentRate) {
-        return;
-    }
-
-    if (!g_upsampler->isMultiRateEnabled()) {
-        LOG_WARN("[RTP] Session {} requests {} Hz but multi-rate is disabled (engine at {} Hz)",
-                 sessionId, targetRate, currentRate);
-        return;
-    }
-
-    LOG_INFO("[RTP] Session {} -> switching engine input rate {} -> {} Hz", sessionId, currentRate,
-             targetRate);
-    if (!pipewire_support::handle_rate_change(targetRate)) {
-        LOG_ERROR("[RTP] Failed to switch engine rate to {} Hz for session {}", targetRate,
-                  sessionId);
-    }
-}
-
-static void ensure_rtp_manager_initialized() {
-    if (g_rtp_manager) {
-        return;
-    }
-
-    auto frameCallback = [](const float* interleaved, size_t frames, uint32_t sampleRate) {
-        if (!g_running.load()) {
-            return;
-        }
-        if (sampleRate != static_cast<uint32_t>(g_input_sample_rate)) {
-            LOG_EVERY_N(WARN, 200,
-                        "RTP session sample rate {} differs from engine input {} Hz. "
-                        "Reconfigure engine to avoid drift.",
-                        sampleRate, g_input_sample_rate);
-        }
-        pipewire_support::process_interleaved_block(interleaved, static_cast<uint32_t>(frames));
-    };
-
-    auto ptpProvider = []() -> Network::PtpSyncState { return {}; };
-
-    auto telemetryCallback = [](const Network::SessionMetrics& metrics) {
-        (void)metrics;  // Suppress unused parameter warning in release builds
-        LOG_DEBUG("RTP session {} stats: packets={} dropped={}", metrics.sessionId,
-                  metrics.packetsReceived, metrics.packetsDropped);
-    };
-
-    g_rtp_manager =
-        std::make_unique<Network::RtpSessionManager>(frameCallback, ptpProvider, telemetryCallback);
-}
-
-static void maybe_start_rtp_from_config() {
-    if (!g_config.rtp.enabled || !g_config.rtp.autoStart) {
-        return;
-    }
-
-    ensure_rtp_manager_initialized();
-    Network::SessionConfig sessionCfg = build_rtp_session_config(g_config.rtp);
-    std::string error;
-    if (!g_rtp_manager->startSession(sessionCfg, error)) {
-        LOG_ERROR("Failed to auto-start RTP session {}: {}", sessionCfg.sessionId, error);
-    } else {
-        LOG_INFO("RTP session '{}' auto-started on {}:{}", sessionCfg.sessionId,
-                 sessionCfg.bindAddress, sessionCfg.port);
-        maybe_switch_rate_for_rtp(sessionCfg.sampleRate, sessionCfg.sessionId);
-    }
-}
-
-static void shutdown_rtp_manager() {
-    if (!g_rtp_manager) {
-        return;
-    }
-    g_rtp_manager->stopAll();
-    g_rtp_manager.reset();
-}
-
-// RTP discovery scanner (Issue #372)
-static constexpr size_t RTP_DISCOVERY_MAX_PORTS = 16;
-static constexpr uint32_t RTP_DISCOVERY_MIN_DURATION_MS = 50;
-static constexpr uint32_t RTP_DISCOVERY_MAX_DURATION_MS = 5000;
-static constexpr uint32_t RTP_DISCOVERY_MIN_COOLDOWN_MS = 250;
-static constexpr uint32_t RTP_DISCOVERY_MAX_COOLDOWN_MS = 30000;
-static constexpr size_t RTP_DISCOVERY_MAX_STREAM_LIMIT = 64;
-
-struct RtpDiscoveryCandidate {
-    std::string host;
-    uint16_t port = 0;
-    uint8_t payloadType = 0;
-    bool multicast = false;
-    uint32_t packets = 0;
-    uint64_t firstSeenMs = 0;
-    uint64_t lastSeenMs = 0;
-};
-
-static std::mutex g_rtp_discovery_mutex;
-static nlohmann::json g_rtp_discovery_cache;
-static std::chrono::steady_clock::time_point g_rtp_discovery_last_scan =
-    std::chrono::steady_clock::time_point::min();
-
-static uint64_t unix_time_millis() {
-    auto now = std::chrono::system_clock::now();
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
-}
-
-static uint32_t clamp_discovery_duration(uint32_t value) {
-    return std::clamp(value, RTP_DISCOVERY_MIN_DURATION_MS, RTP_DISCOVERY_MAX_DURATION_MS);
-}
-
-static uint32_t clamp_discovery_cooldown(uint32_t value) {
-    return std::clamp(value, RTP_DISCOVERY_MIN_COOLDOWN_MS, RTP_DISCOVERY_MAX_COOLDOWN_MS);
-}
-
-static size_t clamp_discovery_stream_limit(size_t value) {
-    return std::clamp(value, static_cast<size_t>(1), RTP_DISCOVERY_MAX_STREAM_LIMIT);
-}
-
-static std::vector<uint16_t> build_discovery_ports(const AppConfig::RtpInputConfig& cfg) {
-    std::vector<uint16_t> ports = cfg.discoveryPorts;
-    auto appendPort = [&](uint16_t candidate) {
-        if (candidate < 1024 || candidate > 65535) {
-            return;
-        }
-        if (std::find(ports.begin(), ports.end(), candidate) == ports.end()) {
-            ports.push_back(candidate);
-        }
-    };
-
-    appendPort(cfg.port);
-    appendPort(5004);
-
-    if (ports.empty()) {
-        ports.push_back(cfg.port);
-    }
-
-    std::sort(ports.begin(), ports.end());
-    ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
-    if (ports.size() > RTP_DISCOVERY_MAX_PORTS) {
-        ports.resize(RTP_DISCOVERY_MAX_PORTS);
-    }
-    return ports;
-}
-
-static bool is_ipv4_multicast(const in_addr& addr) {
-    uint32_t ip = ntohl(addr.s_addr);
-    return ip >= 0xE0000000u && ip <= 0xEFFFFFFFu;
-}
-
-static std::string slugify_discovery_session_id(const std::string& host, uint16_t port) {
-    std::string slug;
-    slug.reserve(host.size() + 6);
-    for (char ch : host) {
-        unsigned char c = static_cast<unsigned char>(ch);
-        if (std::isalnum(c)) {
-            slug.push_back(static_cast<char>(std::tolower(c)));
-        } else {
-            slug.push_back('-');
-        }
-    }
-    while (!slug.empty() && slug.front() == '-') {
-        slug.erase(slug.begin());
-    }
-    while (!slug.empty() && slug.back() == '-') {
-        slug.pop_back();
-    }
-    if (slug.empty()) {
-        slug = "rtp";
-    }
-    slug.push_back('-');
-    slug.append(std::to_string(port));
-    if (slug.size() > 63) {
-        slug.resize(63);
-    }
-    return slug;
-}
-
-static std::string build_discovery_display_name(const std::string& host, uint16_t port,
-                                                uint8_t payloadType) {
-    std::ostringstream oss;
-    oss << host << ":" << port << " (PT" << static_cast<int>(payloadType) << ")";
-    return oss.str();
-}
-
-static void join_discovery_multicast_group(int fd, const std::string& group,
-                                           const std::string& interfaceName) {
-    if (group.empty()) {
-        return;
-    }
-
-    ip_mreq mreq{};
-    if (::inet_pton(AF_INET, group.c_str(), &mreq.imr_multiaddr) != 1) {
-        LOG_WARN("RTP discovery: invalid multicast group {}", group);
-        return;
-    }
-
-    if (!interfaceName.empty()) {
-        in_addr ifaceAddr{};
-        if (::inet_pton(AF_INET, interfaceName.c_str(), &ifaceAddr) == 1) {
-            mreq.imr_interface = ifaceAddr;
-        } else {
-            LOG_WARN("RTP discovery: interface '{}' is not IPv4 literal, using INADDR_ANY",
-                     interfaceName);
-            mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-        }
-    } else {
-        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-    }
-
-    if (::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
-        LOG_WARN("RTP discovery: failed to join multicast group {} ({})", group,
-                 std::strerror(errno));
-    }
-}
-
-static bool extract_rtp_payload_type(const uint8_t* data, size_t length, uint8_t& payloadType) {
-    if (length < 12) {
-        return false;
-    }
-    if ((data[0] & 0xC0) != 0x80) {
-        return false;
-    }
-    uint8_t csrcCount = data[0] & 0x0F;
-    size_t headerBytes = 12 + static_cast<size_t>(csrcCount) * 4;
-    if (headerBytes > length) {
-        return false;
-    }
-    bool extension = (data[0] & 0x10) != 0;
-    if (extension) {
-        if (length < headerBytes + 4) {
-            return false;
-        }
-        uint16_t extensionLength =
-            static_cast<uint16_t>((data[headerBytes + 2] << 8) | data[headerBytes + 3]);
-        headerBytes += 4 + static_cast<size_t>(extensionLength) * 4;
-        if (headerBytes > length) {
-            return false;
-        }
-    }
-    payloadType = data[1] & 0x7F;
-    return true;
-}
-
-static std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_candidates(
-    const std::vector<uint16_t>& ports, uint32_t durationMs, bool allowMulticast,
-    bool allowUnicast) {
-    struct DiscoverySocket {
-        int fd = -1;
-        uint16_t port = 0;
-    };
-
-    std::vector<DiscoverySocket> sockets;
-    sockets.reserve(ports.size());
-    for (uint16_t port : ports) {
-        int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if (fd < 0) {
-            LOG_WARN("RTP discovery: failed to create socket on port {} ({})", port,
-                     std::strerror(errno));
-            continue;
-        }
-        int reuse = 1;
-        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-        ::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
-#endif
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons(port);
-        if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-            LOG_WARN("RTP discovery: bind failed on port {} ({})", port, std::strerror(errno));
-            ::close(fd);
-            continue;
-        }
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (flags >= 0) {
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        }
-        sockets.push_back({fd, port});
-    }
-
-    if (sockets.empty()) {
-        return std::nullopt;
-    }
-
-    if (allowMulticast && g_config.rtp.multicast && !g_config.rtp.multicastGroup.empty()) {
-        for (auto& socket : sockets) {
-            join_discovery_multicast_group(socket.fd, g_config.rtp.multicastGroup,
-                                           g_config.rtp.interfaceName);
-        }
-    }
-
-    std::vector<pollfd> pollFds(sockets.size());
-    for (size_t i = 0; i < sockets.size(); ++i) {
-        pollFds[i].fd = sockets[i].fd;
-        pollFds[i].events = POLLIN;
-        pollFds[i].revents = 0;
-    }
-
-    std::unordered_map<std::string, RtpDiscoveryCandidate> candidates;
-    auto start = std::chrono::steady_clock::now();
-    auto deadline = start + std::chrono::milliseconds(durationMs);
-    std::array<uint8_t, 2048> buffer{};
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto now = std::chrono::steady_clock::now();
-        auto remaining =
-            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-        if (remaining <= 0) {
-            break;
-        }
-        int waitMs = static_cast<int>(
-            std::clamp<long long>(remaining, 10, static_cast<long long>(durationMs)));
-        for (auto& fd : pollFds) {
-            fd.events = POLLIN;
-            fd.revents = 0;
-        }
-        int ready = ::poll(pollFds.data(), static_cast<nfds_t>(pollFds.size()), waitMs);
-        if (ready < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            LOG_WARN("RTP discovery: poll failed ({})", std::strerror(errno));
-            break;
-        }
-        if (ready == 0) {
-            continue;
-        }
-        for (size_t i = 0; i < pollFds.size(); ++i) {
-            if (!(pollFds[i].revents & POLLIN)) {
-                continue;
-            }
-            sockaddr_in remote{};
-            socklen_t len = sizeof(remote);
-            ssize_t bytes = ::recvfrom(pollFds[i].fd, buffer.data(), buffer.size(), 0,
-                                       reinterpret_cast<sockaddr*>(&remote), &len);
-            if (bytes <= 0) {
-                continue;
-            }
-            uint8_t payloadType = 0;
-            if (!extract_rtp_payload_type(buffer.data(), static_cast<size_t>(bytes), payloadType)) {
-                continue;
-            }
-            bool isMulticast = is_ipv4_multicast(remote.sin_addr);
-            if ((isMulticast && !allowMulticast) || (!isMulticast && !allowUnicast)) {
-                continue;
-            }
-            char addrBuf[INET_ADDRSTRLEN] = {};
-            if (!::inet_ntop(AF_INET, &remote.sin_addr, addrBuf, sizeof(addrBuf))) {
-                continue;
-            }
-            uint16_t sourcePort = ntohs(remote.sin_port);
-            std::string key = std::string(addrBuf) + ":" + std::to_string(sourcePort);
-            uint64_t nowMs = unix_time_millis();
-            auto& entry = candidates[key];
-            if (entry.packets == 0) {
-                entry.host = addrBuf;
-                entry.port = sourcePort;
-                entry.payloadType = payloadType;
-                entry.multicast = isMulticast;
-                entry.firstSeenMs = nowMs;
-            }
-            entry.payloadType = payloadType;
-            entry.lastSeenMs = nowMs;
-            entry.packets++;
-        }
-    }
-
-    for (auto& socket : sockets) {
-        if (socket.fd >= 0) {
-            ::close(socket.fd);
-        }
-    }
-
-    std::vector<RtpDiscoveryCandidate> result;
-    result.reserve(candidates.size());
-    for (auto& kv : candidates) {
-        result.push_back(kv.second);
-    }
-    std::sort(result.begin(), result.end(),
-              [](const RtpDiscoveryCandidate& lhs, const RtpDiscoveryCandidate& rhs) {
-                  if (lhs.packets == rhs.packets) {
-                      return lhs.lastSeenMs > rhs.lastSeenMs;
-                  }
-                  return lhs.packets > rhs.packets;
-              });
-    return result;
-}
-
-static nlohmann::json build_discovery_response(const std::vector<RtpDiscoveryCandidate>& candidates,
-                                               uint64_t scannedAtMs, uint32_t durationMs,
-                                               size_t maxStreams) {
-    nlohmann::json resp;
-    resp["status"] = "ok";
-    resp["data"]["scanned_at_unix_ms"] = scannedAtMs;
-    resp["data"]["duration_ms"] = durationMs;
-    resp["data"]["streams"] = nlohmann::json::array();
-
-    size_t limit = std::min(maxStreams, candidates.size());
-    for (size_t i = 0; i < limit; ++i) {
-        const auto& candidate = candidates[i];
-        std::string sessionId = slugify_discovery_session_id(candidate.host, candidate.port);
-        bool existing = g_rtp_manager && g_rtp_manager->hasSession(sessionId);
-
-        nlohmann::json stream;
-        stream["session_id"] = sessionId;
-        stream["display_name"] =
-            build_discovery_display_name(candidate.host, candidate.port, candidate.payloadType);
-        stream["source_host"] = candidate.host;
-        stream["port"] = candidate.port;
-        stream["status"] = candidate.packets >= 4   ? "active"
-                           : candidate.packets >= 2 ? "detected"
-                                                    : "probing";
-        stream["existing_session"] = existing;
-        stream["sample_rate"] = g_config.rtp.sampleRate;
-        stream["channels"] = g_config.rtp.channels;
-        stream["payload_type"] = candidate.payloadType;
-        stream["multicast"] = candidate.multicast;
-        if (candidate.multicast) {
-            stream["multicast_group"] = candidate.host;
-        } else {
-            stream["multicast_group"] = nullptr;
-        }
-        stream["bind_address"] = g_config.rtp.bindAddress;
-        stream["last_seen_unix_ms"] = candidate.lastSeenMs;
-        stream["packet_count"] = candidate.packets;
-
-        resp["data"]["streams"].push_back(stream);
-    }
-
-    return resp;
-}
-
-static nlohmann::json execute_rtp_discovery_scan() {
-    auto ports = build_discovery_ports(g_config.rtp);
-    if (ports.empty()) {
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-        resp["message"] = "No discovery ports configured";
-        return resp;
-    }
-
-    uint32_t durationMs = clamp_discovery_duration(g_config.rtp.discoveryScanDurationMs);
-    bool allowMulticast = g_config.rtp.discoveryEnableMulticast;
-    bool allowUnicast = g_config.rtp.discoveryEnableUnicast;
-
-    auto start = std::chrono::steady_clock::now();
-    auto candidates =
-        collect_rtp_discovery_candidates(ports, durationMs, allowMulticast, allowUnicast);
-    auto elapsedMs = static_cast<uint32_t>(std::min<long long>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                              start)
-            .count(),
-        std::numeric_limits<uint32_t>::max()));
-
-    if (!candidates.has_value()) {
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-        resp["message"] = "Failed to bind discovery sockets";
-        return resp;
-    }
-
-    return build_discovery_response(candidates.value(), unix_time_millis(), elapsedMs,
-                                    clamp_discovery_stream_limit(g_config.rtp.discoveryMaxStreams));
-}
-
-static nlohmann::json get_or_run_rtp_discovery() {
-    uint32_t cooldownMs = clamp_discovery_cooldown(g_config.rtp.discoveryCooldownMs);
-    auto now = std::chrono::steady_clock::now();
-    {
-        std::lock_guard<std::mutex> lock(g_rtp_discovery_mutex);
-        if (!g_rtp_discovery_cache.is_null() &&
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - g_rtp_discovery_last_scan)
-                    .count() < cooldownMs) {
-            return g_rtp_discovery_cache;
-        }
-    }
-
-    nlohmann::json result = execute_rtp_discovery_scan();
-    if (result.contains("status") && result["status"] == "ok") {
-        std::lock_guard<std::mutex> lock(g_rtp_discovery_mutex);
-        g_rtp_discovery_cache = result;
-        g_rtp_discovery_last_scan = std::chrono::steady_clock::now();
-    }
-    return result;
-}
-
-// Handle rate switch for multi-rate mode
-// Returns true on success, false on failure (with rollback)
 static bool handle_rate_switch(int newInputRate) {
     if (!g_upsampler || !g_upsampler->isMultiRateEnabled()) {
         std::cerr << "[Rate] Multi-rate mode not enabled" << std::endl;
@@ -2430,185 +1620,9 @@ static void zeromq_listener_thread() {
                                 }
                             }
                         }
-                    } else if (cmdType == "RTP_START_SESSION" || cmdType == "StartSession") {
-                        if (!j.contains("params") || !j["params"].is_object()) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params object";
-                            response = resp.dump();
-                        } else {
-                            ensure_rtp_manager_initialized();
-                            Network::SessionConfig sessionCfg;
-                            std::string parseError;
-                            if (!Network::sessionConfigFromJson(j["params"], sessionCfg,
-                                                                parseError)) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "VALIDATION_INVALID_CONFIG";
-                                resp["message"] = parseError;
-                                response = resp.dump();
-                            } else if (!g_rtp_manager) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-                                resp["message"] = "RTP manager unavailable";
-                                response = resp.dump();
-                            } else {
-                                std::string startError;
-                                if (!g_rtp_manager->startSession(sessionCfg, startError)) {
-                                    nlohmann::json resp;
-                                    resp["status"] = "error";
-                                    resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-                                    resp["message"] = startError;
-                                    response = resp.dump();
-                                } else {
-                                    nlohmann::json resp;
-                                    resp["status"] = "ok";
-                                    resp["message"] = "RTP session started";
-                                    resp["data"] = Network::sessionConfigToJson(sessionCfg);
-                                    response = resp.dump();
-                                }
-                            }
-                        }
-                    } else if (cmdType == "RTP_STOP_SESSION" || cmdType == "StopSession") {
-                        if (!j.contains("params") || !j["params"].is_object() ||
-                            !j["params"].contains("session_id")) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params.session_id";
-                            response = resp.dump();
-                        } else if (!g_rtp_manager) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                            resp["message"] = "RTP manager not initialized";
-                            response = resp.dump();
-                        } else {
-                            std::string sessionId = j["params"]["session_id"].get<std::string>();
-                            std::string stopError;
-                            if (!g_rtp_manager->stopSession(sessionId, stopError)) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                                resp["message"] = stopError;
-                                response = resp.dump();
-                            } else {
-                                nlohmann::json resp;
-                                resp["status"] = "ok";
-                                resp["message"] = "RTP session stopped";
-                                resp["data"]["session_id"] = sessionId;
-                                response = resp.dump();
-                            }
-                        }
-                    } else if (cmdType == "RTP_LIST_SESSIONS" || cmdType == "ListSessions") {
-                        ensure_rtp_manager_initialized();
-                        nlohmann::json resp;
-                        resp["status"] = "ok";
-                        nlohmann::json sessionsJson = nlohmann::json::array();
-                        if (g_rtp_manager) {
-                            auto sessions = g_rtp_manager->listSessions();
-                            for (const auto& metrics : sessions) {
-                                sessionsJson.push_back(Network::sessionMetricsToJson(metrics));
-                            }
-                        }
-                        resp["data"]["sessions"] = sessionsJson;
-                        response = resp.dump();
-                    } else if (cmdType == "RTP_GET_SESSION" || cmdType == "GetSession") {
-                        if (!j.contains("params") || !j["params"].is_object() ||
-                            !j["params"].contains("session_id")) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params.session_id";
-                            response = resp.dump();
-                        } else if (!g_rtp_manager) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                            resp["message"] = "RTP manager not initialized";
-                            response = resp.dump();
-                        } else {
-                            std::string sessionId = j["params"]["session_id"].get<std::string>();
-                            auto metrics = g_rtp_manager->getMetrics(sessionId);
-                            if (!metrics.has_value()) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                                resp["message"] = "Session not found: " + sessionId;
-                                response = resp.dump();
-                            } else {
-                                nlohmann::json resp;
-                                resp["status"] = "ok";
-                                resp["data"] = Network::sessionMetricsToJson(metrics.value());
-                                response = resp.dump();
-                            }
-                        }
-                    } else if (cmdType == "RTP_DISCOVER_STREAMS" || cmdType == "DiscoverStreams") {
-                        nlohmann::json resp = get_or_run_rtp_discovery();
-                        response = resp.dump();
-                    } else if (cmdType == "SWITCH_RATE") {
-                        // Issue #219: Manual rate switching via ZeroMQ
-                        // JSON format: {"type": "SWITCH_RATE", "params": {"input_rate": 48000}}
-                        if (!g_upsampler) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "ENGINE_NOT_INITIALIZED";
-                            resp["message"] = "Upsampler not initialized";
-                            response = resp.dump();
-                        } else if (!g_upsampler->isMultiRateEnabled()) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "MULTI_RATE_NOT_ENABLED";
-                            resp["message"] = "Multi-rate mode not enabled";
-                            response = resp.dump();
-                        } else if (!j.contains("params") || !j["params"].contains("input_rate")) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params.input_rate field";
-                            response = resp.dump();
-                        } else {
-                            int targetRate = j["params"]["input_rate"].get<int>();
-                            int currentRate = g_current_input_rate.load(std::memory_order_acquire);
-
-                            if (targetRate == currentRate) {
-                                nlohmann::json resp;
-                                resp["status"] = "ok";
-                                resp["data"]["input_rate"] = currentRate;
-                                resp["data"]["output_rate"] =
-                                    g_current_output_rate.load(std::memory_order_acquire);
-                                resp["data"]["upsample_ratio"] = g_upsampler->getUpsampleRatio();
-                                resp["message"] = "Already at requested rate";
-                                response = resp.dump();
-                            } else {
-                                // Perform rate switch
-                                bool switch_success =
-                                    pipewire_support::handle_rate_change(targetRate);
-
-                                if (switch_success) {
-                                    nlohmann::json resp;
-                                    resp["status"] = "ok";
-                                    resp["data"]["input_rate"] =
-                                        g_current_input_rate.load(std::memory_order_acquire);
-                                    resp["data"]["output_rate"] =
-                                        g_current_output_rate.load(std::memory_order_acquire);
-                                    resp["data"]["upsample_ratio"] =
-                                        g_upsampler->getUpsampleRatio();
-                                    resp["data"]["alsa_reconfigure_scheduled"] =
-                                        g_alsa_reconfigure_needed.load(std::memory_order_acquire);
-                                    response = resp.dump();
-                                } else {
-                                    nlohmann::json resp;
-                                    resp["status"] = "error";
-                                    resp["error_code"] = "RATE_SWITCH_FAILED";
-                                    resp["message"] = "Failed to switch to rate " +
-                                                      std::to_string(targetRate) + " Hz";
-                                    response = resp.dump();
-                                }
-                            }
-                        }
+                    } else if (g_rtp_coordinator &&
+                               g_rtp_coordinator->handleZeroMqCommand(cmdType, j, response)) {
+                        // handled by RTP coordinator
                     } else if (cmdType == "DAC_LIST") {
                         nlohmann::json resp;
                         resp["status"] = "ok";
@@ -2692,7 +1706,7 @@ static void zeromq_listener_thread() {
                     response = "ERR:Upsampler not initialized";
                 }
             } else if (cmd.rfind("PHASE_TYPE_SET:", 0) == 0) {
-                // Set phase type: PHASE_TYPE_SET:minimum or PHASE_TYPE_SET:hybrid
+                // Set phase type: PHASE_TYPE_SET:minimum or PHASE_TYPE_SET:linear
                 // Requires quad-phase mode to be enabled (4 filter variants preloaded)
                 std::string phaseStr = cmd.substr(15);  // Extract after "PHASE_TYPE_SET:"
                 if (!g_upsampler) {
@@ -2712,7 +1726,6 @@ static void zeromq_listener_thread() {
                         // Switch phase type (changes actual filter FFT in quad-phase mode)
                         bool switch_success = false;
                         applySoftMuteForFilterSwitch([&]() {
-                            bool partitionEnabledBeforeSwitch = g_config.partitionedConvolution.enabled;
                             switch_success = g_upsampler->switchPhaseType(newPhase);
                             if (switch_success) {
                                 g_active_phase_type = newPhase;
@@ -2742,35 +1755,20 @@ static void zeromq_listener_thread() {
                                             << g_config.eqProfilePath << std::endl;
                                     }
                                 }
-
-                                if (newPhase == PhaseType::Linear && partitionEnabledBeforeSwitch) {
-                                    std::cout << "[Partition] Hybrid phase selected, disabling "
-                                                 "low-latency partitioned convolution."
-                                              << std::endl;
-                                    g_config.partitionedConvolution.enabled = false;
-                                    g_upsampler->setPartitionedConvolutionConfig(
-                                        g_config.partitionedConvolution);
-                                    std::string reason = "phase switch -> " + phaseStr + " phase";
-                                    if (!rebuild_streaming_buffers(reason)) {
-                                        std::cerr << "[Partition] Streaming re-init failed after "
-                                                  << "disabling partition mode; rolling back"
-                                                  << std::endl;
-                                        g_config.partitionedConvolution.enabled = true;
-                                        g_upsampler->setPartitionedConvolutionConfig(
-                                            g_config.partitionedConvolution);
-                                        if (!rebuild_streaming_buffers("partition rollback")) {
-                                            std::cerr << "[Partition] Rollback streaming re-init "
-                                                      << "failed; audio pipeline requires restart"
-                                                      << std::endl;
-                                        }
-                                        switch_success = false;
-                                    }
-                                }
                             }
                             return switch_success;
                         });
 
                         if (switch_success) {
+                            if (newPhase == PhaseType::Linear &&
+                                g_config.partitionedConvolution.enabled) {
+                                std::cout << "[Partition] Linear phase selected, disabling "
+                                             "low-latency partitioned convolution."
+                                          << std::endl;
+                                g_config.partitionedConvolution.enabled = false;
+                                g_upsampler->setPartitionedConvolutionConfig(
+                                    g_config.partitionedConvolution);
+                            }
                             response = "OK:Phase type set to " + phaseStr;
                         } else {
                             response = "ERR:Failed to switch phase type";
@@ -2801,6 +1799,14 @@ static void zeromq_listener_thread() {
         }
     }
 }
+
+// PipeWire objects
+struct Data {
+    struct pw_main_loop* loop;
+    struct pw_stream* input_stream;
+    struct spa_source* signal_check_timer;  // Timer for checking signal flags
+    bool gpu_ready;
+};
 
 // ========== Async-Signal-Safe Signal Handler ==========
 // This handler ONLY sets flags. All other processing is done in the main loop.
@@ -2879,6 +1885,266 @@ static void on_signal_check_timer(void* userdata, uint64_t expirations) {
     // Send watchdog heartbeat to systemd
     sd_notify(0, "WATCHDOG=1");
 #endif
+}
+
+// Input stream process callback (44.1kHz audio from PipeWire)
+static void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
+    if (!input_samples || n_frames == 0 || !g_upsampler) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
+
+    std::vector<float> left(n_frames);
+    std::vector<float> right(n_frames);
+    AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
+    float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
+    update_peak_level(g_peak_input_level, inputPeak);
+
+    StreamFloatVector& output_left = g_upsampler_output_left;
+    StreamFloatVector& output_right = g_upsampler_output_right;
+
+    bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
+    bool left_generated = false;
+    bool right_generated = false;
+
+    if (use_fallback) {
+        size_t output_frames = static_cast<size_t>(n_frames) * g_config.upsampleRatio;
+        output_left.assign(output_frames, 0.0f);
+        output_right.assign(output_frames, 0.0f);
+        for (size_t i = 0; i < n_frames; ++i) {
+            output_left[i * g_config.upsampleRatio] = left[i];
+            output_right[i * g_config.upsampleRatio] = right[i];
+        }
+        left_generated = true;
+        right_generated = true;
+    } else {
+        left_generated = g_upsampler->processStreamBlock(
+            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
+            g_stream_accumulated_left);
+        right_generated = g_upsampler->processStreamBlock(
+            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
+            g_stream_accumulated_right);
+    }
+
+    if (!left_generated || !right_generated) {
+        return;
+    }
+
+    size_t frames_generated = std::min(output_left.size(), output_right.size());
+    if (frames_generated > 0) {
+        float upsamplerPeak =
+            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
+        update_peak_level(g_peak_upsampler_level, upsamplerPeak);
+    }
+
+    if (g_crossfeed_enabled.load()) {
+        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
+            bool cf_generated = g_hrtf_processor->processStreamBlock(
+                output_left.data(), output_right.data(), output_left.size(), g_cf_output_left,
+                g_cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
+                g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
+
+            if (cf_generated) {
+                size_t cf_frames = std::min(g_cf_output_left.size(), g_cf_output_right.size());
+                if (cf_frames > 0) {
+                    float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
+                                                       g_cf_output_right.data(), cf_frames);
+                    update_peak_level(g_peak_post_crossfeed_level, cfPeak);
+                }
+                std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                g_output_buffer_left.insert(g_output_buffer_left.end(), g_cf_output_left.begin(),
+                                            g_cf_output_left.end());
+                g_output_buffer_right.insert(g_output_buffer_right.end(), g_cf_output_right.begin(),
+                                             g_cf_output_right.end());
+                g_buffer_cv.notify_one();
+                return;
+            }
+        }
+        // Crossfeed disabled or not ready: fall through and store original upsampler output.
+    }
+
+    std::lock_guard<std::mutex> lock(g_buffer_mutex);
+    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(), output_left.end());
+    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
+                                 output_right.end());
+    g_buffer_cv.notify_one();
+    if (frames_generated > 0) {
+        float postPeak =
+            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
+        update_peak_level(g_peak_post_crossfeed_level, postPeak);
+    }
+}
+
+static void on_input_process(void* userdata) {
+    Data* data = static_cast<Data*>(userdata);
+
+    struct pw_buffer* buf = pw_stream_dequeue_buffer(data->input_stream);
+    if (!buf) {
+        return;
+    }
+
+    struct spa_buffer* spa_buf = buf->buffer;
+    float* input_samples = static_cast<float*>(spa_buf->datas[0].data);
+    uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
+
+    if (input_samples && n_frames > 0 && data->gpu_ready) {
+        process_interleaved_block(input_samples, n_frames);
+    }
+
+    pw_stream_queue_buffer(data->input_stream, buf);
+}
+
+// Stream state changed callback
+static void on_stream_state_changed(void* userdata, enum pw_stream_state old_state,
+                                    enum pw_stream_state state, const char* error) {
+    (void)userdata;
+    (void)old_state;
+
+    std::cout << "PipeWire input stream state: " << pw_stream_state_as_string(state);
+    if (error) {
+        std::cout << " (error: " << error << ")";
+    }
+    std::cout << std::endl;
+}
+
+// PipeWire format/param changed callback (Issue #219)
+// Detects input sample rate changes from the source stream
+static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* param) {
+    (void)userdata;
+
+    // Only process format changes
+    if (id != SPA_PARAM_Format || param == nullptr) {
+        return;
+    }
+
+    // Parse audio format info
+    struct spa_audio_info_raw info;
+    if (spa_format_audio_raw_parse(param, &info) < 0) {
+        return;
+    }
+
+    int detected_rate = static_cast<int>(info.rate);
+    int current_rate = g_current_input_rate.load(std::memory_order_acquire);
+
+    // Check if rate actually changed
+    if (detected_rate != current_rate && detected_rate > 0) {
+        LOG_INFO("[PipeWire] Sample rate change detected: {} -> {} Hz", current_rate,
+                 detected_rate);
+        // Set pending rate change for main loop to process
+        // (avoid blocking in real-time callback)
+        g_pending_rate_change.store(detected_rate, std::memory_order_release);
+    }
+}
+
+static const struct pw_stream_events input_stream_events = {
+    .version = PW_VERSION_STREAM_EVENTS,
+    .state_changed = on_stream_state_changed,
+    .param_changed = on_param_changed,
+    .process = on_input_process,
+};
+
+// Handle sample rate change detected by PipeWire (Issue #219)
+// This function is called from the main loop when g_pending_rate_change is set
+static bool handle_rate_change(int detected_sample_rate) {
+    if (!g_upsampler) {
+        return false;
+    }
+
+    // Multi-rate mode: use switchToInputRate() for dynamic rate switching
+    if (!g_upsampler->isMultiRateEnabled()) {
+        LOG_ERROR("[Rate] Multi-rate mode not enabled. Rate switching requires multi-rate mode.");
+        return false;
+    }
+
+    // Save previous state for rollback
+    int prev_input_rate = g_current_input_rate.load(std::memory_order_acquire);
+    int prev_output_rate = g_current_output_rate.load(std::memory_order_acquire);
+
+    bool switch_success = false;
+
+    // Use soft mute for filter switching (fade-out, switch, fade-in)
+    applySoftMuteForFilterSwitch([&]() {
+        // Perform filter switch
+        if (!g_upsampler->switchToInputRate(detected_sample_rate)) {
+            LOG_ERROR("[Rate] Failed to switch to input rate: {} Hz", detected_sample_rate);
+            return false;
+        }
+
+        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
+
+        // Output rate is dynamically calculated (input_rate × upsample_ratio)
+        int new_output_rate = g_upsampler->getOutputSampleRate();
+        g_current_output_rate.store(new_output_rate, std::memory_order_release);
+
+        // Update rate family
+        g_set_rate_family(ConvolutionEngine::detectRateFamily(detected_sample_rate));
+
+        // Re-initialize streaming after rate switch (Issue #219)
+        if (!g_upsampler->initializeStreaming()) {
+            LOG_ERROR("[Rate] Failed to reinitialize streaming, rolling back...");
+            // Rollback: switch back to previous rate
+            if (g_upsampler->switchToInputRate(prev_input_rate)) {
+                g_upsampler->initializeStreaming();
+            }
+            g_current_input_rate.store(prev_input_rate, std::memory_order_release);
+            g_current_output_rate.store(prev_output_rate, std::memory_order_release);
+            return false;
+        }
+
+        // Resize streaming input buffers based on new streamValidInputPerBlock (Issue #219)
+        size_t new_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+        g_stream_input_left.resize(new_capacity, 0.0f);
+        g_stream_input_right.resize(new_capacity, 0.0f);
+
+        // Clear accumulated samples (old rate data is invalid)
+        g_stream_accumulated_left = 0;
+        g_stream_accumulated_right = 0;
+
+        LOG_INFO("[Rate] Streaming buffers resized to {} samples (streamValidInputPerBlock={})",
+                 new_capacity, g_upsampler->getStreamValidInputPerBlock());
+
+        // Clear output ring buffers to discard old rate samples (Issue #219)
+        g_output_buffer_left.clear();
+        g_output_buffer_right.clear();
+        LOG_INFO("[Rate] Output ring buffers cleared");
+
+        // Re-apply EQ if enabled (Issue #219: EQ state auto-restore)
+        // EQ magnitude depends on output sample rate, so we must recalculate
+        if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
+            EQ::EqProfile eqProfile;
+            if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
+                size_t filterFftSize = g_upsampler->getFilterFftSize();
+                size_t fullFftSize = g_upsampler->getFullFftSize();
+                double outputSampleRate = static_cast<double>(new_output_rate);
+                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
+                                                                outputSampleRate, eqProfile);
+
+                if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
+                    LOG_INFO("[Rate] EQ re-applied for new output rate {} Hz", new_output_rate);
+                } else {
+                    LOG_WARN("[Rate] Failed to re-apply EQ after rate switch");
+                }
+            }
+        }
+
+        // Schedule ALSA reconfiguration if output rate changed
+        if (new_output_rate != prev_output_rate) {
+            g_alsa_reconfigure_needed.store(true, std::memory_order_release);
+            g_alsa_new_output_rate.store(new_output_rate, std::memory_order_release);
+            LOG_INFO("[Rate] ALSA reconfiguration scheduled for {} Hz ({} -> {}x upsampling)",
+                     new_output_rate, detected_sample_rate, g_upsampler->getUpsampleRatio());
+        } else {
+            LOG_INFO("[Rate] Rate switched to {} Hz -> {} Hz ({}x upsampling)",
+                     detected_sample_rate, new_output_rate, g_upsampler->getUpsampleRatio());
+        }
+
+        switch_success = true;
+        return true;
+    });
+
+    return switch_success;
 }
 
 // Open and configure ALSA device. Returns nullptr on failure.
@@ -3142,7 +2408,7 @@ void alsa_output_thread() {
         int pending_rate = g_pending_rate_change.exchange(0, std::memory_order_acquire);
         if (pending_rate > 0 && g_config.multiRateEnabled) {
             LOG_INFO("[Main] Processing pending rate change to {} Hz", pending_rate);
-            if (!pipewire_support::handle_rate_change(pending_rate)) {
+            if (!handle_rate_change(pending_rate)) {
                 LOG_ERROR("[Main] Failed to handle rate change to {} Hz", pending_rate);
             }
         }
@@ -3625,7 +2891,7 @@ int main(int argc, char* argv[]) {
         // Log latency warning for linear phase
         if (g_config.phaseType == PhaseType::Linear) {
             double latencySec = g_upsampler->getLatencySeconds();
-            std::cout << "  WARNING: Hybrid phase latency: " << latencySec << " seconds ("
+            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
                       << g_upsampler->getLatencySamples() << " samples)" << std::endl;
         }
 
@@ -3768,6 +3034,33 @@ int main(int argc, char* argv[]) {
         std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
                   << outputSampleRate << "Hz)" << std::endl;
 
+        // Initialize RTP engine coordinator
+        rtp_engine::RtpEngineCoordinator::Dependencies rtpDeps{};
+        rtpDeps.config = &g_config;
+        rtpDeps.runningFlag = &g_running;
+        rtpDeps.currentInputRate = &g_current_input_rate;
+        rtpDeps.currentOutputRate = &g_current_output_rate;
+        rtpDeps.alsaReconfigureNeeded = &g_alsa_reconfigure_needed;
+        rtpDeps.handleRateChange = handle_rate_change;
+        rtpDeps.isUpsamplerReady = []() { return g_upsampler != nullptr; };
+        rtpDeps.isMultiRateEnabled = []() {
+            return g_upsampler && g_upsampler->isMultiRateEnabled();
+        };
+        rtpDeps.getUpsampleRatio = []() {
+            return g_upsampler ? g_upsampler->getUpsampleRatio() : 0;
+        };
+        rtpDeps.getInputSampleRate = []() { return g_input_sample_rate; };
+        rtpDeps.processInterleaved = [](const float* data, size_t frames, uint32_t sampleRate) {
+            (void)sampleRate;
+            process_interleaved_block(data, static_cast<uint32_t>(frames));
+        };
+        rtpDeps.ptpProvider = []() -> Network::PtpSyncState { return {}; };
+        rtpDeps.telemetry = [](const Network::SessionMetrics& metrics) {
+            LOG_DEBUG("RTP session {} stats: packets={} dropped={}", metrics.sessionId,
+                      metrics.packetsReceived, metrics.packetsDropped);
+        };
+        g_rtp_coordinator = std::make_unique<rtp_engine::RtpEngineCoordinator>(rtpDeps);
+
         // Initialize fallback manager (Issue #139)
         if (g_config.fallback.enabled) {
             g_fallback_manager = new FallbackManager::Manager();
@@ -3810,95 +3103,80 @@ int main(int argc, char* argv[]) {
         std::cout << "Starting ALSA output thread..." << std::endl;
         std::thread alsa_thread(alsa_output_thread);
 
-        maybe_start_rtp_from_config();
+        if (g_rtp_coordinator) {
+            g_rtp_coordinator->startFromConfig();
+        }
 
-        pipewire_support::InputContext pipewire_ctx = {};
-        pipewire_ctx.gpu_ready = true;
-        struct pw_loop* loop = nullptr;
+        // Initialize PipeWire input
+        pw_init(&argc, &argv);
 
-        // Start ZeroMQ listener thread
+        Data data = {};
+        data.gpu_ready = true;
+
+        // Create main loop (store globally for signal handler access)
+        data.loop = pw_main_loop_new(nullptr);
+        g_pw_loop = data.loop;
+
+        // Start ZeroMQ listener thread AFTER g_pw_loop is set
+        // This ensures RELOAD commands can always quit the main loop
         std::thread zmq_thread(zeromq_listener_thread);
+        struct pw_loop* loop = pw_main_loop_get_loop(data.loop);
 
-        if (g_config.pipewireEnabled) {
-            // Initialize PipeWire input
-            pw_init(&argc, &argv);
+        // Create Capture stream from gpu_upsampler_sink.monitor
+        std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..." << std::endl;
+        data.input_stream = pw_stream_new_simple(
+            loop, "GPU Upsampler Input",
+            pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
+                              PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
+                              "GPU Upsampler Input", PW_KEY_NODE_TARGET,
+                              "gpu_upsampler_sink.monitor", "audio.channels", "2", "audio.position",
+                              "FL,FR", nullptr),
+            &input_stream_events, &data);
 
-            // Create main loop (store globally for signal handler access)
-            pipewire_ctx.loop = pw_main_loop_new(nullptr);
-            g_pw_loop = pipewire_ctx.loop;
+        // Configure input stream audio format (32-bit float stereo)
+        uint8_t input_buffer[1024];
+        struct spa_pod_builder input_builder =
+            SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
 
-            loop = pw_main_loop_get_loop(pipewire_ctx.loop);
+        struct spa_audio_info_raw input_info = {};
+        input_info.format = SPA_AUDIO_FORMAT_F32;
+        input_info.rate = g_input_sample_rate;
+        input_info.channels = CHANNELS;
+        input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
+        input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
 
-            // Create Capture stream from gpu_upsampler_sink.monitor
-            std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..."
-                      << std::endl;
-            pipewire_ctx.input_stream = pw_stream_new_simple(
-                loop, "GPU Upsampler Input",
-                pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
-                                  PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
-                                  "GPU Upsampler Input", PW_KEY_NODE_TARGET,
-                                  "gpu_upsampler_sink.monitor", "audio.channels", "2",
-                                  "audio.position", "FL,FR", nullptr),
-                &pipewire_support::kInputStreamEvents, &pipewire_ctx);
+        const struct spa_pod* input_params[1];
+        input_params[0] =
+            spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
 
-            // Configure input stream audio format (32-bit float stereo)
-            uint8_t input_buffer[1024];
-            struct spa_pod_builder input_builder =
-                SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
+        pw_stream_connect(
+            data.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
+            static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
+            input_params, 1);
 
-            struct spa_audio_info_raw input_info = {};
-            input_info.format = SPA_AUDIO_FORMAT_F32;
-            input_info.rate = g_input_sample_rate;
-            input_info.channels = CHANNELS;
-            input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
-            input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
-
-            const struct spa_pod* input_params[1];
-            input_params[0] =
-                spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
-
-            pw_stream_connect(pipewire_ctx.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
-                              static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
-                                                           PW_STREAM_FLAG_RT_PROCESS),
-                              input_params, 1);
-
-            // Add timer to check signal flags periodically (100ms interval)
-            // This enables async-signal-safe shutdown by polling flags from main loop
-            struct timespec interval = {0, 100000000};  // 100ms in nanoseconds
-            pipewire_ctx.signal_check_timer =
-                pw_loop_add_timer(loop, on_signal_check_timer, nullptr);
-            if (pipewire_ctx.signal_check_timer) {
-                pw_loop_update_timer(loop, pipewire_ctx.signal_check_timer, &interval, &interval,
-                                     false);
-                std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
-            } else {
-                std::cerr << "Warning: Failed to create signal check timer" << std::endl;
-            }
+        // Add timer to check signal flags periodically (100ms interval)
+        // This enables async-signal-safe shutdown by polling flags from main loop
+        struct timespec interval = {0, 100000000};  // 100ms in nanoseconds
+        data.signal_check_timer = pw_loop_add_timer(loop, on_signal_check_timer, &data);
+        if (data.signal_check_timer) {
+            pw_loop_update_timer(loop, data.signal_check_timer, &interval, &interval, false);
+            std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
         } else {
-            std::cout << "PipeWire disabled - RTP-only mode (Docker)" << std::endl;
-            g_pw_loop = nullptr;
+            std::cerr << "Warning: Failed to create signal check timer" << std::endl;
         }
 
         double outputRateKHz = g_input_sample_rate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
         std::cout << "System ready. Audio routing configured:" << std::endl;
-        if (g_config.pipewireEnabled) {
-            std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)"
-                      << std::endl;
-            std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler ("
-                      << g_config.upsampleRatio << "x upsampling)" << std::endl;
-        } else {
-            std::cout << "  1. RTP input → GPU Upsampler (" << g_config.upsampleRatio
-                      << "x upsampling)" << std::endl;
-        }
-        std::cout << "  " << (g_config.pipewireEnabled ? "3" : "2")
-                  << ". GPU Upsampler → ALSA → DAC (" << outputRateKHz << "kHz direct)"
+        std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)"
+                  << std::endl;
+        std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (" << g_config.upsampleRatio
+                  << "x upsampling)" << std::endl;
+        std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
                   << std::endl;
         std::cout << std::endl;
-        if (g_config.pipewireEnabled) {
-            std::cout << "Select 'GPU Upsampler (" << outputRateKHz
-                      << "kHz)' as output device in sound settings." << std::endl;
-        }
+        std::cout << "Select 'GPU Upsampler (" << outputRateKHz
+                  << "kHz)' as output device in sound settings." << std::endl;
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
@@ -3915,15 +3193,7 @@ int main(int argc, char* argv[]) {
         if (g_running.load() && !g_reload_requested.load() && !g_zmq_bind_failed.load()) {
             // Run main loop (only if not already requested to reload/stop)
             g_main_loop_running = true;
-            if (g_config.pipewireEnabled) {
-                pw_main_loop_run(pipewire_ctx.loop);
-            } else {
-                // RTP-only mode: simple signal wait loop
-                std::cout << "Entering RTP-only event loop..." << std::endl;
-                while (g_running.load() && !g_reload_requested.load()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-            }
+            pw_main_loop_run(data.loop);
             g_main_loop_running = false;
         } else if (g_zmq_bind_failed.load()) {
             std::cerr << "Startup aborted due to ZeroMQ bind failure." << std::endl;
@@ -3942,10 +3212,10 @@ int main(int argc, char* argv[]) {
         sd_notify(0, "STOPPING=1\nSTATUS=Shutting down...\n");
 #endif
 
-        // Step 1: Stop signal check timer (PipeWire only)
-        if (g_config.pipewireEnabled && pipewire_ctx.signal_check_timer) {
-            pw_loop_destroy_source(loop, pipewire_ctx.signal_check_timer);
-            pipewire_ctx.signal_check_timer = nullptr;
+        // Step 1: Stop signal check timer
+        if (data.signal_check_timer) {
+            pw_loop_destroy_source(loop, data.signal_check_timer);
+            data.signal_check_timer = nullptr;
         }
 
         // Step 2: Wait for soft mute fade-out to complete (with 100ms timeout)
@@ -3964,15 +3234,15 @@ int main(int argc, char* argv[]) {
         }
 
         // Step 3: Destroy PipeWire stream (stops audio input)
-        if (g_config.pipewireEnabled && pipewire_ctx.input_stream) {
+        if (data.input_stream) {
             std::cout << "  Step 3: Destroying PipeWire stream..." << std::endl;
-            pw_stream_destroy(pipewire_ctx.input_stream);
+            pw_stream_destroy(data.input_stream);
         }
 
         // Step 4: Destroy PipeWire main loop
-        if (g_config.pipewireEnabled && pipewire_ctx.loop) {
+        if (data.loop) {
             std::cout << "  Step 4: Destroying PipeWire main loop..." << std::endl;
-            pw_main_loop_destroy(pipewire_ctx.loop);
+            pw_main_loop_destroy(data.loop);
             g_pw_loop = nullptr;
         }
 
@@ -3985,7 +3255,10 @@ int main(int argc, char* argv[]) {
 
         // Step 6: Release audio processing resources
         std::cout << "  Step 6: Releasing resources..." << std::endl;
-        shutdown_rtp_manager();
+        if (g_rtp_coordinator) {
+            g_rtp_coordinator->shutdown();
+            g_rtp_coordinator.reset();
+        }
         if (g_fallback_manager) {
             g_fallback_manager->shutdown();
             delete g_fallback_manager;
@@ -4001,10 +3274,8 @@ int main(int argc, char* argv[]) {
         g_upsampler = nullptr;
         stop_dac_monitor();
 
-        // Step 7: Deinitialize PipeWire (only if enabled)
-        if (g_config.pipewireEnabled) {
-            pw_deinit();
-        }
+        // Step 7: Deinitialize PipeWire
+        pw_deinit();
         shutdown_pub_socket();
 
         // Don't reload if ZMQ bind failed - exit completely

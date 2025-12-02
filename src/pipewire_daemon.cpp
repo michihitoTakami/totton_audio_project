@@ -128,8 +128,7 @@ static void signal_handler(int sig) {
 // Connected via on_param_changed() event and processed in main loop.
 // See: https://github.com/michihitoTakami/michy_os/issues/218
 // Implements soft mute during filter switching (Issue #266)
-static bool handle_rate_change(PipewireRuntimeContext& ctx, Data& data,
-                               int detected_sample_rate) {
+static bool handle_rate_change(PipewireRuntimeContext& ctx, Data& data, int detected_sample_rate) {
     auto* upsampler = ctx.upsampler.get();
     if (!upsampler) {
         return false;
@@ -539,13 +538,14 @@ int main(int argc, char* argv[]) {
         std::cerr << "Failed to initialize streaming mode" << std::endl;
         return 1;
     }
-    PartitionRuntime::applyPartitionPolicy(partitionRequest, *ctx.upsampler, ctx.config, "PipeWire");
+    PartitionRuntime::applyPartitionPolicy(partitionRequest, *ctx.upsampler, ctx.config,
+                                           "PipeWire");
 
     // Initialize soft mute controller (default fade duration, will be extended for filter
     // switching)
     int initial_output_rate = ctx.upsampler->getOutputSampleRate();
-    ctx.softMute = std::make_unique<SoftMute::Controller>(DEFAULT_SOFT_MUTE_FADE_MS,
-                                                          initial_output_rate);
+    ctx.softMute =
+        std::make_unique<SoftMute::Controller>(DEFAULT_SOFT_MUTE_FADE_MS, initial_output_rate);
     std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
               << initial_output_rate << "Hz)" << std::endl;
 

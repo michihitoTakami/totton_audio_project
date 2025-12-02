@@ -215,22 +215,26 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 if (rtp.contains("channels") && rtp["channels"].is_number_integer())
                     outConfig.rtp.channels = static_cast<uint8_t>(rtp["channels"].get<int>());
                 if (rtp.contains("bitsPerSample") && rtp["bitsPerSample"].is_number_integer())
-                    outConfig.rtp.bitsPerSample = static_cast<uint8_t>(rtp["bitsPerSample"].get<int>());
+                    outConfig.rtp.bitsPerSample =
+                        static_cast<uint8_t>(rtp["bitsPerSample"].get<int>());
                 if (rtp.contains("bigEndian") && rtp["bigEndian"].is_boolean())
                     outConfig.rtp.bigEndian = rtp["bigEndian"].get<bool>();
                 if (rtp.contains("signed") && rtp["signed"].is_boolean())
                     outConfig.rtp.signedSamples = rtp["signed"].get<bool>();
                 if (rtp.contains("payloadType") && rtp["payloadType"].is_number_integer())
                     outConfig.rtp.payloadType = static_cast<uint8_t>(rtp["payloadType"].get<int>());
-                if (rtp.contains("socketBufferBytes") && rtp["socketBufferBytes"].is_number_integer())
+                if (rtp.contains("socketBufferBytes") &&
+                    rtp["socketBufferBytes"].is_number_integer())
                     outConfig.rtp.socketBufferBytes = rtp["socketBufferBytes"].get<size_t>();
                 if (rtp.contains("mtuBytes") && rtp["mtuBytes"].is_number_integer())
                     outConfig.rtp.mtuBytes = rtp["mtuBytes"].get<size_t>();
                 if (rtp.contains("targetLatencyMs") && rtp["targetLatencyMs"].is_number_integer())
                     outConfig.rtp.targetLatencyMs = rtp["targetLatencyMs"].get<uint32_t>();
-                if (rtp.contains("watchdogTimeoutMs") && rtp["watchdogTimeoutMs"].is_number_integer())
+                if (rtp.contains("watchdogTimeoutMs") &&
+                    rtp["watchdogTimeoutMs"].is_number_integer())
                     outConfig.rtp.watchdogTimeoutMs = rtp["watchdogTimeoutMs"].get<uint32_t>();
-                if (rtp.contains("telemetryIntervalMs") && rtp["telemetryIntervalMs"].is_number_integer())
+                if (rtp.contains("telemetryIntervalMs") &&
+                    rtp["telemetryIntervalMs"].is_number_integer())
                     outConfig.rtp.telemetryIntervalMs = rtp["telemetryIntervalMs"].get<uint32_t>();
                 if (rtp.contains("enableRtcp") && rtp["enableRtcp"].is_boolean())
                     outConfig.rtp.enableRtcp = rtp["enableRtcp"].get<bool>();
@@ -314,10 +318,9 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 }
 
                 std::sort(outConfig.rtp.discoveryPorts.begin(), outConfig.rtp.discoveryPorts.end());
-                outConfig.rtp.discoveryPorts.erase(
-                    std::unique(outConfig.rtp.discoveryPorts.begin(),
-                                outConfig.rtp.discoveryPorts.end()),
-                    outConfig.rtp.discoveryPorts.end());
+                outConfig.rtp.discoveryPorts.erase(std::unique(outConfig.rtp.discoveryPorts.begin(),
+                                                               outConfig.rtp.discoveryPorts.end()),
+                                                   outConfig.rtp.discoveryPorts.end());
 
                 constexpr size_t kMaxDiscoveryPorts = 16;
                 if (outConfig.rtp.discoveryPorts.size() > kMaxDiscoveryPorts) {

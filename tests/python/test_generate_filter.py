@@ -719,15 +719,13 @@ class TestCoefficientFileNaming:
         """Coefficient files should use '2m' instead of '2000000' in filenames."""
         # Check that old naming convention files don't exist
         old_format_files = list(coefficients_dir.glob("*_2000000_*.bin"))
-        assert not old_format_files, (
-            f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
-        )
+        assert not old_format_files, f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
 
         # Check that new naming convention files exist
         new_format_files = list(coefficients_dir.glob("*_2m_*.bin"))
-        assert len(new_format_files) >= 8, (
-            f"Expected at least 8 files with '2m' naming, found {len(new_format_files)}"
-        )
+        assert (
+            len(new_format_files) >= 8
+        ), f"Expected at least 8 files with '2m' naming, found {len(new_format_files)}"
 
     def test_json_metadata_files_match_bin_files(self, coefficients_dir):
         """Each .bin file should have a corresponding .json metadata file."""
@@ -761,9 +759,9 @@ class TestCoefficientFileNaming:
                 upsample_ratio=ratio,
                 phase_type=PhaseType.MINIMUM,
             )
-            assert config.base_name == expected_basename, (
-                f"Expected {expected_basename}, got {config.base_name}"
-            )
+            assert (
+                config.base_name == expected_basename
+            ), f"Expected {expected_basename}, got {config.base_name}"
 
     def test_non_2m_taps_use_numeric_format(self):
         """Non-2M tap counts should use numeric format in filename."""
@@ -851,9 +849,9 @@ class TestMultiRateConfigs:
 
         for name, config in MULTI_RATE_CONFIGS.items():
             expected_stopband = config["input_rate"] // 2
-            assert config["stopband"] == expected_stopband, (
-                f"{name}: stopband {config['stopband']} != input_nyquist {expected_stopband}"
-            )
+            assert (
+                config["stopband"] == expected_stopband
+            ), f"{name}: stopband {config['stopband']} != input_nyquist {expected_stopband}"
 
     def test_output_rate_consistency(self):
         """All configs in same family should produce same output rate."""
@@ -1112,9 +1110,9 @@ class TestCoefficientDcGain:
                 pytest.skip(f"{filename} not found")
             data = np.fromfile(filepath, dtype=np.float32)
             dc_gain = float(np.sum(data))
-            assert np.isclose(dc_gain, expected_dc, rtol=1e-3), (
-                f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
-            )
+            assert np.isclose(
+                dc_gain, expected_dc, rtol=1e-3
+            ), f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
 
 
 class TestValidateTapCountErrorHandling:

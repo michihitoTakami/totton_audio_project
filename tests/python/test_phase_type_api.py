@@ -92,7 +92,9 @@ class TestPhaseTypeSet:
                 success=True, data={"phase_type": "minimum"}
             )
             mock_client.return_value = mock_instance
-            mock_load_partition.return_value = PartitionedConvolutionSettings(enabled=False)
+            mock_load_partition.return_value = PartitionedConvolutionSettings(
+                enabled=False
+            )
 
             response = client.put(
                 "/daemon/phase-type",
