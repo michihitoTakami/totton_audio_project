@@ -4,6 +4,7 @@
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
+#include "daemon/rtp_engine_coordinator.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -113,14 +114,10 @@ static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
-static std::unique_ptr<Network::RtpSessionManager> g_rtp_manager;
+static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
 static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
-static void ensure_rtp_manager_initialized();
-static void maybe_start_rtp_from_config();
-static void shutdown_rtp_manager();
-static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInputConfig& cfg);
 
 struct DacDeviceRuntimeInfo {
     std::string id;
@@ -1050,532 +1047,6 @@ static void reset_runtime_state() {
     g_cf_output_buffer_right.clear();
 }
 
-static Network::SessionConfig build_rtp_session_config(const AppConfig::RtpInputConfig& cfg) {
-    Network::SessionConfig session;
-    session.sessionId = cfg.sessionId;
-    session.bindAddress = cfg.bindAddress;
-    session.port = cfg.port;
-    session.sourceHost = cfg.sourceHost;
-    session.autoStart = cfg.autoStart;
-    session.multicast = cfg.multicast;
-    session.multicastGroup = cfg.multicastGroup;
-    session.interfaceName = cfg.interfaceName;
-    session.ttl = cfg.ttl;
-    session.dscp = cfg.dscp;
-    session.sampleRate = cfg.sampleRate;
-    session.channels = cfg.channels;
-    session.bitsPerSample = cfg.bitsPerSample;
-    session.bigEndian = cfg.bigEndian;
-    session.signedSamples = cfg.signedSamples;
-    session.payloadType = cfg.payloadType;
-    session.socketBufferBytes = cfg.socketBufferBytes;
-    session.mtuBytes = cfg.mtuBytes;
-    session.targetLatencyMs = cfg.targetLatencyMs;
-    session.watchdogTimeoutMs = cfg.watchdogTimeoutMs;
-    session.telemetryIntervalMs = cfg.telemetryIntervalMs;
-    session.enableRtcp = cfg.enableRtcp;
-    session.rtcpPort = cfg.rtcpPort;
-    session.enablePtp = cfg.enablePtp;
-    session.ptpInterface = cfg.ptpInterface;
-    session.ptpDomain = cfg.ptpDomain;
-    session.sdp = cfg.sdp;
-    return session;
-}
-
-static void maybe_switch_rate_for_rtp(uint32_t sessionRate, const std::string& sessionId) {
-    if (!g_upsampler || sessionRate == 0) {
-        return;
-    }
-
-    int targetRate = static_cast<int>(sessionRate);
-    int currentRate = g_current_input_rate.load(std::memory_order_acquire);
-    if (targetRate == currentRate) {
-        return;
-    }
-
-    if (!g_upsampler->isMultiRateEnabled()) {
-        LOG_WARN("[RTP] Session {} requests {} Hz but multi-rate is disabled (engine at {} Hz)",
-                 sessionId, targetRate, currentRate);
-        return;
-    }
-
-    LOG_INFO("[RTP] Session {} -> switching engine input rate {} -> {} Hz", sessionId, currentRate,
-             targetRate);
-    if (!handle_rate_change(targetRate)) {
-        LOG_ERROR("[RTP] Failed to switch engine rate to {} Hz for session {}", targetRate,
-                  sessionId);
-    }
-}
-
-static void ensure_rtp_manager_initialized() {
-    if (g_rtp_manager) {
-        return;
-    }
-
-    auto frameCallback = [](const float* interleaved, size_t frames, uint32_t sampleRate) {
-        if (!g_running.load()) {
-            return;
-        }
-        if (sampleRate != static_cast<uint32_t>(g_input_sample_rate)) {
-            LOG_EVERY_N(WARN, 200,
-                        "RTP session sample rate {} differs from engine input {} Hz. "
-                        "Reconfigure engine to avoid drift.",
-                        sampleRate, g_input_sample_rate);
-        }
-        process_interleaved_block(interleaved, static_cast<uint32_t>(frames));
-    };
-
-    auto ptpProvider = []() -> Network::PtpSyncState { return {}; };
-
-    auto telemetryCallback = [](const Network::SessionMetrics& metrics) {
-        (void)metrics;  // Suppress unused parameter warning in release builds
-        LOG_DEBUG("RTP session {} stats: packets={} dropped={}", metrics.sessionId,
-                  metrics.packetsReceived, metrics.packetsDropped);
-    };
-
-    g_rtp_manager =
-        std::make_unique<Network::RtpSessionManager>(frameCallback, ptpProvider, telemetryCallback);
-}
-
-static void maybe_start_rtp_from_config() {
-    if (!g_config.rtp.enabled || !g_config.rtp.autoStart) {
-        return;
-    }
-
-    ensure_rtp_manager_initialized();
-    Network::SessionConfig sessionCfg = build_rtp_session_config(g_config.rtp);
-    std::string error;
-    if (!g_rtp_manager->startSession(sessionCfg, error)) {
-        LOG_ERROR("Failed to auto-start RTP session {}: {}", sessionCfg.sessionId, error);
-    } else {
-        LOG_INFO("RTP session '{}' auto-started on {}:{}", sessionCfg.sessionId,
-                 sessionCfg.bindAddress, sessionCfg.port);
-        maybe_switch_rate_for_rtp(sessionCfg.sampleRate, sessionCfg.sessionId);
-    }
-}
-
-static void shutdown_rtp_manager() {
-    if (!g_rtp_manager) {
-        return;
-    }
-    g_rtp_manager->stopAll();
-    g_rtp_manager.reset();
-}
-
-// RTP discovery scanner (Issue #372)
-static constexpr size_t RTP_DISCOVERY_MAX_PORTS = 16;
-static constexpr uint32_t RTP_DISCOVERY_MIN_DURATION_MS = 50;
-static constexpr uint32_t RTP_DISCOVERY_MAX_DURATION_MS = 5000;
-static constexpr uint32_t RTP_DISCOVERY_MIN_COOLDOWN_MS = 250;
-static constexpr uint32_t RTP_DISCOVERY_MAX_COOLDOWN_MS = 30000;
-static constexpr size_t RTP_DISCOVERY_MAX_STREAM_LIMIT = 64;
-
-struct RtpDiscoveryCandidate {
-    std::string host;
-    uint16_t port = 0;
-    uint8_t payloadType = 0;
-    bool multicast = false;
-    uint32_t packets = 0;
-    uint64_t firstSeenMs = 0;
-    uint64_t lastSeenMs = 0;
-};
-
-static std::mutex g_rtp_discovery_mutex;
-static nlohmann::json g_rtp_discovery_cache;
-static std::chrono::steady_clock::time_point g_rtp_discovery_last_scan =
-    std::chrono::steady_clock::time_point::min();
-
-static uint64_t unix_time_millis() {
-    auto now = std::chrono::system_clock::now();
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
-}
-
-static uint32_t clamp_discovery_duration(uint32_t value) {
-    return std::clamp(value, RTP_DISCOVERY_MIN_DURATION_MS, RTP_DISCOVERY_MAX_DURATION_MS);
-}
-
-static uint32_t clamp_discovery_cooldown(uint32_t value) {
-    return std::clamp(value, RTP_DISCOVERY_MIN_COOLDOWN_MS, RTP_DISCOVERY_MAX_COOLDOWN_MS);
-}
-
-static size_t clamp_discovery_stream_limit(size_t value) {
-    return std::clamp(value, static_cast<size_t>(1), RTP_DISCOVERY_MAX_STREAM_LIMIT);
-}
-
-static std::vector<uint16_t> build_discovery_ports(const AppConfig::RtpInputConfig& cfg) {
-    std::vector<uint16_t> ports = cfg.discoveryPorts;
-    auto appendPort = [&](uint16_t candidate) {
-        if (candidate < 1024 || candidate > 65535) {
-            return;
-        }
-        if (std::find(ports.begin(), ports.end(), candidate) == ports.end()) {
-            ports.push_back(candidate);
-        }
-    };
-
-    appendPort(cfg.port);
-    appendPort(5004);
-
-    if (ports.empty()) {
-        ports.push_back(cfg.port);
-    }
-
-    std::sort(ports.begin(), ports.end());
-    ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
-    if (ports.size() > RTP_DISCOVERY_MAX_PORTS) {
-        ports.resize(RTP_DISCOVERY_MAX_PORTS);
-    }
-    return ports;
-}
-
-static bool is_ipv4_multicast(const in_addr& addr) {
-    uint32_t ip = ntohl(addr.s_addr);
-    return ip >= 0xE0000000u && ip <= 0xEFFFFFFFu;
-}
-
-static std::string slugify_discovery_session_id(const std::string& host, uint16_t port) {
-    std::string slug;
-    slug.reserve(host.size() + 6);
-    for (char ch : host) {
-        unsigned char c = static_cast<unsigned char>(ch);
-        if (std::isalnum(c)) {
-            slug.push_back(static_cast<char>(std::tolower(c)));
-        } else {
-            slug.push_back('-');
-        }
-    }
-    while (!slug.empty() && slug.front() == '-') {
-        slug.erase(slug.begin());
-    }
-    while (!slug.empty() && slug.back() == '-') {
-        slug.pop_back();
-    }
-    if (slug.empty()) {
-        slug = "rtp";
-    }
-    slug.push_back('-');
-    slug.append(std::to_string(port));
-    if (slug.size() > 63) {
-        slug.resize(63);
-    }
-    return slug;
-}
-
-static std::string build_discovery_display_name(const std::string& host, uint16_t port,
-                                                uint8_t payloadType) {
-    std::ostringstream oss;
-    oss << host << ":" << port << " (PT" << static_cast<int>(payloadType) << ")";
-    return oss.str();
-}
-
-static void join_discovery_multicast_group(int fd, const std::string& group,
-                                           const std::string& interfaceName) {
-    if (group.empty()) {
-        return;
-    }
-
-    ip_mreq mreq{};
-    if (::inet_pton(AF_INET, group.c_str(), &mreq.imr_multiaddr) != 1) {
-        LOG_WARN("RTP discovery: invalid multicast group {}", group);
-        return;
-    }
-
-    if (!interfaceName.empty()) {
-        in_addr ifaceAddr{};
-        if (::inet_pton(AF_INET, interfaceName.c_str(), &ifaceAddr) == 1) {
-            mreq.imr_interface = ifaceAddr;
-        } else {
-            LOG_WARN("RTP discovery: interface '{}' is not IPv4 literal, using INADDR_ANY",
-                     interfaceName);
-            mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-        }
-    } else {
-        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-    }
-
-    if (::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
-        LOG_WARN("RTP discovery: failed to join multicast group {} ({})", group,
-                 std::strerror(errno));
-    }
-}
-
-static bool extract_rtp_payload_type(const uint8_t* data, size_t length, uint8_t& payloadType) {
-    if (length < 12) {
-        return false;
-    }
-    if ((data[0] & 0xC0) != 0x80) {
-        return false;
-    }
-    uint8_t csrcCount = data[0] & 0x0F;
-    size_t headerBytes = 12 + static_cast<size_t>(csrcCount) * 4;
-    if (headerBytes > length) {
-        return false;
-    }
-    bool extension = (data[0] & 0x10) != 0;
-    if (extension) {
-        if (length < headerBytes + 4) {
-            return false;
-        }
-        uint16_t extensionLength =
-            static_cast<uint16_t>((data[headerBytes + 2] << 8) | data[headerBytes + 3]);
-        headerBytes += 4 + static_cast<size_t>(extensionLength) * 4;
-        if (headerBytes > length) {
-            return false;
-        }
-    }
-    payloadType = data[1] & 0x7F;
-    return true;
-}
-
-static std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_candidates(
-    const std::vector<uint16_t>& ports, uint32_t durationMs, bool allowMulticast,
-    bool allowUnicast) {
-    struct DiscoverySocket {
-        int fd = -1;
-        uint16_t port = 0;
-    };
-
-    std::vector<DiscoverySocket> sockets;
-    sockets.reserve(ports.size());
-    for (uint16_t port : ports) {
-        int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if (fd < 0) {
-            LOG_WARN("RTP discovery: failed to create socket on port {} ({})", port,
-                     std::strerror(errno));
-            continue;
-        }
-        int reuse = 1;
-        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-        ::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
-#endif
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons(port);
-        if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-            LOG_WARN("RTP discovery: bind failed on port {} ({})", port, std::strerror(errno));
-            ::close(fd);
-            continue;
-        }
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (flags >= 0) {
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        }
-        sockets.push_back({fd, port});
-    }
-
-    if (sockets.empty()) {
-        return std::nullopt;
-    }
-
-    if (allowMulticast && g_config.rtp.multicast && !g_config.rtp.multicastGroup.empty()) {
-        for (auto& socket : sockets) {
-            join_discovery_multicast_group(socket.fd, g_config.rtp.multicastGroup,
-                                           g_config.rtp.interfaceName);
-        }
-    }
-
-    std::vector<pollfd> pollFds(sockets.size());
-    for (size_t i = 0; i < sockets.size(); ++i) {
-        pollFds[i].fd = sockets[i].fd;
-        pollFds[i].events = POLLIN;
-        pollFds[i].revents = 0;
-    }
-
-    std::unordered_map<std::string, RtpDiscoveryCandidate> candidates;
-    auto start = std::chrono::steady_clock::now();
-    auto deadline = start + std::chrono::milliseconds(durationMs);
-    std::array<uint8_t, 2048> buffer{};
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        auto now = std::chrono::steady_clock::now();
-        auto remaining =
-            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-        if (remaining <= 0) {
-            break;
-        }
-        int waitMs = static_cast<int>(
-            std::clamp<long long>(remaining, 10, static_cast<long long>(durationMs)));
-        for (auto& fd : pollFds) {
-            fd.events = POLLIN;
-            fd.revents = 0;
-        }
-        int ready = ::poll(pollFds.data(), static_cast<nfds_t>(pollFds.size()), waitMs);
-        if (ready < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            LOG_WARN("RTP discovery: poll failed ({})", std::strerror(errno));
-            break;
-        }
-        if (ready == 0) {
-            continue;
-        }
-        for (size_t i = 0; i < pollFds.size(); ++i) {
-            if (!(pollFds[i].revents & POLLIN)) {
-                continue;
-            }
-            sockaddr_in remote{};
-            socklen_t len = sizeof(remote);
-            ssize_t bytes = ::recvfrom(pollFds[i].fd, buffer.data(), buffer.size(), 0,
-                                       reinterpret_cast<sockaddr*>(&remote), &len);
-            if (bytes <= 0) {
-                continue;
-            }
-            uint8_t payloadType = 0;
-            if (!extract_rtp_payload_type(buffer.data(), static_cast<size_t>(bytes), payloadType)) {
-                continue;
-            }
-            bool isMulticast = is_ipv4_multicast(remote.sin_addr);
-            if ((isMulticast && !allowMulticast) || (!isMulticast && !allowUnicast)) {
-                continue;
-            }
-            char addrBuf[INET_ADDRSTRLEN] = {};
-            if (!::inet_ntop(AF_INET, &remote.sin_addr, addrBuf, sizeof(addrBuf))) {
-                continue;
-            }
-            uint16_t sourcePort = ntohs(remote.sin_port);
-            std::string key = std::string(addrBuf) + ":" + std::to_string(sourcePort);
-            uint64_t nowMs = unix_time_millis();
-            auto& entry = candidates[key];
-            if (entry.packets == 0) {
-                entry.host = addrBuf;
-                entry.port = sourcePort;
-                entry.payloadType = payloadType;
-                entry.multicast = isMulticast;
-                entry.firstSeenMs = nowMs;
-            }
-            entry.payloadType = payloadType;
-            entry.lastSeenMs = nowMs;
-            entry.packets++;
-        }
-    }
-
-    for (auto& socket : sockets) {
-        if (socket.fd >= 0) {
-            ::close(socket.fd);
-        }
-    }
-
-    std::vector<RtpDiscoveryCandidate> result;
-    result.reserve(candidates.size());
-    for (auto& kv : candidates) {
-        result.push_back(kv.second);
-    }
-    std::sort(result.begin(), result.end(),
-              [](const RtpDiscoveryCandidate& lhs, const RtpDiscoveryCandidate& rhs) {
-                  if (lhs.packets == rhs.packets) {
-                      return lhs.lastSeenMs > rhs.lastSeenMs;
-                  }
-                  return lhs.packets > rhs.packets;
-              });
-    return result;
-}
-
-static nlohmann::json build_discovery_response(const std::vector<RtpDiscoveryCandidate>& candidates,
-                                               uint64_t scannedAtMs, uint32_t durationMs,
-                                               size_t maxStreams) {
-    nlohmann::json resp;
-    resp["status"] = "ok";
-    resp["data"]["scanned_at_unix_ms"] = scannedAtMs;
-    resp["data"]["duration_ms"] = durationMs;
-    resp["data"]["streams"] = nlohmann::json::array();
-
-    size_t limit = std::min(maxStreams, candidates.size());
-    for (size_t i = 0; i < limit; ++i) {
-        const auto& candidate = candidates[i];
-        std::string sessionId = slugify_discovery_session_id(candidate.host, candidate.port);
-        bool existing = g_rtp_manager && g_rtp_manager->hasSession(sessionId);
-
-        nlohmann::json stream;
-        stream["session_id"] = sessionId;
-        stream["display_name"] =
-            build_discovery_display_name(candidate.host, candidate.port, candidate.payloadType);
-        stream["source_host"] = candidate.host;
-        stream["port"] = candidate.port;
-        stream["status"] = candidate.packets >= 4   ? "active"
-                           : candidate.packets >= 2 ? "detected"
-                                                    : "probing";
-        stream["existing_session"] = existing;
-        stream["sample_rate"] = g_config.rtp.sampleRate;
-        stream["channels"] = g_config.rtp.channels;
-        stream["payload_type"] = candidate.payloadType;
-        stream["multicast"] = candidate.multicast;
-        if (candidate.multicast) {
-            stream["multicast_group"] = candidate.host;
-        } else {
-            stream["multicast_group"] = nullptr;
-        }
-        stream["bind_address"] = g_config.rtp.bindAddress;
-        stream["last_seen_unix_ms"] = candidate.lastSeenMs;
-        stream["packet_count"] = candidate.packets;
-
-        resp["data"]["streams"].push_back(stream);
-    }
-
-    return resp;
-}
-
-static nlohmann::json execute_rtp_discovery_scan() {
-    auto ports = build_discovery_ports(g_config.rtp);
-    if (ports.empty()) {
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-        resp["message"] = "No discovery ports configured";
-        return resp;
-    }
-
-    uint32_t durationMs = clamp_discovery_duration(g_config.rtp.discoveryScanDurationMs);
-    bool allowMulticast = g_config.rtp.discoveryEnableMulticast;
-    bool allowUnicast = g_config.rtp.discoveryEnableUnicast;
-
-    auto start = std::chrono::steady_clock::now();
-    auto candidates =
-        collect_rtp_discovery_candidates(ports, durationMs, allowMulticast, allowUnicast);
-    auto elapsedMs = static_cast<uint32_t>(std::min<long long>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                              start)
-            .count(),
-        std::numeric_limits<uint32_t>::max()));
-
-    if (!candidates.has_value()) {
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-        resp["message"] = "Failed to bind discovery sockets";
-        return resp;
-    }
-
-    return build_discovery_response(candidates.value(), unix_time_millis(), elapsedMs,
-                                    clamp_discovery_stream_limit(g_config.rtp.discoveryMaxStreams));
-}
-
-static nlohmann::json get_or_run_rtp_discovery() {
-    uint32_t cooldownMs = clamp_discovery_cooldown(g_config.rtp.discoveryCooldownMs);
-    auto now = std::chrono::steady_clock::now();
-    {
-        std::lock_guard<std::mutex> lock(g_rtp_discovery_mutex);
-        if (!g_rtp_discovery_cache.is_null() &&
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - g_rtp_discovery_last_scan)
-                    .count() < cooldownMs) {
-            return g_rtp_discovery_cache;
-        }
-    }
-
-    nlohmann::json result = execute_rtp_discovery_scan();
-    if (result.contains("status") && result["status"] == "ok") {
-        std::lock_guard<std::mutex> lock(g_rtp_discovery_mutex);
-        g_rtp_discovery_cache = result;
-        g_rtp_discovery_last_scan = std::chrono::steady_clock::now();
-    }
-    return result;
-}
-
-// Handle rate switch for multi-rate mode
-// Returns true on success, false on failure (with rollback)
 static bool handle_rate_switch(int newInputRate) {
     if (!g_upsampler || !g_upsampler->isMultiRateEnabled()) {
         std::cerr << "[Rate] Multi-rate mode not enabled" << std::endl;
@@ -2149,184 +1620,9 @@ static void zeromq_listener_thread() {
                                 }
                             }
                         }
-                    } else if (cmdType == "RTP_START_SESSION" || cmdType == "StartSession") {
-                        if (!j.contains("params") || !j["params"].is_object()) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params object";
-                            response = resp.dump();
-                        } else {
-                            ensure_rtp_manager_initialized();
-                            Network::SessionConfig sessionCfg;
-                            std::string parseError;
-                            if (!Network::sessionConfigFromJson(j["params"], sessionCfg,
-                                                                parseError)) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "VALIDATION_INVALID_CONFIG";
-                                resp["message"] = parseError;
-                                response = resp.dump();
-                            } else if (!g_rtp_manager) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-                                resp["message"] = "RTP manager unavailable";
-                                response = resp.dump();
-                            } else {
-                                std::string startError;
-                                if (!g_rtp_manager->startSession(sessionCfg, startError)) {
-                                    nlohmann::json resp;
-                                    resp["status"] = "error";
-                                    resp["error_code"] = "AUDIO_RTP_SOCKET_ERROR";
-                                    resp["message"] = startError;
-                                    response = resp.dump();
-                                } else {
-                                    nlohmann::json resp;
-                                    resp["status"] = "ok";
-                                    resp["message"] = "RTP session started";
-                                    resp["data"] = Network::sessionConfigToJson(sessionCfg);
-                                    response = resp.dump();
-                                }
-                            }
-                        }
-                    } else if (cmdType == "RTP_STOP_SESSION" || cmdType == "StopSession") {
-                        if (!j.contains("params") || !j["params"].is_object() ||
-                            !j["params"].contains("session_id")) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params.session_id";
-                            response = resp.dump();
-                        } else if (!g_rtp_manager) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                            resp["message"] = "RTP manager not initialized";
-                            response = resp.dump();
-                        } else {
-                            std::string sessionId = j["params"]["session_id"].get<std::string>();
-                            std::string stopError;
-                            if (!g_rtp_manager->stopSession(sessionId, stopError)) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                                resp["message"] = stopError;
-                                response = resp.dump();
-                            } else {
-                                nlohmann::json resp;
-                                resp["status"] = "ok";
-                                resp["message"] = "RTP session stopped";
-                                resp["data"]["session_id"] = sessionId;
-                                response = resp.dump();
-                            }
-                        }
-                    } else if (cmdType == "RTP_LIST_SESSIONS" || cmdType == "ListSessions") {
-                        ensure_rtp_manager_initialized();
-                        nlohmann::json resp;
-                        resp["status"] = "ok";
-                        nlohmann::json sessionsJson = nlohmann::json::array();
-                        if (g_rtp_manager) {
-                            auto sessions = g_rtp_manager->listSessions();
-                            for (const auto& metrics : sessions) {
-                                sessionsJson.push_back(Network::sessionMetricsToJson(metrics));
-                            }
-                        }
-                        resp["data"]["sessions"] = sessionsJson;
-                        response = resp.dump();
-                    } else if (cmdType == "RTP_GET_SESSION" || cmdType == "GetSession") {
-                        if (!j.contains("params") || !j["params"].is_object() ||
-                            !j["params"].contains("session_id")) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params.session_id";
-                            response = resp.dump();
-                        } else if (!g_rtp_manager) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                            resp["message"] = "RTP manager not initialized";
-                            response = resp.dump();
-                        } else {
-                            std::string sessionId = j["params"]["session_id"].get<std::string>();
-                            auto metrics = g_rtp_manager->getMetrics(sessionId);
-                            if (!metrics.has_value()) {
-                                nlohmann::json resp;
-                                resp["status"] = "error";
-                                resp["error_code"] = "AUDIO_RTP_SESSION_NOT_FOUND";
-                                resp["message"] = "Session not found: " + sessionId;
-                                response = resp.dump();
-                            } else {
-                                nlohmann::json resp;
-                                resp["status"] = "ok";
-                                resp["data"] = Network::sessionMetricsToJson(metrics.value());
-                                response = resp.dump();
-                            }
-                        }
-                    } else if (cmdType == "RTP_DISCOVER_STREAMS" || cmdType == "DiscoverStreams") {
-                        nlohmann::json resp = get_or_run_rtp_discovery();
-                        response = resp.dump();
-                    } else if (cmdType == "SWITCH_RATE") {
-                        // Issue #219: Manual rate switching via ZeroMQ
-                        // JSON format: {"type": "SWITCH_RATE", "params": {"input_rate": 48000}}
-                        if (!g_upsampler) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "ENGINE_NOT_INITIALIZED";
-                            resp["message"] = "Upsampler not initialized";
-                            response = resp.dump();
-                        } else if (!g_upsampler->isMultiRateEnabled()) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "MULTI_RATE_NOT_ENABLED";
-                            resp["message"] = "Multi-rate mode not enabled";
-                            response = resp.dump();
-                        } else if (!j.contains("params") || !j["params"].contains("input_rate")) {
-                            nlohmann::json resp;
-                            resp["status"] = "error";
-                            resp["error_code"] = "IPC_INVALID_PARAMS";
-                            resp["message"] = "Missing params.input_rate field";
-                            response = resp.dump();
-                        } else {
-                            int targetRate = j["params"]["input_rate"].get<int>();
-                            int currentRate = g_current_input_rate.load(std::memory_order_acquire);
-
-                            if (targetRate == currentRate) {
-                                nlohmann::json resp;
-                                resp["status"] = "ok";
-                                resp["data"]["input_rate"] = currentRate;
-                                resp["data"]["output_rate"] =
-                                    g_current_output_rate.load(std::memory_order_acquire);
-                                resp["data"]["upsample_ratio"] = g_upsampler->getUpsampleRatio();
-                                resp["message"] = "Already at requested rate";
-                                response = resp.dump();
-                            } else {
-                                // Perform rate switch
-                                bool switch_success = handle_rate_change(targetRate);
-
-                                if (switch_success) {
-                                    nlohmann::json resp;
-                                    resp["status"] = "ok";
-                                    resp["data"]["input_rate"] =
-                                        g_current_input_rate.load(std::memory_order_acquire);
-                                    resp["data"]["output_rate"] =
-                                        g_current_output_rate.load(std::memory_order_acquire);
-                                    resp["data"]["upsample_ratio"] =
-                                        g_upsampler->getUpsampleRatio();
-                                    resp["data"]["alsa_reconfigure_scheduled"] =
-                                        g_alsa_reconfigure_needed.load(std::memory_order_acquire);
-                                    response = resp.dump();
-                                } else {
-                                    nlohmann::json resp;
-                                    resp["status"] = "error";
-                                    resp["error_code"] = "RATE_SWITCH_FAILED";
-                                    resp["message"] = "Failed to switch to rate " +
-                                                      std::to_string(targetRate) + " Hz";
-                                    response = resp.dump();
-                                }
-                            }
-                        }
+                    } else if (g_rtp_coordinator &&
+                               g_rtp_coordinator->handleZeroMqCommand(cmdType, j, response)) {
+                        // handled by RTP coordinator
                     } else if (cmdType == "DAC_LIST") {
                         nlohmann::json resp;
                         resp["status"] = "ok";
@@ -3738,6 +3034,33 @@ int main(int argc, char* argv[]) {
         std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
                   << outputSampleRate << "Hz)" << std::endl;
 
+        // Initialize RTP engine coordinator
+        rtp_engine::RtpEngineCoordinator::Dependencies rtpDeps{};
+        rtpDeps.config = &g_config;
+        rtpDeps.runningFlag = &g_running;
+        rtpDeps.currentInputRate = &g_current_input_rate;
+        rtpDeps.currentOutputRate = &g_current_output_rate;
+        rtpDeps.alsaReconfigureNeeded = &g_alsa_reconfigure_needed;
+        rtpDeps.handleRateChange = handle_rate_change;
+        rtpDeps.isUpsamplerReady = []() { return g_upsampler != nullptr; };
+        rtpDeps.isMultiRateEnabled = []() {
+            return g_upsampler && g_upsampler->isMultiRateEnabled();
+        };
+        rtpDeps.getUpsampleRatio = []() {
+            return g_upsampler ? g_upsampler->getUpsampleRatio() : 0;
+        };
+        rtpDeps.getInputSampleRate = []() { return g_input_sample_rate; };
+        rtpDeps.processInterleaved = [](const float* data, size_t frames, uint32_t sampleRate) {
+            (void)sampleRate;
+            process_interleaved_block(data, static_cast<uint32_t>(frames));
+        };
+        rtpDeps.ptpProvider = []() -> Network::PtpSyncState { return {}; };
+        rtpDeps.telemetry = [](const Network::SessionMetrics& metrics) {
+            LOG_DEBUG("RTP session {} stats: packets={} dropped={}", metrics.sessionId,
+                      metrics.packetsReceived, metrics.packetsDropped);
+        };
+        g_rtp_coordinator = std::make_unique<rtp_engine::RtpEngineCoordinator>(rtpDeps);
+
         // Initialize fallback manager (Issue #139)
         if (g_config.fallback.enabled) {
             g_fallback_manager = new FallbackManager::Manager();
@@ -3780,7 +3103,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Starting ALSA output thread..." << std::endl;
         std::thread alsa_thread(alsa_output_thread);
 
-        maybe_start_rtp_from_config();
+        if (g_rtp_coordinator) {
+            g_rtp_coordinator->startFromConfig();
+        }
 
         // Initialize PipeWire input
         pw_init(&argc, &argv);
@@ -3930,7 +3255,10 @@ int main(int argc, char* argv[]) {
 
         // Step 6: Release audio processing resources
         std::cout << "  Step 6: Releasing resources..." << std::endl;
-        shutdown_rtp_manager();
+        if (g_rtp_coordinator) {
+            g_rtp_coordinator->shutdown();
+            g_rtp_coordinator.reset();
+        }
         if (g_fallback_manager) {
             g_fallback_manager->shutdown();
             delete g_fallback_manager;
