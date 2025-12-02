@@ -183,6 +183,7 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/partition_runtime_utils.cpp
+    src/daemon/dac_manager.cpp
     src/daemon/rtp_engine_coordinator.cpp
     src/daemon/zmq_server.cpp
 )
