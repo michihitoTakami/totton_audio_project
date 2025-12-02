@@ -27,7 +27,7 @@ import socket
 import struct
 import sys
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 # =============================================================================
 # 環境変数から設定を読み込み

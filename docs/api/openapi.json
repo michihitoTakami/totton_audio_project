@@ -293,7 +293,7 @@
           "daemon"
         ],
         "summary": "Set Phase Type",
-        "description": "Set phase type on daemon.\n\nRequires quad-phase mode to be enabled (4 filter variants preloaded).\nChanges take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 100 Hz / linear phase above 100 Hz (10 ms alignment)",
+        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 100 Hz / linear phase above 100 Hz (10 ms alignment)",
         "operationId": "set_phase_type_daemon_phase_type_put",
         "requestBody": {
           "content": {

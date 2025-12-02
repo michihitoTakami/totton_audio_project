@@ -538,10 +538,11 @@ TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithPartialMultiRateKeepsDefaults) {
     EXPECT_EQ(config.coefficientDir, "data/coefficients");
 }
 
-TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndQuadPhase) {
+TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndFilterPaths) {
     writeConfig(R"({
         "multiRateEnabled": true,
-        "quadPhaseEnabled": true,
+        "filterPath44kMin": "a/path44kMin.bin",
+        "filterPath48kLinear": "a/path48kLinear.bin",
         "coefficientDir": "multi/coefficients"
     })");
 
@@ -550,6 +551,7 @@ TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndQuadPhase) {
 
     EXPECT_TRUE(result);
     EXPECT_TRUE(config.multiRateEnabled);
-    EXPECT_TRUE(config.quadPhaseEnabled);
+    EXPECT_EQ(config.filterPath44kMin, "a/path44kMin.bin");
+    EXPECT_EQ(config.filterPath48kLinear, "a/path48kLinear.bin");
     EXPECT_EQ(config.coefficientDir, "multi/coefficients");
 }

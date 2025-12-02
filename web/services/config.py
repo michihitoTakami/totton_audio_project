@@ -181,8 +181,7 @@ def save_config(settings: Settings) -> bool:
     """Save configuration to JSON file, preserving existing fields.
 
     This function merges the Settings fields into the existing config.json,
-    preserving any fields not managed by Settings (e.g., quadPhaseEnabled,
-    filterPath*, etc.).
+    preserving any fields not managed by Settings (e.g., filterPath*, etc.).
     """
     try:
         # Load existing config to preserve unmanaged fields

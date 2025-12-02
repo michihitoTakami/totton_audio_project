@@ -207,8 +207,7 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
     """
     Set phase type on daemon.
 
-    Requires quad-phase mode to be enabled (4 filter variants preloaded).
-    Changes take effect immediately without daemon restart.
+    All filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.
 
     - minimum: Minimum phase filter (recommended, no pre-ringing)
     - hybrid: Minimum phase below 100 Hz / linear phase above 100 Hz (10 ms alignment)

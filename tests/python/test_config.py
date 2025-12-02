@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 
@@ -18,7 +19,6 @@ class TestLoadRawConfig:
         config_data = {
             "alsaDevice": "hw:AUDIO",
             "upsampleRatio": 16,
-            "quadPhaseEnabled": True,
             "filterPath44kMin": "path/to/filter.bin",
         }
         config_file.write_text(json.dumps(config_data))
@@ -74,11 +74,10 @@ class TestSaveConfig:
     def test_save_preserves_existing_fields(self, tmp_path: Path) -> None:
         """Test that save_config preserves fields not in Settings."""
         config_file = tmp_path / "config.json"
-        # Existing config with quadPhaseEnabled and other fields
-        existing_config = {
+        # Existing config with per-filter paths and other fields
+        existing_config: dict[str, Any] = {
             "alsaDevice": "hw:OLD",
             "upsampleRatio": 8,
-            "quadPhaseEnabled": True,
             "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
             "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
             "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
@@ -112,7 +111,6 @@ class TestSaveConfig:
         assert saved_config["eqProfile"] == "NewProfile"
 
         # Non-Settings fields should be preserved
-        assert saved_config["quadPhaseEnabled"] is True
         assert (
             saved_config["filterPath44kMin"]
             == "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin"
@@ -161,7 +159,7 @@ class TestSaveConfig:
     def test_save_with_none_eq_profile(self, tmp_path: Path) -> None:
         """Test that save_config handles None eq_profile."""
         config_file = tmp_path / "config.json"
-        existing_config = {"quadPhaseEnabled": True}
+        existing_config: dict[str, Any] = {}
         config_file.write_text(json.dumps(existing_config))
 
         new_settings = Settings(
@@ -177,7 +175,6 @@ class TestSaveConfig:
 
         saved_config = json.loads(config_file.read_text())
         assert saved_config["eqProfile"] is None
-        assert saved_config["quadPhaseEnabled"] is True
 
 
 class TestLoadConfig:

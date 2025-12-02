@@ -586,7 +586,11 @@ static void print_config_summary(const AppConfig& cfg) {
     LOG_INFO("  Block size:     {}", cfg.blockSize);
     LOG_INFO("  Gain:           {}", cfg.gain);
     LOG_INFO("  Headroom tgt:   {}", cfg.headroomTarget);
-    LOG_INFO("  Filter path:    {}", cfg.filterPath);
+    LOG_INFO("  Base filter path: {}", cfg.filterPath);
+    LOG_INFO("  Filter path 44k min: {}", cfg.filterPath44kMin);
+    LOG_INFO("  Filter path 48k min: {}", cfg.filterPath48kMin);
+    LOG_INFO("  Filter path 44k linear: {}", cfg.filterPath44kLinear);
+    LOG_INFO("  Filter path 48k linear: {}", cfg.filterPath48kLinear);
     LOG_INFO("  EQ enabled:     {}", (cfg.eqEnabled ? "yes" : "no"));
     if (cfg.eqEnabled && !cfg.eqProfilePath.empty()) {
         LOG_INFO("  EQ profile:     {}", cfg.eqProfilePath);
@@ -605,10 +609,7 @@ static std::string resolve_filter_path_for(ConvolutionEngine::RateFamily family,
 }
 
 static std::string current_filter_path() {
-    if (g_config.quadPhaseEnabled) {
-        return resolve_filter_path_for(g_active_rate_family, g_active_phase_type);
-    }
-    return g_config.filterPath;
+    return resolve_filter_path_for(g_active_rate_family, g_active_phase_type);
 }
 
 static void update_effective_gain(float headroomGain, const std::string& reason) {
@@ -1241,10 +1242,6 @@ static std::string handle_phase_type_set(const daemon_ipc::ZmqRequest& request) 
 
     if (!g_upsampler) {
         return build_error_response(request, "IPC_INVALID_COMMAND", "Upsampler not initialized");
-    }
-    if (!g_upsampler->isQuadPhaseEnabled()) {
-        return build_error_response(request, "IPC_INVALID_COMMAND",
-                                    "Quad-phase mode not enabled (runtime switching unavailable)");
     }
     if (phaseStr != "minimum" && phaseStr != "linear") {
         return build_error_response(request, "IPC_INVALID_PARAMS",
@@ -2356,8 +2353,6 @@ int main(int argc, char* argv[]) {
         bool initSuccess = false;
         ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
         if (g_config.multiRateEnabled) {
-            // Multi-rate mode: load all 10 filter configurations (Issue #219)
-            // 2 rate families × 5 ratios (1x/2x/4x/8x/16x)
             std::cout << "Multi-rate mode enabled" << std::endl;
             std::cout << "  Coefficient directory: " << g_config.coefficientDir << std::endl;
 
@@ -2379,11 +2374,9 @@ int main(int argc, char* argv[]) {
                                             std::memory_order_release);
                 g_set_rate_family(ConvolutionEngine::detectRateFamily(g_input_sample_rate));
             }
-        } else if (g_config.quadPhaseEnabled) {
-            // Quad-phase mode: load all 4 filter configurations
+        } else {
             std::cout << "Quad-phase mode enabled" << std::endl;
 
-            // Check all 4 filter files exist
             bool allFilesExist = true;
             for (const auto& path : {g_config.filterPath44kMin, g_config.filterPath48kMin,
                                      g_config.filterPath44kLinear, g_config.filterPath48kLinear}) {
@@ -2398,7 +2391,6 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
-            // Determine initial rate family from inputSampleRate
             initialFamily = ConvolutionEngine::detectRateFamily(g_input_sample_rate);
             if (initialFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
                 initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
@@ -2408,17 +2400,6 @@ int main(int argc, char* argv[]) {
                 g_config.filterPath44kMin, g_config.filterPath48kMin, g_config.filterPath44kLinear,
                 g_config.filterPath48kLinear, g_config.upsampleRatio, g_config.blockSize,
                 initialFamily, g_config.phaseType);
-        } else {
-            // Standard single-filter mode (backward compatible)
-            if (!std::filesystem::exists(g_config.filterPath)) {
-                std::cerr << "Config error: Filter file not found: " << g_config.filterPath
-                          << std::endl;
-                delete g_upsampler;
-                exitCode = 1;
-                break;
-            }
-            initSuccess = g_upsampler->initialize(g_config.filterPath, g_config.upsampleRatio,
-                                                  g_config.blockSize);
         }
 
         if (!initSuccess) {
@@ -2454,24 +2435,13 @@ int main(int argc, char* argv[]) {
         if (g_config.multiRateEnabled) {
             // Rate family already set during initializeMultiRate()
             // g_active_rate_family is set via g_set_rate_family() above
-        } else if (g_config.quadPhaseEnabled) {
-            g_active_rate_family = initialFamily;
         } else {
-            ConvolutionEngine::RateFamily detected =
-                ConvolutionEngine::detectRateFamily(g_input_sample_rate);
-            g_active_rate_family = (detected == ConvolutionEngine::RateFamily::RATE_UNKNOWN)
-                                       ? ConvolutionEngine::RateFamily::RATE_44K
-                                       : detected;
+            g_active_rate_family = initialFamily;
         }
+
         g_active_phase_type = g_config.phaseType;
         refresh_current_headroom("initial filter load");
 
-        // Set input sample rate for correct output rate calculation (non-multi-rate, non-quad-phase
-        // mode)
-        if (!g_config.multiRateEnabled && !g_config.quadPhaseEnabled) {
-            g_upsampler->setInputSampleRate(g_input_sample_rate);
-            g_upsampler->setPhaseType(g_config.phaseType);
-        }
         std::cout << "Input sample rate: " << g_upsampler->getInputSampleRate() << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
         if (!g_config.multiRateEnabled) {

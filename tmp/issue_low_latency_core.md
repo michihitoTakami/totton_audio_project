@@ -23,6 +23,7 @@
 - GPU 側では `PartitionPlan`/`PartitionState` を導入し、fast パーティション FFT + tail パーティション FFT をステレオ毎に逐次実行する構成。
 - fast パーティション出力は既存ストリーミングと互換の `StreamFloatVector` へ即時書き出し。tail パーティションは同一ブロック内で加算する実装（初期バージョンでは遅延加算を行わず、ブロック長の短縮にフォーカス）。
 - multi-rate / quad-phase モードとは排他。設定時は自動的に partition 機能を無効化し、ログへ理由を出力。
+  このドキュメントは新方針に移行中で、今後は low-latency モードでも quad-phase（linear/hybrid） を選択できるようにし、排他制御を解除する予定である（Issue #467 参照）。
 - Crossfeed(HRTF) と EQ は低遅延モードでは現在サポート外。該当設定が有効な場合は起動時に強制的に無効化される（Issue #353 で拡張予定）。
 - ZeroMQ コマンド経由での CROSSFEED_ENABLE もガード済み。low-latency 中は ERR を返す。
 - 既存ストリーミング API との整合性: `initializeStreaming` / `resetStreaming` / `freeStreamingBuffers` などは partition 有効時に専用コードへフォールバックする。失敗時は従来モードへ自動退避。
