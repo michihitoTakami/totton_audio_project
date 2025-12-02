@@ -145,5 +145,3 @@ Record results in `docs/jetson/quality/test-checklist.md` (new section “低遅
 - **Tail never catches up**: verify `maxPartitions` ≥ 3 and `fastPartitionTaps < total taps`. Use the JSON summary to confirm.
 - **FFT artifacts**: ensure the capture file is at the upsampled output rate (705.6k/768k). Down-sampled captures hide stopband leakage.
 - **XRUN bursts**: increase PipeWire buffer (`pw-metadata -n settings 0 clock.min.quantum 256`) and confirm `periodSize` in `config.json` matches.
-
-

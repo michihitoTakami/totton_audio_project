@@ -23,7 +23,9 @@ from scripts.partition_analysis import (
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="低遅延パーティション対応インパルス解析ツール")
+    parser = argparse.ArgumentParser(
+        description="低遅延パーティション対応インパルス解析ツール"
+    )
     parser.add_argument(
         "--coeff",
         type=Path,
@@ -77,9 +79,15 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="解析結果をJSONで保存するパス",
     )
-    parser.add_argument("--window", type=int, default=2000, help="広域プロットのサンプル数")
-    parser.add_argument("--zoom", type=int, default=200, help="ズーム表示するサンプル数")
-    parser.add_argument("--show", action="store_true", help="matplotlibのGUI表示を有効化")
+    parser.add_argument(
+        "--window", type=int, default=2000, help="広域プロットのサンプル数"
+    )
+    parser.add_argument(
+        "--zoom", type=int, default=200, help="ズーム表示するサンプル数"
+    )
+    parser.add_argument(
+        "--show", action="store_true", help="matplotlibのGUI表示を有効化"
+    )
     return parser.parse_args()
 
 
@@ -144,7 +152,9 @@ def _compute_group_delay_curve(coeffs: np.ndarray, sample_rate: Optional[int]):
     return freqs, group_delay * 1000.0  # milliseconds
 
 
-def _group_delay_metrics(freqs, group_delay_ms, center_hz: float = 100.0, window_hz: float = 40.0):
+def _group_delay_metrics(
+    freqs, group_delay_ms, center_hz: float = 100.0, window_hz: float = 40.0
+):
     if freqs is None or group_delay_ms is None:
         return None
     half_window = window_hz / 2.0
@@ -181,7 +191,6 @@ def main():
 
     metadata = _load_metadata(args.metadata)
     output_rate = args.output_rate or metadata.get("sample_rate_output")
-    upsample_ratio = metadata.get("upsample_ratio")
 
     config = load_partition_config(args.config, base=PartitionConfig())
     if args.partition_enabled is not None:
@@ -215,7 +224,9 @@ def main():
         print(f"  h[{i:02d}] = {coeffs[i]:.8f}")
 
     energy_first_100 = float(np.sum(first_100.astype(np.float64) ** 2))
-    print(f"先頭100サンプルのエネルギー比率: {energy_first_100 / total_energy * 100:.2f}%")
+    print(
+        f"先頭100サンプルのエネルギー比率: {energy_first_100 / total_energy * 100:.2f}%"
+    )
 
     cumulative_normalized = energy_cumsum / total_energy
     pre_ringing_pct = _pre_ringing_ratio_pct(energy_cumsum, peak_idx)
@@ -225,8 +236,10 @@ def main():
 
     if plan.enabled:
         print("\n[Partition Plan]")
-        print(f"  設定: fast={config.fast_partition_taps} taps, min={config.min_partition_taps}, "
-              f"max={config.max_partitions}, tailFFT×{config.tail_fft_multiple}")
+        print(
+            f"  設定: fast={config.fast_partition_taps} taps, min={config.min_partition_taps}, "
+            f"max={config.max_partitions}, tailFFT×{config.tail_fft_multiple}"
+        )
         for entry in partition_summary:
             print(
                 f"  - {entry['role']}#{entry['index']}: {entry['taps']} taps, FFT {entry['fft_size']}, "
@@ -240,9 +253,7 @@ def main():
                 f"全パーティション {settling_window} samples ≈ {settling_ms:.2f} ms"
             )
         else:
-            print(
-                f"  推定遅延サンプル: fast {fast_window}, tail合流 {settling_window}"
-            )
+            print(f"  推定遅延サンプル: fast {fast_window}, tail合流 {settling_window}")
     else:
         print("\nPartitionモードは無効です（--enable-partitionで強制可能）。")
 
@@ -287,20 +298,36 @@ def main():
     axes[2].set_xlabel("Sample")
     axes[2].set_ylabel("Energy ratio")
     axes[2].grid(True, alpha=0.3)
-    axes[2].axhline(pre_ringing_pct / 100.0, color="#ff006e", linestyle=":", alpha=0.6, label="Pre-ringing ratio")
+    axes[2].axhline(
+        pre_ringing_pct / 100.0,
+        color="#ff006e",
+        linestyle=":",
+        alpha=0.6,
+        label="Pre-ringing ratio",
+    )
     if plan.enabled and plan.realtime_taps > 0:
-        axes[2].axvline(plan.realtime_taps, color="#8338ec", linestyle="--", alpha=0.7, label="Fast boundary")
+        axes[2].axvline(
+            plan.realtime_taps,
+            color="#8338ec",
+            linestyle="--",
+            alpha=0.7,
+            label="Fast boundary",
+        )
     _shade_partitions(axes[2], partition_summary)
     axes[2].legend()
 
     if plot_rows == 4:
         ax_gd = axes[3]
         ax_gd.plot(group_delay_freqs, group_delay_ms, linewidth=0.8, color="#1d8a99")
-        ax_gd.set_xlim(0, min(500, group_delay_freqs[-1] if group_delay_freqs.size else 500))
+        ax_gd.set_xlim(
+            0, min(500, group_delay_freqs[-1] if group_delay_freqs.size else 500)
+        )
         ax_gd.set_xlabel("Frequency (Hz)")
         ax_gd.set_ylabel("Group delay (ms)")
         ax_gd.set_title("Group delay curve")
-        ax_gd.axvline(100, color="#ffbe0b", linestyle="--", alpha=0.7, label="100 Hz focus")
+        ax_gd.axvline(
+            100, color="#ffbe0b", linestyle="--", alpha=0.7, label="100 Hz focus"
+        )
         if group_delay_summary:
             ax_gd.axhspan(
                 group_delay_summary["min_ms"],

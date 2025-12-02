@@ -30,7 +30,12 @@ def _read_wav(path: Path) -> Tuple[int, np.ndarray]:
     return sr, data.astype(np.float32)
 
 
-def _slice_signal(data: np.ndarray, sample_rate: int, start_s: float = 0.0, duration_s: Optional[float] = None):
+def _slice_signal(
+    data: np.ndarray,
+    sample_rate: int,
+    start_s: float = 0.0,
+    duration_s: Optional[float] = None,
+):
     start_idx = max(0, int(start_s * sample_rate))
     if duration_s is None:
         end_idx = data.shape[0]
@@ -90,7 +95,9 @@ def analyze_frequency_response(
         stopband_energy = mag_out_db[stopband_mask]
         max_stopband_energy = float(np.max(stopband_energy))
         stopband_delta = peak_mag_out - max_stopband_energy
-        print(f"Stopband (>{stopband_start} Hz) max energy: {max_stopband_energy:.2f} dB")
+        print(
+            f"Stopband (>{stopband_start} Hz) max energy: {max_stopband_energy:.2f} dB"
+        )
         print(f"Stopband attenuation: {stopband_delta:.2f} dB")
     print()
 
@@ -133,7 +140,11 @@ def _render_frequency_plot(
     axes[0].set_xlim(0, freqs_in[-1] / 1000)
     axes[0].set_ylim(np.max(mag_in_db) - 100, np.max(mag_in_db) + 10)
     axes[0].axvline(
-        plot_data["peak_freq_in"] / 1000, color="r", linestyle="--", alpha=0.5, label="Peak"
+        plot_data["peak_freq_in"] / 1000,
+        color="r",
+        linestyle="--",
+        alpha=0.5,
+        label="Peak",
     )
     axes[0].set_xlabel("Frequency (kHz)")
     axes[0].set_ylabel("Magnitude (dB)")
@@ -147,7 +158,11 @@ def _render_frequency_plot(
     axes[1].set_xlim(0, min(30, freqs_out[-1] / 1000))
     axes[1].set_ylim(np.max(mag_out_db) - 100, np.max(mag_out_db) + 10)
     axes[1].axvline(
-        plot_data["peak_freq_out"] / 1000, color="r", linestyle="--", alpha=0.5, label="Peak"
+        plot_data["peak_freq_out"] / 1000,
+        color="r",
+        linestyle="--",
+        alpha=0.5,
+        label="Peak",
     )
     axes[1].axvline(20, color="g", linestyle="--", alpha=0.4, label="20 kHz")
     axes[1].axvline(22.05, color="orange", linestyle="--", alpha=0.4, label="22.05 kHz")
@@ -188,13 +203,24 @@ def _render_frequency_plot(
 
 
 def _parse_args():
-    parser = argparse.ArgumentParser(description="Verify frequency response of upsampled audio")
+    parser = argparse.ArgumentParser(
+        description="Verify frequency response of upsampled audio"
+    )
     parser.add_argument("input", type=Path, help="Input WAV file")
     parser.add_argument("output", type=Path, help="Output WAV file (upsampled)")
     parser.add_argument("--plot", type=Path, default=None, help="出力プロット (png)")
-    parser.add_argument("--metadata", type=Path, default=None, help="フィルタ係数メタデータ(JSON)")
-    parser.add_argument("--tap-count", type=int, default=None, help="フィルタタップ数を直接指定")
-    parser.add_argument("--config", type=Path, default=None, help="partitionedConvolution設定を読み込むconfig.json")
+    parser.add_argument(
+        "--metadata", type=Path, default=None, help="フィルタ係数メタデータ(JSON)"
+    )
+    parser.add_argument(
+        "--tap-count", type=int, default=None, help="フィルタタップ数を直接指定"
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="partitionedConvolution設定を読み込むconfig.json",
+    )
     parser.add_argument("--fast-partition-taps", type=int, default=None)
     parser.add_argument("--min-partition-taps", type=int, default=None)
     parser.add_argument("--max-partitions", type=int, default=None)
@@ -277,7 +303,9 @@ def _compare_fast_tail(
         return None
     fast_duration = window_seconds or max(fast_seconds, 0.05)
     fast_slice = _slice_signal(data_out, sr_out, start_s=0.0, duration_s=fast_duration)
-    tail_slice = _slice_signal(data_out, sr_out, start_s=settling_seconds, duration_s=window_seconds)
+    tail_slice = _slice_signal(
+        data_out, sr_out, start_s=settling_seconds, duration_s=window_seconds
+    )
     if fast_slice.size < 2 or tail_slice.size < 2:
         return None
     fast_fft = 20 * np.log10(np.abs(_window_fft(fast_slice)) + 1e-12)
@@ -286,7 +314,9 @@ def _compare_fast_tail(
     delta = float(np.max(np.abs(tail_fft[:min_len] - fast_fft[:min_len])))
     rms_fast = float(np.sqrt(np.mean(fast_slice**2)))
     rms_tail = float(np.sqrt(np.mean(tail_slice**2)))
-    print(f"Fast vs Tail スペクトル最大差: {delta:.2f} dB (fast RMS {rms_fast:.6f}, tail RMS {rms_tail:.6f})")
+    print(
+        f"Fast vs Tail スペクトル最大差: {delta:.2f} dB (fast RMS {rms_fast:.6f}, tail RMS {rms_tail:.6f})"
+    )
     return {
         "spectral_delta_db": delta,
         "rms_fast": rms_fast,
@@ -303,7 +333,9 @@ def _compare_reference_output(
     mag_target_db: np.ndarray,
     sr_target: int,
 ):
-    slice_ref = _slice_signal(data_ref, sr_ref, start_s=slice_start, duration_s=duration_s)
+    slice_ref = _slice_signal(
+        data_ref, sr_ref, start_s=slice_start, duration_s=duration_s
+    )
     if slice_ref.size < 2:
         print("Reference出力が短すぎるため比較をスキップします。")
         return None, None
@@ -345,23 +377,38 @@ def main():
     sr_out, data_out = _read_wav(args.output)
 
     metadata = _load_metadata(args.metadata)
-    tap_count = args.tap_count or metadata.get("n_taps_actual") or metadata.get("n_taps_specified")
+    tap_count = (
+        args.tap_count
+        or metadata.get("n_taps_actual")
+        or metadata.get("n_taps_specified")
+    )
 
-    plan, fast_seconds, settling_seconds = _compute_partition_windows(args, tap_count, sr_out)
+    plan, fast_seconds, settling_seconds = _compute_partition_windows(
+        args, tap_count, sr_out
+    )
     skip_seconds = args.settling_seconds
     if skip_seconds is None and settling_seconds:
         skip_seconds = settling_seconds
     if skip_seconds:
         print(f"Output解析前に {skip_seconds:.3f} 秒スキップ（tail合流後を評価）")
 
-    sliced_output = _slice_signal(data_out, sr_out, start_s=skip_seconds or 0.0, duration_s=args.analysis_window_seconds)
+    sliced_output = _slice_signal(
+        data_out,
+        sr_out,
+        start_s=skip_seconds or 0.0,
+        duration_s=args.analysis_window_seconds,
+    )
     if args.analysis_window_seconds:
         comparable_duration = args.analysis_window_seconds * (sr_in / sr_out)
-        sliced_input = _slice_signal(data_in, sr_in, start_s=0.0, duration_s=comparable_duration)
+        sliced_input = _slice_signal(
+            data_in, sr_in, start_s=0.0, duration_s=comparable_duration
+        )
     else:
         sliced_input = data_in
 
-    results, plot_data = analyze_frequency_response(sliced_input, sr_in, sliced_output, sr_out)
+    results, plot_data = analyze_frequency_response(
+        sliced_input, sr_in, sliced_output, sr_out
+    )
 
     reference_plot = None
     reference_delta = None
@@ -388,10 +435,16 @@ def main():
     fast_tail_stats = None
     if args.compare_fast_tail:
         fast_tail_stats = _compare_fast_tail(
-            data_out, sr_out, fast_seconds, settling_seconds, args.analysis_window_seconds
+            data_out,
+            sr_out,
+            fast_seconds,
+            settling_seconds,
+            args.analysis_window_seconds,
         )
 
-    _render_frequency_plot(plot_data, args.plot, reference_plot, args.reference_label, reference_delta)
+    _render_frequency_plot(
+        plot_data, args.plot, reference_plot, args.reference_label, reference_delta
+    )
 
     print("=" * 60)
     if results["frequency_match"]:
