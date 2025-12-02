@@ -693,15 +693,21 @@ bool HRTFProcessor::processStereo(const float* inputL, const float* inputR,
                                 validOutputSize * sizeof(float), cudaMemcpyDeviceToHost, stream_),
                 "copy output R");
 
-            // Save overlap for next block
-            checkCudaError(
-                cudaMemcpyAsync(overlapBufferL_.data(), d_paddedInputL_ + validOutputPerBlock_,
-                                overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream_),
-                "save overlap L");
-            checkCudaError(
-                cudaMemcpyAsync(overlapBufferR_.data(), d_paddedInputR_ + validOutputPerBlock_,
-                                overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream_),
-                "save overlap R");
+            // Save overlap for next block using the actual block size that was processed
+            if (overlapSize_ > 0) {
+                size_t overlapCopyStart = currentBlockSize;
+                size_t overlapCopyEnd = overlapCopyStart + overlapSize_;
+                if (overlapCopyEnd <= static_cast<size_t>(fftSize_)) {
+                    checkCudaError(
+                        cudaMemcpyAsync(overlapBufferL_.data(), d_paddedInputL_ + overlapCopyStart,
+                                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream_),
+                        "save overlap L");
+                    checkCudaError(
+                        cudaMemcpyAsync(overlapBufferR_.data(), d_paddedInputR_ + overlapCopyStart,
+                                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream_),
+                        "save overlap R");
+                }
+            }
 
             outputPos += validOutputSize;
             inputPos += validOutputSize;

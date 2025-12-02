@@ -1421,12 +1421,18 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
             "cudaMemcpy partition block");
 
         if (state.overlapSize > 0 && d_channelOverlap) {
-            int overlapOffset = state.descriptor.fftSize - state.overlapSize;
-            Utils::checkCudaError(
-                cudaMemcpyAsync(d_channelOverlap, state.d_timeDomain + overlapOffset,
-                                state.overlapSize * sizeof(float),
-                                cudaMemcpyDeviceToDevice, stream),
-                "cudaMemcpy partition overlap save");
+            int overlapOffset = std::max(0, samplesToUse);
+            size_t maxCopy =
+                static_cast<size_t>(state.descriptor.fftSize) - static_cast<size_t>(overlapOffset);
+            size_t overlapSamples =
+                std::min(maxCopy, static_cast<size_t>(state.overlapSize));
+            if (overlapSamples > 0) {
+                Utils::checkCudaError(
+                    cudaMemcpyAsync(d_channelOverlap, state.d_timeDomain + overlapOffset,
+                                    overlapSamples * sizeof(float),
+                                    cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy partition overlap save");
+            }
         }
 
         Utils::checkCufftError(cufftSetStream(state.planForward, stream),
