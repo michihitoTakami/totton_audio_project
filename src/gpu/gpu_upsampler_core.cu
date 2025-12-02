@@ -646,14 +646,19 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                 "cudaMemcpy valid output to host"
             );
 
-            // Save overlap for next block (last overlapSize_ samples of the current padded input)
-            size_t overlapCopyStart = currentBlockSize;
-            if (overlapSize_ > 0 && overlapCopyStart + overlapSize_ <= fftSize_) {
-                Utils::checkCudaError(
-                    cudaMemcpyAsync(overlapBuffer.data(), d_paddedInput + overlapCopyStart,
-                                   overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-                    "cudaMemcpy overlap from device"
-                );
+            // Save overlap for next block using the contiguous upsampled input
+            if (overlapSize_ > 0) {
+                size_t nextBlockStart = inputPos + validOutputSize;
+                if (nextBlockStart >= overlapSize_ && nextBlockStart <= outputFrames) {
+                    size_t overlapStart = nextBlockStart - overlapSize_;
+                    if (overlapStart + overlapSize_ <= outputFrames) {
+                        Utils::checkCudaError(
+                            cudaMemcpyAsync(overlapBuffer.data(), d_upsampledInput + overlapStart,
+                                           overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                            "cudaMemcpy overlap from device"
+                        );
+                    }
+                }
             }
 
             if (blockCount < 3) {
