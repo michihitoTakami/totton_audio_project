@@ -82,7 +82,7 @@ def _get_service_pid(service: str) -> Optional[int]:
 
 def _pid_looks_like_daemon(pid: int) -> bool:
     """Verify PID belongs to gpu_upsampler (avoid PID 1 or unrelated processes)."""
-    if pid <= 1:
+    if pid < 1:
         return False
     comm_path = f"/proc/{pid}/comm"
     try:
