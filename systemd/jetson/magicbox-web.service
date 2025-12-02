@@ -6,10 +6,6 @@ Documentation=https://github.com/michihitoTakami/gpu_os
 After=network.target gpu-upsampler.service
 Requires=gpu-upsampler.service
 
-# If daemon stops, stop web UI too
-BindsTo=gpu-upsampler.service
-PartOf=gpu-upsampler.service
-
 [Service]
 Type=simple
 

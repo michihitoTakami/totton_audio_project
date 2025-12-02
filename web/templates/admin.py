@@ -474,6 +474,10 @@ def get_admin_html() -> str:
         let wsReconnectAttempts = 0;
         const MAX_RECONNECT_ATTEMPTS = 5;
 
+        async function restartDaemon() {
+            await fetch(API + '/daemon/restart', { method: 'POST' });
+        }
+
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = protocol + '//' + window.location.host + '/ws/stats';
@@ -1170,7 +1174,7 @@ def get_admin_html() -> str:
                 showUploadMessage(data.message, data.success);
                 if (data.success && data.restart_required) {
                     btn.textContent = '再起動中...';
-                    await fetch(API + '/restart', { method: 'POST' });
+                    await restartDaemon();
                     setTimeout(() => {
                         fetchStatus();
                         fetchEqProfile();
