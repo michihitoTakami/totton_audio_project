@@ -2755,6 +2755,17 @@ int main(int argc, char* argv[]) {
         };
         disableFromEnv("PIPEWIRE_DISABLED");
         disableFromEnv("MAGICBOX_DISABLE_PIPEWIRE");
+        auto enableFromEnv = [&](const char* envName) {
+            if (const char* value = std::getenv(envName)) {
+                std::string flag = toLower(value);
+                if (flag == "1" || flag == "true" || flag == "yes") {
+                    pipewireEnabled = true;
+                    pipewireOverrideReason = std::string(envName) + "=true";
+                }
+            }
+        };
+        enableFromEnv("PIPEWIRE_ENABLED");
+        enableFromEnv("MAGICBOX_ENABLE_PIPEWIRE");
         if (!pipewireEnabled) {
             std::cout << "Config: PipeWire input disabled ("
                       << (pipewireOverrideReason.empty() ? "config.json" : pipewireOverrideReason)

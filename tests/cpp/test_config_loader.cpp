@@ -119,6 +119,28 @@ TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
 }
 
+TEST_F(ConfigLoaderTest, PipewireEnabledDefaultsToTrue) {
+    fs::remove(testConfigPath);
+
+    AppConfig config;
+    bool loaded = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_FALSE(loaded);
+    EXPECT_TRUE(config.pipewireEnabled);
+}
+
+TEST_F(ConfigLoaderTest, PipewireCanBeDisabledViaConfig) {
+    writeConfig(R"({
+        "pipewireEnabled": false
+    })");
+
+    AppConfig config;
+    bool loaded = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(loaded);
+    EXPECT_FALSE(config.pipewireEnabled);
+}
+
 TEST_F(ConfigLoaderTest, LoadInvalidJsonReturnsFalse) {
     writeConfig("{ invalid json }");
 
