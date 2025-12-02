@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Magic Box - Ultimate Audio Experience{% endblock %}</title>
+
+    <!-- Main CSS -->
+    <link rel="stylesheet" href="/static/css/main.css">
+
+    <!-- htmx 1.9.12 -->
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
+    <!-- Alpine.js 3.13.10 -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
+
+    {% block extra_head %}{% endblock %}
+</head>
+<body x-data="{ mobileMenuOpen: false }" :class="{ 'menu-open': mobileMenuOpen }">
+    <!-- Mobile Menu Toggle Button -->
+    <button
+        class="mobile-menu-toggle"
+        @click="mobileMenuOpen = !mobileMenuOpen"
+        aria-label="Toggle menu"
+    >
+        <span></span>
+        <span></span>
+        <span></span>
+    </button>
+
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" :class="{ 'open': mobileMenuOpen }">
+        {% include 'components/sidebar.html' %}
+    </aside>
+
+    <!-- Overlay for mobile menu (clicking closes menu) -->
+    <div
+        @click="mobileMenuOpen = false"
+        x-show="mobileMenuOpen"
+        x-transition.opacity
+        style="display: none;"
+    ></div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block content %}
+        <!-- Page content goes here -->
+        {% endblock %}
+    </main>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>
