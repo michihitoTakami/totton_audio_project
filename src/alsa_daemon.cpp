@@ -4,6 +4,7 @@
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
+#include "daemon/dac_manager.h"
 #include "daemon/rtp_engine_coordinator.h"
 #include "daemon/zmq_server.h"
 #include "daemon_constants.h"
@@ -57,7 +58,6 @@
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 // systemd notification support (optional)
@@ -114,31 +114,6 @@ static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
 static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
-
-struct DacDeviceRuntimeInfo {
-    std::string id;
-    std::string card;
-    std::string name;
-    std::string description;
-
-    bool operator==(const DacDeviceRuntimeInfo& other) const {
-        return id == other.id && card == other.card && name == other.name &&
-               description == other.description;
-    }
-};
-
-static std::mutex g_dac_mutex;
-static std::condition_variable g_dac_cv;
-static std::vector<DacDeviceRuntimeInfo> g_dac_devices;
-static std::string g_requested_alsa_device;
-static std::string g_selected_alsa_device;
-static std::string g_active_playback_device;
-static DacCapability::Capability g_active_dac_capability;
-static std::atomic<bool> g_dac_change_pending{false};
-static std::atomic<bool> g_dac_monitor_running{false};
-static std::atomic<bool> g_dac_force_rescan{false};
-static std::thread g_dac_monitor_thread;
-static nlohmann::json g_last_dac_event;
 
 static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
 
@@ -402,326 +377,24 @@ static inline int64_t get_timestamp_ms() {
         .count();
 }
 
-static void publish_zmq_event(const std::string& type, const nlohmann::json& data = {}) {
+static void send_zmq_payload(const nlohmann::json& payload) {
     if (!g_zmq_server) {
         return;
     }
-
-    nlohmann::json payload;
-    payload["type"] = type;
-    payload["timestamp"] = get_timestamp_ms();
-    if (!data.is_null() && !data.empty()) {
-        payload["data"] = data;
-    }
-
-    std::string serialized = payload.dump();
-    if (g_zmq_server->publish(serialized)) {
-        g_last_dac_event = payload;
-    }
+    g_zmq_server->publish(payload.dump());
 }
 
-static bool is_valid_alsa_device_name(const std::string& device) {
-    if (device.empty())
-        return false;
-    if (device == "default")
-        return true;
-
-    auto checkPrefix = [](const std::string& value, const std::string& prefix) -> bool {
-        if (value.rfind(prefix, 0) != 0)
-            return false;
-        const std::string rest = value.substr(prefix.size());
-        if (rest.empty())
-            return false;
-        for (char c : rest) {
-            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == ',' || c == '_' ||
-                  c == ':')) {
-                return false;
-            }
-        }
-        return true;
-    };
-
-    if (checkPrefix(device, "hw:") || checkPrefix(device, "plughw:") ||
-        checkPrefix(device, "sysdefault:")) {
-        return true;
-    }
-    return false;
+static dac::DacManager::Dependencies make_dac_dependencies() {
+    dac::DacManager::Dependencies deps;
+    deps.config = &g_config;
+    deps.runningFlag = &g_running;
+    deps.timestampProvider = get_timestamp_ms;
+    deps.eventPublisher = send_zmq_payload;
+    deps.defaultDevice = DEFAULT_ALSA_DEVICE;
+    return deps;
 }
 
-static void add_device_entry(std::vector<DacDeviceRuntimeInfo>& list,
-                             std::unordered_set<std::string>& seen, const std::string& id,
-                             const std::string& card, const std::string& name,
-                             const std::string& description) {
-    if (id.empty())
-        return;
-    if (!seen.insert(id).second)
-        return;
-    list.push_back({id, card, name, description});
-}
-
-static std::vector<DacDeviceRuntimeInfo> enumerate_dac_devices() {
-    std::vector<DacDeviceRuntimeInfo> devices;
-    std::unordered_set<std::string> seen;
-    add_device_entry(devices, seen, "default", "System", "Default Output",
-                     "System default ALSA route");
-
-    int card = -1;
-    if (snd_card_next(&card) < 0) {
-        return devices;
-    }
-
-    while (card >= 0) {
-        std::string cardNum = std::to_string(card);
-        std::string cardBaseId = "hw:" + cardNum;
-        snd_ctl_t* handle = nullptr;
-        if (snd_ctl_open(&handle, cardBaseId.c_str(), 0) < 0) {
-            snd_card_next(&card);
-            continue;
-        }
-
-        snd_ctl_card_info_t* cardInfo;
-        snd_ctl_card_info_alloca(&cardInfo);
-        if (snd_ctl_card_info(handle, cardInfo) < 0) {
-            snd_ctl_close(handle);
-            snd_card_next(&card);
-            continue;
-        }
-
-        std::string cardName = snd_ctl_card_info_get_name(cardInfo);
-        std::string cardLong = snd_ctl_card_info_get_longname(cardInfo);
-        std::string cardId = snd_ctl_card_info_get_id(cardInfo);
-        if (cardLong.empty())
-            cardLong = cardName;
-
-        add_device_entry(devices, seen, cardBaseId, cardName, "hw", cardLong);
-        add_device_entry(devices, seen, "plughw:" + cardNum, cardName, "plughw", cardLong);
-        if (!cardId.empty()) {
-            add_device_entry(devices, seen, "hw:" + cardId, cardName, "hw", cardLong);
-            add_device_entry(devices, seen, "plughw:" + cardId, cardName, "plughw", cardLong);
-        }
-
-        int device = -1;
-        while (snd_ctl_pcm_next_device(handle, &device) >= 0 && device >= 0) {
-            snd_pcm_info_t* pcmInfo;
-            snd_pcm_info_alloca(&pcmInfo);
-            snd_pcm_info_set_device(pcmInfo, device);
-            snd_pcm_info_set_subdevice(pcmInfo, 0);
-            snd_pcm_info_set_stream(pcmInfo, SND_PCM_STREAM_PLAYBACK);
-            if (snd_ctl_pcm_info(handle, pcmInfo) < 0)
-                continue;
-
-            std::string pcmName = snd_pcm_info_get_name(pcmInfo);
-            std::string desc = cardName;
-            if (!pcmName.empty())
-                desc += " / " + pcmName;
-
-            std::string deviceSuffix = "," + std::to_string(device);
-            add_device_entry(devices, seen, cardBaseId + deviceSuffix, cardName, pcmName, desc);
-            add_device_entry(devices, seen, "plughw:" + cardNum + deviceSuffix, cardName, pcmName,
-                             desc);
-            if (!cardId.empty()) {
-                add_device_entry(devices, seen, "hw:" + cardId + deviceSuffix, cardName, pcmName,
-                                 desc);
-                add_device_entry(devices, seen, "plughw:" + cardId + deviceSuffix, cardName,
-                                 pcmName, desc);
-            }
-        }
-
-        snd_ctl_close(handle);
-        snd_card_next(&card);
-    }
-
-    return devices;
-}
-
-static std::string pick_preferred_device_locked(const std::vector<DacDeviceRuntimeInfo>& devices) {
-    if (!g_requested_alsa_device.empty()) {
-        auto it = std::find_if(devices.begin(), devices.end(),
-                               [](const auto& info) { return info.id == g_requested_alsa_device; });
-        if (it != devices.end()) {
-            return g_requested_alsa_device;
-        }
-    }
-
-    for (const auto& dev : devices) {
-        if (dev.id == "default")
-            continue;
-        return dev.id;
-    }
-    return g_requested_alsa_device;
-}
-
-static nlohmann::json capability_to_json(const DacCapability::Capability& cap) {
-    nlohmann::json capJson;
-    capJson["device"] = cap.deviceName;
-    capJson["is_valid"] = cap.isValid;
-    capJson["min_rate"] = cap.minSampleRate;
-    capJson["max_rate"] = cap.maxSampleRate;
-    capJson["max_channels"] = cap.maxChannels;
-    capJson["supported_rates"] = cap.supportedRates;
-    if (!cap.errorMessage.empty()) {
-        capJson["error_message"] = cap.errorMessage;
-    }
-    if (cap.alsaErrno != 0) {
-        capJson["alsa_errno"] = cap.alsaErrno;
-    }
-    return capJson;
-}
-
-static nlohmann::json build_dac_devices_json_locked() {
-    nlohmann::json devicesJson = nlohmann::json::array();
-    for (const auto& dev : g_dac_devices) {
-        nlohmann::json entry;
-        entry["id"] = dev.id;
-        entry["card"] = dev.card;
-        entry["name"] = dev.name;
-        entry["description"] = dev.description;
-        entry["is_requested"] = (dev.id == g_requested_alsa_device);
-        entry["is_selected"] = (dev.id == g_selected_alsa_device);
-        entry["is_active"] = (dev.id == g_active_playback_device);
-        devicesJson.push_back(entry);
-    }
-
-    nlohmann::json root;
-    root["devices"] = devicesJson;
-    root["requested_device"] = g_requested_alsa_device;
-    root["selected_device"] = g_selected_alsa_device;
-    root["active_device"] = g_active_playback_device;
-    root["change_pending"] = g_dac_change_pending.load(std::memory_order_acquire);
-    return root;
-}
-
-static nlohmann::json build_dac_devices_json() {
-    std::lock_guard<std::mutex> lock(g_dac_mutex);
-    return build_dac_devices_json_locked();
-}
-
-static void set_selected_device_locked(const std::string& device, const std::string& reason) {
-    if (g_selected_alsa_device == device)
-        return;
-    g_selected_alsa_device = device;
-    g_dac_change_pending.store(true, std::memory_order_release);
-    g_dac_cv.notify_all();
-    std::cout << "[DAC] Selected ALSA device: " << (device.empty() ? "<none>" : device) << " ("
-              << reason << ")" << std::endl;
-}
-
-static void update_active_device_state(const std::string& device, bool active) {
-    std::lock_guard<std::mutex> lock(g_dac_mutex);
-    if (active) {
-        g_active_playback_device = device;
-    } else if (g_active_playback_device == device) {
-        g_active_playback_device.clear();
-    }
-}
-
-static void update_dac_capability_async(const std::string& device, const std::string& reason) {
-    if (device.empty())
-        return;
-    auto cap = DacCapability::scan(device);
-    {
-        std::lock_guard<std::mutex> lock(g_dac_mutex);
-        g_active_dac_capability = cap;
-    }
-    nlohmann::json data = build_dac_devices_json();
-    data["capability"] = capability_to_json(cap);
-    data["reason"] = reason;
-    publish_zmq_event("dac_selected", data);
-}
-
-static void initialize_dac_manager() {
-    {
-        std::lock_guard<std::mutex> lock(g_dac_mutex);
-        g_requested_alsa_device =
-            g_config.alsaDevice.empty() ? DEFAULT_ALSA_DEVICE : g_config.alsaDevice;
-        g_selected_alsa_device.clear();
-        g_active_playback_device.clear();
-        g_active_dac_capability = DacCapability::Capability();
-        g_last_dac_event = nlohmann::json::object();
-    }
-
-    auto snapshot = enumerate_dac_devices();
-    std::string initialSelection;
-    {
-        std::lock_guard<std::mutex> lock(g_dac_mutex);
-        g_dac_devices = snapshot;
-        initialSelection = pick_preferred_device_locked(g_dac_devices);
-        if (!initialSelection.empty()) {
-            g_selected_alsa_device = initialSelection;
-            g_dac_change_pending.store(true, std::memory_order_release);
-        }
-    }
-
-    publish_zmq_event("dac_devices_updated", build_dac_devices_json());
-    if (!initialSelection.empty()) {
-        update_dac_capability_async(initialSelection, "initial");
-    }
-}
-
-static std::string wait_for_selected_device() {
-    std::unique_lock<std::mutex> lock(g_dac_mutex);
-    g_dac_cv.wait(lock, [] {
-        return !g_running.load(std::memory_order_acquire) || !g_selected_alsa_device.empty();
-    });
-    return g_selected_alsa_device;
-}
-
-static std::string get_selected_device() {
-    std::lock_guard<std::mutex> lock(g_dac_mutex);
-    return g_selected_alsa_device;
-}
-
-static void dac_monitor_loop() {
-    while (g_dac_monitor_running.load(std::memory_order_acquire)) {
-        bool rescan = g_dac_force_rescan.exchange(false, std::memory_order_acq_rel);
-        auto devices = enumerate_dac_devices();
-        std::string newlySelected;
-        bool devicesChanged = false;
-        {
-            std::lock_guard<std::mutex> lock(g_dac_mutex);
-            if (devices != g_dac_devices) {
-                g_dac_devices = devices;
-                devicesChanged = true;
-            }
-            std::string candidate = pick_preferred_device_locked(g_dac_devices);
-            if (candidate != g_selected_alsa_device) {
-                set_selected_device_locked(candidate, "monitor");
-                newlySelected = candidate;
-            } else if (rescan && !candidate.empty()) {
-                newlySelected = candidate;
-            }
-        }
-
-        if (devicesChanged) {
-            publish_zmq_event("dac_devices_updated", build_dac_devices_json());
-        }
-        if (!newlySelected.empty()) {
-            update_dac_capability_async(newlySelected, rescan ? "manual_rescan" : "auto");
-        }
-
-        for (int i = 0; i < 10 && g_dac_monitor_running.load(std::memory_order_acquire); ++i) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            if (g_dac_force_rescan.load(std::memory_order_acquire)) {
-                break;
-            }
-        }
-    }
-}
-
-static void start_dac_monitor() {
-    if (g_dac_monitor_running.exchange(true))
-        return;
-    g_dac_monitor_thread = std::thread(dac_monitor_loop);
-}
-
-static void stop_dac_monitor() {
-    if (!g_dac_monitor_running.exchange(false))
-        return;
-    g_dac_force_rescan.store(true, std::memory_order_release);
-    if (g_dac_monitor_thread.joinable()) {
-        g_dac_monitor_thread.join();
-    }
-}
+static dac::DacManager g_dac_manager(make_dac_dependencies());
 
 // ========== PID File Lock (flock-based) ==========
 
@@ -882,15 +555,7 @@ static nlohmann::json collect_runtime_stats_json() {
 
     stats["fallback"] = make_fallback_stats_json();
 
-    {
-        std::lock_guard<std::mutex> lock(g_dac_mutex);
-        nlohmann::json dacJson;
-        dacJson["requested_device"] = g_requested_alsa_device;
-        dacJson["selected_device"] = g_selected_alsa_device;
-        dacJson["active_device"] = g_active_playback_device;
-        dacJson["device_count"] = g_dac_devices.size();
-        stats["dac"] = dacJson;
-    }
+    stats["dac"] = g_dac_manager.buildStatsSummaryJson();
 
     return stats;
 }
@@ -1525,19 +1190,11 @@ static std::string handle_rtp_command(const daemon_ipc::ZmqRequest& request) {
 }
 
 static std::string handle_dac_list(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request, "", build_dac_devices_json());
+    return build_ok_response(request, "", g_dac_manager.buildDevicesJson());
 }
 
 static std::string handle_dac_status(const daemon_ipc::ZmqRequest& request) {
-    nlohmann::json data;
-    {
-        std::lock_guard<std::mutex> lock(g_dac_mutex);
-        data = build_dac_devices_json_locked();
-        data["capability"] = capability_to_json(g_active_dac_capability);
-        if (!g_last_dac_event.is_null() && !g_last_dac_event.empty()) {
-            data["last_event"] = g_last_dac_event;
-        }
-    }
+    nlohmann::json data = g_dac_manager.buildStatusJson();
     data["output_rate"] = g_current_output_rate.load(std::memory_order_acquire);
     return build_ok_response(request, "", data);
 }
@@ -1549,25 +1206,19 @@ static std::string handle_dac_select(const daemon_ipc::ZmqRequest& request) {
     }
 
     std::string targetDevice = (*request.json)["params"]["device"].get<std::string>();
-    if (!is_valid_alsa_device_name(targetDevice)) {
+    if (!g_dac_manager.isValidDeviceName(targetDevice)) {
         return build_error_response(request, "IPC_INVALID_PARAMS", "Invalid ALSA device name");
     }
 
-    {
-        std::lock_guard<std::mutex> lock(g_dac_mutex);
-        g_requested_alsa_device = targetDevice;
-        g_config.alsaDevice = targetDevice;
-        std::string candidate = pick_preferred_device_locked(g_dac_devices);
-        set_selected_device_locked(candidate, "manual_select");
-    }
-    g_dac_force_rescan.store(true, std::memory_order_release);
+    g_dac_manager.requestDevice(targetDevice);
 
-    return build_ok_response(request, "Preferred ALSA device updated", build_dac_devices_json());
+    return build_ok_response(request, "Preferred ALSA device updated",
+                             g_dac_manager.buildDevicesJson());
 }
 
 static std::string handle_dac_rescan(const daemon_ipc::ZmqRequest& request) {
-    g_dac_force_rescan.store(true, std::memory_order_release);
-    return build_ok_response(request, "DAC rescan scheduled", build_dac_devices_json());
+    g_dac_manager.requestRescan();
+    return build_ok_response(request, "DAC rescan scheduled", g_dac_manager.buildDevicesJson());
 }
 
 static std::string handle_phase_type_get(const daemon_ipc::ZmqRequest& request) {
@@ -2230,20 +1881,20 @@ static bool pcm_alive(snd_pcm_t* pcm_handle) {
 void alsa_output_thread() {
     elevate_realtime_priority("ALSA output");
 
-    std::string currentDevice = wait_for_selected_device();
+    std::string currentDevice = g_dac_manager.waitForSelection();
     snd_pcm_t* pcm_handle = nullptr;
     while (g_running && !pcm_handle) {
         if (currentDevice.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = wait_for_selected_device();
+            currentDevice = g_dac_manager.waitForSelection();
             continue;
         }
         pcm_handle = open_and_configure_pcm(currentDevice);
         if (!pcm_handle) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = wait_for_selected_device();
+            currentDevice = g_dac_manager.waitForSelection();
         } else {
-            update_active_device_state(currentDevice, true);
+            g_dac_manager.markActiveDevice(currentDevice, true);
         }
     }
     std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
@@ -2276,16 +1927,16 @@ void alsa_output_thread() {
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
                 }
-                update_active_device_state(currentDevice, false);
+                g_dac_manager.markActiveDevice(currentDevice, false);
                 while (g_running && !pcm_handle) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
-                    currentDevice = wait_for_selected_device();
+                    currentDevice = g_dac_manager.waitForSelection();
                     if (currentDevice.empty())
                         continue;
                     pcm_handle = open_and_configure_pcm(currentDevice);
                 }
                 if (pcm_handle) {
-                    update_active_device_state(currentDevice, true);
+                    g_dac_manager.markActiveDevice(currentDevice, true);
                 }
                 // Reset buffer positions to avoid backlog after long downtime
                 {
@@ -2337,21 +1988,21 @@ void alsa_output_thread() {
             }
         }
 
-        if (g_dac_change_pending.exchange(false, std::memory_order_acquire)) {
-            std::string nextDevice = get_selected_device();
+        if (auto pendingDevice = g_dac_manager.consumePendingChange()) {
+            std::string nextDevice = *pendingDevice;
             if (!nextDevice.empty() && nextDevice != currentDevice) {
                 std::cout << "ALSA: Switching output to " << nextDevice << std::endl;
                 if (pcm_handle) {
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
-                    update_active_device_state(currentDevice, false);
+                    g_dac_manager.markActiveDevice(currentDevice, false);
                 }
                 currentDevice = nextDevice;
                 while (g_running && !pcm_handle) {
                     pcm_handle = open_and_configure_pcm(currentDevice);
                     if (!pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                        currentDevice = wait_for_selected_device();
+                        currentDevice = g_dac_manager.waitForSelection();
                         if (currentDevice.empty())
                             break;
                     }
@@ -2359,7 +2010,7 @@ void alsa_output_thread() {
                 if (!pcm_handle) {
                     continue;
                 }
-                update_active_device_state(currentDevice, true);
+                g_dac_manager.markActiveDevice(currentDevice, true);
             }
         }
 
@@ -2480,10 +2131,10 @@ void alsa_output_thread() {
                               << std::endl;
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
-                    update_active_device_state(currentDevice, false);
+                    g_dac_manager.markActiveDevice(currentDevice, false);
                     while (g_running && !pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
-                        std::string next = get_selected_device();
+                        std::string next = g_dac_manager.getSelectedDevice();
                         if (!next.empty()) {
                             currentDevice = next;
                         }
@@ -2492,7 +2143,7 @@ void alsa_output_thread() {
                         pcm_handle = open_and_configure_pcm(currentDevice);
                     }
                     if (pcm_handle) {
-                        update_active_device_state(currentDevice, true);
+                        g_dac_manager.markActiveDevice(currentDevice, true);
                         // resize buffer to new period size if needed
                         snd_pcm_uframes_t new_period = 0;
                         snd_pcm_hw_params_t* hw_params;
@@ -2541,10 +2192,10 @@ void alsa_output_thread() {
                         snd_pcm_close(pcm_handle);
                         pcm_handle = nullptr;
                     }
-                    update_active_device_state(currentDevice, false);
+                    g_dac_manager.markActiveDevice(currentDevice, false);
                     while (g_running && !pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
-                        std::string next = get_selected_device();
+                        std::string next = g_dac_manager.getSelectedDevice();
                         if (!next.empty()) {
                             currentDevice = next;
                         }
@@ -2553,7 +2204,7 @@ void alsa_output_thread() {
                         pcm_handle = open_and_configure_pcm(currentDevice);
                     }
                     if (pcm_handle) {
-                        update_active_device_state(currentDevice, true);
+                        g_dac_manager.markActiveDevice(currentDevice, true);
                     }
                 }
             }
@@ -2564,7 +2215,7 @@ void alsa_output_thread() {
     if (pcm_handle) {
         snd_pcm_drain(pcm_handle);
         snd_pcm_close(pcm_handle);
-        update_active_device_state(currentDevice, false);
+        g_dac_manager.markActiveDevice(currentDevice, false);
     }
     std::cout << "ALSA: Output thread terminated" << std::endl;
 }
@@ -3059,10 +2710,10 @@ int main(int argc, char* argv[]) {
         // Start ZeroMQ server after g_pw_loop is set to allow RELOAD to quit the main loop
         start_zmq_server();
 
-        initialize_dac_manager();
+        g_dac_manager.initialize();
 
         // Start ALSA output thread
-        start_dac_monitor();
+        g_dac_manager.start();
         std::cout << "Starting ALSA output thread..." << std::endl;
         std::thread alsa_thread(alsa_output_thread);
 
@@ -3269,7 +2920,7 @@ int main(int argc, char* argv[]) {
         g_crossfeed_enabled.store(false);
         delete g_upsampler;
         g_upsampler = nullptr;
-        stop_dac_monitor();
+        g_dac_manager.stop();
 
         // Step 7: Deinitialize PipeWire
         if (pipewireInitCalled) {
