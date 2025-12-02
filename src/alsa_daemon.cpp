@@ -70,9 +70,8 @@ constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
-        std::cout << "[Partition] Hybrid phase is incompatible with low-latency mode. "
-                  << "Switching to minimum phase." << std::endl;
-        config.phaseType = PhaseType::Minimum;
+        std::cout << "[Partition] Notice: Hybrid phase selected together with low-latency mode. "
+                  << "Proceeding with hybrid + partitioned convolution." << std::endl;
     }
 }
 
