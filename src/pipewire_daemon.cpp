@@ -50,11 +50,9 @@ struct PipewireRuntimeContext {
 };
 
 static void enforce_phase_partition_constraints(AppConfig& config) {
-    if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
-        std::cout << "[Partition] Hybrid phase is incompatible with low-latency mode. "
-                  << "Switching to minimum phase." << std::endl;
-        config.phaseType = PhaseType::Minimum;
-    }
+    // Note: Hybrid phase is compatible with low-latency mode (partitioned convolution)
+    // No constraint enforcement needed for hybrid phase
+    (void)config;  // Suppress unused parameter warning
 }
 
 // Forward declaration for Data struct (defined below)
@@ -519,10 +517,10 @@ int main(int argc, char* argv[]) {
         ctx.upsampler->setPhaseType(appConfig.phaseType);
         std::cout << "Phase type: " << phaseTypeToString(appConfig.phaseType) << std::endl;
 
-        // Log latency warning for linear phase
-        if (appConfig.phaseType == PhaseType::Linear) {
+        // Log latency warning for hybrid phase (has some latency due to linear component)
+        if (appConfig.phaseType == PhaseType::Hybrid) {
             double latencySec = ctx.upsampler->getLatencySeconds();
-            std::cout << "  WARNING: Hybrid phase latency: " << latencySec << " seconds ("
+            std::cout << "  Note: Hybrid phase latency: " << latencySec << " seconds ("
                       << ctx.upsampler->getLatencySamples() << " samples)" << std::endl;
         }
     } else {

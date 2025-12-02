@@ -253,10 +253,10 @@ std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_candidat
             }
 
             auto nowMs = unix_time_millis();
-            auto it = std::find_if(
-                candidates.begin(), candidates.end(), [&](const RtpDiscoveryCandidate& c) {
-                    return c.host == host && c.port == listenPort;
-                });
+            auto it = std::find_if(candidates.begin(), candidates.end(),
+                                   [&](const RtpDiscoveryCandidate& c) {
+                                       return c.host == host && c.port == listenPort;
+                                   });
             if (it == candidates.end()) {
                 RtpDiscoveryCandidate cand;
                 cand.host = host;

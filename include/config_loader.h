@@ -10,7 +10,7 @@ constexpr const char* DEFAULT_CONFIG_FILE = "config.json";
 // Phase type for FIR filter
 enum class PhaseType {
     Minimum,  // Minimum phase: no pre-ringing, frequency-dependent delay (recommended)
-    Linear    // Linear phase: pre-ringing present, constant delay, symmetric
+    Hybrid    // Hybrid phase: low-freq minimum phase + high-freq 10ms aligned linear phase
 };
 
 struct AppConfig {
@@ -28,8 +28,8 @@ struct AppConfig {
     bool quadPhaseEnabled = false;  // Enable quad-phase mode with all 4 filter FFTs preloaded
     std::string filterPath44kMin = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     std::string filterPath48kMin = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
-    std::string filterPath44kLinear = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
-    std::string filterPath48kLinear = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
+    std::string filterPath44kHybrid = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    std::string filterPath48kHybrid = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
 
     // Multi-rate mode: 10 filter configurations (2 rate families × 5 ratios: 1x/2x/4x/8x/16x)
     // Issue #219: Dynamic rate switching with all filters preloaded

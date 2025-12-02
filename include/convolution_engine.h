@@ -236,8 +236,7 @@ class GPUUpsampler {
     void resetStreaming();
 
     // Configure partitioned convolution (Issue #351)
-    void setPartitionedConvolutionConfig(
-        const AppConfig::PartitionedConvolutionConfig& config);
+    void setPartitionedConvolutionConfig(const AppConfig::PartitionedConvolutionConfig& config);
     bool isPartitionedConvolutionEnabled() const {
         return partitionPlan_.enabled;
     }
@@ -288,7 +287,7 @@ class GPUUpsampler {
     // - Minimum phase: 0 (causal, no pre-delay)
     // - Linear phase: (filterTaps - 1) / 2
     int getLatencySamples() const {
-        if (phaseType_ == PhaseType::Linear) {
+        if (phaseType_ == PhaseType::Hybrid) {
             return (filterTaps_ - 1) / 2;
         }
         return 0;
@@ -311,7 +310,7 @@ class GPUUpsampler {
 
     // Apply EQ magnitude only (for linear phase filters)
     // Multiplies filter magnitude by EQ magnitude, preserves original phase
-    // Use this when phaseType_ == PhaseType::Linear
+    // Use this when phaseType_ == PhaseType::Hybrid
     bool applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude);
 
    private:
@@ -574,9 +573,8 @@ class GPUUpsampler {
                                        StreamFloatVector& streamInputBuffer,
                                        size_t& streamInputAccumulated);
     bool processPartitionBlock(PartitionState& state, cudaStream_t stream,
-                               const float* d_newSamples, int newSamples,
-                               float* d_channelOverlap, StreamFloatVector& tempOutput,
-                               StreamFloatVector& outputData);
+                               const float* d_newSamples, int newSamples, float* d_channelOverlap,
+                               StreamFloatVector& tempOutput, StreamFloatVector& outputData);
     void setActiveHostCoefficients(const std::vector<float>& source);
     bool updateActiveImpulseFromSpectrum(const cufftComplex* spectrum,
                                          std::vector<float>& destination);

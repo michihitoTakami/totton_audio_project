@@ -43,10 +43,10 @@ void GPUUpsampler::restoreOriginalFilter() {
 
 // Apply EQ magnitude (dispatches based on phase type)
 // - Minimum phase: full cepstrum-based minimum phase reconstruction
-// - Linear phase: magnitude-only multiplication, preserving filter phase
+// - Hybrid phase: magnitude-only multiplication, preserving filter phase
 bool GPUUpsampler::applyEqMagnitude(const std::vector<double>& eqMagnitude) {
     // Dispatch based on phase type
-    if (phaseType_ == PhaseType::Linear) {
+    if (phaseType_ == PhaseType::Hybrid) {
         return applyEqMagnitudeOnly(eqMagnitude);
     }
     // Fall through to minimum phase reconstruction

@@ -9,7 +9,7 @@
 
 PhaseType parsePhaseType(const std::string& str) {
     if (str == "linear" || str == "hybrid") {
-        return PhaseType::Linear;
+        return PhaseType::Hybrid;
     }
     // Default to Minimum for "minimum" or any invalid value
     return PhaseType::Minimum;
@@ -17,7 +17,7 @@ PhaseType parsePhaseType(const std::string& str) {
 
 const char* phaseTypeToString(PhaseType type) {
     switch (type) {
-    case PhaseType::Linear:
+    case PhaseType::Hybrid:
         return "hybrid";
     case PhaseType::Minimum:
     default:
@@ -74,10 +74,10 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             outConfig.filterPath44kMin = j["filterPath44kMin"].get<std::string>();
         if (j.contains("filterPath48kMin"))
             outConfig.filterPath48kMin = j["filterPath48kMin"].get<std::string>();
-        if (j.contains("filterPath44kLinear"))
-            outConfig.filterPath44kLinear = j["filterPath44kLinear"].get<std::string>();
-        if (j.contains("filterPath48kLinear"))
-            outConfig.filterPath48kLinear = j["filterPath48kLinear"].get<std::string>();
+        if (j.contains("filterPath44kHybrid"))
+            outConfig.filterPath44kHybrid = j["filterPath44kHybrid"].get<std::string>();
+        if (j.contains("filterPath48kHybrid"))
+            outConfig.filterPath48kHybrid = j["filterPath48kHybrid"].get<std::string>();
 
         // Multi-rate mode settings (Issue #219)
         if (j.contains("multiRateEnabled"))

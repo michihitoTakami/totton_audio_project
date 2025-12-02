@@ -869,8 +869,8 @@ TEST_F(ConvolutionEngineTest, DefaultPhaseTypeIsMinimum) {
 TEST_F(ConvolutionEngineTest, SetPhaseType) {
     GPUUpsampler upsampler;
 
-    upsampler.setPhaseType(PhaseType::Linear);
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    upsampler.setPhaseType(PhaseType::Hybrid);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 
     upsampler.setPhaseType(PhaseType::Minimum);
     EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
@@ -940,7 +940,7 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
     ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
 
     upsampler.setInputSampleRate(44100);
-    upsampler.setPhaseType(PhaseType::Linear);
+    upsampler.setPhaseType(PhaseType::Hybrid);
 
     // 640k taps: (640000 - 1) / 2 = 319999.5 -> 319999 samples
     EXPECT_EQ(upsampler.getLatencySamples(), 319999);
@@ -963,7 +963,7 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
     ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
 
     upsampler.setInputSampleRate(48000);  // 48k family
-    upsampler.setPhaseType(PhaseType::Linear);
+    upsampler.setPhaseType(PhaseType::Hybrid);
 
     // 640k taps: (640000 - 1) / 2 = 319999 samples
     EXPECT_EQ(upsampler.getLatencySamples(), 319999);
@@ -986,8 +986,8 @@ TEST_F(ConvolutionEngineTest, ApplyEqLinearPhase) {
     ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
 
     // Set to linear phase mode
-    upsampler.setPhaseType(PhaseType::Linear);
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    upsampler.setPhaseType(PhaseType::Hybrid);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 
     // Create flat EQ (unity magnitude)
     size_t fftSize = upsampler.getFilterFftSize();
@@ -1012,7 +1012,7 @@ TEST_F(ConvolutionEngineTest, ApplyEqLinearPhaseWithBoost) {
     ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
 
     // Set to linear phase mode
-    upsampler.setPhaseType(PhaseType::Linear);
+    upsampler.setPhaseType(PhaseType::Hybrid);
 
     // Create EQ with boost (should trigger auto-normalization)
     size_t fftSize = upsampler.getFilterFftSize();
@@ -1037,7 +1037,7 @@ TEST_F(ConvolutionEngineTest, RestoreFilterAfterLinearPhaseEq) {
     ASSERT_TRUE(upsampler.initialize(coeffPath, 16, 8192));
 
     // Set to linear phase mode and apply EQ
-    upsampler.setPhaseType(PhaseType::Linear);
+    upsampler.setPhaseType(PhaseType::Hybrid);
     size_t fftSize = upsampler.getFilterFftSize();
     std::vector<double> eqMagnitude(fftSize, 0.5);  // -6dB
     ASSERT_TRUE(upsampler.applyEqMagnitude(eqMagnitude));
@@ -1086,12 +1086,12 @@ TEST_F(ConvolutionEngineTest, InitializeQuadPhaseWith48kLinear) {
         tempDir.getMinPhasePath("48k"),
         tempDir.getLinearPhasePath("44k"),
         tempDir.getLinearPhasePath("48k"),
-        16, 8192, RateFamily::RATE_48K, PhaseType::Linear);
+        16, 8192, RateFamily::RATE_48K, PhaseType::Hybrid);
 
     EXPECT_TRUE(result);
     EXPECT_TRUE(upsampler.isQuadPhaseEnabled());
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 }
 
 TEST_F(ConvolutionEngineTest, SwitchPhaseTypeInQuadPhase) {
@@ -1110,8 +1110,8 @@ TEST_F(ConvolutionEngineTest, SwitchPhaseTypeInQuadPhase) {
     EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
 
     // Switch to linear phase
-    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Linear));
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Hybrid));
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 
     // Switch back to minimum phase
     EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Minimum));
@@ -1137,7 +1137,7 @@ TEST_F(ConvolutionEngineTest, SwitchPhaseTypeFailsWithoutQuadPhase) {
     EXPECT_FALSE(upsampler.isQuadPhaseEnabled());
 
     // switchPhaseType should fail when not in quad-phase mode
-    EXPECT_FALSE(upsampler.switchPhaseType(PhaseType::Linear));
+    EXPECT_FALSE(upsampler.switchPhaseType(PhaseType::Hybrid));
 }
 
 TEST_F(ConvolutionEngineTest, SwitchRateFamilyInQuadPhaseMinimum) {
@@ -1177,16 +1177,16 @@ TEST_F(ConvolutionEngineTest, SwitchRateFamilyInQuadPhaseLinear) {
         tempDir.getMinPhasePath("48k"),
         tempDir.getLinearPhasePath("44k"),
         tempDir.getLinearPhasePath("48k"),
-        16, 8192, RateFamily::RATE_44K, PhaseType::Linear));
+        16, 8192, RateFamily::RATE_44K, PhaseType::Hybrid));
 
     // Initial state
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 
     // Switch to 48k - phase type should remain linear
     EXPECT_TRUE(upsampler.switchRateFamily(RateFamily::RATE_48K));
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 }
 
 TEST_F(ConvolutionEngineTest, QuadPhaseCombinedSwitching) {
@@ -1207,14 +1207,14 @@ TEST_F(ConvolutionEngineTest, QuadPhaseCombinedSwitching) {
     EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
 
     // 2. 44k Linear
-    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Linear));
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Hybrid));
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_44K);
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 
     // 3. 48k Linear
     EXPECT_TRUE(upsampler.switchRateFamily(RateFamily::RATE_48K));
     EXPECT_EQ(upsampler.getCurrentRateFamily(), RateFamily::RATE_48K);
-    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Hybrid);
 
     // 4. 48k Minimum
     EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Minimum));
@@ -1274,7 +1274,7 @@ TEST_F(ConvolutionEngineTest, QuadPhaseLatencyCalculation) {
     EXPECT_EQ(upsampler.getLatencySamples(), 0);
 
     // Switch to linear phase - should have non-zero latency
-    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Linear));
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Hybrid));
     // Latency = (taps - 1) / 2 = (1024 - 1) / 2 = 511
     EXPECT_EQ(upsampler.getLatencySamples(), 511);
 }

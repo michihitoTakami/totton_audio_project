@@ -8,12 +8,50 @@
   "headroomTarget": 0.92,
   "phaseType": "minimum",
   "filterPath": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
-  "quadPhaseEnabled": true,
+  "quadPhaseEnabled": false,
   "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
   "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
-  "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
-  "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
-  "_comment": "Multi-rate filter paths: System automatically selects appropriate filter based on input rate and DAC capability. Available filters: 44k/48k \u00d7 2x/4x/8x/16x \u00d7 min_phase/hybrid.",
+  "filterPath44kHybrid": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
+  "filterPath48kHybrid": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
+  "filterPaths": {
+    "_comment": "Multi-rate filter paths: System automatically selects appropriate filter based on input rate and DAC capability.",
+    "44k": {
+      "2x": {
+        "min": "data/coefficients/filter_44k_2x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_44k_2x_2m_hybrid_phase.bin"
+      },
+      "4x": {
+        "min": "data/coefficients/filter_44k_4x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_44k_4x_2m_hybrid_phase.bin"
+      },
+      "8x": {
+        "min": "data/coefficients/filter_44k_8x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_44k_8x_2m_hybrid_phase.bin"
+      },
+      "16x": {
+        "min": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin"
+      }
+    },
+    "48k": {
+      "2x": {
+        "min": "data/coefficients/filter_48k_2x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_48k_2x_2m_hybrid_phase.bin"
+      },
+      "4x": {
+        "min": "data/coefficients/filter_48k_4x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_48k_4x_2m_hybrid_phase.bin"
+      },
+      "8x": {
+        "min": "data/coefficients/filter_48k_8x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_48k_8x_2m_hybrid_phase.bin"
+      },
+      "16x": {
+        "min": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
+        "hybrid": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin"
+      }
+    }
+  },
   "eqEnabled": true,
   "eqProfilePath": "data/EQ/Sample_EQ.txt",
   "partitionedConvolution": {
