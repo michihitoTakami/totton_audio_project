@@ -1,16 +1,14 @@
 #include "daemon/rtp_engine_coordinator.h"
 
 #include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <thread>
-
 #include <gtest/gtest.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <thread>
+#include <unistd.h>
 
 using namespace std::chrono_literals;
 
@@ -26,8 +24,8 @@ void send_rtp_packet(uint16_t port) {
     ASSERT_EQ(::inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr), 1);
 
     uint8_t packet[12] = {};
-    packet[0] = 0x80;         // Version 2
-    packet[1] = 127 & 0x7F;   // Payload type 127
+    packet[0] = 0x80;        // Version 2
+    packet[1] = 127 & 0x7F;  // Payload type 127
 
     ssize_t sent =
         ::sendto(fd, packet, sizeof(packet), 0, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
@@ -78,7 +76,7 @@ TEST(RtpDiscovery, ReportsListeningPort) {
         send_rtp_packet(kListenPort);
     });
 
-    nlohmann::json result = RtpEngineCoordinatorTestHook::runDiscoveryScan(coordinator);
+    nlohmann::json result = rtp_engine::RtpEngineCoordinatorTestHook::runDiscoveryScan(coordinator);
     sender.join();
 
     ASSERT_EQ(result["status"], "ok");
