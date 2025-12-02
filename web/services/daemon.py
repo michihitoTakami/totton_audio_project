@@ -149,9 +149,22 @@ def get_daemon_pid() -> Optional[int]:
     try:
         with open(PID_FILE_PATH) as f:
             pid = int(f.read().strip())
-            return pid if _pid_looks_like_daemon(pid) else None
+            if _pid_looks_like_daemon(pid):
+                return pid
     except (ValueError, IOError):
-        return None
+        pass
+
+    # Last resort: use ZMQ ping to detect running daemon when PID is hidden (e.g., container PID namespace)
+    try:
+        from .daemon_client import get_daemon_client
+
+        with get_daemon_client(timeout_ms=500) as client:
+            ok, _ = client.send_command("PING")
+            if ok:
+                return None
+    except Exception:
+        pass
+    return None
 
 
 def start_daemon() -> tuple[bool, str]:
