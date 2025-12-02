@@ -2712,7 +2712,6 @@ static void zeromq_listener_thread() {
                         // Switch phase type (changes actual filter FFT in quad-phase mode)
                         bool switch_success = false;
                         applySoftMuteForFilterSwitch([&]() {
-                            bool partitionEnabledBeforeSwitch = g_config.partitionedConvolution.enabled;
                             switch_success = g_upsampler->switchPhaseType(newPhase);
                             if (switch_success) {
                                 g_active_phase_type = newPhase;
@@ -2743,28 +2742,11 @@ static void zeromq_listener_thread() {
                                     }
                                 }
 
-                                if (newPhase == PhaseType::Linear && partitionEnabledBeforeSwitch) {
-                                    std::cout << "[Partition] Hybrid phase selected, disabling "
-                                                 "low-latency partitioned convolution."
-                                              << std::endl;
-                                    g_config.partitionedConvolution.enabled = false;
-                                    g_upsampler->setPartitionedConvolutionConfig(
-                                        g_config.partitionedConvolution);
-                                    std::string reason = "phase switch -> " + phaseStr + " phase";
-                                    if (!rebuild_streaming_buffers(reason)) {
-                                        std::cerr << "[Partition] Streaming re-init failed after "
-                                                  << "disabling partition mode; rolling back"
-                                                  << std::endl;
-                                        g_config.partitionedConvolution.enabled = true;
-                                        g_upsampler->setPartitionedConvolutionConfig(
-                                            g_config.partitionedConvolution);
-                                        if (!rebuild_streaming_buffers("partition rollback")) {
-                                            std::cerr << "[Partition] Rollback streaming re-init "
-                                                      << "failed; audio pipeline requires restart"
-                                                      << std::endl;
-                                        }
-                                        switch_success = false;
-                                    }
+                                std::string reason = "phase switch -> " + phaseStr + " phase";
+                                if (!rebuild_streaming_buffers(reason)) {
+                                    std::cerr << "[Streaming] Streaming re-init failed after "
+                                              << "phase switch" << std::endl;
+                                    switch_success = false;
                                 }
                             }
                             return switch_success;
