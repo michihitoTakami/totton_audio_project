@@ -342,6 +342,42 @@ static std::mutex g_streaming_mutex;  // Protects streaming buffer state during 
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
 
+static bool rebuild_streaming_buffers(const std::string& reason) {
+    if (!g_upsampler) {
+        std::cerr << "[Streaming] Cannot rebuild buffers (" << reason << "): upsampler missing"
+                  << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::mutex> streamLock(g_streaming_mutex);
+
+    g_upsampler->resetStreaming();
+
+    {
+        std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
+        g_output_buffer_left.clear();
+        g_output_buffer_right.clear();
+        g_output_read_pos = 0;
+    }
+    g_stream_input_left.clear();
+    g_stream_input_right.clear();
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+
+    if (!g_upsampler->initializeStreaming()) {
+        std::cerr << "[Streaming] Failed to initialize streaming after " << reason << std::endl;
+        return false;
+    }
+
+    size_t newCapacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+    g_stream_input_left.resize(newCapacity, 0.0f);
+    g_stream_input_right.resize(newCapacity, 0.0f);
+
+    std::cout << "[Streaming] Reinitialized buffers (" << reason << ") capacity=" << newCapacity
+              << " samples" << std::endl;
+    return true;
+}
+
 static void elevate_realtime_priority(const char* name, int priority = 65) {
 #ifdef __linux__
     sched_param params{};
@@ -2676,6 +2712,7 @@ static void zeromq_listener_thread() {
                         // Switch phase type (changes actual filter FFT in quad-phase mode)
                         bool switch_success = false;
                         applySoftMuteForFilterSwitch([&]() {
+                            bool partitionEnabledBeforeSwitch = g_config.partitionedConvolution.enabled;
                             switch_success = g_upsampler->switchPhaseType(newPhase);
                             if (switch_success) {
                                 g_active_phase_type = newPhase;
@@ -2705,20 +2742,35 @@ static void zeromq_listener_thread() {
                                             << g_config.eqProfilePath << std::endl;
                                     }
                                 }
+
+                                if (newPhase == PhaseType::Linear && partitionEnabledBeforeSwitch) {
+                                    std::cout << "[Partition] Hybrid phase selected, disabling "
+                                                 "low-latency partitioned convolution."
+                                              << std::endl;
+                                    g_config.partitionedConvolution.enabled = false;
+                                    g_upsampler->setPartitionedConvolutionConfig(
+                                        g_config.partitionedConvolution);
+                                    std::string reason = "phase switch -> " + phaseStr + " phase";
+                                    if (!rebuild_streaming_buffers(reason)) {
+                                        std::cerr << "[Partition] Streaming re-init failed after "
+                                                  << "disabling partition mode; rolling back"
+                                                  << std::endl;
+                                        g_config.partitionedConvolution.enabled = true;
+                                        g_upsampler->setPartitionedConvolutionConfig(
+                                            g_config.partitionedConvolution);
+                                        if (!rebuild_streaming_buffers("partition rollback")) {
+                                            std::cerr << "[Partition] Rollback streaming re-init "
+                                                      << "failed; audio pipeline requires restart"
+                                                      << std::endl;
+                                        }
+                                        switch_success = false;
+                                    }
+                                }
                             }
                             return switch_success;
                         });
 
                         if (switch_success) {
-                            if (newPhase == PhaseType::Linear &&
-                                g_config.partitionedConvolution.enabled) {
-                                std::cout << "[Partition] Hybrid phase selected, disabling "
-                                             "low-latency partitioned convolution."
-                                          << std::endl;
-                                g_config.partitionedConvolution.enabled = false;
-                                g_upsampler->setPartitionedConvolutionConfig(
-                                    g_config.partitionedConvolution);
-                            }
                             response = "OK:Phase type set to " + phaseStr;
                         } else {
                             response = "ERR:Failed to switch phase type";
