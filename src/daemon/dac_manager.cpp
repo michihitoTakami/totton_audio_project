@@ -302,10 +302,10 @@ std::string DacManager::getSelectedDevice() {
 }
 
 std::optional<std::string> DacManager::consumePendingChange() {
-    if (!changePending_.exchange(false, std::memory_order_acquire)) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!changePending_.exchange(false, std::memory_order_acq_rel)) {
         return std::nullopt;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
     return selectedDevice_;
 }
 
