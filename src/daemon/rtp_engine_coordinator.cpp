@@ -241,7 +241,8 @@ std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_candidat
 
             char host[INET_ADDRSTRLEN] = {0};
             ::inet_ntop(AF_INET, &srcAddr.sin_addr, host, sizeof(host));
-            uint16_t port = ntohs(srcAddr.sin_port);
+            // Use the daemon's listening port rather than the sender's ephemeral source port.
+            uint16_t listenPort = sockets[i].port;
 
             bool multicast = is_ipv4_multicast(srcAddr.sin_addr);
             if (multicast && !allowMulticast) {
@@ -253,12 +254,13 @@ std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_candidat
 
             auto nowMs = unix_time_millis();
             auto it = std::find_if(
-                candidates.begin(), candidates.end(),
-                [&](const RtpDiscoveryCandidate& c) { return c.host == host && c.port == port; });
+                candidates.begin(), candidates.end(), [&](const RtpDiscoveryCandidate& c) {
+                    return c.host == host && c.port == listenPort;
+                });
             if (it == candidates.end()) {
                 RtpDiscoveryCandidate cand;
                 cand.host = host;
-                cand.port = port;
+                cand.port = listenPort;
                 cand.payloadType = payloadType;
                 cand.multicast = multicast;
                 cand.packets = 1;

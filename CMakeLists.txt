@@ -475,17 +475,22 @@ add_executable(cpu_tests
     tests/cpp/test_eq_parser.cpp
     tests/cpp/test_eq_to_fir.cpp
     tests/cpp/test_config_loader.cpp
+    tests/cpp/test_rtp_discovery.cpp
     tests/cpp/test_partition_plan.cpp
     tests/cpp/test_phase_alignment.cpp
     tests/cpp/test_playback_buffer_threshold.cpp
+    src/daemon/rtp_engine_coordinator.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
     gpu_upsampler_core
     eq_support
+    rtp_session
+    logging
 )
 target_include_directories(cpu_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
 )
 gtest_discover_tests(cpu_tests)
 

@@ -58,6 +58,14 @@ class RtpEngineCoordinator {
     nlohmann::json discoveryCache_;
     std::chrono::steady_clock::time_point lastDiscovery_{
         std::chrono::steady_clock::time_point::min()};
+
+    friend struct RtpEngineCoordinatorTestHook;
+};
+
+struct RtpEngineCoordinatorTestHook {
+    static nlohmann::json runDiscoveryScan(RtpEngineCoordinator& coordinator) {
+        return coordinator.runDiscoveryScan();
+    }
 };
 
 }  // namespace rtp_engine
