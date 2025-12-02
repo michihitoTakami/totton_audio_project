@@ -119,7 +119,15 @@ def check_daemon_running() -> bool:
 
     pid = get_daemon_pid()
     if pid is None:
-        return False
+        # Fallback: try ZeroMQ ping (works across container namespaces)
+        try:
+            from .daemon_client import get_daemon_client
+
+            with get_daemon_client(timeout_ms=500) as client:
+                ok, _ = client.send_command("PING")
+                return ok
+        except Exception:
+            return False
     try:
         # Check if process exists
         os.kill(pid, 0)
