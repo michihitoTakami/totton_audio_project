@@ -184,6 +184,7 @@ add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/partition_runtime_utils.cpp
     src/daemon/rtp_engine_coordinator.cpp
+    src/daemon/zmq_server.cpp
 )
 
 target_include_directories(gpu_upsampler_alsa PRIVATE src)
@@ -530,6 +531,23 @@ target_link_libraries(base64_tests
     zeromq_interface
 )
 gtest_discover_tests(base64_tests)
+
+add_executable(zmq_server_tests
+    tests/cpp/test_zmq_server.cpp
+    src/daemon/zmq_server.cpp
+)
+target_link_libraries(zmq_server_tests
+    GTest::gtest_main
+    nlohmann_json::nlohmann_json
+    ${ZMQ_LIBRARIES}
+)
+target_include_directories(zmq_server_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    src
+    ${ZMQ_INCLUDE_DIRS}
+    ${cppzmq_SOURCE_DIR}
+)
+gtest_discover_tests(zmq_server_tests)
 
 # Error codes tests (CPU-only)
 add_executable(error_codes_tests
