@@ -1360,17 +1360,21 @@ static std::string handle_crossfeed_set_combined(const daemon_ipc::ZmqRequest& r
 
     if (!applySuccess) {
         size_t expectedSize = 0;
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (g_hrtf_processor) {
-            expectedSize = g_hrtf_processor->getFilterFftSize();
+        {
+            std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+            if (g_hrtf_processor) {
+                expectedSize = g_hrtf_processor->getFilterFftSize();
+            }
         }
+        nlohmann::json errorData;
+        errorData["rate_family"] = rateFamily;
+        errorData["complex_count"] = complexCount;
+        errorData["expected_size"] = expectedSize;
         nlohmann::json resp;
         resp["status"] = "error";
         resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
         resp["message"] = "Filter size mismatch or application failed";
-        resp["data"]["rate_family"] = rateFamily;
-        resp["data"]["complex_count"] = complexCount;
-        resp["data"]["expected_size"] = expectedSize;
+        resp["data"] = errorData;
         return resp.dump();
     }
 
@@ -1463,10 +1467,12 @@ static std::string handle_crossfeed_set_size(const daemon_ipc::ZmqRequest& reque
         return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params field");
     }
 
-    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-    if (!g_hrtf_processor) {
-        return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                    "HRTF processor not initialized");
+    {
+        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        if (!g_hrtf_processor) {
+            return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
+                                        "HRTF processor not initialized");
+        }
     }
 
     auto params = (*request.json)["params"];
@@ -1478,6 +1484,10 @@ static std::string handle_crossfeed_set_size(const daemon_ipc::ZmqRequest& reque
     CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
     bool switchSuccess = false;
     applySoftMuteForFilterSwitch([&]() {
+        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        if (!g_hrtf_processor) {
+            return false;
+        }
         switchSuccess = g_hrtf_processor->switchHeadSize(targetSize);
         return switchSuccess;
     });
@@ -1487,7 +1497,10 @@ static std::string handle_crossfeed_set_size(const daemon_ipc::ZmqRequest& reque
                                     "Failed to switch head size");
     }
 
-    reset_crossfeed_stream_state_locked();
+    {
+        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        reset_crossfeed_stream_state_locked();
+    }
     nlohmann::json data;
     data["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
     return build_ok_response(request, "", data);
