@@ -16,6 +16,18 @@ PID_FILE_PATH = Path("/tmp/gpu_upsampler_alsa.pid")
 STATS_FILE_PATH = Path("/tmp/gpu_upsampler_stats.json")
 
 # ============================================================================
+# Phase Type Options
+# ============================================================================
+
+PHASE_TYPE_MINIMUM = "minimum"
+PHASE_TYPE_HYBRID = "hybrid"
+DAEMON_PHASE_LINEAR = "linear"  # Runtime daemon string (kept for backwards compat)
+HYBRID_PHASE_DESCRIPTION = "100Hz以下は最小位相 / 100Hz以上は線形位相（10ms整列）"
+HYBRID_PHASE_WARNING = (
+    f"ハイブリッド: {HYBRID_PHASE_DESCRIPTION}。約10msの整列ディレイが発生します。"
+)
+
+# ============================================================================
 # ZeroMQ
 # ============================================================================
 

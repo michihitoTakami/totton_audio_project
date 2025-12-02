@@ -25,14 +25,14 @@ class TestPhaseType:
         from generate_filter import PhaseType
 
         assert PhaseType.MINIMUM.value == "minimum"
-        assert PhaseType.LINEAR.value == "linear"
+        assert PhaseType.HYBRID.value == "hybrid"
 
     def test_phase_type_from_string(self):
         """PhaseType should be constructible from string."""
         from generate_filter import PhaseType
 
         assert PhaseType("minimum") == PhaseType.MINIMUM
-        assert PhaseType("linear") == PhaseType.LINEAR
+        assert PhaseType("hybrid") == PhaseType.HYBRID
 
 
 class TestMinimumPhaseMethod:
@@ -109,20 +109,18 @@ class TestFilterConfig:
         # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
         assert config.base_name == "filter_44k_16x_2m_min_phase"
 
-    def test_base_name_linear_phase(self):
-        """base_name should include phase type for linear phase."""
+    def test_base_name_hybrid_phase(self):
+        """base_name should include phase type label for hybrid phase."""
         from generate_filter import FilterConfig, PhaseType
 
-        # 線形位相は奇数タップ必須
         config = FilterConfig(
-            n_taps=2_000_001,  # Odd tap count required for linear phase
+            n_taps=2_000_000,
             input_rate=48000,
             upsample_ratio=8,
-            phase_type=PhaseType.LINEAR,
+            phase_type=PhaseType.HYBRID,
         )
-        # Note: taps_label uses original n_taps, which is 2000001
-        assert "linear" in config.base_name
-        assert "48k" in config.base_name
+        assert config.phase_label == "hybrid_phase"
+        assert config.base_name.endswith("_hybrid_phase")
 
     def test_base_name_custom_prefix(self):
         """output_prefix should override auto-generated name."""
@@ -131,24 +129,32 @@ class TestFilterConfig:
         config = FilterConfig(output_prefix="custom_filter")
         assert config.base_name == "custom_filter"
 
-    def test_linear_phase_accepts_even_taps(self):
-        """Linear phase should accept even tap counts."""
+    def test_hybrid_delay_samples_property(self):
+        """Hybrid delay samples should match delay ms."""
         from generate_filter import FilterConfig, PhaseType
 
-        # Even tap count should be accepted
-        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.LINEAR)
-        assert config.n_taps == 2_000_000
-        # final_taps is padded to ratio multiple (2M is already divisible by 16)
-        assert config.final_taps == 2_000_000
-        assert config.final_taps % config.upsample_ratio == 0
+        config = FilterConfig(
+            n_taps=8192,
+            input_rate=44100,
+            upsample_ratio=16,
+            phase_type=PhaseType.HYBRID,
+            hybrid_delay_ms=5.0,
+        )
+        expected = int(round(0.005 * 44100 * 16))
+        assert config.hybrid_delay_samples == expected
 
-    def test_linear_phase_accepts_odd_taps(self):
-        """Linear phase should accept odd tap counts."""
+    def test_hybrid_delay_validation(self):
+        """Hybrid delay must be shorter than tap length."""
         from generate_filter import FilterConfig, PhaseType
+        import pytest
 
-        # Odd tap count should work
-        config = FilterConfig(n_taps=2_000_001, phase_type=PhaseType.LINEAR)
-        assert config.n_taps == 2_000_001
+        with pytest.raises(ValueError):
+            FilterConfig(
+                n_taps=2048,
+                input_rate=44100,
+                upsample_ratio=16,
+                phase_type=PhaseType.HYBRID,
+            )
 
     def test_minimum_phase_accepts_even_taps(self):
         """Minimum phase should accept even tap counts."""
@@ -174,6 +180,22 @@ class TestFilterDesigner:
             stopband_start=22050,
             kaiser_beta=14,
             phase_type=PhaseType.MINIMUM,
+        )
+
+    @pytest.fixture
+    def hybrid_config(self):
+        """Hybrid config with enough taps for 10ms delay."""
+        from generate_filter import FilterConfig, PhaseType
+
+        return FilterConfig(
+            n_taps=8192,
+            input_rate=44100,
+            upsample_ratio=16,
+            passband_end=20000,
+            stopband_start=22050,
+            kaiser_beta=14,
+            phase_type=PhaseType.HYBRID,
+            hybrid_fast_window_samples=4096,
         )
 
     def test_design_linear_phase(self, small_config):
@@ -219,81 +241,21 @@ class TestFilterDesigner:
         peak_idx = np.argmax(np.abs(h_final))
         assert peak_idx < len(h_final) * 0.1
 
-    def test_design_returns_linear_phase(self):
-        """design() with LINEAR should return linear phase filter."""
-        from generate_filter import FilterConfig, FilterDesigner, PhaseType
+    def test_design_returns_hybrid_phase(self, hybrid_config):
+        """design() with HYBRID should align peak near delay samples."""
+        from generate_filter import FilterDesigner
 
-        # Use odd tap count divisible by 7 to preserve symmetry
-        config = FilterConfig(
-            n_taps=1603,  # 1603 = 229 * 7, odd and divisible by 7
-            input_rate=44100,
-            upsample_ratio=7,  # Unusual ratio but valid
-            kaiser_beta=14,
-            phase_type=PhaseType.LINEAR,
-        )
-        designer = FilterDesigner(config)
+        designer = FilterDesigner(hybrid_config)
         h_final, h_linear = designer.design()
 
-        # Should return same as linear
         assert h_linear is not None
-        # Linear phase with odd taps should be symmetric
-        assert np.allclose(h_final, h_final[::-1], atol=1e-10)
+        assert len(h_final) == hybrid_config.n_taps
 
-    def test_design_linear_phase_odd_taps_padded_symmetric(self):
-        """design() with LINEAR and odd tap count should pad to ratio multiple and stay symmetric."""
-        from generate_filter import FilterConfig, FilterDesigner, PhaseType
-
-        config = FilterConfig(
-            n_taps=1601,  # Odd, not divisible by 16
-            input_rate=44100,
-            upsample_ratio=16,
-            kaiser_beta=14,
-            phase_type=PhaseType.LINEAR,
-        )
-        designer = FilterDesigner(config)
-        h_final, h_linear = designer.design()
-
-        # Tap count should be padded to next multiple of 16 (1616)
-        assert len(h_final) == config.final_taps == 1616
-        assert len(h_final) % 16 == 0
-        # Should be symmetric
-        assert np.allclose(h_final, h_final[::-1], atol=1e-10)
-
-    def test_design_linear_phase_padded_multiple_keeps_symmetry(self):
-        """Linear phase should remain symmetric after padding to ratio multiple."""
-        from generate_filter import FilterConfig, FilterDesigner, PhaseType
-
-        config = FilterConfig(
-            n_taps=63,  # Not divisible by 4
-            input_rate=44100,
-            upsample_ratio=4,
-            kaiser_beta=10,
-            phase_type=PhaseType.LINEAR,
-        )
-        designer = FilterDesigner(config)
-        h_final, h_linear = designer.design()
-
-        # Should be padded to the next multiple of 4 (64 taps) and symmetric
-        assert len(h_final) == config.final_taps == 64
-        assert np.allclose(h_final, h_final[::-1], atol=1e-10)
-
-    def test_design_linear_phase_even_taps_padded_multiple(self):
-        """design() with LINEAR should pad even taps to ratio multiple and keep symmetry."""
-        from generate_filter import FilterConfig, FilterDesigner, PhaseType
-
-        config = FilterConfig(
-            n_taps=1600,
-            input_rate=44100,
-            upsample_ratio=16,
-            kaiser_beta=14,
-            phase_type=PhaseType.LINEAR,
-        )
-        designer = FilterDesigner(config)
-        h_final, h_linear = designer.design()
-
-        # Should be padded to ratio multiple (already divisible) and symmetric
-        assert len(h_final) == config.final_taps == 1600
-        assert np.allclose(h_final, h_final[::-1], atol=1e-10)
+        peak_idx = int(np.argmax(np.abs(h_final)))
+        delta = abs(peak_idx - hybrid_config.hybrid_delay_samples)
+        # Allow 2 ms tolerance due to windowing
+        tolerance = int(hybrid_config.output_rate * 0.002)
+        assert delta < tolerance
 
 
 class TestFilterValidator:
@@ -349,12 +311,11 @@ class TestFilterValidator:
         """validate should detect symmetric (linear phase) filters."""
         from generate_filter import FilterConfig, FilterValidator, PhaseType
 
-        # 線形位相は奇数タップ必須
         config = FilterConfig(
             n_taps=1001,  # Odd tap count required for linear phase
             input_rate=44100,
             upsample_ratio=16,
-            phase_type=PhaseType.LINEAR,
+            phase_type=PhaseType.MINIMUM,
         )
         validator = FilterValidator(config)
 
@@ -694,7 +655,7 @@ class TestCoefficientFileLoading:
 
     def test_load_44k_16x_coefficients(self, coefficients_dir):
         """Should load 44.1kHz 16x coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_hybrid_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("44kHz 16x coefficient file not found")
@@ -706,7 +667,7 @@ class TestCoefficientFileLoading:
 
     def test_load_48k_16x_coefficients(self, coefficients_dir):
         """Should load 48kHz 16x coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_48k_16x_2m_min_phase.bin"
+        coeff_path = coefficients_dir / "filter_48k_16x_2m_hybrid_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("48kHz 16x coefficient file not found")
@@ -718,7 +679,7 @@ class TestCoefficientFileLoading:
 
     def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):
         """Loaded coefficients should have DC gain close to target (L * 0.99)."""
-        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_hybrid_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("44kHz 16x coefficient file not found")
@@ -735,14 +696,14 @@ class TestCoefficientFileNaming:
 
     # Expected filenames for all 8 multi-rate configurations
     EXPECTED_FILENAMES = [
-        "filter_44k_16x_2m_min_phase.bin",
-        "filter_44k_8x_2m_min_phase.bin",
-        "filter_44k_4x_2m_min_phase.bin",
-        "filter_44k_2x_2m_min_phase.bin",
-        "filter_48k_16x_2m_min_phase.bin",
-        "filter_48k_8x_2m_min_phase.bin",
-        "filter_48k_4x_2m_min_phase.bin",
-        "filter_48k_2x_2m_min_phase.bin",
+        "filter_44k_16x_2m_hybrid_phase.bin",
+        "filter_44k_8x_2m_hybrid_phase.bin",
+        "filter_44k_4x_2m_hybrid_phase.bin",
+        "filter_44k_2x_2m_hybrid_phase.bin",
+        "filter_48k_16x_2m_hybrid_phase.bin",
+        "filter_48k_8x_2m_hybrid_phase.bin",
+        "filter_48k_4x_2m_hybrid_phase.bin",
+        "filter_48k_2x_2m_hybrid_phase.bin",
     ]
 
     def test_all_coefficient_files_exist(self, coefficients_dir):
@@ -758,13 +719,15 @@ class TestCoefficientFileNaming:
         """Coefficient files should use '2m' instead of '2000000' in filenames."""
         # Check that old naming convention files don't exist
         old_format_files = list(coefficients_dir.glob("*_2000000_*.bin"))
-        assert not old_format_files, f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
+        assert not old_format_files, (
+            f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
+        )
 
         # Check that new naming convention files exist
         new_format_files = list(coefficients_dir.glob("*_2m_*.bin"))
-        assert (
-            len(new_format_files) >= 8
-        ), f"Expected at least 8 files with '2m' naming, found {len(new_format_files)}"
+        assert len(new_format_files) >= 8, (
+            f"Expected at least 8 files with '2m' naming, found {len(new_format_files)}"
+        )
 
     def test_json_metadata_files_match_bin_files(self, coefficients_dir):
         """Each .bin file should have a corresponding .json metadata file."""
@@ -798,9 +761,9 @@ class TestCoefficientFileNaming:
                 upsample_ratio=ratio,
                 phase_type=PhaseType.MINIMUM,
             )
-            assert (
-                config.base_name == expected_basename
-            ), f"Expected {expected_basename}, got {config.base_name}"
+            assert config.base_name == expected_basename, (
+                f"Expected {expected_basename}, got {config.base_name}"
+            )
 
     def test_non_2m_taps_use_numeric_format(self):
         """Non-2M tap counts should use numeric format in filename."""
@@ -888,9 +851,9 @@ class TestMultiRateConfigs:
 
         for name, config in MULTI_RATE_CONFIGS.items():
             expected_stopband = config["input_rate"] // 2
-            assert (
-                config["stopband"] == expected_stopband
-            ), f"{name}: stopband {config['stopband']} != input_nyquist {expected_stopband}"
+            assert config["stopband"] == expected_stopband, (
+                f"{name}: stopband {config['stopband']} != input_nyquist {expected_stopband}"
+            )
 
     def test_output_rate_consistency(self):
         """All configs in same family should produce same output rate."""
@@ -926,15 +889,15 @@ class TestMultiRateOutputFilename:
         # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
         assert config_min.base_name == "filter_44k_16x_2m_min_phase"
 
-        # Linear phase (odd taps required)
-        config_lin = FilterConfig(
-            n_taps=2_000_001,  # Odd tap count required for linear phase
+        # Hybrid phase (same taps as minimum)
+        config_hybrid = FilterConfig(
+            n_taps=2_000_000,
             input_rate=44100,
             upsample_ratio=16,
-            phase_type=PhaseType.LINEAR,
+            phase_type=PhaseType.HYBRID,
         )
-        assert "linear" in config_lin.base_name
-        assert "44k" in config_lin.base_name
+        assert config_hybrid.base_name.endswith("_hybrid_phase")
+        assert "44k" in config_hybrid.base_name
 
 
 class TestValidateTapCountMultiRate:
@@ -962,94 +925,6 @@ class TestValidateTapCountMultiRate:
         # 1025 IS divisible by... nothing here that we use
         with pytest.raises(ValueError):
             validate_tap_count(1025, 2)  # Not divisible by 2
-
-
-class TestLinearPhasePadding:
-    """Tests for linear phase zero-padding to ratio multiples."""
-
-    def test_compute_padded_taps_already_divisible(self):
-        """compute_padded_taps should return n_taps if already divisible."""
-        from generate_filter import compute_padded_taps
-
-        assert compute_padded_taps(1024, 16) == 1024
-        assert compute_padded_taps(1024, 8) == 1024
-        assert compute_padded_taps(1024, 4) == 1024
-
-    def test_compute_padded_taps_needs_padding(self):
-        """compute_padded_taps should return next multiple if not divisible."""
-        from generate_filter import compute_padded_taps
-
-        # 1025 -> 1040 (next multiple of 16)
-        assert compute_padded_taps(1025, 16) == 1040
-        # 1025 -> 1032 (next multiple of 8)
-        assert compute_padded_taps(1025, 8) == 1032
-        # 2000001 -> 2000016 (next multiple of 16)
-        assert compute_padded_taps(2_000_001, 16) == 2_000_016
-
-    def test_final_taps_minimum_phase_unchanged(self):
-        """final_taps should equal n_taps for minimum phase."""
-        from generate_filter import FilterConfig, PhaseType
-
-        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
-        assert config.final_taps == 2_000_000
-
-    def test_final_taps_linear_phase_odd_padded(self):
-        """final_taps should be padded to ratio multiple for linear phase (odd input)."""
-        from generate_filter import FilterConfig, PhaseType
-
-        # 2,000,001 is odd, but not divisible by 16
-        # Should be padded to 2,000,016
-        config = FilterConfig(
-            n_taps=2_000_001,
-            upsample_ratio=16,
-            phase_type=PhaseType.LINEAR,
-        )
-        assert config.final_taps == 2_000_016
-        assert config.final_taps % 16 == 0
-
-    def test_final_taps_linear_phase_already_multiple(self):
-        """final_taps should be unchanged if already divisible by ratio."""
-        from generate_filter import FilterConfig, PhaseType
-
-        # 2,000,000 is already divisible by 16 -> no padding needed
-        config = FilterConfig(
-            n_taps=2_000_000,
-            upsample_ratio=16,
-            phase_type=PhaseType.LINEAR,
-        )
-        assert config.final_taps == 2_000_000
-        assert config.final_taps % 16 == 0
-
-    def test_final_taps_linear_phase_padding_minimal(self):
-        """Padding should add at most (ratio-1) to reach next multiple."""
-        from generate_filter import FilterConfig, PhaseType
-
-        # 2,000,001 is not divisible by 16 -> pad to 2,000,016
-        config = FilterConfig(
-            n_taps=2_000_001,
-            upsample_ratio=16,
-            phase_type=PhaseType.LINEAR,
-        )
-        # Padding should add at most ratio-1 (15 in this case)
-        assert config.final_taps - config.n_taps < 16
-        assert config.final_taps == 2_000_016
-
-    def test_taps_label_reflects_final_taps(self):
-        """taps_label should use final_taps, not n_taps."""
-        from generate_filter import FilterConfig, PhaseType
-
-        config = FilterConfig(
-            n_taps=2_000_001,
-            upsample_ratio=16,
-            phase_type=PhaseType.LINEAR,
-        )
-        # final_taps = 2,000,016, which is not a nice round number
-        # taps_label should be "2000016" (not "2m" since it's not exactly 2M)
-        assert config.taps_label == "2000016"
-
-        # For minimum phase with 2M taps - uses "2m" shorthand
-        config_min = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
-        assert config_min.taps_label == "2m"
 
 
 class TestFilterGenerator:
@@ -1226,10 +1101,10 @@ class TestCoefficientDcGain:
         coeff_dir = Path(__file__).parent.parent.parent / "data" / "coefficients"
         # 新形式フィルタ: DCゲイン = L * 0.99
         cases = [
-            ("filter_44k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
-            ("filter_48k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
-            ("filter_44k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
-            ("filter_48k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_44k_16x_2m_hybrid_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_48k_16x_2m_hybrid_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_44k_8x_2m_hybrid_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_48k_8x_2m_hybrid_phase.bin", 8.0 * 0.99),  # 7.92
         ]
         for filename, expected_dc in cases:
             filepath = coeff_dir / filename
@@ -1237,9 +1112,9 @@ class TestCoefficientDcGain:
                 pytest.skip(f"{filename} not found")
             data = np.fromfile(filepath, dtype=np.float32)
             dc_gain = float(np.sum(data))
-            assert np.isclose(
-                dc_gain, expected_dc, rtol=1e-3
-            ), f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
+            assert np.isclose(dc_gain, expected_dc, rtol=1e-3), (
+                f"{filename}: expected DC={expected_dc:.4f}, got {dc_gain:.4f}"
+            )
 
 
 class TestValidateTapCountErrorHandling:

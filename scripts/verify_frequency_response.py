@@ -48,30 +48,30 @@ def _window_fft(signal: np.ndarray):
     return np.fft.rfft(signal * window)
 
 
+def _compute_spectrum(signal: np.ndarray, sample_rate: int):
+    fft = _window_fft(signal)
+    freqs = np.fft.rfftfreq(len(signal), 1 / sample_rate)
+    mag_db = 20 * np.log10(np.abs(fft) + 1e-12)
+    return freqs, mag_db
+
+
 def analyze_frequency_response(
     data_in: np.ndarray,
     sr_in: int,
     data_out: np.ndarray,
     sr_out: int,
-    output_plot: Optional[Path] = None,
 ):
-    """Compare spectra of input/output arrays."""
+    """Compare spectra of input/output arrays and return metrics with plot data."""
     print(f"Input:  {len(data_in)} samples @ {sr_in} Hz")
     print(f"Output: {len(data_out)} samples @ {sr_out} Hz")
     print(f"Upsample ratio: {sr_out / sr_in:.2f}x")
     print()
 
-    fft_in = _window_fft(data_in)
-    fft_out = _window_fft(data_out)
+    freqs_in, mag_in_db = _compute_spectrum(data_in, sr_in)
+    freqs_out, mag_out_db = _compute_spectrum(data_out, sr_out)
 
-    freqs_in = np.fft.rfftfreq(len(data_in), 1 / sr_in)
-    freqs_out = np.fft.rfftfreq(len(data_out), 1 / sr_out)
-
-    mag_in_db = 20 * np.log10(np.abs(fft_in) + 1e-12)
-    mag_out_db = 20 * np.log10(np.abs(fft_out) + 1e-12)
-
-    peak_idx_in = int(np.argmax(np.abs(fft_in)))
-    peak_idx_out = int(np.argmax(np.abs(fft_out)))
+    peak_idx_in = int(np.argmax(mag_in_db))
+    peak_idx_out = int(np.argmax(mag_out_db))
     peak_freq_in = freqs_in[peak_idx_in]
     peak_freq_out = freqs_out[peak_idx_out]
     peak_mag_in = mag_in_db[peak_idx_in]
@@ -94,28 +94,90 @@ def analyze_frequency_response(
         print(f"Stopband attenuation: {stopband_delta:.2f} dB")
     print()
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
-    axes[0].plot(freqs_in / 1000, mag_in_db, linewidth=0.5)
-    axes[0].set_xlim(0, sr_in / 2000)
+    plot_data = {
+        "freqs_in": freqs_in,
+        "mag_in_db": mag_in_db,
+        "freqs_out": freqs_out,
+        "mag_out_db": mag_out_db,
+        "peak_freq_in": peak_freq_in,
+        "peak_freq_out": peak_freq_out,
+    }
+
+    return (
+        {
+            "peak_freq_in": float(peak_freq_in),
+            "peak_freq_out": float(peak_freq_out),
+            "peak_mag_in": float(peak_mag_in),
+            "peak_mag_out": float(peak_mag_out),
+            "stopband_delta": stopband_delta,
+            "frequency_match": freq_match,
+        },
+        plot_data,
+    )
+
+
+def _render_frequency_plot(
+    plot_data: dict,
+    output_plot: Optional[Path],
+    reference_plot: Optional[dict],
+    reference_label: str,
+    delta_plot: Optional[dict],
+):
+    plot_rows = 2 + (1 if delta_plot else 0)
+    fig, axes = plt.subplots(plot_rows, 1, figsize=(12, 8 + 2.5 * (plot_rows - 2)))
+    axes = np.atleast_1d(axes)
+
+    freqs_in = plot_data["freqs_in"]
+    mag_in_db = plot_data["mag_in_db"]
+    axes[0].plot(freqs_in / 1000, mag_in_db, linewidth=0.5, label="Input")
+    axes[0].set_xlim(0, freqs_in[-1] / 1000)
     axes[0].set_ylim(np.max(mag_in_db) - 100, np.max(mag_in_db) + 10)
-    axes[0].axvline(peak_freq_in / 1000, color="r", linestyle="--", alpha=0.5, label=f"Peak {peak_freq_in:.1f} Hz")
+    axes[0].axvline(
+        plot_data["peak_freq_in"] / 1000, color="r", linestyle="--", alpha=0.5, label="Peak"
+    )
     axes[0].set_xlabel("Frequency (kHz)")
     axes[0].set_ylabel("Magnitude (dB)")
-    axes[0].set_title(f"Input Spectrum ({sr_in} Hz)")
+    axes[0].set_title(f"Input Spectrum ({int(freqs_in[-1] * 2)} Hz Nyquist)")
     axes[0].grid(True, alpha=0.3)
     axes[0].legend()
 
-    axes[1].plot(freqs_out / 1000, mag_out_db, linewidth=0.5)
-    axes[1].set_xlim(0, min(30, sr_out / 2000))
+    freqs_out = plot_data["freqs_out"]
+    mag_out_db = plot_data["mag_out_db"]
+    axes[1].plot(freqs_out / 1000, mag_out_db, linewidth=0.5, label="Hybrid output")
+    axes[1].set_xlim(0, min(30, freqs_out[-1] / 1000))
     axes[1].set_ylim(np.max(mag_out_db) - 100, np.max(mag_out_db) + 10)
-    axes[1].axvline(peak_freq_out / 1000, color="r", linestyle="--", alpha=0.5, label=f"Peak {peak_freq_out:.1f} Hz")
-    axes[1].axvline(20, color="g", linestyle="--", alpha=0.5, label="20 kHz")
-    axes[1].axvline(22.05, color="orange", linestyle="--", alpha=0.5, label="22.05 kHz")
+    axes[1].axvline(
+        plot_data["peak_freq_out"] / 1000, color="r", linestyle="--", alpha=0.5, label="Peak"
+    )
+    axes[1].axvline(20, color="g", linestyle="--", alpha=0.4, label="20 kHz")
+    axes[1].axvline(22.05, color="orange", linestyle="--", alpha=0.4, label="22.05 kHz")
+    if reference_plot:
+        axes[1].plot(
+            reference_plot["freqs"] / 1000,
+            reference_plot["mag_db"],
+            linewidth=0.5,
+            alpha=0.8,
+            label=reference_label,
+        )
     axes[1].set_xlabel("Frequency (kHz)")
     axes[1].set_ylabel("Magnitude (dB)")
-    axes[1].set_title(f"Output Spectrum ({sr_out} Hz)")
+    axes[1].set_title("Output Spectrum")
     axes[1].grid(True, alpha=0.3)
     axes[1].legend()
+
+    if delta_plot:
+        ax_delta = axes[2]
+        ax_delta.plot(
+            delta_plot["frequencies"] / 1000,
+            delta_plot["delta_db"],
+            linewidth=0.6,
+            color="#8338ec",
+        )
+        ax_delta.axhline(0.0, color="black", linewidth=0.5, linestyle="--", alpha=0.5)
+        ax_delta.set_xlabel("Frequency (kHz)")
+        ax_delta.set_ylabel("Δ Hybrid - Reference (dB)")
+        ax_delta.set_title("Hybrid vs Reference magnitude delta")
+        ax_delta.grid(True, alpha=0.3)
 
     plt.tight_layout()
     destination = output_plot or Path("plots/analysis/frequency_verification.png")
@@ -123,15 +185,6 @@ def analyze_frequency_response(
     plt.savefig(destination, dpi=150)
     plt.close(fig)
     print(f"Plot saved: {destination}")
-
-    return {
-        "peak_freq_in": float(peak_freq_in),
-        "peak_freq_out": float(peak_freq_out),
-        "peak_mag_in": float(peak_mag_in),
-        "peak_mag_out": float(peak_mag_out),
-        "stopband_delta": stopband_delta,
-        "frequency_match": freq_match,
-    }
 
 
 def _parse_args():
@@ -167,6 +220,18 @@ def _parse_args():
         "--partition-enabled",
         action="store_true",
         help="config.jsonが無い場合でもpartition計画を強制有効化",
+    )
+    parser.add_argument(
+        "--reference-output",
+        type=Path,
+        default=None,
+        help="比較対象となる旧最小位相などのWAVを指定するとハイブリッドとの差分を算出",
+    )
+    parser.add_argument(
+        "--reference-label",
+        type=str,
+        default="Legacy min-phase",
+        help="比較対象のラベル文字列",
     )
     return parser.parse_args()
 
@@ -229,6 +294,45 @@ def _compare_fast_tail(
     }
 
 
+def _compare_reference_output(
+    data_ref: np.ndarray,
+    sr_ref: int,
+    slice_start: float,
+    duration_s: Optional[float],
+    freqs_target: np.ndarray,
+    mag_target_db: np.ndarray,
+    sr_target: int,
+):
+    slice_ref = _slice_signal(data_ref, sr_ref, start_s=slice_start, duration_s=duration_s)
+    if slice_ref.size < 2:
+        print("Reference出力が短すぎるため比較をスキップします。")
+        return None, None
+    freqs_ref, mag_ref_db = _compute_spectrum(slice_ref, sr_ref)
+    reference_plot = {"freqs": freqs_ref, "mag_db": mag_ref_db}
+
+    if sr_ref != sr_target:
+        print(
+            f"Referenceサンプルレート {sr_ref} Hz と出力 {sr_target} Hz が一致しません。"
+            " スペクトル差分は表示せず、プロットのみ重ねます。"
+        )
+        return reference_plot, None
+
+    max_freq = min(freqs_ref[-1], freqs_target[-1])
+    mask_target = freqs_target <= max_freq
+    interp_ref = np.interp(freqs_target[mask_target], freqs_ref, mag_ref_db)
+    delta = mag_target_db[mask_target] - interp_ref
+    if delta.size == 0:
+        return reference_plot, None
+
+    delta_stats = {
+        "frequencies": freqs_target[mask_target],
+        "delta_db": delta,
+        "max_abs_db": float(np.max(np.abs(delta))),
+        "rms_db": float(np.sqrt(np.mean(delta**2))),
+    }
+    return reference_plot, delta_stats
+
+
 def main():
     args = _parse_args()
 
@@ -257,11 +361,37 @@ def main():
     else:
         sliced_input = data_in
 
-    results = analyze_frequency_response(sliced_input, sr_in, sliced_output, sr_out, args.plot)
+    results, plot_data = analyze_frequency_response(sliced_input, sr_in, sliced_output, sr_out)
+
+    reference_plot = None
+    reference_delta = None
+    if args.reference_output:
+        sr_ref, data_ref = _read_wav(args.reference_output)
+        reference_plot, reference_delta = _compare_reference_output(
+            data_ref,
+            sr_ref,
+            slice_start=skip_seconds or 0.0,
+            duration_s=args.analysis_window_seconds,
+            freqs_target=plot_data["freqs_out"],
+            mag_target_db=plot_data["mag_out_db"],
+            sr_target=sr_out,
+        )
+        if reference_delta:
+            print(
+                f"Hybrid vs {args.reference_label}: "
+                f"max Δ {reference_delta['max_abs_db']:.2f} dB / "
+                f"RMS Δ {reference_delta['rms_db']:.2f} dB"
+            )
+            results["reference_delta_max_db"] = reference_delta["max_abs_db"]
+            results["reference_delta_rms_db"] = reference_delta["rms_db"]
 
     fast_tail_stats = None
     if args.compare_fast_tail:
-        fast_tail_stats = _compare_fast_tail(data_out, sr_out, fast_seconds, settling_seconds, args.analysis_window_seconds)
+        fast_tail_stats = _compare_fast_tail(
+            data_out, sr_out, fast_seconds, settling_seconds, args.analysis_window_seconds
+        )
+
+    _render_frequency_plot(plot_data, args.plot, reference_plot, args.reference_label, reference_delta)
 
     print("=" * 60)
     if results["frequency_match"]:

@@ -172,13 +172,13 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 2. **フィルタ係数ファイルの確認**:
    ```bash
    # マルチレート対応フィルタの確認
-   ls -lh data/coefficients/filter_*_*x_2m_min_phase.bin
+   ls -lh data/coefficients/filter_*_*x_2m_hybrid_phase.bin
    ```
    各フィルタファイル（約7.6MB）と対応するメタデータJSONファイルが存在する必要があります。
 
    ```bash
    # メタデータの確認（DCゲイン・レート情報）
-   cat data/coefficients/filter_44k_16x_2m_min_phase.json | jq '.sample_rate_input, .sample_rate_output, .upsample_ratio, .validation_results.normalization.normalized_dc_gain'
+   cat data/coefficients/filter_44k_16x_2m_hybrid_phase.json | jq '.sample_rate_input, .sample_rate_output, .upsample_ratio, .validation_results.normalization.normalized_dc_gain'
    ```
 
 ## 音声経路
@@ -205,14 +205,14 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 | 入力レート | 出力レート | 倍率 | フィルタファイル |
 |-----------|----------|------|----------------|
-| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_min_phase.bin |
-| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_min_phase.bin |
-| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_min_phase.bin |
-| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_min_phase.bin |
-| 48kHz | 768kHz | 16x | filter_48k_16x_2m_min_phase.bin |
-| 96kHz | 768kHz | 8x | filter_48k_8x_2m_min_phase.bin |
-| 192kHz | 768kHz | 4x | filter_48k_4x_2m_min_phase.bin |
-| 384kHz | 768kHz | 2x | filter_48k_2x_2m_min_phase.bin |
+| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_hybrid_phase.bin |
+| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_hybrid_phase.bin |
+| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_hybrid_phase.bin |
+| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_hybrid_phase.bin |
+| 48kHz | 768kHz | 16x | filter_48k_16x_2m_hybrid_phase.bin |
+| 96kHz | 768kHz | 8x | filter_48k_8x_2m_hybrid_phase.bin |
+| 192kHz | 768kHz | 4x | filter_48k_4x_2m_hybrid_phase.bin |
+| 384kHz | 768kHz | 2x | filter_48k_2x_2m_hybrid_phase.bin |
 
 ### フィルタとゲイン設定
 

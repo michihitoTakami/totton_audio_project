@@ -200,23 +200,23 @@ uv sync
 # Generate 640k-tap minimum phase filter (default β≈28)
 uv run python scripts/generate_filter.py --taps 640000
 
-# Generate 640k-tap linear phase filter
-uv run python scripts/generate_filter.py --taps 640000 --phase-type linear
+# Generate 640k-tap hybrid filter (≤100 Hz min-phase, >100 Hz 10 ms linear)
+uv run python scripts/generate_filter.py --taps 640000 --phase-type hybrid
 
 # Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)
-uv run python scripts/generate_filter.py --generate-all --phase-type minimum
+uv run python scripts/generate_filter.py --generate-all --phase-type hybrid
 
-# Output (example for minimum phase, 44.1kHz input, 16x upsample):
-# - data/coefficients/filter_44k_16x_2m_minimum.bin (2.56 MB binary)
-# - data/coefficients/filter_44k_16x_2m_minimum.json (metadata)
-# - plots/analysis/filter_44k_16x_2m_minimum_*.png (validation plots)
+# Output (example for hybrid phase, 44.1kHz input, 16x upsample):
+# - data/coefficients/filter_44k_16x_2m_hybrid_phase.bin (2.44 MB binary)
+# - data/coefficients/filter_44k_16x_2m_hybrid_phase.json (metadata)
+# - plots/analysis/44k_16x_* (validation plots)
 ```
 
 ### Phase Type CLI Options
 | オプション | 値 | 説明 |
 |-----------|-----|------|
-| `--phase-type` | `minimum` (default) | 最小位相フィルタを生成 |
-| `--phase-type` | `linear` | 線形位相フィルタを生成 |
+| `--phase-type` | `minimum` (legacy) | 最小位相フィルタを生成 |
+| `--phase-type` | `hybrid` (default) | 低域最小位相/高域10ms整列のハイブリッドを生成 |
 | `--generate-all` | (flag) | 全8構成（44k/48k × 2x/4x/8x/16x）を一括生成 |
 
 ### Build (C++/CUDA)

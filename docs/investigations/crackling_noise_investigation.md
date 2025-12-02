@@ -219,7 +219,7 @@ WARNING: Clipping detected - 95 samples clipped out of 29163520 (0.000325749%)
    # フィルタ係数の分析
    uv run python -c "
    import numpy as np
-   coeffs = np.fromfile('data/coefficients/filter_44k_16x_2m_min_phase.bin', dtype=np.float32)
+   coeffs = np.fromfile('data/coefficients/filter_44k_16x_2m_hybrid_phase.bin', dtype=np.float32)
    print(f'Sum: {coeffs.sum()}, Max: {coeffs.max()}, Min: {coeffs.min()}')
    print(f'Energy: {(coeffs**2).sum()}')
    "

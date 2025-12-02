@@ -14,12 +14,14 @@ struct FilterPreset {
 };
 
 inline constexpr FilterPreset FILTER_PRESET_44K = {
-    44100, 16, "data/coefficients/filter_44k_16x_2m_min_phase.bin",
-    "2M-tap min-phase FIR for 44.1kHz → 705.6kHz (16x)", 2'000'000};
+    44100, 16, "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
+    "2M-tap hybrid FIR (≤100 Hz min-phase, >100 Hz 10 ms linear) for 44.1kHz → 705.6kHz (16x)",
+    2'000'000};
 
 inline constexpr FilterPreset FILTER_PRESET_48K = {
-    48000, 16, "data/coefficients/filter_48k_16x_2m_min_phase.bin",
-    "2M-tap min-phase FIR for 48kHz → 768kHz (16x)", 2'000'000};
+    48000, 16, "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
+    "2M-tap hybrid FIR (≤100 Hz min-phase, >100 Hz 10 ms linear) for 48kHz → 768kHz (16x)",
+    2'000'000};
 
 inline constexpr std::array<FilterPreset, 2> FILTER_PRESETS = {FILTER_PRESET_44K,
                                                                FILTER_PRESET_48K};

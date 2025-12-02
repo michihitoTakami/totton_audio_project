@@ -433,12 +433,15 @@ def get_embedded_html() -> str:
         <div class="form-group">
             <label>Filter Phase</label>
             <select id="phaseType">
-                <option value="minimum">Minimum Phase (推奨)</option>
-                <option value="linear">Linear Phase</option>
+                <option value="minimum" title="全帯域を最小位相で処理（最小レイテンシ）">Minimum Phase (推奨)</option>
+                <option value="hybrid" title="100Hz以下は最小位相 / 100Hz以上は線形位相（10ms整列）">Hybrid Phase (100Hz以下最小 / 100Hz以上線形)</option>
             </select>
+            <div style="font-size:12px; color:#9fb3ff; margin-top:8px; line-height:1.4;">
+                ハイブリッドは100Hz以下を最小位相、100Hz以上を線形位相（10ms整列）で処理し、定位を維持しながら低域のプレリンギングを抑えます。
+            </div>
         </div>
         <div id="phaseWarning" class="warning-banner">
-            ⚠️ Linear phaseはレイテンシが約1秒あります。リアルタイム用途にはMinimum phaseを推奨します。
+            ⚠️ ハイブリッドは100Hz以下を最小位相、100Hz以上を線形位相（10ms整列）で処理します。約10msの整列ディレイが発生し、低遅延モードとは併用できません。
         </div>
         <div id="phaseMessage" class="message"></div>
     </div>
@@ -1259,12 +1262,14 @@ def get_embedded_html() -> str:
         // Phase Type Functions
         let currentPhaseType = 'minimum';
         let isLowLatencyModeEnabled = false;
+        const HYBRID_PHASE_NOTE = 'ハイブリッドは100Hz以下を最小位相、100Hz以上を線形位相（10ms整列）で処理します。';
+        const HYBRID_PHASE_WARNING_TEXT = HYBRID_PHASE_NOTE + ' 約10msの整列ディレイが発生し、低遅延モードとは併用できません。';
 
         function updatePhaseOptionAvailability() {
-            const linearOption = document.querySelector('#phaseType option[value="linear"]');
-            if (!linearOption) return;
-            linearOption.disabled = isLowLatencyModeEnabled;
-            linearOption.title = isLowLatencyModeEnabled ? '低遅延モード中は選択できません' : '';
+            const hybridOption = document.querySelector('#phaseType option[value="hybrid"]');
+            if (!hybridOption) return;
+            hybridOption.disabled = isLowLatencyModeEnabled;
+            hybridOption.title = isLowLatencyModeEnabled ? '低遅延モード中は選択できません' : '100Hz以下は最小位相 / 100Hz以上は線形位相（10ms整列）';
         }
 
         async function fetchPartitionStatus() {
@@ -1322,15 +1327,13 @@ def get_embedded_html() -> str:
 
         function updatePhaseWarning(phaseType, apiWarning) {
             const warning = document.getElementById('phaseWarning');
-            if (phaseType === 'linear') {
-                // Use API warning if provided, otherwise use default
-                if (apiWarning) {
-                    warning.textContent = '⚠️ ' + apiWarning;
-                }
+            const message = apiWarning || HYBRID_PHASE_WARNING_TEXT;
+            if (phaseType === 'hybrid') {
+                warning.textContent = '⚠️ ' + message;
                 warning.classList.add('visible');
-            } else {
-                warning.classList.remove('visible');
+                return;
             }
+            warning.classList.remove('visible');
         }
 
         function showPhaseMessage(text, success) {
@@ -1364,7 +1367,7 @@ def get_embedded_html() -> str:
                     if (data.data && data.data.partition_disabled) {
                         isLowLatencyModeEnabled = false;
                         updatePhaseOptionAvailability();
-                        successMessage += '（線形位相に切り替えたため低遅延モードを自動で無効化しました）';
+                        successMessage += '（ハイブリッドに切り替えたため低遅延モードを自動で無効化しました）';
                     }
                     showPhaseMessage(successMessage, true);
                     // Refresh partition status to keep availability in sync

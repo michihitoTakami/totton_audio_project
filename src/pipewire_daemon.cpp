@@ -12,6 +12,7 @@
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/props.h>
@@ -21,75 +22,69 @@
 // Configuration (using common constants from daemon_constants.h)
 using namespace DaemonConstants;
 
-static AppConfig g_config;
+struct PipewireRuntimeContext {
+    AppConfig config{};
+    std::atomic<float> limiterGain{1.0f};
+    std::atomic<float> effectiveGain{1.0f};
+    std::atomic<int> currentInputRate{DEFAULT_INPUT_SAMPLE_RATE};
+    std::atomic<int> currentOutputRate{DEFAULT_OUTPUT_SAMPLE_RATE};
+    std::atomic<int> currentRateFamilyInt{
+        static_cast<int>(ConvolutionEngine::RateFamily::RATE_44K)};
+    std::atomic<bool> running{true};
+    std::atomic<int> pendingRateChange{0};
+    AudioRingBuffer outputBufferLeft;
+    AudioRingBuffer outputBufferRight;
+    std::vector<float> outputTempLeft;
+    std::vector<float> outputTempRight;
+    std::unique_ptr<ConvolutionEngine::GPUUpsampler> upsampler;
+    std::unique_ptr<SoftMute::Controller> softMute;
+
+    ConvolutionEngine::RateFamily getRateFamily() const {
+        return static_cast<ConvolutionEngine::RateFamily>(
+            currentRateFamilyInt.load(std::memory_order_acquire));
+    }
+
+    void setRateFamily(ConvolutionEngine::RateFamily family) {
+        currentRateFamilyInt.store(static_cast<int>(family), std::memory_order_release);
+    }
+};
 
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
-        std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
+        std::cout << "[Partition] Hybrid phase is incompatible with low-latency mode. "
                   << "Switching to minimum phase." << std::endl;
         config.phaseType = PhaseType::Minimum;
     }
 }
 
-static std::atomic<float> g_limiter_gain{1.0f};
-static std::atomic<float> g_effective_gain{1.0f};
-
-// Dynamic rate configuration (updated at runtime based on input detection)
-// Using atomic for thread-safety between PipeWire callbacks and main thread
-static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
-static std::atomic<int> g_current_output_rate{DEFAULT_OUTPUT_SAMPLE_RATE};
-static std::atomic<int> g_current_rate_family_int{
-    static_cast<int>(ConvolutionEngine::RateFamily::RATE_44K)};
-
-// Helper to get/set rate family atomically
-inline ConvolutionEngine::RateFamily g_get_rate_family() {
-    return static_cast<ConvolutionEngine::RateFamily>(
-        g_current_rate_family_int.load(std::memory_order_acquire));
-}
-inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
-    g_current_rate_family_int.store(static_cast<int>(family), std::memory_order_release);
-}
-
-// Global state
-static std::atomic<bool> g_running{true};
-static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
-static SoftMute::Controller* g_soft_mute = nullptr;  // Soft mute for glitch-free rate transitions
-
-// Pending rate change (set by PipeWire callback, processed in main loop)
-// Value: 0 = no change pending, >0 = detected input sample rate
-static std::atomic<int> g_pending_rate_change{0};
-
 // Forward declaration for Data struct (defined below)
 struct Data;
 
-// Global pointer to Data for use in handle_rate_change
-static Data* g_data = nullptr;
+// Signal handler needs access to runtime context
+namespace {
+PipewireRuntimeContext* g_runtime_ctx = nullptr;
+}
 
-static float apply_output_limiter(float* interleaved, size_t frames) {
+static float apply_output_limiter(PipewireRuntimeContext& ctx, float* interleaved, size_t frames) {
     constexpr float kEpsilon = 1e-6f;
     if (!interleaved || frames == 0) {
-        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
-        g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
+        ctx.limiterGain.store(1.0f, std::memory_order_relaxed);
+        ctx.effectiveGain.store(ctx.config.gain, std::memory_order_relaxed);
         return 0.0f;
     }
     float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
     float limiterGain = 1.0f;
-    const float target = g_config.headroomTarget;
+    const float target = ctx.config.headroomTarget;
     if (target > 0.0f && peak > target) {
         limiterGain = target / (peak + kEpsilon);
         AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
         peak = target;
     }
-    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
-    g_effective_gain.store(g_config.gain * limiterGain, std::memory_order_relaxed);
+    ctx.limiterGain.store(limiterGain, std::memory_order_relaxed);
+    ctx.effectiveGain.store(ctx.config.gain * limiterGain, std::memory_order_relaxed);
     return peak;
 }
 
-// Output ring buffers (using common AudioRingBuffer class)
-static AudioRingBuffer g_output_buffer_left;
-static AudioRingBuffer g_output_buffer_right;
-static std::vector<float> g_output_temp_left;
-static std::vector<float> g_output_temp_right;
 // Use 768kHz (48k family max) as base to ensure sufficient capacity for both rate families
 static constexpr size_t OUTPUT_RING_CAPACITY = 768000 * 2;  // ~2 seconds per channel at max rate
 
@@ -97,6 +92,7 @@ static constexpr size_t OUTPUT_RING_CAPACITY = 768000 * 2;  // ~2 seconds per ch
 using StreamBuffer = ConvolutionEngine::StreamFloatVector;
 
 struct Data {
+    PipewireRuntimeContext* ctx = nullptr;
     struct pw_main_loop* loop;
     struct pw_stream* input_stream;
     struct pw_stream* output_stream;
@@ -122,7 +118,9 @@ struct Data {
 // Signal handler for graceful shutdown
 static void signal_handler(int sig) {
     std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
-    g_running = false;
+    if (g_runtime_ctx) {
+        g_runtime_ctx->running.store(false, std::memory_order_release);
+    }
 }
 
 // Rate family switching helper
@@ -130,13 +128,15 @@ static void signal_handler(int sig) {
 // Connected via on_param_changed() event and processed in main loop.
 // See: https://github.com/michihitoTakami/michy_os/issues/218
 // Implements soft mute during filter switching (Issue #266)
-static bool handle_rate_change(int detected_sample_rate) {
-    if (!g_upsampler) {
+static bool handle_rate_change(PipewireRuntimeContext& ctx, Data& data,
+                               int detected_sample_rate) {
+    auto* upsampler = ctx.upsampler.get();
+    if (!upsampler) {
         return false;
     }
 
     // Multi-rate mode: use switchToInputRate() for dynamic rate switching
-    if (!g_upsampler->isMultiRateEnabled()) {
+    if (!upsampler->isMultiRateEnabled()) {
         std::cerr
             << "[Rate] ERROR: Multi-rate mode not enabled. Rate switching requires multi-rate mode."
             << std::endl;
@@ -148,27 +148,29 @@ static bool handle_rate_change(int detected_sample_rate) {
     // Thread safety: Configuration changes are atomic inside SoftMute::Controller, and we still
     // wait for fade-out completion before mutating filter state to avoid artifacts.
     using namespace DaemonConstants;
-    int current_output_rate = g_current_output_rate.load();
+    int current_output_rate = ctx.currentOutputRate.load();
     int originalFadeDuration = DEFAULT_SOFT_MUTE_FADE_MS;
 
-    if (g_soft_mute && current_output_rate > 0) {
+    auto* softMute = ctx.softMute.get();
+
+    if (softMute && current_output_rate > 0) {
         // Save original fade duration for restoration
-        originalFadeDuration = g_soft_mute->getFadeDuration();
+        originalFadeDuration = softMute->getFadeDuration();
 
         // Update fade duration for filter switching
-        g_soft_mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
-        g_soft_mute->setSampleRate(current_output_rate);
+        softMute->setFadeDuration(FILTER_SWITCH_FADE_MS);
+        softMute->setSampleRate(current_output_rate);
 
         std::cout << "[Rate] Starting fade-out for filter switch ("
                   << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
-        g_soft_mute->startFadeOut();
+        softMute->startFadeOut();
 
         // Wait for fade-out to complete (approximately 1.5 seconds)
         // Polling is necessary because fade is processed in audio thread
         auto fade_start = std::chrono::steady_clock::now();
         const auto timeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS);
-        while (g_soft_mute->isTransitioning() &&
-               g_soft_mute->getState() == SoftMute::MuteState::FADING_OUT) {
+        while (softMute->isTransitioning() &&
+               softMute->getState() == SoftMute::MuteState::FADING_OUT) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             auto elapsed = std::chrono::steady_clock::now() - fade_start;
             if (elapsed > timeout) {
@@ -179,77 +181,75 @@ static bool handle_rate_change(int detected_sample_rate) {
         }
 
         // Ensure we're fully muted before switching
-        if (g_soft_mute->getState() != SoftMute::MuteState::MUTED) {
-            g_soft_mute->setMuted();
+        if (softMute->getState() != SoftMute::MuteState::MUTED) {
+            softMute->setMuted();
         }
     }
 
     // Save previous state for rollback
-    int prev_input_rate = g_current_input_rate.load(std::memory_order_acquire);
-    int prev_output_rate = g_current_output_rate.load(std::memory_order_acquire);
+    int prev_input_rate = ctx.currentInputRate.load(std::memory_order_acquire);
+    int prev_output_rate = ctx.currentOutputRate.load(std::memory_order_acquire);
 
     // Perform filter switch
     bool switch_success = false;
 
-    if (g_upsampler->switchToInputRate(detected_sample_rate)) {
-        g_current_input_rate.store(detected_sample_rate, std::memory_order_release);
+    if (upsampler->switchToInputRate(detected_sample_rate)) {
+        ctx.currentInputRate.store(detected_sample_rate, std::memory_order_release);
 
         // Output rate is dynamically calculated (input_rate × upsample_ratio)
-        int new_output_rate = g_upsampler->getOutputSampleRate();
-        g_current_output_rate.store(new_output_rate, std::memory_order_release);
+        int new_output_rate = upsampler->getOutputSampleRate();
+        ctx.currentOutputRate.store(new_output_rate, std::memory_order_release);
 
         // Re-initialize streaming after rate switch (Issue #219)
         // switchToInputRate() invalidates streaming buffers, so we must reinitialize
-        if (!g_upsampler->initializeStreaming()) {
+        if (!upsampler->initializeStreaming()) {
             std::cerr << "[Rate] Failed to reinitialize streaming, rolling back..." << std::endl;
             // Rollback: switch back to previous rate
-            if (g_upsampler->switchToInputRate(prev_input_rate)) {
-                g_upsampler->initializeStreaming();
+            if (upsampler->switchToInputRate(prev_input_rate)) {
+                upsampler->initializeStreaming();
             }
-            g_current_input_rate.store(prev_input_rate, std::memory_order_release);
-            g_current_output_rate.store(prev_output_rate, std::memory_order_release);
-            if (g_soft_mute) {
-                g_soft_mute->setPlaying();
-                g_soft_mute->setFadeDuration(originalFadeDuration);
+            ctx.currentInputRate.store(prev_input_rate, std::memory_order_release);
+            ctx.currentOutputRate.store(prev_output_rate, std::memory_order_release);
+            if (softMute) {
+                softMute->setPlaying();
+                softMute->setFadeDuration(originalFadeDuration);
             }
             return false;
         }
 
         // Resize streaming input buffers based on new streamValidInputPerBlock (Issue #219)
-        if (g_data) {
-            size_t new_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
-            g_data->stream_input_left.resize(new_capacity, 0.0f);
-            g_data->stream_input_right.resize(new_capacity, 0.0f);
+        size_t new_capacity = upsampler->getStreamValidInputPerBlock() * 2;
+        data.stream_input_left.resize(new_capacity, 0.0f);
+        data.stream_input_right.resize(new_capacity, 0.0f);
 
-            // Clear accumulated samples (old rate data is invalid)
-            g_data->stream_accum_left = 0;
-            g_data->stream_accum_right = 0;
+        // Clear accumulated samples (old rate data is invalid)
+        data.stream_accum_left = 0;
+        data.stream_accum_right = 0;
 
-            std::cout << "[Rate] Streaming buffers resized to " << new_capacity
-                      << " samples (streamValidInputPerBlock="
-                      << g_upsampler->getStreamValidInputPerBlock() << ")" << std::endl;
-        }
+        std::cout << "[Rate] Streaming buffers resized to " << new_capacity
+                  << " samples (streamValidInputPerBlock="
+                  << upsampler->getStreamValidInputPerBlock() << ")" << std::endl;
 
         // Clear output ring buffers to discard old rate samples (Issue #219)
-        g_output_buffer_left.clear();
-        g_output_buffer_right.clear();
+        ctx.outputBufferLeft.clear();
+        ctx.outputBufferRight.clear();
         std::cout << "[Rate] Output ring buffers cleared" << std::endl;
 
         // Update soft mute sample rate if output rate changed
-        if (g_soft_mute && new_output_rate != current_output_rate) {
-            g_soft_mute->setSampleRate(new_output_rate);
+        if (softMute && new_output_rate != current_output_rate) {
+            softMute->setSampleRate(new_output_rate);
         }
 
         // Output rate change only requires reconnection if it actually changed
         // (same-family hi-res switches keep the same output rate)
-        if (g_data && new_output_rate != current_output_rate) {
-            g_data->needs_output_reconnect = true;
-            g_data->new_output_rate = new_output_rate;
+        if (new_output_rate != current_output_rate) {
+            data.needs_output_reconnect = true;
+            data.new_output_rate = new_output_rate;
             std::cout << "[Rate] Output stream reconnection scheduled for " << new_output_rate
-                      << " Hz (" << g_upsampler->getUpsampleRatio() << "x upsampling)" << std::endl;
+                      << " Hz (" << upsampler->getUpsampleRatio() << "x upsampling)" << std::endl;
         } else {
             std::cout << "[Rate] Rate switched to " << detected_sample_rate << " Hz -> "
-                      << new_output_rate << " Hz (" << g_upsampler->getUpsampleRatio()
+                      << new_output_rate << " Hz (" << upsampler->getUpsampleRatio()
                       << "x upsampling)" << std::endl;
         }
         switch_success = true;
@@ -259,18 +259,18 @@ static bool handle_rate_change(int detected_sample_rate) {
     }
 
     // Start fade-in after filter switch (or restore state on failure)
-    if (g_soft_mute) {
+    if (softMute) {
         if (switch_success) {
             std::cout << "[Rate] Starting fade-in after filter switch ("
                       << (FILTER_SWITCH_FADE_MS / 1000.0) << "s)..." << std::endl;
-            g_soft_mute->startFadeIn();
+            softMute->startFadeIn();
             // Fade duration will be reset to default in output processing thread when fade-in
             // completes
         } else {
             // If switch failed, restore original state immediately
             std::cerr << "[Rate] Switch failed, restoring audio state" << std::endl;
-            g_soft_mute->setPlaying();
-            g_soft_mute->setFadeDuration(originalFadeDuration);
+            softMute->setPlaying();
+            softMute->setFadeDuration(originalFadeDuration);
         }
     }
 
@@ -280,6 +280,14 @@ static bool handle_rate_change(int detected_sample_rate) {
 // Input stream process callback (44.1kHz audio from PipeWire)
 static void on_input_process(void* userdata) {
     Data* data = static_cast<Data*>(userdata);
+    if (!data || !data->ctx) {
+        return;
+    }
+    auto* ctx = data->ctx;
+    auto* upsampler = ctx->upsampler.get();
+    if (!upsampler) {
+        return;
+    }
 
     struct pw_buffer* buf = pw_stream_dequeue_buffer(data->input_stream);
     if (!buf) {
@@ -306,19 +314,19 @@ static void on_input_process(void* userdata) {
         bool first_iteration = true;
         while (true) {
             size_t frames_to_process = first_iteration ? n_frames : 0;
-            bool left_generated = g_upsampler->processStreamBlock(
+            bool left_generated = upsampler->processStreamBlock(
                 data->input_left.data(), frames_to_process, data->output_left,
-                g_upsampler->streamLeft_, data->stream_input_left, data->stream_accum_left);
-            bool right_generated = g_upsampler->processStreamBlock(
+                upsampler->streamLeft_, data->stream_input_left, data->stream_accum_left);
+            bool right_generated = upsampler->processStreamBlock(
                 data->input_right.data(), frames_to_process, data->output_right,
-                g_upsampler->streamRight_, data->stream_input_right, data->stream_accum_right);
+                upsampler->streamRight_, data->stream_input_right, data->stream_accum_right);
 
             if (left_generated && right_generated) {
                 // Store output for consumption by output stream
-                if (!g_output_buffer_left.write(data->output_left.data(),
-                                                data->output_left.size()) ||
-                    !g_output_buffer_right.write(data->output_right.data(),
-                                                 data->output_right.size())) {
+                if (!ctx->outputBufferLeft.write(data->output_left.data(),
+                                                 data->output_left.size()) ||
+                    !ctx->outputBufferRight.write(data->output_right.data(),
+                                                  data->output_right.size())) {
                     std::cerr << "Warning: Output ring buffer overflow - dropping samples"
                               << std::endl;
                 }
@@ -338,6 +346,10 @@ static void on_input_process(void* userdata) {
 // Output stream process callback (705.6kHz audio to DAC)
 static void on_output_process(void* userdata) {
     Data* data = static_cast<Data*>(userdata);
+    if (!data || !data->ctx) {
+        return;
+    }
+    auto* ctx = data->ctx;
 
     struct pw_buffer* buf = pw_stream_dequeue_buffer(data->output_stream);
     if (!buf) {
@@ -349,38 +361,38 @@ static void on_output_process(void* userdata) {
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
     if (output_samples && n_frames > 0) {
-        size_t available = std::min(g_output_buffer_left.availableToRead(),
-                                    g_output_buffer_right.availableToRead());
+        size_t available = std::min(ctx->outputBufferLeft.availableToRead(),
+                                    ctx->outputBufferRight.availableToRead());
 
         if (available >= n_frames) {
-            if (g_output_temp_left.size() < n_frames)
-                g_output_temp_left.resize(n_frames);
-            if (g_output_temp_right.size() < n_frames)
-                g_output_temp_right.resize(n_frames);
+            if (ctx->outputTempLeft.size() < n_frames)
+                ctx->outputTempLeft.resize(n_frames);
+            if (ctx->outputTempRight.size() < n_frames)
+                ctx->outputTempRight.resize(n_frames);
 
-            bool read_left = g_output_buffer_left.read(g_output_temp_left.data(), n_frames);
-            bool read_right = g_output_buffer_right.read(g_output_temp_right.data(), n_frames);
+            bool read_left = ctx->outputBufferLeft.read(ctx->outputTempLeft.data(), n_frames);
+            bool read_right = ctx->outputBufferRight.read(ctx->outputTempRight.data(), n_frames);
 
             if (read_left && read_right) {
                 // Interleave output (separate L/R → stereo interleaved)
-                AudioUtils::interleaveStereo(g_output_temp_left.data(), g_output_temp_right.data(),
-                                             output_samples, n_frames);
-                AudioUtils::applyInterleavedGain(output_samples, n_frames, g_config.gain);
+                AudioUtils::interleaveStereo(ctx->outputTempLeft.data(),
+                                             ctx->outputTempRight.data(), output_samples, n_frames);
+                AudioUtils::applyInterleavedGain(output_samples, n_frames, ctx->config.gain);
 
                 // Apply soft mute if transitioning (for filter switching)
-                if (g_soft_mute) {
-                    g_soft_mute->process(output_samples, n_frames);
+                if (ctx->softMute) {
+                    ctx->softMute->process(output_samples, n_frames);
 
                     // Reset fade duration to default after filter switch fade-in completes
                     // Check if we just completed a fade-in from filter switching
                     using namespace DaemonConstants;
-                    if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING &&
-                        g_soft_mute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
-                        g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
+                    if (ctx->softMute->getState() == SoftMute::MuteState::PLAYING &&
+                        ctx->softMute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
+                        ctx->softMute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
                     }
                 }
 
-                apply_output_limiter(output_samples, n_frames);
+                apply_output_limiter(*ctx, output_samples, n_frames);
             } else {
                 std::memset(output_samples, 0, n_frames * CHANNELS * sizeof(float));
             }
@@ -413,8 +425,11 @@ static void on_stream_state_changed(void* userdata, enum pw_stream_state old_sta
 // and let the main loop handle the actual rate change.
 // See: docs/architecture/rate-negotiation-handshake.md
 static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* param) {
-    (void)userdata;
-
+    Data* data = static_cast<Data*>(userdata);
+    PipewireRuntimeContext* ctx = data ? data->ctx : nullptr;
+    if (!ctx) {
+        return;
+    }
     // Only handle format changes
     if (id != SPA_PARAM_Format || param == nullptr) {
         return;
@@ -427,7 +442,7 @@ static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* 
     }
 
     int detected_rate = static_cast<int>(info.rate);
-    int current_rate = g_current_input_rate.load(std::memory_order_acquire);
+    int current_rate = ctx->currentInputRate.load(std::memory_order_acquire);
 
     // Check if rate has changed
     if (detected_rate != current_rate && detected_rate > 0) {
@@ -436,7 +451,7 @@ static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* 
 
         // Set pending rate change (will be processed in main loop)
         // This avoids blocking the real-time audio thread
-        g_pending_rate_change.store(detected_rate, std::memory_order_release);
+        ctx->pendingRateChange.store(detected_rate, std::memory_order_release);
     }
 }
 
@@ -474,61 +489,63 @@ int main(int argc, char* argv[]) {
     PartitionRuntime::RuntimeRequest partitionRequest{
         appConfig.partitionedConvolution.enabled, appConfig.eqEnabled, appConfig.crossfeed.enabled};
 
+    PipewireRuntimeContext ctx;
+    ctx.config = appConfig;
+    g_runtime_ctx = &ctx;
+
     // Install signal handlers
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
     // Initialize GPU upsampler (multi-rate mode only)
     std::cout << "Initializing GPU upsampler..." << std::endl;
-    g_upsampler = new ConvolutionEngine::GPUUpsampler();
-    g_upsampler->setPartitionedConvolutionConfig(appConfig.partitionedConvolution);
+    ctx.upsampler = std::make_unique<ConvolutionEngine::GPUUpsampler>();
+    ctx.upsampler->setPartitionedConvolutionConfig(appConfig.partitionedConvolution);
 
     std::cout << "Mode: Multi-Rate (all supported rates: 44.1k/48k families, 16x/8x/4x/2x)"
               << std::endl;
-    bool init_success = g_upsampler->initializeMultiRate(
+    bool init_success = ctx.upsampler->initializeMultiRate(
         coefficient_dir, DEFAULT_BLOCK_SIZE,
         44100);  // Initial input rate (will be updated by PipeWire detection)
 
     if (!init_success) {
         std::cerr << "Failed to initialize GPU upsampler" << std::endl;
-        delete g_upsampler;
         return 1;
     }
-    std::cout << "GPU upsampler ready (" << g_upsampler->getUpsampleRatio() << "x upsampling, "
+    std::cout << "GPU upsampler ready (" << ctx.upsampler->getUpsampleRatio() << "x upsampling, "
               << DEFAULT_BLOCK_SIZE << " samples/block)" << std::endl;
 
     // Load config and set phase type (input sample rate is auto-detected from PipeWire)
     if (configLoaded) {
-        g_upsampler->setPhaseType(appConfig.phaseType);
+        ctx.upsampler->setPhaseType(appConfig.phaseType);
         std::cout << "Phase type: " << phaseTypeToString(appConfig.phaseType) << std::endl;
 
         // Log latency warning for linear phase
         if (appConfig.phaseType == PhaseType::Linear) {
-            double latencySec = g_upsampler->getLatencySeconds();
-            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
-                      << g_upsampler->getLatencySamples() << " samples)" << std::endl;
+            double latencySec = ctx.upsampler->getLatencySeconds();
+            std::cout << "  WARNING: Hybrid phase latency: " << latencySec << " seconds ("
+                      << ctx.upsampler->getLatencySamples() << " samples)" << std::endl;
         }
     } else {
         std::cout << "Phase type: minimum (default)" << std::endl;
     }
-    g_config = appConfig;
-    g_limiter_gain.store(1.0f, std::memory_order_relaxed);
-    g_effective_gain.store(g_config.gain, std::memory_order_relaxed);
-    // Input sample rate will be auto-detected from PipeWire stream
+    ctx.limiterGain.store(1.0f, std::memory_order_relaxed);
+    ctx.effectiveGain.store(ctx.config.gain, std::memory_order_relaxed);
+    ctx.currentInputRate.store(ctx.upsampler->getInputSampleRate(), std::memory_order_release);
+    ctx.currentOutputRate.store(ctx.upsampler->getOutputSampleRate(), std::memory_order_release);
     std::cout << "Input sample rate: auto-detected from PipeWire" << std::endl;
 
-    if (!g_upsampler->initializeStreaming()) {
+    if (!ctx.upsampler->initializeStreaming()) {
         std::cerr << "Failed to initialize streaming mode" << std::endl;
-        delete g_upsampler;
         return 1;
     }
-    PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_upsampler, g_config, "PipeWire");
+    PartitionRuntime::applyPartitionPolicy(partitionRequest, *ctx.upsampler, ctx.config, "PipeWire");
 
     // Initialize soft mute controller (default fade duration, will be extended for filter
     // switching)
-    using namespace DaemonConstants;
-    int initial_output_rate = g_upsampler->getOutputSampleRate();
-    g_soft_mute = new SoftMute::Controller(DEFAULT_SOFT_MUTE_FADE_MS, initial_output_rate);
+    int initial_output_rate = ctx.upsampler->getOutputSampleRate();
+    ctx.softMute = std::make_unique<SoftMute::Controller>(DEFAULT_SOFT_MUTE_FADE_MS,
+                                                          initial_output_rate);
     std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
               << initial_output_rate << "Hz)" << std::endl;
 
@@ -537,16 +554,16 @@ int main(int argc, char* argv[]) {
     // Initialize PipeWire
     pw_init(&argc, &argv);
 
-    g_output_buffer_left.init(OUTPUT_RING_CAPACITY);
-    g_output_buffer_right.init(OUTPUT_RING_CAPACITY);
+    ctx.outputBufferLeft.init(OUTPUT_RING_CAPACITY);
+    ctx.outputBufferRight.init(OUTPUT_RING_CAPACITY);
 
     Data data = {};
+    data.ctx = &ctx;
     data.gpu_ready = true;
-    g_data = &data;  // Set global pointer for handle_rate_change
 
     // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
     // Use 2x safety margin to handle timing variations
-    size_t buffer_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+    size_t buffer_capacity = ctx.upsampler->getStreamValidInputPerBlock() * 2;
     data.stream_input_left.resize(buffer_capacity, 0.0f);
     data.stream_input_right.resize(buffer_capacity, 0.0f);
     std::cout << "Streaming buffer capacity: " << buffer_capacity
@@ -574,7 +591,7 @@ int main(int argc, char* argv[]) {
 
     struct spa_audio_info_raw input_info = {};
     input_info.format = SPA_AUDIO_FORMAT_F32;
-    input_info.rate = g_current_input_rate.load();
+    input_info.rate = ctx.currentInputRate.load();
     input_info.channels = CHANNELS;
     input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
     input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
@@ -605,7 +622,7 @@ int main(int argc, char* argv[]) {
 
     struct spa_audio_info_raw output_info = {};
     output_info.format = SPA_AUDIO_FORMAT_F32;
-    output_info.rate = g_current_output_rate.load();
+    output_info.rate = ctx.currentOutputRate.load();
     output_info.channels = CHANNELS;
     output_info.position[0] = SPA_AUDIO_CHANNEL_FL;
     output_info.position[1] = SPA_AUDIO_CHANNEL_FR;
@@ -633,15 +650,16 @@ int main(int argc, char* argv[]) {
 
     // Run main loop with rate change handling
     // Using iterate instead of run to check for pending rate changes
-    while (g_running) {
+    while (ctx.running.load(std::memory_order_acquire)) {
         // Check for pending rate change (set by on_param_changed callback)
-        int pending_rate = g_pending_rate_change.exchange(0, std::memory_order_acq_rel);
+        int pending_rate = ctx.pendingRateChange.exchange(0, std::memory_order_acq_rel);
         if (pending_rate > 0) {
             std::cout << "[Main] Processing rate change to " << pending_rate << " Hz..."
                       << std::endl;
-            if (handle_rate_change(pending_rate)) {
-                std::cout << "[Main] Rate change successful: " << g_current_input_rate.load()
-                          << " Hz input -> " << g_current_output_rate.load() << " Hz output"
+            if (handle_rate_change(ctx, data, pending_rate)) {
+                std::cout << "[Main] Rate change successful: "
+                          << ctx.currentInputRate.load(std::memory_order_acquire) << " Hz input -> "
+                          << ctx.currentOutputRate.load(std::memory_order_acquire) << " Hz output"
                           << std::endl;
             } else {
                 std::cerr << "[Main] Rate change failed or not supported" << std::endl;
@@ -701,7 +719,7 @@ int main(int argc, char* argv[]) {
 
         // Process PipeWire events (non-blocking iteration)
         // timeout_ms = -1 means wait indefinitely, but we use a short timeout
-        // to periodically check g_running and pending rate changes
+        // to periodically check running flag and pending rate changes
         pw_loop_iterate(pw_main_loop_get_loop(data.loop), 10);  // 10ms timeout
     }
 
@@ -718,13 +736,8 @@ int main(int argc, char* argv[]) {
         pw_main_loop_destroy(data.loop);
     }
 
-    delete g_soft_mute;
-    g_soft_mute = nullptr;
-    delete g_upsampler;
-    if (g_soft_mute) {
-        delete g_soft_mute;
-        g_soft_mute = nullptr;
-    }
+    ctx.softMute.reset();
+    ctx.upsampler.reset();
     pw_deinit();
 
     std::cout << "Goodbye!" << std::endl;

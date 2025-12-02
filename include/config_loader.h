@@ -21,20 +21,23 @@ struct AppConfig {
     int blockSize = 4096;
     float gain = 1.0f;
     float headroomTarget = 0.92f;  // Peak target (linear 0-1) for headroom + limiter guard
-    std::string filterPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+    std::string filterPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 
     // Quad-phase mode: 4 filter paths (2 rate families × 2 phase types)
     bool quadPhaseEnabled = false;  // Enable quad-phase mode with all 4 filter FFTs preloaded
-    std::string filterPath44kMin = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
-    std::string filterPath48kMin = "data/coefficients/filter_48k_16x_2m_min_phase.bin";
-    std::string filterPath44kLinear = "data/coefficients/filter_44k_16x_2m_linear.bin";
-    std::string filterPath48kLinear = "data/coefficients/filter_48k_16x_2m_linear.bin";
+    std::string filterPath44kMin = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    std::string filterPath48kMin = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
+    std::string filterPath44kLinear = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    std::string filterPath48kLinear = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
 
     // Multi-rate mode: 10 filter configurations (2 rate families × 5 ratios: 1x/2x/4x/8x/16x)
     // Issue #219: Dynamic rate switching with all filters preloaded
     bool multiRateEnabled = false;  // Enable multi-rate mode with all 10 filter FFTs preloaded
     std::string coefficientDir = "data/coefficients";  // Directory containing filter files
+
+    // PipeWire input (disable for Docker/RTP-only mode)
+    bool pipewireEnabled = true;  // Set to false for RTP-only mode (Docker)
 
     // EQ settings
     bool eqEnabled = false;
