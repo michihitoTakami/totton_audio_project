@@ -2608,6 +2608,52 @@ int main(int argc, char* argv[]) {
             std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
         }
 
+        // Determine PipeWire mode (config + env overrides)
+        bool pipewireEnabled = g_config.pipewireEnabled;
+        std::string pipewireOverrideReason;
+        auto toLower = [](std::string value) {
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        };
+        if (const char* env_mode = std::getenv("MAGICBOX_INPUT_MODE")) {
+            std::string mode = toLower(env_mode);
+            if (mode == "rtp") {
+                pipewireEnabled = false;
+                pipewireOverrideReason = "MAGICBOX_INPUT_MODE=rtp";
+            } else if (mode == "pipewire") {
+                pipewireEnabled = true;
+                pipewireOverrideReason = "MAGICBOX_INPUT_MODE=pipewire";
+            }
+        }
+        auto disableFromEnv = [&](const char* envName) {
+            if (const char* value = std::getenv(envName)) {
+                std::string flag = toLower(value);
+                if (flag == "1" || flag == "true" || flag == "yes") {
+                    pipewireEnabled = false;
+                    pipewireOverrideReason = std::string(envName) + "=true";
+                }
+            }
+        };
+        disableFromEnv("PIPEWIRE_DISABLED");
+        disableFromEnv("MAGICBOX_DISABLE_PIPEWIRE");
+        auto enableFromEnv = [&](const char* envName) {
+            if (const char* value = std::getenv(envName)) {
+                std::string flag = toLower(value);
+                if (flag == "1" || flag == "true" || flag == "yes") {
+                    pipewireEnabled = true;
+                    pipewireOverrideReason = std::string(envName) + "=true";
+                }
+            }
+        };
+        enableFromEnv("PIPEWIRE_ENABLED");
+        enableFromEnv("MAGICBOX_ENABLE_PIPEWIRE");
+        if (!pipewireEnabled) {
+            std::cout << "Config: PipeWire input disabled ("
+                      << (pipewireOverrideReason.empty() ? "config.json" : pipewireOverrideReason)
+                      << "). Running in RTP-only mode." << std::endl;
+        }
+
         PartitionRuntime::RuntimeRequest partitionRequest{g_config.partitionedConvolution.enabled,
                                                           g_config.eqEnabled,
                                                           g_config.crossfeed.enabled};
@@ -2977,15 +3023,25 @@ int main(int argc, char* argv[]) {
             g_fallback_active.store(false, std::memory_order_relaxed);
         }
 
-        // Initialize PipeWire input
-        pw_init(&argc, &argv);
-
-        Data data = {};
+        Data data{};
         data.gpu_ready = true;
+        struct pw_loop* loop = nullptr;
+        bool pipewireInitCalled = false;
+        bool pipewireActive = false;
 
-        // Create main loop (store globally for signal handler access)
-        data.loop = pw_main_loop_new(nullptr);
-        g_pw_loop = data.loop;
+        if (pipewireEnabled) {
+            pw_init(&argc, &argv);
+            pipewireInitCalled = true;
+            data.loop = pw_main_loop_new(nullptr);
+            if (!data.loop) {
+                std::cerr << "PipeWire: Failed to create main loop. Falling back to RTP-only mode."
+                          << std::endl;
+            } else {
+                g_pw_loop = data.loop;
+                loop = pw_main_loop_get_loop(data.loop);
+                pipewireActive = true;
+            }
+        }
 
         // Start ZeroMQ server after g_pw_loop is set to allow RELOAD to quit the main loop
         start_zmq_server();
@@ -3001,87 +3057,131 @@ int main(int argc, char* argv[]) {
             g_rtp_coordinator->startFromConfig();
         }
 
-        struct pw_loop* loop = pw_main_loop_get_loop(data.loop);
+        if (pipewireActive) {
+            std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..."
+                      << std::endl;
+            data.input_stream = pw_stream_new_simple(
+                loop, "GPU Upsampler Input",
+                pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
+                                  PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
+                                  "GPU Upsampler Input", PW_KEY_NODE_TARGET,
+                                  "gpu_upsampler_sink.monitor", "audio.channels", "2",
+                                  "audio.position", "FL,FR", nullptr),
+                &input_stream_events, &data);
 
-        // Create Capture stream from gpu_upsampler_sink.monitor
-        std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..." << std::endl;
-        data.input_stream = pw_stream_new_simple(
-            loop, "GPU Upsampler Input",
-            pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
-                              PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
-                              "GPU Upsampler Input", PW_KEY_NODE_TARGET,
-                              "gpu_upsampler_sink.monitor", "audio.channels", "2", "audio.position",
-                              "FL,FR", nullptr),
-            &input_stream_events, &data);
+            if (!data.input_stream) {
+                std::cerr << "PipeWire: Failed to create input stream. Disabling PipeWire path."
+                          << std::endl;
+                pipewireActive = false;
+            } else {
+                uint8_t input_buffer[1024];
+                struct spa_pod_builder input_builder =
+                    SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
+                struct spa_audio_info_raw input_info = {};
+                input_info.format = SPA_AUDIO_FORMAT_F32;
+                input_info.rate = g_input_sample_rate;
+                input_info.channels = CHANNELS;
+                input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
+                input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
 
-        // Configure input stream audio format (32-bit float stereo)
-        uint8_t input_buffer[1024];
-        struct spa_pod_builder input_builder =
-            SPA_POD_BUILDER_INIT(input_buffer, sizeof(input_buffer));
+                const struct spa_pod* input_params[1];
+                input_params[0] =
+                    spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
 
-        struct spa_audio_info_raw input_info = {};
-        input_info.format = SPA_AUDIO_FORMAT_F32;
-        input_info.rate = g_input_sample_rate;
-        input_info.channels = CHANNELS;
-        input_info.position[0] = SPA_AUDIO_CHANNEL_FL;
-        input_info.position[1] = SPA_AUDIO_CHANNEL_FR;
+                int connectResult =
+                    pw_stream_connect(data.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
+                                      static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
+                                                                   PW_STREAM_FLAG_RT_PROCESS),
+                                      input_params, 1);
+                if (connectResult < 0) {
+                    std::cerr << "PipeWire: Failed to connect input stream (" << connectResult
+                              << "). Disabling PipeWire path." << std::endl;
+                    pw_stream_destroy(data.input_stream);
+                    data.input_stream = nullptr;
+                    pipewireActive = false;
+                } else {
+                    struct timespec interval = {0, 100000000};  // 100ms
+                    data.signal_check_timer = pw_loop_add_timer(loop, on_signal_check_timer, &data);
+                    if (data.signal_check_timer) {
+                        pw_loop_update_timer(loop, data.signal_check_timer, &interval, &interval,
+                                             false);
+                        std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
+                    } else {
+                        std::cerr << "Warning: Failed to create signal check timer" << std::endl;
+                    }
+                }
+            }
+        } else if (!pipewireEnabled) {
+            std::cout << "PipeWire input path skipped (disabled)." << std::endl;
+        }
 
-        const struct spa_pod* input_params[1];
-        input_params[0] =
-            spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
-
-        pw_stream_connect(
-            data.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
-            static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
-            input_params, 1);
-
-        // Add timer to check signal flags periodically (100ms interval)
-        // This enables async-signal-safe shutdown by polling flags from main loop
-        struct timespec interval = {0, 100000000};  // 100ms in nanoseconds
-        data.signal_check_timer = pw_loop_add_timer(loop, on_signal_check_timer, &data);
-        if (data.signal_check_timer) {
-            pw_loop_update_timer(loop, data.signal_check_timer, &interval, &interval, false);
-            std::cout << "Signal check timer initialized (100ms interval)" << std::endl;
-        } else {
-            std::cerr << "Warning: Failed to create signal check timer" << std::endl;
+        if (!pipewireActive && data.loop) {
+            pw_main_loop_destroy(data.loop);
+            data.loop = nullptr;
+            g_pw_loop = nullptr;
+            loop = nullptr;
         }
 
         double outputRateKHz = g_input_sample_rate * g_config.upsampleRatio / 1000.0;
         std::cout << std::endl;
-        std::cout << "System ready. Audio routing configured:" << std::endl;
-        std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)"
-                  << std::endl;
-        std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (" << g_config.upsampleRatio
-                  << "x upsampling)" << std::endl;
-        std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
-                  << std::endl;
-        std::cout << std::endl;
-        std::cout << "Select 'GPU Upsampler (" << outputRateKHz
-                  << "kHz)' as output device in sound settings." << std::endl;
+        if (pipewireActive) {
+            std::cout << "System ready. Audio routing configured:" << std::endl;
+            std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)"
+                      << std::endl;
+            std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler ("
+                      << g_config.upsampleRatio << "x upsampling)" << std::endl;
+            std::cout << "  3. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
+                      << std::endl;
+            std::cout << std::endl;
+            std::cout << "Select 'GPU Upsampler (" << outputRateKHz
+                      << "kHz)' as output device in sound settings." << std::endl;
+        } else {
+            std::cout << "System ready (RTP-only mode). Audio routing configured:" << std::endl;
+            std::cout << "  1. RTP network source → GPU Upsampler (" << g_config.upsampleRatio
+                      << "x upsampling)" << std::endl;
+            std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
+                      << std::endl;
+        }
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
 #ifdef HAVE_SYSTEMD
-        // Notify systemd that daemon is ready
-        sd_notify(0,
-                  "READY=1\n"
-                  "STATUS=Processing audio...\n");
+        if (pipewireActive) {
+            sd_notify(0,
+                      "READY=1\n"
+                      "STATUS=Processing audio...\n");
+        } else {
+            sd_notify(0,
+                      "READY=1\n"
+                      "STATUS=Processing audio (RTP-only)...\n");
+        }
         std::cout << "systemd: Notified READY=1" << std::endl;
 #endif
 
-        // Check if RELOAD was requested during startup (before main loop),
-        // ZeroMQ bind failed, or signal received during initialization
-        if (g_running.load() && !g_reload_requested.load() && !g_zmq_bind_failed.load()) {
-            // Run main loop (only if not already requested to reload/stop)
-            g_main_loop_running = true;
-            pw_main_loop_run(data.loop);
-            g_main_loop_running = false;
+        auto runRtpOnlyMainLoop = [&]() {
+            while (g_running.load() && !g_reload_requested.load() && !g_zmq_bind_failed.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                process_pending_signals();
+#ifdef HAVE_SYSTEMD
+                sd_notify(0, "WATCHDOG=1");
+#endif
+            }
+        };
+
+        if (pipewireActive && data.loop && !g_zmq_bind_failed.load()) {
+            if (g_running.load() && !g_reload_requested.load()) {
+                g_main_loop_running = true;
+                pw_main_loop_run(data.loop);
+                g_main_loop_running = false;
+            } else if (!g_running.load()) {
+                std::cout << "Startup interrupted by signal, skipping main loop." << std::endl;
+            } else if (g_reload_requested.load()) {
+                std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
+            }
         } else if (g_zmq_bind_failed.load()) {
             std::cerr << "Startup aborted due to ZeroMQ bind failure." << std::endl;
-        } else if (!g_running.load()) {
-            std::cout << "Startup interrupted by signal, skipping main loop." << std::endl;
         } else {
-            std::cout << "RELOAD requested during startup, skipping main loop." << std::endl;
+            runRtpOnlyMainLoop();
         }
 
         // ========== Shutdown Sequence ==========
@@ -3094,7 +3194,7 @@ int main(int argc, char* argv[]) {
 #endif
 
         // Step 1: Stop signal check timer
-        if (data.signal_check_timer) {
+        if (data.signal_check_timer && loop) {
             pw_loop_destroy_source(loop, data.signal_check_timer);
             data.signal_check_timer = nullptr;
         }
@@ -3159,7 +3259,9 @@ int main(int argc, char* argv[]) {
         stop_dac_monitor();
 
         // Step 7: Deinitialize PipeWire
-        pw_deinit();
+        if (pipewireInitCalled) {
+            pw_deinit();
+        }
 
         // Don't reload if ZMQ bind failed - exit completely
         if (g_zmq_bind_failed) {

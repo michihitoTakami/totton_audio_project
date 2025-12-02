@@ -85,6 +85,10 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("coefficientDir"))
             outConfig.coefficientDir = j["coefficientDir"].get<std::string>();
 
+        // PipeWire input toggle (Docker / RTP-only mode)
+        if (j.contains("pipewireEnabled"))
+            outConfig.pipewireEnabled = j["pipewireEnabled"].get<bool>();
+
         // Partitioned convolution settings (Issue #351)
         if (j.contains("partitionedConvolution") && j["partitionedConvolution"].is_object()) {
             auto pc = j["partitionedConvolution"];

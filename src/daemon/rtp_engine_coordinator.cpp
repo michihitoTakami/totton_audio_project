@@ -241,7 +241,8 @@ std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_candidat
 
             char host[INET_ADDRSTRLEN] = {0};
             ::inet_ntop(AF_INET, &srcAddr.sin_addr, host, sizeof(host));
-            uint16_t port = ntohs(srcAddr.sin_port);
+            // Use the daemon's listening port rather than the sender's ephemeral source port.
+            uint16_t listenPort = sockets[i].port;
 
             bool multicast = is_ipv4_multicast(srcAddr.sin_addr);
             if (multicast && !allowMulticast) {
@@ -252,13 +253,14 @@ std::optional<std::vector<RtpDiscoveryCandidate>> collect_rtp_discovery_candidat
             }
 
             auto nowMs = unix_time_millis();
-            auto it = std::find_if(
-                candidates.begin(), candidates.end(),
-                [&](const RtpDiscoveryCandidate& c) { return c.host == host && c.port == port; });
+            auto it = std::find_if(candidates.begin(), candidates.end(),
+                                   [&](const RtpDiscoveryCandidate& c) {
+                                       return c.host == host && c.port == listenPort;
+                                   });
             if (it == candidates.end()) {
                 RtpDiscoveryCandidate cand;
                 cand.host = host;
-                cand.port = port;
+                cand.port = listenPort;
                 cand.payloadType = payloadType;
                 cand.multicast = multicast;
                 cand.packets = 1;
@@ -335,12 +337,29 @@ Network::SessionConfig RtpEngineCoordinator::buildSessionConfig(
     session.sessionId = cfg.sessionId.empty() ? std::string("rtp_default") : cfg.sessionId;
     session.bindAddress = cfg.bindAddress;
     session.port = cfg.port;
+    session.sourceHost = cfg.sourceHost;
+    session.multicast = cfg.multicast;
+    session.multicastGroup = cfg.multicastGroup;
+    session.interfaceName = cfg.interfaceName;
+    session.ttl = cfg.ttl;
+    session.dscp = cfg.dscp;
     session.payloadType = cfg.payloadType;
     session.sampleRate = cfg.sampleRate;
     session.channels = cfg.channels;
-    session.payloadType = cfg.payloadType;
+    session.bitsPerSample = cfg.bitsPerSample;
+    session.bigEndian = cfg.bigEndian;
+    session.signedSamples = cfg.signedSamples;
+    session.socketBufferBytes = cfg.socketBufferBytes;
+    session.mtuBytes = cfg.mtuBytes;
+    session.targetLatencyMs = cfg.targetLatencyMs;
+    session.watchdogTimeoutMs = cfg.watchdogTimeoutMs;
+    session.telemetryIntervalMs = cfg.telemetryIntervalMs;
+    session.enableRtcp = cfg.enableRtcp;
+    session.rtcpPort = cfg.rtcpPort;
+    session.enablePtp = cfg.enablePtp;
     session.ptpInterface = cfg.ptpInterface;
     session.ptpDomain = cfg.ptpDomain;
+    session.autoStart = cfg.autoStart;
     session.sdp = cfg.sdp;
     return session;
 }
