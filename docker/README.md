@@ -102,9 +102,7 @@ docker compose -f jetson/docker-compose.jetson.yml logs -f
 docker compose -f jetson/docker-compose.jetson.yml down
 ```
 
-`docker/jetson/config.docker.json` が自動的にコピーされ、PipeWireを無効化したRTP入力モード・Jetson向けパラメータで起動します。必要に応じて同ファイルを編集してください。
-
-> Note: Web UI の Start/Stop/Restart は systemd の `gpu-upsampler.service` を叩きます。JetsonでホストOSのsystemd上にデーモンがいる前提です。Webをコンテナ内で動かす場合、ホストのsystemdソケットを共有していないとデーモン制御はできません（ステータス表示のみ）。
+`docker/jetson/config.docker.json` が自動的にコピーされ、PipeWireを無効化したRTP入力モード・Jetson向けパラメータで起動します。必要に応じて同ファイルを編集してください。Web/UI と Daemon は同一コンテナ (`command: all`) で動くため、systemd 連携や /tmp 共有を気にせず Start/Stop/Restart が機能します。
 
 #### x86_64ローカル検証
 

@@ -154,7 +154,7 @@ def get_daemon_pid() -> Optional[int]:
     except (ValueError, IOError):
         pass
 
-    # Last resort: use ZMQ ping to detect running daemon when PID is hidden (e.g., container PID namespace)
+    # Last-resort: try ZMQ ping and surface None PID if running (for containerized setups)
     try:
         from .daemon_client import get_daemon_client
 
