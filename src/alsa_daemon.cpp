@@ -4,8 +4,8 @@
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
-#include "daemon_constants.h"
 #include "daemon/pipewire_support.h"
+#include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
 #include "fallback_manager.h"
@@ -407,8 +407,6 @@ static void reset_crossfeed_stream_state_locked() {
 
 namespace pipewire_support {
 
-namespace {
-
 void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
     if (!input_samples || n_frames == 0 || !g_upsampler) {
         return;
@@ -496,6 +494,8 @@ void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
         update_peak_level(g_peak_post_crossfeed_level, postPeak);
     }
 }
+
+namespace {
 
 void on_input_process(void* userdata) {
     InputContext* data = static_cast<InputContext*>(userdata);
@@ -2829,7 +2829,6 @@ static void on_signal_check_timer(void* userdata, uint64_t expirations) {
 #endif
 }
 
-
 // Open and configure ALSA device. Returns nullptr on failure.
 static snd_pcm_t* open_and_configure_pcm(const std::string& device) {
     snd_pcm_t* pcm_handle = nullptr;
@@ -3779,14 +3778,15 @@ int main(int argc, char* argv[]) {
             loop = pw_main_loop_get_loop(pipewire_ctx.loop);
 
             // Create Capture stream from gpu_upsampler_sink.monitor
-            std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..." << std::endl;
+            std::cout << "Creating PipeWire input (capturing from gpu_upsampler_sink)..."
+                      << std::endl;
             pipewire_ctx.input_stream = pw_stream_new_simple(
                 loop, "GPU Upsampler Input",
                 pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
                                   PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
                                   "GPU Upsampler Input", PW_KEY_NODE_TARGET,
-                                  "gpu_upsampler_sink.monitor", "audio.channels", "2", "audio.position",
-                                  "FL,FR", nullptr),
+                                  "gpu_upsampler_sink.monitor", "audio.channels", "2",
+                                  "audio.position", "FL,FR", nullptr),
                 &pipewire_support::kInputStreamEvents, &pipewire_ctx);
 
             // Configure input stream audio format (32-bit float stereo)
@@ -3805,10 +3805,10 @@ int main(int argc, char* argv[]) {
             input_params[0] =
                 spa_format_audio_raw_build(&input_builder, SPA_PARAM_EnumFormat, &input_info);
 
-            pw_stream_connect(
-                pipewire_ctx.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
-                static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
-                input_params, 1);
+            pw_stream_connect(pipewire_ctx.input_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
+                              static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
+                                                           PW_STREAM_FLAG_RT_PROCESS),
+                              input_params, 1);
 
             // Add timer to check signal flags periodically (100ms interval)
             // This enables async-signal-safe shutdown by polling flags from main loop
@@ -3833,13 +3833,14 @@ int main(int argc, char* argv[]) {
         if (g_config.pipewireEnabled) {
             std::cout << "  1. Applications → gpu_upsampler_sink (select in GNOME settings)"
                       << std::endl;
-            std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler (" << g_config.upsampleRatio
-                      << "x upsampling)" << std::endl;
+            std::cout << "  2. gpu_upsampler_sink.monitor → GPU Upsampler ("
+                      << g_config.upsampleRatio << "x upsampling)" << std::endl;
         } else {
             std::cout << "  1. RTP input → GPU Upsampler (" << g_config.upsampleRatio
                       << "x upsampling)" << std::endl;
         }
-        std::cout << "  " << (g_config.pipewireEnabled ? "3" : "2") << ". GPU Upsampler → ALSA → DAC (" << outputRateKHz << "kHz direct)"
+        std::cout << "  " << (g_config.pipewireEnabled ? "3" : "2")
+                  << ". GPU Upsampler → ALSA → DAC (" << outputRateKHz << "kHz direct)"
                   << std::endl;
         std::cout << std::endl;
         if (g_config.pipewireEnabled) {
