@@ -157,6 +157,9 @@ def start_daemon() -> tuple[bool, str]:
     """
     logger.info("Starting daemon...")
 
+    config = load_config()
+    rtp_enabled = _is_rtp_enabled()
+
     # Prefer systemd control when service is installed (Jetson)
     service = _get_systemd_service_name()
     if service:
@@ -191,13 +194,15 @@ def start_daemon() -> tuple[bool, str]:
         logger.error("Daemon binary not found: %s", DAEMON_BINARY)
         return False, f"Daemon binary not found: {DAEMON_BINARY}"
 
-    # Step 1: Setup audio routing (create sink, set default)
-    routing_success, routing_msg = setup_audio_routing()
-    if not routing_success:
-        logger.error("Failed to setup audio routing: %s", routing_msg)
-        return False, f"Failed to setup audio routing: {routing_msg}"
+    # Step 1: Setup audio routing (PipeWire only when NOT in RTP mode)
+    if rtp_enabled:
+        logger.info("RTP mode enabled, skipping PipeWire audio routing")
+    else:
+        routing_success, routing_msg = setup_audio_routing()
+        if not routing_success:
+            logger.error("Failed to setup audio routing: %s", routing_msg)
+            return False, f"Failed to setup audio routing: {routing_msg}"
 
-    config = load_config()
     try:
         # Step 2: Start daemon process
         logger.info(
@@ -214,7 +219,6 @@ def start_daemon() -> tuple[bool, str]:
 
         # Step 3: Wait for daemon to register with PipeWire
         # Skip PipeWire check if RTP mode is enabled (daemon uses RTP input instead)
-        rtp_enabled = _is_rtp_enabled()
         if rtp_enabled:
             logger.info("RTP mode enabled, skipping PipeWire node check")
         elif not wait_for_daemon_node(timeout_sec=5.0):
