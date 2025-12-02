@@ -80,6 +80,20 @@ def _get_service_pid(service: str) -> Optional[int]:
         return None
 
 
+def _pid_looks_like_daemon(pid: int) -> bool:
+    """Verify PID belongs to gpu_upsampler (avoid PID 1 or unrelated processes)."""
+    if pid <= 1:
+        return False
+    comm_path = f"/proc/{pid}/comm"
+    try:
+        with open(comm_path) as f:
+            comm = f.read().strip()
+        # Name is truncated to 15 chars; daemon names start with gpu_upsampler
+        return comm.startswith("gpu_upsampler")
+    except OSError:
+        return False
+
+
 def _is_rtp_enabled() -> bool:
     """Check if RTP mode is enabled in config.json.
 
@@ -109,7 +123,7 @@ def check_daemon_running() -> bool:
     try:
         # Check if process exists
         os.kill(pid, 0)
-        return True
+        return _pid_looks_like_daemon(pid)
     except (OSError, ProcessLookupError):
         return False
 
@@ -119,14 +133,15 @@ def get_daemon_pid() -> Optional[int]:
     service = _get_systemd_service_name()
     if service:
         pid = _get_service_pid(service)
-        if pid:
+        if pid and _pid_looks_like_daemon(pid):
             return pid
 
     if not PID_FILE_PATH.exists():
         return None
     try:
         with open(PID_FILE_PATH) as f:
-            return int(f.read().strip())
+            pid = int(f.read().strip())
+            return pid if _pid_looks_like_daemon(pid) else None
     except (ValueError, IOError):
         return None
 
