@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -10,6 +11,7 @@ from typing import Optional
 
 from ..constants import (
     DAEMON_BINARY,
+    DAEMON_SERVICE_NAMES,
     PID_FILE_PATH,
     STATS_FILE_PATH,
 )
@@ -24,6 +26,60 @@ from .pipewire import (
 logger = logging.getLogger(__name__)
 
 
+def _systemctl_available() -> bool:
+    """Return True if systemctl is available in PATH."""
+    return shutil.which("systemctl") is not None
+
+
+def _get_systemd_service_name() -> Optional[str]:
+    """Return the first known systemd service name that is installed."""
+    if not _systemctl_available():
+        return None
+
+    for name in DAEMON_SERVICE_NAMES:
+        try:
+            result = subprocess.run(
+                ["systemctl", "show", "-p", "LoadState", "--value", name],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "loaded":
+                return name
+        except subprocess.SubprocessError:
+            continue
+    return None
+
+
+def _is_service_active(service: str) -> bool:
+    """Check if the systemd service is active."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", service],
+            timeout=2,
+        )
+        return result.returncode == 0
+    except subprocess.SubprocessError:
+        return False
+
+
+def _get_service_pid(service: str) -> Optional[int]:
+    """Get MainPID from systemd."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "show", "-p", "MainPID", "--value", service],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode != 0:
+            return None
+        pid = int(result.stdout.strip() or "0")
+        return pid or None
+    except (ValueError, subprocess.SubprocessError):
+        return None
+
+
 def _is_rtp_enabled() -> bool:
     """Check if RTP mode is enabled in config.json.
 
@@ -31,6 +87,7 @@ def _is_rtp_enabled() -> bool:
         True if RTP is enabled and autoStart is true.
     """
     from ..constants import CONFIG_PATH
+
     try:
         with open(CONFIG_PATH) as f:
             config_data = json.load(f)
@@ -42,11 +99,14 @@ def _is_rtp_enabled() -> bool:
 
 def check_daemon_running() -> bool:
     """Check if the daemon process is running."""
+    service = _get_systemd_service_name()
+    if service:
+        return _is_service_active(service)
+
     pid = get_daemon_pid()
     if pid is None:
         return False
     try:
-        # Check if process exists
         os.kill(pid, 0)
         return True
     except (OSError, ProcessLookupError):
@@ -54,7 +114,13 @@ def check_daemon_running() -> bool:
 
 
 def get_daemon_pid() -> Optional[int]:
-    """Get the daemon PID from pid file."""
+    """Get the daemon PID from pid file or systemd."""
+    service = _get_systemd_service_name()
+    if service:
+        pid = _get_service_pid(service)
+        if pid:
+            return pid
+
     if not PID_FILE_PATH.exists():
         return None
     try:
@@ -74,6 +140,32 @@ def start_daemon() -> tuple[bool, str]:
     4. Setup PipeWire monitor links
     """
     logger.info("Starting daemon...")
+
+    # Prefer systemd control when service is installed (Jetson)
+    service = _get_systemd_service_name()
+    if service:
+        if _is_service_active(service):
+            logger.warning("Daemon is already running via systemd")
+            return False, "Daemon is already running (systemd)"
+
+        try:
+            result = subprocess.run(
+                ["systemctl", "start", service],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                logger.info("Daemon started via systemd: %s", service)
+                return True, f"Daemon started via systemd ({service})"
+            error_msg = (
+                result.stderr.strip() or result.stdout.strip() or "unknown error"
+            )
+            logger.error("Failed to start daemon via systemd: %s", error_msg)
+            return False, f"systemctl start {service} failed: {error_msg}"
+        except subprocess.SubprocessError as e:
+            logger.error("Failed to start daemon via systemd: %s", e)
+            return False, f"systemctl start failed: {e}"
 
     if check_daemon_running():
         logger.warning("Daemon is already running")
@@ -124,7 +216,9 @@ def start_daemon() -> tuple[bool, str]:
             link_success, link_msg = setup_pipewire_links()
             if not link_success:
                 # Cleanup: stop the daemon we just started
-                logger.error("Failed to setup PipeWire links: %s, cleaning up...", link_msg)
+                logger.error(
+                    "Failed to setup PipeWire links: %s, cleaning up...", link_msg
+                )
                 _force_stop_daemon()
                 restore_default_sink()
                 return False, f"Daemon started but link setup failed: {link_msg}"
@@ -160,6 +254,35 @@ def _force_stop_daemon() -> None:
 def stop_daemon() -> tuple[bool, str]:
     """Stop the daemon process and restore audio routing."""
     logger.info("Stopping daemon...")
+
+    service = _get_systemd_service_name()
+    if service:
+        if not _is_service_active(service):
+            logger.warning("Daemon is not running (systemd)")
+            return False, "Daemon is not running (systemd)"
+        try:
+            result = subprocess.run(
+                ["systemctl", "stop", service],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                error_msg = (
+                    result.stderr.strip() or result.stdout.strip() or "unknown error"
+                )
+                logger.error("Failed to stop daemon via systemd: %s", error_msg)
+                return False, f"systemctl stop {service} failed: {error_msg}"
+            # Confirm stop
+            if _is_service_active(service):
+                logger.error("Daemon still running after systemctl stop")
+                return False, "Daemon did not stop via systemd"
+            logger.info("Daemon stopped via systemd: %s", service)
+            return True, "Daemon stopped (systemd)"
+        except subprocess.SubprocessError as e:
+            logger.error("Failed to stop daemon via systemd: %s", e)
+            return False, f"systemctl stop failed: {e}"
+
     pid = get_daemon_pid()
     if pid is None:
         logger.warning("Daemon is not running (no PID file)")
@@ -176,6 +299,10 @@ def stop_daemon() -> tuple[bool, str]:
 
         # Restore default sink after daemon stops
         restore_default_sink()
+
+        if check_daemon_running():
+            logger.error("Daemon is still running after stop attempt")
+            return False, "Daemon did not stop"
 
         logger.info("Daemon stopped successfully")
         return True, "Daemon stopped"

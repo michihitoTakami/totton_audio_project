@@ -37,7 +37,9 @@ ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock"
 # Daemon
 # ============================================================================
 
-DAEMON_SERVICE = "gpu_upsampler_alsa"  # systemd service name (if using systemd)
+DAEMON_SERVICE = "gpu_upsampler_alsa"  # legacy/systemd service name (PC)
+# Known service names for systemd-managed deployments (Jetson uses gpu-upsampler)
+DAEMON_SERVICE_NAMES = ("gpu-upsampler", DAEMON_SERVICE)
 
 # ============================================================================
 # PipeWire / PulseAudio
