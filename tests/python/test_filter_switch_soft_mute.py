@@ -54,13 +54,13 @@ class TestPhaseTypeSwitchSoftMute:
             # Mock error response
             mock_send.return_value = (
                 False,
-                "ERR:Quad-phase mode not enabled (runtime switching unavailable)",
+                "ERR:Runtime switching unavailable",
             )
 
             success, message = daemon_client.set_phase_type("hybrid")
 
             assert success is False
-            assert "Quad-phase mode not enabled" in message
+            assert "Runtime switching unavailable" in message
 
 
 class TestCrossfeedSwitchSoftMute:

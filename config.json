@@ -8,12 +8,11 @@
   "headroomTarget": 0.92,
   "phaseType": "minimum",
   "filterPath": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
-  "quadPhaseEnabled": true,
   "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
   "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
   "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
   "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
-  "_comment": "Multi-rate filter paths: System automatically selects appropriate filter based on input rate and DAC capability. Available filters: 44k/48k \u00d7 2x/4x/8x/16x \u00d7 min_phase/hybrid.",
+  "_comment": "Filter paths: system preloads 44kHz/48kHz filters for both minimum and linear phase at startup.",
   "eqEnabled": true,
   "eqProfilePath": "data/EQ/Sample_EQ.txt",
   "partitionedConvolution": {

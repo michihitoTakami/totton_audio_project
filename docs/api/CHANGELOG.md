@@ -7,9 +7,9 @@ APIへの重要な変更はこのファイルに記録されます。
 ## [Unreleased]
 
 ### Added
-- **Phase Type Control**: 位相タイプのランタイム切り替え
+- **Phase Type Control**: 位相タイプのランタイム切り替え（フィルタは常時プリロード）
   - `GET /daemon/phase-type` - 現在の位相タイプ取得
-  - `PUT /daemon/phase-type` - 位相タイプ変更（quad-phaseモード必須）
+  - `PUT /daemon/phase-type` - 位相タイプ変更（即時反映）
 - **DAC**: DAC Capability検出API (#199)
   - `GET /dac/capabilities` - DAC対応サンプリングレート取得
   - `GET /dac/devices` - デバイス一覧とCapability

@@ -8,7 +8,6 @@
   "headroomTarget": 0.92,
   "phaseType": "minimum",
   "filterPath": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
-  "quadPhaseEnabled": false,
   "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
   "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_min_phase.bin",
   "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",

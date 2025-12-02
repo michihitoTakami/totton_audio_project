@@ -67,9 +67,6 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("phaseType"))
             outConfig.phaseType = parsePhaseType(j["phaseType"].get<std::string>());
 
-        // Quad-phase mode settings
-        if (j.contains("quadPhaseEnabled"))
-            outConfig.quadPhaseEnabled = j["quadPhaseEnabled"].get<bool>();
         if (j.contains("filterPath44kMin"))
             outConfig.filterPath44kMin = j["filterPath44kMin"].get<std::string>();
         if (j.contains("filterPath48kMin"))
@@ -344,6 +341,19 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             std::clamp(outConfig.headroomTarget, DaemonConstants::MIN_HEADROOM_TARGET,
                        DaemonConstants::MAX_HEADROOM_TARGET);
 
+        // Ensure per-family filters fall back to the generic path if not explicitly set
+        if (outConfig.filterPath44kMin.empty()) {
+            outConfig.filterPath44kMin = outConfig.filterPath;
+        }
+        if (outConfig.filterPath48kMin.empty()) {
+            outConfig.filterPath48kMin = outConfig.filterPath;
+        }
+        if (outConfig.filterPath44kLinear.empty()) {
+            outConfig.filterPath44kLinear = outConfig.filterPath;
+        }
+        if (outConfig.filterPath48kLinear.empty()) {
+            outConfig.filterPath48kLinear = outConfig.filterPath;
+        }
         if (verbose) {
             std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)
                       << std::endl;

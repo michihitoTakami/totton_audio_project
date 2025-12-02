@@ -169,7 +169,7 @@ class TestPhaseTypeSet:
                 success=False,
                 error=DaemonError(
                     error_code="IPC_DAEMON_NOT_RUNNING",
-                    message="Quad-phase mode not enabled",
+                    message="Runtime switching unavailable",
                 ),
             )
             mock_client.return_value = mock_instance
@@ -180,7 +180,7 @@ class TestPhaseTypeSet:
             )
 
             assert response.status_code == 503
-            assert "Quad-phase mode not enabled" in response.json()["detail"]
+            assert "Runtime switching unavailable" in response.json()["detail"]
 
 
 class TestDaemonClientPhaseType:
