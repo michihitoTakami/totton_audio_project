@@ -367,12 +367,26 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             );
         }
 
-        // Save overlap for next block (D2D)
-        Utils::checkCudaError(
-            cudaMemcpyAsync(d_overlap, d_streamPadded_ + validOutputPerBlock_,
-                           adjustedOverlapSize * sizeof(float), cudaMemcpyDeviceToDevice, stream),
-            "cudaMemcpy streaming overlap D2D save"
-        );
+        // Save overlap for next block using the actual upsampled input tail
+        if (adjustedOverlapSize > 0) {
+            if (validOutputPerBlock_ >= adjustedOverlapSize) {
+                int overlapStart = validOutputPerBlock_ - adjustedOverlapSize;
+                Utils::checkCudaError(
+                    cudaMemcpyAsync(d_overlap, d_streamUpsampled_ + overlapStart,
+                                    adjustedOverlapSize * sizeof(float),
+                                    cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy streaming overlap tail"
+                );
+            } else {
+                // Fallback: insufficient samples in this block, preserve previous overlap
+                Utils::checkCudaError(
+                    cudaMemcpyAsync(d_overlap, d_streamPadded_ + validOutputPerBlock_,
+                                    adjustedOverlapSize * sizeof(float),
+                                    cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy streaming overlap fallback"
+                );
+            }
+        }
 
         // Synchronize stream
         Utils::checkCudaError(

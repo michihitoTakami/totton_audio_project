@@ -899,15 +899,20 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
                         validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
         "copy output R");
 
-    // Update device overlap
-    checkCudaError(
-        cudaMemcpyAsync(d_overlapL_, d_paddedInputL_ + validOutputPerBlock_,
-                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
-        "update overlap L");
-    checkCudaError(
-        cudaMemcpyAsync(d_overlapR_, d_paddedInputR_ + validOutputPerBlock_,
-                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
-        "update overlap R");
+    // Update device overlap using the actual tail of this block
+    if (overlapSize_ > 0) {
+        size_t overlapSamples =
+            std::min(static_cast<size_t>(overlapSize_), static_cast<size_t>(streamValidInputPerBlock_));
+        size_t overlapStart = streamValidInputPerBlock_ - overlapSamples;
+        checkCudaError(
+            cudaMemcpyAsync(d_overlapL_, d_paddedInputL_ + overlapSize_ + overlapStart,
+                            overlapSamples * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+            "update overlap L");
+        checkCudaError(
+            cudaMemcpyAsync(d_overlapR_, d_paddedInputR_ + overlapSize_ + overlapStart,
+                            overlapSamples * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+            "update overlap R");
+    }
 
     // Ensure all device↔host transfers finished before reusing/altering host buffers
     checkCudaError(cudaStreamSynchronize(stream), "stream sync (crossfeed streaming)");
