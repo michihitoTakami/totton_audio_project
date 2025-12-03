@@ -369,7 +369,7 @@ function dashboardData() {
             try {
                 const newState = !this.lowLatency.enabled;
                 const response = await fetch('/partitioned-convolution', {
-                    method: 'POST',
+                    method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ enabled: newState }),
                 });
@@ -396,7 +396,7 @@ function dashboardData() {
             this.phaseType.loading = true;
             try {
                 const response = await fetch('/daemon/phase-type', {
-                    method: 'POST',
+                    method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phase_type: this.phaseType.selected }),
                 });
@@ -499,19 +499,15 @@ function dashboardData() {
             this.crossfeed.loading = true;
             try {
                 const newState = !this.crossfeed.enabled;
-                const response = await fetch('/crossfeed/toggle', {
+                const endpoint = newState ? '/crossfeed/enable' : '/crossfeed/disable';
+                const response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        enabled: newState,
-                        head_size: this.crossfeed.headSize,
-                    }),
                 });
 
                 if (!response.ok) throw new Error('Failed to toggle crossfeed');
 
                 const data = await response.json();
-                this.crossfeed.enabled = data.enabled;
+                this.crossfeed.enabled = newState;
                 this.showToast(data.message || 'クロスフィードを切り替えました', 'success');
                 await this.fetchStatus();
             } catch (error) {
@@ -527,19 +523,14 @@ function dashboardData() {
 
             this.crossfeed.loading = true;
             try {
-                const response = await fetch('/crossfeed/toggle', {
+                const response = await fetch(`/crossfeed/size/${size}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        enabled: true,
-                        head_size: size,
-                    }),
                 });
 
                 if (!response.ok) throw new Error('Failed to set head size');
 
                 const data = await response.json();
-                this.crossfeed.headSize = size;
+                this.crossfeed.headSize = data.headSize || size;
                 this.showToast(data.message || '頭のサイズを変更しました', 'success');
             } catch (error) {
                 console.error('Failed to set head size:', error);
