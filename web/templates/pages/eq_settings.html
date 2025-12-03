@@ -1,0 +1,701 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t.get('nav.eq') }} - {{ t.get('app.title') }}{% endblock %}
+
+{% block content %}
+<div x-data="eqSettingsData()" x-init="init()">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1 class="page-title">{{ t.get('nav.eq') }}</h1>
+        <p class="page-subtitle">{{ t.get('eq.subtitle') }}</p>
+    </div>
+
+    <!-- Current Active EQ Profile -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('eq.active.title') }}</h2>
+        <div class="card">
+            <template x-if="activeEq.active && activeEq.name">
+                <div>
+                    <div class="active-profile-name" x-text="activeEq.name"></div>
+                    <div class="active-profile-meta">
+                        <span x-show="activeEq.source_type === 'opra'">
+                            <strong>{{ t.get('eq.active.source') }}:</strong> OPRA
+                        </span>
+                        <span x-show="activeEq.has_modern_target">
+                            <span class="badge badge-success">{{ t.get('eq.active.modern_target') }}</span>
+                        </span>
+                    </div>
+
+                    <!-- EQ Filters Display -->
+                    <div x-show="activeEq.filters && activeEq.filters.length > 0" style="margin-top: 16px;">
+                        <h3 class="eq-filters-title">{{ t.get('eq.active.filters_title') }}</h3>
+                        <div class="eq-filters-list">
+                            <template x-for="filter in activeEq.filters" :key="filter">
+                                <div class="eq-filter-item" x-text="filter"></div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 16px;">
+                        <button
+                            class="action-button btn-secondary"
+                            @click="deactivateEQ"
+                            :disabled="actionInProgress"
+                        >
+                            <span class="action-icon">✗</span>
+                            <span class="action-label">{{ t.get('eq.active.deactivate') }}</span>
+                        </button>
+                    </div>
+                </div>
+            </template>
+            <template x-if="!activeEq.active || !activeEq.name">
+                <div class="info-text">
+                    <span class="icon">ℹ️</span>{{ t.get('eq.active.none') }}
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- OPRA Headphone Search -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('eq.opra.title') }}</h2>
+        <div class="card">
+            <div class="form-group">
+                <label for="opraSearch">{{ t.get('eq.opra.search_label') }}</label>
+                <input
+                    type="text"
+                    id="opraSearch"
+                    class="search-input"
+                    placeholder="{{ t.get('eq.opra.search_placeholder') }}"
+                    x-model="opra.searchQuery"
+                    @input="searchOPRA"
+                >
+            </div>
+
+            <!-- Search Results -->
+            <div class="opra-results" x-show="opra.results.length > 0" style="max-height: 300px; overflow-y: auto; margin-top: 12px;">
+                <template x-for="result in opra.results" :key="result.name">
+                    <div class="opra-result-item" @click="selectHeadphone(result)">
+                        <div class="opra-result-name" x-text="result.name"></div>
+                        <div class="opra-result-vendor" x-text="result.vendor"></div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Selected Headphone -->
+            <div class="opra-selected" x-show="opra.selected" style="margin-top: 16px;">
+                <div class="opra-selected-name" x-text="opra.selected?.name"></div>
+                <div class="opra-selected-vendor" x-text="opra.selected?.vendor"></div>
+
+                <div class="form-group" style="margin-top: 12px;" x-show="opra.eqOptions.length > 0">
+                    <label for="opraEqSelect">{{ t.get('eq.opra.variant') }}</label>
+                    <select id="opraEqSelect" x-model="opra.selectedEq">
+                        <template x-for="eq in opra.eqOptions" :key="eq">
+                            <option :value="eq" x-text="eq"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <label class="checkbox-label" style="margin-top: 12px;">
+                    <input type="checkbox" x-model="opra.useModernTarget">
+                    <span>{{ t.get('eq.opra.modern_target') }}</span>
+                </label>
+                <div class="info-text" style="margin-left: 24px;">
+                    {{ t.get('eq.opra.modern_target_desc') }}
+                </div>
+
+                <button
+                    class="action-button btn-primary"
+                    @click="applyOPRA"
+                    :disabled="!opra.selected || actionInProgress"
+                    style="margin-top: 12px;"
+                >
+                    <span class="action-icon">✓</span>
+                    <span class="action-label">{{ t.get('eq.opra.apply') }}</span>
+                </button>
+            </div>
+
+            <div class="license-note" style="margin-top: 16px;">
+                {{ t.get('eq.opra.license') }} <a href="https://github.com/opra-project/OPRA" target="_blank" class="license-link">{{ t.get('eq.opra.license_link') }}</a> (CC BY-SA 4.0)
+            </div>
+        </div>
+    </div>
+
+    <!-- Import EQ from Text -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('eq.import.title') }}</h2>
+        <div class="card">
+            <div class="form-group">
+                <label for="eqName">{{ t.get('eq.import.name_label') }}</label>
+                <input
+                    type="text"
+                    id="eqName"
+                    class="search-input"
+                    placeholder="{{ t.get('eq.import.name_placeholder') }}"
+                    x-model="textImport.name"
+                >
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+                <label for="eqText">{{ t.get('eq.import.content_label') }}</label>
+                <textarea
+                    id="eqText"
+                    class="text-area"
+                    rows="10"
+                    placeholder="{{ t.get('eq.import.content_placeholder') }}"
+                    x-model="textImport.content"
+                ></textarea>
+            </div>
+
+            <div style="text-align: center; margin-top: 16px;">
+                <button
+                    class="action-button btn-primary"
+                    @click="importFromText"
+                    :disabled="!textImport.name || !textImport.content || actionInProgress"
+                >
+                    <span class="action-icon">📥</span>
+                    <span class="action-label">{{ t.get('eq.import.import_button') }}</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Saved EQ Profiles -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('eq.profiles.title') }}</h2>
+        <div class="card">
+            <template x-if="profiles.list.length > 0">
+                <div class="profiles-list">
+                    <template x-for="profile in profiles.list" :key="profile.filename">
+                        <div class="profile-item" :class="{ 'profile-active': activeEq.name === profile.name }">
+                            <div class="profile-info">
+                                <div class="profile-name">
+                                    <span x-text="profile.name"></span>
+                                    <span x-show="activeEq.name === profile.name" class="badge badge-active" style="margin-left: 8px;">{{ t.get('eq.profiles.active') }}</span>
+                                </div>
+                                <div class="profile-meta">
+                                    <span class="profile-type" x-text="profile.type"></span>
+                                    <span class="profile-filters" x-text="profile.filter_count + ' filters'"></span>
+                                    <span class="profile-size" x-text="formatFileSize(profile.size)"></span>
+                                </div>
+                            </div>
+                            <div class="profile-actions">
+                                <button
+                                    class="btn-icon btn-primary"
+                                    @click="activateProfile(profile.name)"
+                                    :disabled="actionInProgress || activeEq.name === profile.name"
+                                    title="{{ t.get('eq.profiles.activate') }}"
+                                >
+                                    ✓
+                                </button>
+                                <button
+                                    class="btn-icon btn-danger"
+                                    @click="deleteProfile(profile.name)"
+                                    :disabled="actionInProgress"
+                                    title="{{ t.get('eq.profiles.delete') }}"
+                                >
+                                    ✗
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+            <template x-if="profiles.list.length === 0">
+                <div class="info-text">
+                    <span class="icon">ℹ️</span>{{ t.get('eq.profiles.empty') }}
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function eqSettingsData() {
+    return {
+        activeEq: {
+            active: false,
+            name: null,
+            source_type: null,
+            has_modern_target: false,
+            filters: [],
+        },
+        opra: {
+            searchQuery: '',
+            results: [],
+            selected: null,
+            eqOptions: [],
+            selectedEq: '',
+            useModernTarget: true,
+            searching: false,
+        },
+        profiles: {
+            list: [],
+            loading: false,
+        },
+        textImport: {
+            name: '',
+            content: '',
+        },
+        actionInProgress: false,
+
+        init() {
+            this.fetchActiveEq();
+            this.fetchProfiles();
+        },
+
+        async fetchActiveEq() {
+            try {
+                const response = await fetch('/eq/active');
+                if (!response.ok) throw new Error('Failed to fetch active EQ');
+                const data = await response.json();
+
+                // Parse filters from original_filters or opra_filters
+                let filters = [];
+                if (data.original_filters && data.original_filters.length > 0) {
+                    filters = data.original_filters;
+                } else if (data.opra_filters && data.opra_filters.length > 0) {
+                    filters = data.opra_filters;
+                }
+
+                this.activeEq = {
+                    active: data.active || false,
+                    name: data.name || null,
+                    source_type: data.source_type || null,
+                    has_modern_target: data.has_modern_target || false,
+                    filters: filters,
+                };
+            } catch (error) {
+                console.error('Failed to fetch active EQ:', error);
+            }
+        },
+
+        async fetchProfiles() {
+            this.profiles.loading = true;
+            try {
+                const response = await fetch('/eq/profiles');
+                if (!response.ok) throw new Error('Failed to fetch profiles');
+                const data = await response.json();
+                this.profiles.list = data.profiles || [];
+            } catch (error) {
+                console.error('Failed to fetch profiles:', error);
+                this.profiles.list = [];
+            } finally {
+                this.profiles.loading = false;
+            }
+        },
+
+        async searchOPRA() {
+            if (!this.opra.searchQuery || this.opra.searchQuery.length < 2) {
+                this.opra.results = [];
+                return;
+            }
+
+            this.opra.searching = true;
+            try {
+                const response = await fetch(`/opra/search?q=${encodeURIComponent(this.opra.searchQuery)}`);
+                if (!response.ok) throw new Error('Search failed');
+                const data = await response.json();
+                this.opra.results = data.results || [];
+            } catch (error) {
+                console.error('Failed to search OPRA:', error);
+                this.opra.results = [];
+            } finally {
+                this.opra.searching = false;
+            }
+        },
+
+        selectHeadphone(result) {
+            this.opra.selected = result;
+            this.opra.results = [];
+            this.opra.searchQuery = result.name;
+            this.opra.eqOptions = result.eq_variants || [];
+            this.opra.selectedEq = this.opra.eqOptions[0] || '';
+        },
+
+        async applyOPRA() {
+            if (!this.opra.selected || this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const eqId = this.opra.selectedEq || this.opra.selected.eq_variants?.[0];
+                if (!eqId) {
+                    throw new Error('No EQ variant selected');
+                }
+
+                const endpoint = `/opra/apply/${encodeURIComponent(eqId)}?apply_correction=${this.opra.useModernTarget}`;
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Failed to apply EQ');
+
+                const data = await response.json();
+                this.showToast(data.message || 'EQを適用しました', 'success');
+                await this.fetchActiveEq();
+                await this.fetchProfiles();
+            } catch (error) {
+                console.error('Failed to apply EQ:', error);
+                this.showToast('EQの適用に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async activateProfile(name) {
+            if (this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch(`/eq/activate/${encodeURIComponent(name)}`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Failed to activate profile');
+
+                const data = await response.json();
+                this.showToast(data.message || 'プロファイルを有効化しました', 'success');
+                await this.fetchActiveEq();
+            } catch (error) {
+                console.error('Failed to activate profile:', error);
+                this.showToast('プロファイルの有効化に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async deactivateEQ() {
+            if (this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/eq/deactivate', {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Failed to deactivate EQ');
+
+                const data = await response.json();
+                this.showToast(data.message || 'EQを無効化しました', 'success');
+                await this.fetchActiveEq();
+            } catch (error) {
+                console.error('Failed to deactivate EQ:', error);
+                this.showToast('EQの無効化に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async deleteProfile(name) {
+            if (this.actionInProgress) return;
+            if (!confirm(`プロファイル「${name}」を削除しますか?`)) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch(`/eq/profiles/${encodeURIComponent(name)}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) throw new Error('Failed to delete profile');
+
+                const data = await response.json();
+                this.showToast(data.message || 'プロファイルを削除しました', 'success');
+                await this.fetchProfiles();
+                await this.fetchActiveEq();
+            } catch (error) {
+                console.error('Failed to delete profile:', error);
+                this.showToast('プロファイルの削除に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async importFromText() {
+            if (!this.textImport.name || !this.textImport.content || this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/eq/import-text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: this.textImport.name,
+                        content: this.textImport.content,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to import EQ');
+                }
+
+                const data = await response.json();
+                this.showToast(data.message || 'EQをインポートしました', 'success');
+
+                // Clear form
+                this.textImport.name = '';
+                this.textImport.content = '';
+
+                await this.fetchProfiles();
+            } catch (error) {
+                console.error('Failed to import EQ:', error);
+                this.showToast(error.message || 'EQのインポートに失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 12px 20px;
+                background: ${type === 'success' ? '#00ff88' : type === 'error' ? '#ff4444' : '#00d4ff'};
+                color: #0a0e12;
+                border-radius: 8px;
+                font-weight: 600;
+                z-index: 9999;
+                animation: slideIn 0.3s ease;
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        },
+    };
+}
+</script>
+
+<style>
+.active-profile-name {
+    font-size: 20px;
+    font-weight: 600;
+    color: #00ff88;
+    margin-bottom: 12px;
+}
+
+.active-profile-meta {
+    font-size: 14px;
+    color: #8a9aa9;
+}
+
+.active-profile-meta span {
+    margin-right: 12px;
+}
+
+.eq-filters-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #00d4ff;
+    margin-bottom: 8px;
+}
+
+.eq-filters-list {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(0, 255, 170, 0.4);
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 13px;
+    font-family: monospace;
+    color: #8a9aa9;
+    line-height: 1.6;
+    text-align: left;
+}
+
+.eq-filter-item {
+    /* Override global styles - remove all borders and backgrounds */
+    display: block;
+    border: none !important;
+    background: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    gap: 0 !important;
+    margin: 0;
+}
+
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge-success {
+    background: #00ff88;
+    color: #0a0e12;
+}
+
+.badge-active {
+    background: #00d4ff;
+    color: #0a0e12;
+}
+
+.text-area {
+    width: 100%;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #e8eef3;
+    font-family: monospace;
+    font-size: 14px;
+    resize: vertical;
+}
+
+.text-area:focus {
+    outline: none;
+    border-color: #00d4ff;
+}
+
+.profiles-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.profile-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.profile-item.profile-active {
+    background: rgba(0, 212, 255, 0.1);
+    border-color: #00d4ff;
+}
+
+.profile-info {
+    flex: 1;
+}
+
+.profile-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #e8eef3;
+    margin-bottom: 4px;
+}
+
+.profile-meta {
+    font-size: 12px;
+    color: #8a9aa9;
+}
+
+.profile-meta span {
+    margin-right: 12px;
+}
+
+.profile-type {
+    text-transform: uppercase;
+    font-weight: 600;
+    color: #00d4ff;
+}
+
+.profile-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-icon.btn-primary {
+    background: #00ff88;
+    color: #0a0e12;
+}
+
+.btn-icon.btn-primary:hover {
+    background: #00cc6a;
+}
+
+.btn-icon.btn-danger {
+    background: rgba(255, 68, 68, 0.2);
+    color: #ff4444;
+}
+
+.btn-icon.btn-danger:hover {
+    background: rgba(255, 68, 68, 0.4);
+}
+
+.btn-icon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.opra-results {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.opra-result-item {
+    padding: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.opra-result-item:last-child {
+    border-bottom: none;
+}
+
+.opra-result-item:hover {
+    background: rgba(0, 212, 255, 0.1);
+}
+
+.opra-result-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e8eef3;
+    margin-bottom: 4px;
+}
+
+.opra-result-vendor {
+    font-size: 12px;
+    color: #8a9aa9;
+}
+
+.opra-selected {
+    padding: 12px;
+    background: rgba(0, 212, 255, 0.1);
+    border-radius: 8px;
+    border-left: 4px solid #00d4ff;
+}
+
+.opra-selected-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #00d4ff;
+    margin-bottom: 4px;
+}
+
+.opra-selected-vendor {
+    font-size: 14px;
+    color: #8a9aa9;
+}
+</style>
+{% endblock %}

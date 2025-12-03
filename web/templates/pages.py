@@ -49,12 +49,10 @@ def render_eq_settings(lang: str = "en", current_page: str = "eq") -> str:
     Returns:
         Rendered HTML string
     """
-    # TODO: Implement in Issue #411
-    template = env.get_template("base.html")
+    template = env.get_template("pages/eq_settings.html")
     return template.render(
         t=get_translations(lang),
         current_page=current_page,
-        content="<h2>EQ Settings - Coming Soon</h2>",
     )
 
 
