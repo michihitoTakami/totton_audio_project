@@ -383,6 +383,35 @@ def main():
         or metadata.get("n_taps_specified")
     )
 
+    hybrid_stats = (
+        metadata.get("validation_results", {}).get("hybrid_gain_alignment")
+        if metadata
+        else None
+    )
+    if hybrid_stats:
+        print("Hybrid gain alignment (metadata):")
+        print(
+            f"  ref {hybrid_stats['passband_reference']:.6f}, "
+            f"hybrid {hybrid_stats['passband_hybrid']:.6f}, "
+            f"scale x{hybrid_stats['normalization_gain']:.4f}"
+        )
+        print(
+            "  crossover "
+            f"{hybrid_stats['crossover_hz']:.1f} Hz, transition {hybrid_stats['transition_hz']:.1f} Hz, "
+            f"delay {hybrid_stats['hybrid_delay_ms']:.3f} ms"
+        )
+        print(
+            f"  max group delay error {hybrid_stats['group_delay_error_ms']:.3f} ms"
+        )
+        if "allpass_sections" in hybrid_stats:
+            print(
+                "  all-pass solver: "
+                f"sections={hybrid_stats['allpass_sections']}, "
+                f"status={hybrid_stats.get('allpass_solver_status', 'n/a')}, "
+                f"rmse={hybrid_stats.get('allpass_rmse_ms', 0.0):.3f} ms"
+            )
+        print()
+
     plan, fast_seconds, settling_seconds = _compute_partition_windows(
         args, tap_count, sr_out
     )

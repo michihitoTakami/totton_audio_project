@@ -148,8 +148,8 @@ async def get_phase_type():
     Get current phase type from daemon.
 
     Returns the current filter phase type (minimum or hybrid).
-    Hybrid combines minimum phase below 150 Hz with linear phase above 150 Hz
-    (~6.7 ms alignment, 1 period of crossover frequency) to retain imaging while keeping bass tight.
+    Hybrid now keeps the minimum-phase crossover amplitude and adds group-delay shaping
+    (≈6.7 ms alignment above 150 Hz) via an all-pass stage so volume stays matched regardless of phase type.
     """
     with get_daemon_client() as client:
         response = client.send_command_v2("PHASE_TYPE_GET")
@@ -210,7 +210,7 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
     All filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.
 
     - minimum: Minimum phase filter (recommended, no pre-ringing)
-    - hybrid: Minimum phase below 150 Hz / linear phase above 150 Hz (~6.7 ms alignment, 1 period of crossover frequency)
+    - hybrid: Minimum phase crossover + group-delay-shaped upper band (~6.7 ms alignment above 150 Hz, gain-matched)
     """
     # Validation is handled by Pydantic Literal type (returns 422 for invalid values)
     with get_daemon_client() as client:

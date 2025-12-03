@@ -273,7 +273,7 @@
           "daemon"
         ],
         "summary": "Get Phase Type",
-        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid combines minimum phase below 150 Hz with linear phase above 150 Hz\n(~6.7 ms alignment, 1 period of crossover frequency) to retain imaging while keeping bass tight.",
+        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid keeps the minimum-phase crossover magnitude and adds a group-delay-shaped all-pass (~6.7 ms alignment above 150 Hz) so imaging stays intact while loudness is matched.",
         "operationId": "get_phase_type_daemon_phase_type_get",
         "responses": {
           "200": {
@@ -293,7 +293,7 @@
           "daemon"
         ],
         "summary": "Set Phase Type",
-        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 150 Hz / linear phase above 150 Hz (~6.7 ms alignment, 1 period of crossover frequency)",
+        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase crossover + group-delay-shaped upper band (~6.7 ms alignment above 150 Hz, gain-matched)",
         "operationId": "set_phase_type_daemon_phase_type_put",
         "requestBody": {
           "content": {

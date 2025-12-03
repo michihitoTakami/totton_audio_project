@@ -40,7 +40,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy import signal
+from scipy import optimize, signal
 
 # GPU高速化（CuPy）のオプショナルサポート
 try:
@@ -87,7 +87,11 @@ HYBRID_DEFAULT_CROSSOVER_HZ = 150.0
 HYBRID_DEFAULT_TRANSITION_HZ = 40.0
 HYBRID_DEFAULT_DELAY_MS = 10.0
 HYBRID_DEFAULT_FAST_WINDOW = 32_768
+HYBRID_DEFAULT_ALLPASS_SECTIONS = 12
 HYBRID_FAST_WINDOW_TARGET = 0.99
+HYBRID_ALLPASS_MIN_RADIUS = 0.05
+HYBRID_ALLPASS_MAX_RADIUS = 0.999
+HYBRID_ALLPASS_SOLVER_MAX_EVAL = 6000
 
 
 @dataclass
@@ -107,6 +111,7 @@ class FilterConfig:
     hybrid_transition_hz: float = HYBRID_DEFAULT_TRANSITION_HZ
     hybrid_delay_ms: float = HYBRID_DEFAULT_DELAY_MS
     hybrid_fast_window_samples: int = HYBRID_DEFAULT_FAST_WINDOW
+    hybrid_allpass_sections: int = HYBRID_DEFAULT_ALLPASS_SECTIONS
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
     # 全レートで音量統一のため target_dc_gain × dc_gain_factor に設定
     target_dc_gain: float | None = None
@@ -180,6 +185,10 @@ class FilterConfig:
                 raise ValueError(
                     "hybrid_fast_window_samples は正の整数である必要があります"
                 )
+            if self.hybrid_allpass_sections < 0:
+                raise ValueError(
+                    "hybrid_allpass_sections は0以上の整数である必要があります"
+                )
             if self.hybrid_delay_samples >= self.n_taps:
                 raise ValueError(
                     f"hybrid_delay_ms に対応するサンプル数 ({self.hybrid_delay_samples}) がタップ数 ({self.n_taps}) 以上です"
@@ -237,12 +246,20 @@ class FilterConfig:
         return f"filter_{self.family}_{self.upsample_ratio}x_{self.taps_label}_{self.phase_label}"
 
 
+@dataclass
+class AllpassFitResult:
+    sections: int
+    status: str
+    iterations: int
+    rmse_seconds: float
+
+
 class FilterDesigner:
     """フィルタ設計を担当するクラス"""
 
     def __init__(self, config: FilterConfig) -> None:
         self.config = config
-        self.hybrid_gain_alignment: dict[str, float] | None = None
+        self.hybrid_gain_alignment: dict[str, float | int | str] | None = None
 
     def design_linear_phase(self) -> np.ndarray:
         """ベースとなる線形位相FIRフィルタを設計する"""
@@ -327,7 +344,127 @@ class FilterDesigner:
 
         H_min = np.fft.rfft(h_min_phase, n=n_fft)
         H_linear = np.fft.rfft(h_linear, n=n_fft)
+        phase_min = np.unwrap(np.angle(H_min))
+        omega = 2 * np.pi * freqs
 
+        tau_min = self._compute_group_delay(phase_min, omega)
+        tau_target = self._target_group_delay(freqs, tau_min)
+        delta_tau = tau_target - tau_min
+
+        passband_mask = freqs <= self.config.passband_end
+        if not np.any(passband_mask):
+            passband_mask = np.ones_like(freqs, dtype=bool)
+
+        requires_blend = self.config.n_taps <= (
+            2 * self.config.hybrid_delay_samples + 64
+        )
+        if requires_blend:
+            return self._design_hybrid_phase_blend(
+                h_linear,
+                h_min_phase,
+                freqs,
+                omega,
+                H_min,
+                H_linear,
+                tau_target,
+                passband_mask,
+                n_fft,
+            )
+
+        high_weight = 1.0 - self._hybrid_lowpass_weight(freqs)
+        weight = np.zeros_like(delta_tau, dtype=np.float64)
+        weight[passband_mask] = np.clip(high_weight[passband_mask], 0.05, 1.0)
+
+        H_allpass, allpass_info = self._design_allpass_response(
+            omega, delta_tau, weight
+        )
+        H_hybrid = H_min * H_allpass
+
+        h_time = np.fft.irfft(H_hybrid, n=n_fft).real
+        h_time = h_time[: self.config.n_taps]
+
+        passband_ref = float(np.mean(np.abs(H_min)[passband_mask]))
+        H_hybrid_truncated = np.fft.rfft(h_time, n=n_fft)
+        passband_hybrid = float(np.mean(np.abs(H_hybrid_truncated)[passband_mask]))
+        normalization_gain = 1.0
+        if passband_hybrid > 1e-12:
+            normalization_gain = passband_ref / passband_hybrid
+            h_time *= normalization_gain
+            H_hybrid_truncated *= normalization_gain
+            passband_hybrid = float(
+                np.mean(np.abs(H_hybrid_truncated)[passband_mask])
+            )
+
+        tau_final = self._compute_group_delay(
+            np.unwrap(np.angle(H_hybrid_truncated)), omega
+        )
+        group_delay_error = tau_final[passband_mask] - tau_target[passband_mask]
+        max_group_delay_error = (
+            float(np.max(np.abs(group_delay_error)) * 1000.0)
+            if np.any(passband_mask)
+            else 0.0
+        )
+
+        self.hybrid_gain_alignment = {
+            "passband_reference": passband_ref,
+            "passband_hybrid": passband_hybrid,
+            "normalization_gain": normalization_gain,
+            "crossover_hz": float(self.config.hybrid_crossover_hz),
+            "transition_hz": float(self.config.hybrid_transition_hz),
+            "hybrid_delay_ms": float(self.config.hybrid_delay_ms),
+            "group_delay_error_ms": max_group_delay_error,
+            "allpass_sections": allpass_info.sections,
+            "allpass_solver_status": allpass_info.status,
+            "allpass_solver_iterations": allpass_info.iterations,
+            "allpass_rmse_ms": allpass_info.rmse_seconds * 1000.0,
+        }
+
+        print(
+            "  群遅延整形: "
+            f"sections={allpass_info.sections} "
+            f"status={allpass_info.status} "
+            f"rmse={allpass_info.rmse_seconds * 1000.0:.3f} ms"
+        )
+        print(
+            "  ハイブリッドゲイン整合: "
+            f"ref {passband_ref:.6f}, hybrid {passband_hybrid:.6f}, "
+            f"scale x{normalization_gain:.4f}"
+        )
+        print(
+            f"  ハイブリッド: クロスオーバー {self.config.hybrid_crossover_hz} Hz, "
+            f"遅延 {self.config.hybrid_delay_ms} ms, "
+            f"群遅延誤差 max {max_group_delay_error:.3f} ms"
+        )
+        return h_time
+
+    def _hybrid_lowpass_weight(self, freqs: np.ndarray) -> np.ndarray:
+        """クロスオーバー周波数で滑らかに接続するための重みを計算"""
+        crossover = self.config.hybrid_crossover_hz
+        width = self.config.hybrid_transition_hz
+        start = max(0.0, crossover - width / 2.0)
+        end = crossover + width / 2.0
+
+        weights = np.ones_like(freqs)
+        weights[freqs >= end] = 0.0
+        transition_mask = (freqs > start) & (freqs < end)
+        if np.any(transition_mask):
+            phase = (freqs[transition_mask] - start) / max(end - start, 1e-9)
+            weights[transition_mask] = 0.5 * (1 + np.cos(np.pi * phase))
+        return weights
+
+    def _design_hybrid_phase_blend(
+        self,
+        h_linear: np.ndarray,
+        h_min_phase: np.ndarray,
+        freqs: np.ndarray,
+        omega: np.ndarray,
+        H_min: np.ndarray,
+        H_linear: np.ndarray,
+        tau_target: np.ndarray,
+        passband_mask: np.ndarray,
+        n_fft: int,
+    ) -> np.ndarray:
+        """クロスフェード方式のハイブリッド設計（低タップ数フォールバック）"""
         mag_min = np.maximum(np.abs(H_min), 1e-12)
         mag_linear = np.maximum(np.abs(H_linear), 1e-12)
 
@@ -343,10 +480,6 @@ class FilterDesigner:
         high_band_mask = freqs >= end
         if not np.any(high_band_mask):
             high_band_mask = freqs >= crossover
-
-        passband_mask = freqs <= self.config.passband_end
-        if not np.any(passband_mask):
-            passband_mask = np.ones_like(freqs, dtype=bool)
 
         def _band_avg(values: np.ndarray, mask: np.ndarray) -> float:
             if np.any(mask):
@@ -377,13 +510,45 @@ class FilterDesigner:
 
         magnitude = low_weight * mag_low + high_weight * mag_high
         phase_min = np.unwrap(np.angle(H_min))
-        phase_linear = -2 * np.pi * freqs * self.config.hybrid_delay_seconds
-
+        phase_linear = -omega * self.config.hybrid_delay_seconds
         phase_hybrid = low_weight * phase_min + high_weight * phase_linear
+
         H_hybrid = magnitude * np.exp(1j * phase_hybrid)
+        h_time = np.fft.irfft(H_hybrid, n=n_fft).real
+        h_time = h_time[: self.config.n_taps]
+
+        H_min_truncated = np.fft.rfft(h_min_phase, n=n_fft)
+        passband_ref = float(np.mean(np.abs(H_min_truncated)[passband_mask]))
+
+        H_hybrid_truncated = np.fft.rfft(h_time, n=n_fft)
+        passband_hybrid = float(np.mean(np.abs(H_hybrid_truncated)[passband_mask]))
+        normalization_gain = 1.0
+        if passband_hybrid > 1e-12:
+            normalization_gain = passband_ref / passband_hybrid
+            h_time *= normalization_gain
+            H_hybrid_truncated *= normalization_gain
+            passband_hybrid = float(
+                np.mean(np.abs(H_hybrid_truncated)[passband_mask])
+            )
+
+        tau_final = self._compute_group_delay(
+            np.unwrap(np.angle(H_hybrid_truncated)), omega
+        )
+        group_delay_error = tau_final[passband_mask] - tau_target[passband_mask]
+        max_group_delay_error = (
+            float(np.max(np.abs(group_delay_error)) * 1000.0)
+            if np.any(passband_mask)
+            else 0.0
+        )
 
         self.hybrid_gain_alignment = {
             "passband_reference": passband_ref,
+            "passband_hybrid": passband_hybrid,
+            "normalization_gain": normalization_gain,
+            "crossover_hz": float(self.config.hybrid_crossover_hz),
+            "transition_hz": float(self.config.hybrid_transition_hz),
+            "hybrid_delay_ms": float(self.config.hybrid_delay_ms),
+            "group_delay_error_ms": max_group_delay_error,
             "low_gain": low_gain,
             "high_gain": high_gain,
             "low_band_avg_min": low_min_avg,
@@ -391,37 +556,155 @@ class FilterDesigner:
             "high_band_avg_linear": high_lin_avg,
             "transition_start_hz": float(start),
             "transition_end_hz": float(end),
-            "crossover_hz": float(crossover),
+            "allpass_sections": 0,
+            "allpass_solver_status": "blend_fallback",
+            "allpass_solver_iterations": 0,
+            "allpass_rmse_ms": 0.0,
         }
 
         print(
-            "  ハイブリッドゲイン整合: "
-            f"low x{low_gain:.3f} (min {low_min_avg:.6f} -> ref {passband_ref:.6f}), "
-            f"high x{high_gain:.3f} (lin {high_lin_avg:.6f} -> ref {passband_ref:.6f})"
+            "  ハイブリッドゲイン整合(ブレンド): "
+            f"low x{low_gain:.3f} (min {low_min_avg:.6f}), "
+            f"high x{high_gain:.3f} (lin {high_lin_avg:.6f}) -> ref {passband_ref:.6f}"
+        )
+        print(
+            f"  ハイブリッド（ブレンド）: クロスオーバー {self.config.hybrid_crossover_hz} Hz, "
+            f"遅延 {self.config.hybrid_delay_ms} ms, 群遅延誤差 max {max_group_delay_error:.3f} ms"
         )
 
-        h_time = np.fft.irfft(H_hybrid, n=n_fft).real
-        h_time = h_time[: self.config.n_taps]
-        print(
-            f"  ハイブリッド: クロスオーバー {self.config.hybrid_crossover_hz} Hz, "
-            f"遅延 {self.config.hybrid_delay_ms} ms"
-        )
         return h_time
 
-    def _hybrid_lowpass_weight(self, freqs: np.ndarray) -> np.ndarray:
-        """クロスオーバー周波数で滑らかに接続するための重みを計算"""
-        crossover = self.config.hybrid_crossover_hz
-        width = self.config.hybrid_transition_hz
-        start = max(0.0, crossover - width / 2.0)
-        end = crossover + width / 2.0
+    def _design_allpass_response(
+        self, omega: np.ndarray, delta_tau: np.ndarray, weight: np.ndarray
+    ) -> tuple[np.ndarray, AllpassFitResult]:
+        """群遅延差分を近似するオールパス応答を設計"""
+        sections = self.config.hybrid_allpass_sections
+        info = AllpassFitResult(
+            sections=int(sections),
+            status="disabled" if sections <= 0 else "not_started",
+            iterations=0,
+            rmse_seconds=0.0,
+        )
+        if sections <= 0 or np.allclose(delta_tau, 0.0):
+            return np.ones_like(omega, dtype=np.complex128), info
 
-        weights = np.ones_like(freqs)
-        weights[freqs >= end] = 0.0
-        transition_mask = (freqs > start) & (freqs < end)
-        if np.any(transition_mask):
-            phase = (freqs[transition_mask] - start) / max(end - start, 1e-9)
-            weights[transition_mask] = 0.5 * (1 + np.cos(np.pi * phase))
-        return weights
+        theta_min = max(
+            2
+            * np.pi
+            * max(self.config.hybrid_crossover_hz * 0.4, 1.0)
+            / self.config.output_rate,
+            1e-4,
+        )
+        theta_max = np.pi * 0.995
+
+        base_freqs = np.linspace(
+            max(self.config.hybrid_crossover_hz, 1.0),
+            self.config.passband_end,
+            sections + 2,
+        )[1:-1]
+        base_thetas = np.clip(
+            2 * np.pi * base_freqs / self.config.output_rate, theta_min, theta_max
+        )
+
+        def inv_logistic(value: float, lo: float, hi: float) -> float:
+            value = np.clip(value, lo + 1e-4, hi - 1e-4)
+            ratio = (value - lo) / (hi - lo)
+            return float(np.log(ratio / (1 - ratio)))
+
+        x0_list: list[float] = []
+        for theta0 in base_thetas:
+            x0_list.append(
+                inv_logistic(
+                    0.85, HYBRID_ALLPASS_MIN_RADIUS, HYBRID_ALLPASS_MAX_RADIUS
+                )
+            )
+            x0_list.append(inv_logistic(theta0, theta_min, theta_max))
+        x0 = np.array(x0_list, dtype=np.float64)
+
+        def unpack(params: np.ndarray) -> list[tuple[float, float]]:
+            packed = []
+            for idx in range(0, len(params), 2):
+                r = self._logistic(
+                    params[idx], HYBRID_ALLPASS_MIN_RADIUS, HYBRID_ALLPASS_MAX_RADIUS
+                )
+                theta = self._logistic(params[idx + 1], theta_min, theta_max)
+                packed.append((float(r), float(theta)))
+            return packed
+
+        weight_safe = np.maximum(weight, 0.0)
+
+        def residual(params: np.ndarray) -> np.ndarray:
+            sections_local = unpack(params)
+            tau_ap = self._allpass_group_delay_from_sections(sections_local, omega)
+            return np.sqrt(weight_safe) * (tau_ap - delta_tau)
+
+        result = optimize.least_squares(
+            residual,
+            x0,
+            max_nfev=HYBRID_ALLPASS_SOLVER_MAX_EVAL,
+            ftol=1e-12,
+            xtol=1e-12,
+            gtol=1e-12,
+        )
+        info.status = "success" if result.success else "failure"
+        info.iterations = int(result.nfev)
+
+        sections_opt = unpack(result.x)
+        H_allpass = self._allpass_response_from_sections(sections_opt, omega)
+        tau_ap = self._allpass_group_delay_from_sections(sections_opt, omega)
+        rmse_seconds = float(
+            np.sqrt(np.mean(((tau_ap - delta_tau) * np.sqrt(weight_safe)) ** 2))
+        )
+        info.rmse_seconds = rmse_seconds
+        return H_allpass, info
+
+    @staticmethod
+    def _logistic(x: float | np.ndarray, lo: float, hi: float) -> np.ndarray:
+        return lo + (hi - lo) / (1.0 + np.exp(-x))
+
+    def _allpass_response_from_sections(
+        self, sections: list[tuple[float, float]], omega: np.ndarray
+    ) -> np.ndarray:
+        if not sections:
+            return np.ones_like(omega, dtype=np.complex128)
+        z = np.exp(-1j * omega)
+        response = np.ones_like(z, dtype=np.complex128)
+        for r, theta in sections:
+            cos_theta = np.cos(theta)
+            num = (r**2) - 2 * r * cos_theta * z + z**2
+            den = 1 - 2 * r * cos_theta * z + (r**2) * z**2
+            response *= num / den
+        return response
+
+    def _allpass_group_delay_from_sections(
+        self, sections: list[tuple[float, float]], omega: np.ndarray
+    ) -> np.ndarray:
+        phase = np.unwrap(np.angle(self._allpass_response_from_sections(sections, omega)))
+        return self._compute_group_delay(phase, omega)
+
+    def _compute_group_delay(
+        self, phase: np.ndarray, omega: np.ndarray
+    ) -> np.ndarray:
+        """アンラップ位相から群遅延を計算"""
+        if phase.size != omega.size:
+            raise ValueError("phase と omega の長さが一致していません")
+        if phase.size < 2:
+            return np.zeros_like(phase)
+        tau = -np.gradient(phase, omega, edge_order=2)
+        if tau.size >= 2:
+            tau[0] = tau[1]
+            tau[-1] = tau[-2]
+        return tau
+
+    def _target_group_delay(
+        self, freqs: np.ndarray, tau_min: np.ndarray
+    ) -> np.ndarray:
+        """低域は最小位相、上域は指定遅延に向かうターゲット群遅延を生成"""
+        low_weight = self._hybrid_lowpass_weight(freqs)
+        high_weight = 1.0 - low_weight
+        tau_linear = np.full_like(freqs, self.config.hybrid_delay_seconds)
+        tau_target = low_weight * tau_min + high_weight * tau_linear
+        return tau_target
 
     def _convert_to_minimum_phase_gpu(
         self, h_linear: np.ndarray, n_fft: int
@@ -946,6 +1229,7 @@ class FilterGenerator:
             "hybrid_transition_hz": self.config.hybrid_transition_hz,
             "hybrid_delay_ms": self.config.hybrid_delay_ms,
             "hybrid_fast_window_samples": self.config.hybrid_fast_window_samples,
+            "hybrid_allpass_sections": self.config.hybrid_allpass_sections,
             "hybrid_fast_window_target_ratio": HYBRID_FAST_WINDOW_TARGET,
             "target_dc_gain": self.config.target_dc_gain,
             "output_basename": self.config.base_name,
@@ -1433,6 +1717,7 @@ def _generate_filter_worker(
             hybrid_transition_hz=args_dict["hybrid_transition_hz"],
             hybrid_delay_ms=args_dict["hybrid_delay_ms"],
             hybrid_fast_window_samples=args_dict["hybrid_fast_window_samples"],
+            hybrid_allpass_sections=args_dict["hybrid_allpass_sections"],
         )
 
         generator = FilterGenerator(config)
@@ -1486,6 +1771,7 @@ def generate_all_filters(args: argparse.Namespace) -> None:
         "hybrid_transition_hz": args.hybrid_transition_hz,
         "hybrid_delay_ms": args.hybrid_delay_ms,
         "hybrid_fast_window_samples": args.hybrid_fast_window,
+        "hybrid_allpass_sections": args.hybrid_allpass_sections,
     }
 
     results = []
@@ -1679,6 +1965,12 @@ GPU Acceleration:
         type=int,
         default=HYBRID_DEFAULT_FAST_WINDOW,
         help="Fast-partition window size used for energy checks (samples). Default: 32768",
+    )
+    parser.add_argument(
+        "--hybrid-allpass-sections",
+        type=int,
+        default=HYBRID_DEFAULT_ALLPASS_SECTIONS,
+        help="Number of second-order all-pass sections for hybrid phase group delay shaping. 0 disables the solver.",
     )
     parser.add_argument(
         "--output-prefix",

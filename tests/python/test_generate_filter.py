@@ -258,7 +258,7 @@ class TestFilterDesigner:
         assert delta < tolerance
 
     def test_hybrid_gain_alignment_metrics(self, hybrid_config):
-        """Hybrid設計時に低域/高域ゲイン整合情報が記録される"""
+        """Hybrid設計時に正規化ゲインと群遅延誤差が記録される"""
         from generate_filter import FilterDesigner
 
         designer = FilterDesigner(hybrid_config)
@@ -266,15 +266,47 @@ class TestFilterDesigner:
 
         info = designer.hybrid_gain_alignment
         assert info is not None
-        assert info["low_gain"] > 0
-        assert info["high_gain"] > 0
+        assert info["normalization_gain"] > 0
+        assert np.isclose(
+            info["passband_reference"],
+            info["passband_hybrid"],
+            rtol=0.1,
+        )
+        if info["allpass_solver_status"] == "blend_fallback":
+            assert info["group_delay_error_ms"] < 7.0
+        else:
+            assert info["group_delay_error_ms"] < 5.0
+            assert info["allpass_sections"] == hybrid_config.hybrid_allpass_sections
+            assert info["allpass_solver_status"] == "success"
+            assert info["allpass_rmse_ms"] < 2.0
 
-        low_aligned = info["low_band_avg_min"] * info["low_gain"]
-        high_aligned = info["high_band_avg_linear"] * info["high_gain"]
-        ref = info["passband_reference"]
+    def test_hybrid_group_delay_targets(self, hybrid_config):
+        """Hybrid設計時に高域群遅延がターゲット値へ収束する"""
+        from generate_filter import FilterDesigner
 
-        assert np.isclose(low_aligned, ref, rtol=0.25)
-        assert np.isclose(high_aligned, ref, rtol=0.1)
+        designer = FilterDesigner(hybrid_config)
+        h_final, _ = designer.design()
+
+        n_fft = 2 ** int(np.ceil(np.log2(len(h_final) * 2)))
+        freqs = np.fft.rfftfreq(n_fft, d=1.0 / hybrid_config.output_rate)
+        omega = 2 * np.pi * freqs
+        H = np.fft.rfft(h_final, n=n_fft)
+        phase = np.unwrap(np.angle(H))
+        tau = designer._compute_group_delay(phase, omega)
+
+        transition_edge = (
+            hybrid_config.hybrid_crossover_hz + hybrid_config.hybrid_transition_hz
+        )
+        high_mask = freqs >= transition_edge
+        assert np.any(high_mask)
+
+        tau_high = tau[high_mask]
+        target_delay = hybrid_config.hybrid_delay_ms / 1000.0
+        mean_error = float(np.mean(np.abs(tau_high - target_delay)))
+        info = designer.hybrid_gain_alignment or {}
+        status = info.get("allpass_solver_status", "success")
+        limit_ms = 2.0 if status != "blend_fallback" else 7.0
+        assert mean_error * 1000.0 < limit_ms
 
 
 class TestFilterValidator:
