@@ -200,7 +200,7 @@ uv sync
 # Generate 640k-tap minimum phase filter (default β≈28)
 uv run python scripts/generate_filter.py --taps 640000
 
-# Generate 640k-tap hybrid filter (≤150 Hz min-phase, >150 Hz 10 ms linear)
+# Generate 640k-tap hybrid filter (≤150 Hz min-phase, >150 Hz ~6.7 ms linear)
 uv run python scripts/generate_filter.py --taps 640000 --phase-type hybrid
 
 # Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)
@@ -216,7 +216,7 @@ uv run python scripts/generate_filter.py --generate-all --phase-type hybrid
 | オプション | 値 | 説明 |
 |-----------|-----|------|
 | `--phase-type` | `minimum` (legacy) | 最小位相フィルタを生成 |
-| `--phase-type` | `hybrid` (default) | 低域最小位相/高域10ms整列のハイブリッドを生成 |
+| `--phase-type` | `hybrid` (default) | 低域最小位相/高域約6.7ms整列のハイブリッドを生成（クロスオーバー周波数の1周期に自動整列） |
 | `--generate-all` | (flag) | 全8構成（44k/48k × 2x/4x/8x/16x）を一括生成 |
 
 ### Build (C++/CUDA)

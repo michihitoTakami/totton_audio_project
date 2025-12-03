@@ -250,7 +250,7 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 # 環境セットアップ
 uv sync
 
-# 44.1k系 2M-tap ハイブリッドフィルタ生成（≤150Hz最小位相/10ms整列）
+# 44.1k系 2M-tap ハイブリッドフィルタ生成（≤150Hz最小位相/約6.7ms整列）
 uv run python scripts/generate_filter.py --taps 2000000 --phase-type hybrid
 
 # 全構成（44k/48k × 2x/4x/8x/16x）一括生成（マルチレート対応）
