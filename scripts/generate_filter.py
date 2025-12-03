@@ -12,7 +12,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/ハ�
 
 位相タイプ:
 - minimum: 最小位相（プリリンギング排除、周波数依存遅延）【従来】
-- hybrid: 低域（≤150Hz）最小位相 + 高域線形位相（群遅延10ms整列）【新規】
+- hybrid: 低域（≤150Hz）最小位相 + 高域線形位相（群遅延はクロスオーバー周波数の1周期に自動整列、150Hz時は約6.67ms）【新規】
 
 仕様:
 - タップ数: 640,000 (640k) デフォルト
@@ -58,7 +58,7 @@ class PhaseType(Enum):
     """フィルタの位相タイプ"""
 
     MINIMUM = "minimum"  # 最小位相: プリリンギングなし、周波数依存遅延
-    HYBRID = "hybrid"  # 低域最小位相 + 高域線形位相（10ms整列）
+    HYBRID = "hybrid"  # 低域最小位相 + 高域線形位相（クロスオーバー周波数の1周期に自動整列）
 
 
 class MinimumPhaseMethod(Enum):
@@ -171,6 +171,9 @@ class FilterConfig:
                 )
             if self.hybrid_transition_hz <= 0:
                 raise ValueError("hybrid_transition_hz は正の値である必要があります")
+            # デフォルト値の場合はクロスオーバー周波数の1周期に基づいて自動計算
+            if self.hybrid_delay_ms == HYBRID_DEFAULT_DELAY_MS:
+                self.hybrid_delay_ms = 1000.0 / self.hybrid_crossover_hz
             if self.hybrid_delay_ms <= 0:
                 raise ValueError("hybrid_delay_ms は正の値である必要があります")
             if self.hybrid_fast_window_samples <= 0:
@@ -1494,8 +1497,8 @@ Examples:
   # Generate single minimum phase filter (default, recommended)
   %(prog)s --input-rate 44100 --upsample-ratio 16
 
-  # Generate hybrid phase filter (150 Hz crossover, 10 ms delay)
-  %(prog)s --phase-type hybrid --hybrid-crossover-hz 120
+  # Generate hybrid phase filter (150 Hz crossover, auto delay ~6.67ms)
+  %(prog)s --phase-type hybrid --hybrid-crossover-hz 150
 
   # Generate all 8 filter configurations
   %(prog)s --generate-all
@@ -1603,7 +1606,7 @@ GPU Acceleration:
         "--hybrid-delay-ms",
         type=float,
         default=HYBRID_DEFAULT_DELAY_MS,
-        help="Absolute delay applied to the linear-phase portion (ms). Default: 10",
+        help="Absolute delay applied to the linear-phase portion (ms). Default: auto (1000/crossover_hz, e.g. 6.67ms for 150Hz)",
     )
     parser.add_argument(
         "--hybrid-fast-window",
