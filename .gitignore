@@ -28,7 +28,6 @@ env/
 
 # uv
 .uv/
-uv.lock
 
 # aqua (local cache)
 .aqua/
