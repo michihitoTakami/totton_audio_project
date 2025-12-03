@@ -53,16 +53,16 @@ from generate_filter import (
 class MixedPhaseSettings:
     """位相EQに関するパラメータ"""
 
-    eq_taps: int = 8_192
+    eq_taps: int = 4_096
     eq_delay_ms: float = 3.0
     eq_low_hz: float = 100.0
     eq_high_hz: float = 500.0
     eq_max_freq: float = 20_000.0
     eq_low_cut_hz: float = 60.0
     target_smooth_hz: float = 60.0
-    eq_iterations: int = 20_000
+    eq_iterations: int = 50_000
     eq_tolerance: float = 1e-6
-    eq_step_size: float = 0.005
+    eq_step_size: float = 0.004
     eq_oversample: int = 2
     analysis_fft_exp: int = 22
     weight_sub: float = 0.01
@@ -607,7 +607,7 @@ def parse_args() -> argparse.Namespace:
         help="Output basename (otherwise auto-generated).",
     )
     # Mixed-phase specific parameters
-    parser.add_argument("--eq-taps", type=int, default=640_000, help="Phase EQ FIR length.")
+    parser.add_argument("--eq-taps", type=int, default=4_096, help="Phase EQ FIR length.")
     parser.add_argument("--eq-delay-ms", type=float, default=3.0, help="Target constant delay (ms).")
     parser.add_argument("--eq-low-hz", type=float, default=100.0, help="Delay ramp start frequency.")
     parser.add_argument(
@@ -632,7 +632,7 @@ def parse_args() -> argparse.Namespace:
         help="Hann smoothing bandwidth for τ_total.",
     )
     parser.add_argument(
-        "--eq-iterations", type=int, default=200_000, help="Phase EQ solver iterations."
+        "--eq-iterations", type=int, default=50_000, help="Phase EQ solver iterations."
     )
     parser.add_argument(
         "--eq-tolerance",
@@ -643,7 +643,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--eq-step-size",
         type=float,
-        default=0.005,
+        default=0.004,
         help="Gradient descent step size for phase EQ.",
     )
     parser.add_argument(
