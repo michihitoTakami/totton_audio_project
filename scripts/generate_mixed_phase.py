@@ -53,14 +53,14 @@ from generate_filter import (
 class MixedPhaseSettings:
     """位相EQに関するパラメータ"""
 
-    eq_taps: int = 640_000
+    eq_taps: int = 8_192
     eq_delay_ms: float = 3.0
     eq_low_hz: float = 100.0
     eq_high_hz: float = 500.0
     eq_max_freq: float = 20_000.0
     eq_low_cut_hz: float = 60.0
     target_smooth_hz: float = 60.0
-    eq_iterations: int = 200_000
+    eq_iterations: int = 20_000
     eq_tolerance: float = 1e-6
     eq_step_size: float = 0.005
     eq_oversample: int = 2
