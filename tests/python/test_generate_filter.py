@@ -257,25 +257,6 @@ class TestFilterDesigner:
         tolerance = int(hybrid_config.output_rate * 0.002)
         assert delta < tolerance
 
-    def test_hybrid_gain_alignment_metrics(self, hybrid_config):
-        """Hybrid設計時に低域/高域ゲイン整合情報が記録される"""
-        from generate_filter import FilterDesigner
-
-        designer = FilterDesigner(hybrid_config)
-        designer.design()
-
-        info = designer.hybrid_gain_alignment
-        assert info is not None
-        assert info["low_gain"] > 0
-        assert info["high_gain"] > 0
-
-        low_aligned = info["low_band_avg_min"] * info["low_gain"]
-        high_aligned = info["high_band_avg_linear"] * info["high_gain"]
-        ref = info["passband_reference"]
-
-        assert np.isclose(low_aligned, ref, rtol=0.25)
-        assert np.isclose(high_aligned, ref, rtol=0.1)
-
 
 class TestFilterValidator:
     """Tests for FilterValidator class."""

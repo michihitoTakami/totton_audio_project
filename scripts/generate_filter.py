@@ -242,7 +242,6 @@ class FilterDesigner:
 
     def __init__(self, config: FilterConfig) -> None:
         self.config = config
-        self.hybrid_gain_alignment: dict[str, float] | None = None
 
     def design_linear_phase(self) -> np.ndarray:
         """ベースとなる線形位相FIRフィルタを設計する"""
@@ -328,77 +327,15 @@ class FilterDesigner:
         H_min = np.fft.rfft(h_min_phase, n=n_fft)
         H_linear = np.fft.rfft(h_linear, n=n_fft)
 
-        mag_min = np.maximum(np.abs(H_min), 1e-12)
-        mag_linear = np.maximum(np.abs(H_linear), 1e-12)
-
-        crossover = self.config.hybrid_crossover_hz
-        width = self.config.hybrid_transition_hz
-        start = max(0.0, crossover - width / 2.0)
-        end = crossover + width / 2.0
-
-        low_band_mask = freqs <= start
-        if not np.any(low_band_mask):
-            low_band_mask = freqs <= crossover
-
-        high_band_mask = freqs >= end
-        if not np.any(high_band_mask):
-            high_band_mask = freqs >= crossover
-
-        passband_mask = freqs <= self.config.passband_end
-        if not np.any(passband_mask):
-            passband_mask = np.ones_like(freqs, dtype=bool)
-
-        def _band_avg(values: np.ndarray, mask: np.ndarray) -> float:
-            if np.any(mask):
-                return float(np.mean(values[mask]))
-            return float(np.mean(values))
-
-        passband_ref = _band_avg(mag_linear, passband_mask)
-        low_min_avg = _band_avg(mag_min, low_band_mask)
-        low_lin_avg = _band_avg(mag_linear, low_band_mask)
-        high_lin_avg = _band_avg(mag_linear, high_band_mask)
-
-        eps = 1e-12
-
-        def _compute_gain(target: float, actual: float) -> float:
-            if actual < eps:
-                return 1.0
-            gain = target / actual
-            return float(np.clip(gain, 0.125, 8.0))
-
-        low_gain = _compute_gain(passband_ref, low_min_avg)
-        high_gain = _compute_gain(passband_ref, high_lin_avg)
-
-        mag_low = mag_min * low_gain
-        mag_high = mag_linear * high_gain
+        magnitude = np.maximum(np.abs(H_linear), 1e-12)
+        phase_min = np.unwrap(np.angle(H_min))
+        phase_linear = -2 * np.pi * freqs * self.config.hybrid_delay_seconds
 
         low_weight = self._hybrid_lowpass_weight(freqs)
         high_weight = 1.0 - low_weight
 
-        magnitude = low_weight * mag_low + high_weight * mag_high
-        phase_min = np.unwrap(np.angle(H_min))
-        phase_linear = -2 * np.pi * freqs * self.config.hybrid_delay_seconds
-
         phase_hybrid = low_weight * phase_min + high_weight * phase_linear
         H_hybrid = magnitude * np.exp(1j * phase_hybrid)
-
-        self.hybrid_gain_alignment = {
-            "passband_reference": passband_ref,
-            "low_gain": low_gain,
-            "high_gain": high_gain,
-            "low_band_avg_min": low_min_avg,
-            "low_band_avg_linear": low_lin_avg,
-            "high_band_avg_linear": high_lin_avg,
-            "transition_start_hz": float(start),
-            "transition_end_hz": float(end),
-            "crossover_hz": float(crossover),
-        }
-
-        print(
-            "  ハイブリッドゲイン整合: "
-            f"low x{low_gain:.3f} (min {low_min_avg:.6f} -> ref {passband_ref:.6f}), "
-            f"high x{high_gain:.3f} (lin {high_lin_avg:.6f} -> ref {passband_ref:.6f})"
-        )
 
         h_time = np.fft.irfft(H_hybrid, n=n_fft).real
         h_time = h_time[: self.config.n_taps]
@@ -482,7 +419,6 @@ class FilterDesigner:
             tuple: (最終フィルタ係数, 基準線形位相係数 or None)
         """
         # 1. 基準線形位相フィルタを設計
-        self.hybrid_gain_alignment = None
         h_linear = self.design_linear_phase()
 
         if self.config.phase_type == PhaseType.MINIMUM:
@@ -905,8 +841,6 @@ class FilterGenerator:
 
         # 3. 仕様検証
         validation_results = self.validator.validate(h_final)
-        if self.designer.hybrid_gain_alignment:
-            validation_results["hybrid_gain_alignment"] = self.designer.hybrid_gain_alignment
         validation_results["normalization"] = normalization_info
 
         # 4. プロット生成
