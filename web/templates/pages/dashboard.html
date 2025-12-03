@@ -25,19 +25,6 @@
             </div>
         </div>
 
-        <!-- Input Mode Card -->
-        <div class="status-card">
-            <div class="status-card-header">
-                <span class="status-icon">🎤</span>
-                <h3>{{ t.get('dashboard.input_mode') }}</h3>
-            </div>
-            <div class="status-card-body">
-                <div class="status-indicator status-info">
-                    <span x-text="status.input_mode === 'rtp' ? 'RTP' : 'PipeWire'"></span>
-                </div>
-            </div>
-        </div>
-
         <!-- EQ Status Card -->
         <div class="status-card">
             <div class="status-card-header">
@@ -51,53 +38,212 @@
             </div>
         </div>
 
-        <!-- Sample Rate Card -->
+        <!-- Crossfeed Status Card -->
         <div class="status-card">
             <div class="status-card-header">
-                <span class="status-icon">📊</span>
-                <h3>{{ t.get('dashboard.sample_rate') }}</h3>
+                <span class="status-icon">🎧</span>
+                <h3>クロスフィード</h3>
             </div>
             <div class="status-card-body">
-                <div class="metric">
-                    <span class="metric-label">{{ t.get('dashboard.input') }}</span>
-                    <span class="metric-value" x-text="formatSampleRate(status.input_rate)"></span>
+                <div class="status-indicator" :class="status.crossfeed_enabled ? 'status-ok' : 'status-off'">
+                    <span x-text="status.crossfeed_enabled ? 'ON' : 'OFF'"></span>
                 </div>
-                <div class="metric">
-                    <span class="metric-label">{{ t.get('dashboard.output') }}</span>
-                    <span class="metric-value" x-text="formatSampleRate(status.output_rate)"></span>
+            </div>
+        </div>
+
+        <!-- Low Latency Mode Card -->
+        <div class="status-card">
+            <div class="status-card-header">
+                <span class="status-icon">⚡</span>
+                <h3>低遅延モード</h3>
+            </div>
+            <div class="status-card-body">
+                <div class="status-indicator" :class="status.low_latency_enabled ? 'status-ok' : 'status-off'">
+                    <span x-text="status.low_latency_enabled ? 'ON' : 'OFF'"></span>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Input Mode Switcher -->
+    <!-- Low Latency Mode -->
     <div class="section">
-        <h2 class="section-title">{{ t.get('dashboard.mode_switch.title') }}</h2>
+        <h2 class="section-title">⚡ 低遅延モード (Partitioned Convolution)</h2>
         <div class="card">
-            <div class="mode-switcher">
-                <button
-                    class="mode-button"
-                    :class="{ 'active': status.input_mode === 'pipewire' }"
-                    @click="switchInputMode('pipewire')"
-                    :disabled="switching"
+            <div class="toggle-container">
+                <div class="toggle-label">
+                    <span>低遅延パーティション</span>
+                    <span class="toggle-desc">クロスフィードと排他利用</span>
+                </div>
+                <div class="toggle-switch" :class="{ 'active': lowLatency.enabled }" @click="toggleLowLatency"></div>
+            </div>
+            <div class="alert alert-warning" x-show="lowLatency.enabled && status.crossfeed_enabled">
+                ⚠️ クロスフィードは低遅延モードでは利用できません。
+            </div>
+            <div class="info-text">
+                <span class="icon">ℹ️</span>32kタップの高速パーティションで超低遅延を実現します。
+            </div>
+        </div>
+    </div>
+
+    <!-- Phase Type Selection -->
+    <div class="section">
+        <h2 class="section-title">🌊 位相タイプ</h2>
+        <div class="card">
+            <div class="form-group">
+                <label for="phaseType">Filter Phase</label>
+                <select id="phaseType" x-model="phaseType.selected" @change="changePhaseType">
+                    <option value="minimum">Minimum Phase (推奨)</option>
+                    <option value="hybrid">Hybrid Phase (150Hz以下最小 / 150Hz以上線形)</option>
+                </select>
+            </div>
+            <div class="info-text">
+                <span class="icon">ℹ️</span>
+                <span x-show="phaseType.selected === 'minimum'">全帯域を最小位相で処理（最小レイテンシ）</span>
+                <span x-show="phaseType.selected === 'hybrid'">150Hz以下は最小位相、150Hz以上は線形位相（約6.7ms整列）で処理</span>
+            </div>
+            <div class="alert alert-warning" x-show="phaseType.selected === 'hybrid' && lowLatency.enabled">
+                ⚠️ ハイブリッド位相は約6.7msの整列ディレイが発生し、低遅延モードとは併用できません。
+            </div>
+        </div>
+    </div>
+
+    <!-- Headphone EQ (OPRA) -->
+    <div class="section">
+        <h2 class="section-title">🎚️ ヘッドホンEQ (OPRA)</h2>
+        <div class="card">
+            <div class="form-group">
+                <label for="opraSearch">Search Headphones</label>
+                <input
+                    type="text"
+                    id="opraSearch"
+                    class="search-input"
+                    placeholder="e.g. HD650, DT770, AirPods..."
+                    x-model="opra.searchQuery"
+                    @input="searchOPRA"
                 >
-                    <div class="mode-icon">🎧</div>
-                    <div class="mode-label">{{ t.get('dashboard.mode_switch.pipewire') }}</div>
-                    <div class="mode-desc">{{ t.get('dashboard.mode_switch.pipewire_desc') }}</div>
+            </div>
+
+            <!-- Search Results -->
+            <div class="opra-results" x-show="opra.results.length > 0" style="max-height: 300px; overflow-y: auto; margin-top: 12px;">
+                <template x-for="result in opra.results" :key="result.name">
+                    <div class="opra-result-item" @click="selectHeadphone(result)">
+                        <div class="opra-result-name" x-text="result.name"></div>
+                        <div class="opra-result-vendor" x-text="result.vendor"></div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Selected Headphone -->
+            <div class="opra-selected" x-show="opra.selected" style="margin-top: 16px;">
+                <div class="opra-selected-name" x-text="opra.selected?.name"></div>
+                <div class="opra-selected-vendor" x-text="opra.selected?.vendor"></div>
+
+                <div class="form-group" style="margin-top: 12px;" x-show="opra.eqOptions.length > 0">
+                    <label for="opraEqSelect">EQバリエーション</label>
+                    <select id="opraEqSelect" x-model="opra.selectedEq">
+                        <template x-for="eq in opra.eqOptions" :key="eq">
+                            <option :value="eq" x-text="eq"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <label class="checkbox-label" style="margin-top: 12px;">
+                    <input type="checkbox" x-model="opra.useModernTarget">
+                    <span>Modern Target (KB5000_7)</span>
+                </label>
+                <div class="info-text" style="margin-left: 24px;">
+                    最新のターゲットカーブに補正
+                </div>
+            </div>
+
+            <div class="btn-row">
+                <button
+                    class="action-button btn-primary"
+                    @click="applyEQ"
+                    :disabled="!opra.selected || actionInProgress"
+                >
+                    <span class="action-icon">✓</span>
+                    <span class="action-label">Apply EQ</span>
                 </button>
                 <button
-                    class="mode-button"
-                    :class="{ 'active': status.input_mode === 'rtp' }"
-                    @click="switchInputMode('rtp')"
-                    :disabled="switching"
+                    class="action-button btn-secondary"
+                    @click="deactivateEQ"
+                    :disabled="actionInProgress"
                 >
-                    <div class="mode-icon">🌐</div>
-                    <div class="mode-label">{{ t.get('dashboard.mode_switch.rtp') }}</div>
-                    <div class="mode-desc">{{ t.get('dashboard.mode_switch.rtp_desc') }}</div>
+                    <span class="action-icon">✗</span>
+                    <span class="action-label">EQ Off</span>
                 </button>
             </div>
-            <div class="alert alert-info" x-show="switching">
-                <span>{{ t.get('dashboard.mode_switch.switching') }}</span>
+
+            <div class="license-note">
+                EQ data: <a href="https://github.com/opra-project/OPRA" target="_blank" class="license-link">OPRA Project</a> (CC BY-SA 4.0)
+            </div>
+        </div>
+    </div>
+
+    <!-- Crossfeed (HRTF) -->
+    <div class="section">
+        <h2 class="section-title">🎧 クロスフィード (HRTF)</h2>
+        <div class="card">
+            <div class="toggle-container">
+                <div class="toggle-label">
+                    <span>クロスフィード</span>
+                    <span class="toggle-desc">スピーカーリスニングを再現</span>
+                </div>
+                <div class="toggle-switch" :class="{ 'active': crossfeed.enabled }" @click="toggleCrossfeed"></div>
+            </div>
+
+            <div class="form-group" style="margin-top: 16px;" x-show="crossfeed.enabled">
+                <label>頭のサイズ:</label>
+                <div class="head-size-group">
+                    <button
+                        type="button"
+                        class="head-size-btn"
+                        :class="{ 'active': crossfeed.headSize === 'xs' }"
+                        @click="setHeadSize('xs')"
+                        :disabled="!crossfeed.enabled"
+                    >XS</button>
+                    <button
+                        type="button"
+                        class="head-size-btn"
+                        :class="{ 'active': crossfeed.headSize === 's' }"
+                        @click="setHeadSize('s')"
+                        :disabled="!crossfeed.enabled"
+                    >S</button>
+                    <button
+                        type="button"
+                        class="head-size-btn"
+                        :class="{ 'active': crossfeed.headSize === 'm' }"
+                        @click="setHeadSize('m')"
+                        :disabled="!crossfeed.enabled"
+                    >M</button>
+                    <button
+                        type="button"
+                        class="head-size-btn"
+                        :class="{ 'active': crossfeed.headSize === 'l' }"
+                        @click="setHeadSize('l')"
+                        :disabled="!crossfeed.enabled"
+                    >L</button>
+                    <button
+                        type="button"
+                        class="head-size-btn"
+                        :class="{ 'active': crossfeed.headSize === 'xl' }"
+                        @click="setHeadSize('xl')"
+                        :disabled="!crossfeed.enabled"
+                    >XL</button>
+                </div>
+            </div>
+
+            <div class="alert alert-warning" x-show="crossfeed.enabled && lowLatency.enabled">
+                ⚠️ クロスフィードは低遅延モードと併用できません。
+            </div>
+
+            <div class="info-text">
+                <span class="icon">ℹ️</span>正三角形配置（±30°）でスピーカーリスニングを再現
+            </div>
+
+            <div class="license-note">
+                HRTF data: <a href="https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960" target="_blank" class="license-link">HUTUBS, TU Berlin</a> (CC BY 4.0)
             </div>
         </div>
     </div>
@@ -111,38 +257,13 @@
                     class="action-button"
                     @click="restartDaemon"
                     :disabled="actionInProgress"
-                    hx-post="/daemon/restart"
-                    hx-trigger="click"
-                    hx-swap="none"
                 >
                     <span class="action-icon">🔄</span>
                     <span class="action-label">{{ t.get('dashboard.action.restart_daemon') }}</span>
                 </button>
-
-                <a href="/eq" class="action-button">
-                    <span class="action-icon">🎚️</span>
-                    <span class="action-label">{{ t.get('dashboard.action.eq_settings') }}</span>
-                </a>
-
-                <a href="/crossfeed" class="action-button">
-                    <span class="action-icon">🎧</span>
-                    <span class="action-label">{{ t.get('dashboard.action.crossfeed') }}</span>
-                </a>
-
-                <a href="/rtp" class="action-button">
-                    <span class="action-icon">🌐</span>
-                    <span class="action-label">{{ t.get('dashboard.action.rtp_management') }}</span>
-                </a>
             </div>
         </div>
     </div>
-
-    <!-- WebSocket Status Monitor (for debugging) -->
-    <template x-if="wsConnected">
-        <div class="ws-indicator ws-connected" title="WebSocket接続中">
-            <span class="ws-dot"></span>
-        </div>
-    </template>
 </div>
 {% endblock %}
 
@@ -152,21 +273,47 @@ function dashboardData() {
     return {
         status: {
             daemon_running: false,
-            input_mode: 'pipewire',
             eq_active: false,
-            input_rate: 0,
-            output_rate: 0,
+            crossfeed_enabled: false,
+            low_latency_enabled: false,
         },
-        switching: false,
+        lowLatency: {
+            enabled: false,
+            loading: false,
+        },
+        phaseType: {
+            selected: 'minimum',
+            loading: false,
+        },
+        opra: {
+            searchQuery: '',
+            results: [],
+            selected: null,
+            eqOptions: [],
+            selectedEq: '',
+            useModernTarget: true,
+            searching: false,
+        },
+        crossfeed: {
+            enabled: false,
+            headSize: 'm',
+            loading: false,
+        },
         actionInProgress: false,
         wsConnected: false,
         ws: null,
 
         init() {
             this.fetchStatus();
-            this.connectWebSocket();
-            // Poll status every 5 seconds as fallback
-            setInterval(() => this.fetchStatus(), 5000);
+            this.fetchLowLatencyStatus();
+            this.fetchPhaseType();
+            this.fetchCrossfeedStatus();
+            // Poll status every 3 seconds
+            setInterval(() => {
+                this.fetchStatus();
+                this.fetchLowLatencyStatus();
+                this.fetchCrossfeedStatus();
+            }, 3000);
         },
 
         async fetchStatus() {
@@ -176,74 +323,233 @@ function dashboardData() {
                 const data = await response.json();
                 this.status = {
                     daemon_running: data.daemon_running || false,
-                    input_mode: data.input_mode || 'pipewire',
                     eq_active: data.eq_active || false,
-                    input_rate: data.input_rate || 0,
-                    output_rate: data.output_rate || 0,
+                    crossfeed_enabled: data.settings?.crossfeed_enabled || false,
+                    low_latency_enabled: data.settings?.low_latency_enabled || false,
                 };
             } catch (error) {
                 console.error('Failed to fetch status:', error);
             }
         },
 
-        connectWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/stats`;
-
-            this.ws = new WebSocket(wsUrl);
-
-            this.ws.onopen = () => {
-                this.wsConnected = true;
-                console.log('WebSocket connected');
-            };
-
-            this.ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    this.status = {
-                        daemon_running: data.daemon_running || false,
-                        input_mode: data.input_mode || 'pipewire',
-                        eq_active: data.eq_active || false,
-                        input_rate: data.input_rate || 0,
-                        output_rate: data.output_rate || 0,
-                    };
-                } catch (error) {
-                    console.error('WebSocket message parse error:', error);
-                }
-            };
-
-            this.ws.onclose = () => {
-                this.wsConnected = false;
-                console.log('WebSocket disconnected, reconnecting in 3s...');
-                setTimeout(() => this.connectWebSocket(), 3000);
-            };
-
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
+        async fetchLowLatencyStatus() {
+            try {
+                const response = await fetch('/partitioned-convolution');
+                if (!response.ok) throw new Error('Failed to fetch low latency status');
+                const data = await response.json();
+                this.lowLatency.enabled = data.enabled || false;
+            } catch (error) {
+                console.error('Failed to fetch low latency status:', error);
+            }
         },
 
-        async switchInputMode(mode) {
-            if (this.switching || this.status.input_mode === mode) return;
-
-            this.switching = true;
+        async fetchPhaseType() {
             try {
-                const response = await fetch('/api/input-mode/switch', {
+                const response = await fetch('/daemon/phase-type');
+                if (!response.ok) throw new Error('Failed to fetch phase type');
+                const data = await response.json();
+                this.phaseType.selected = data.phase_type || 'minimum';
+            } catch (error) {
+                console.error('Failed to fetch phase type:', error);
+            }
+        },
+
+        async fetchCrossfeedStatus() {
+            try {
+                const response = await fetch('/crossfeed/status');
+                if (!response.ok) throw new Error('Failed to fetch crossfeed status');
+                const data = await response.json();
+                this.crossfeed.enabled = data.enabled || false;
+                this.crossfeed.headSize = data.head_size || 'm';
+            } catch (error) {
+                console.error('Failed to fetch crossfeed status:', error);
+            }
+        },
+
+        async toggleLowLatency() {
+            if (this.lowLatency.loading) return;
+
+            this.lowLatency.loading = true;
+            try {
+                const newState = !this.lowLatency.enabled;
+                const response = await fetch('/partitioned-convolution', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode }),
+                    body: JSON.stringify({ enabled: newState }),
                 });
 
-                if (!response.ok) throw new Error('Mode switch failed');
+                if (!response.ok) throw new Error('Failed to toggle low latency mode');
 
                 const data = await response.json();
-                this.showToast(data.message || 'モードを切り替えました', 'success');
+                this.lowLatency.enabled = data.enabled;
+                this.showToast(data.message || '低遅延モードを切り替えました', 'success');
+
+                // Refresh status
                 await this.fetchStatus();
             } catch (error) {
-                console.error('Failed to switch input mode:', error);
-                this.showToast('モード切り替えに失敗しました', 'error');
+                console.error('Failed to toggle low latency:', error);
+                this.showToast('低遅延モードの切り替えに失敗しました', 'error');
             } finally {
-                this.switching = false;
+                this.lowLatency.loading = false;
+            }
+        },
+
+        async changePhaseType() {
+            if (this.phaseType.loading) return;
+
+            this.phaseType.loading = true;
+            try {
+                const response = await fetch('/daemon/phase-type', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase_type: this.phaseType.selected }),
+                });
+
+                if (!response.ok) throw new Error('Failed to change phase type');
+
+                const data = await response.json();
+                this.showToast(data.message || '位相タイプを変更しました', 'success');
+            } catch (error) {
+                console.error('Failed to change phase type:', error);
+                this.showToast('位相タイプの変更に失敗しました', 'error');
+            } finally {
+                this.phaseType.loading = false;
+            }
+        },
+
+        async searchOPRA() {
+            if (!this.opra.searchQuery || this.opra.searchQuery.length < 2) {
+                this.opra.results = [];
+                return;
+            }
+
+            this.opra.searching = true;
+            try {
+                const response = await fetch(`/opra/search?query=${encodeURIComponent(this.opra.searchQuery)}`);
+                if (!response.ok) throw new Error('Search failed');
+                const data = await response.json();
+                this.opra.results = data.results || [];
+            } catch (error) {
+                console.error('Failed to search OPRA:', error);
+                this.opra.results = [];
+            } finally {
+                this.opra.searching = false;
+            }
+        },
+
+        selectHeadphone(result) {
+            this.opra.selected = result;
+            this.opra.results = [];
+            this.opra.searchQuery = result.name;
+            this.opra.eqOptions = result.eq_variants || [];
+            this.opra.selectedEq = this.opra.eqOptions[0] || '';
+        },
+
+        async applyEQ() {
+            if (!this.opra.selected || this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const payload = {
+                    headphone: this.opra.selected.name,
+                    variant: this.opra.selectedEq,
+                    modern_target: this.opra.useModernTarget,
+                };
+
+                const response = await fetch('/opra/apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) throw new Error('Failed to apply EQ');
+
+                const data = await response.json();
+                this.showToast(data.message || 'EQを適用しました', 'success');
+                await this.fetchStatus();
+            } catch (error) {
+                console.error('Failed to apply EQ:', error);
+                this.showToast('EQの適用に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async deactivateEQ() {
+            if (this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/eq/deactivate', {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Failed to deactivate EQ');
+
+                const data = await response.json();
+                this.showToast(data.message || 'EQを無効化しました', 'success');
+                await this.fetchStatus();
+            } catch (error) {
+                console.error('Failed to deactivate EQ:', error);
+                this.showToast('EQの無効化に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async toggleCrossfeed() {
+            if (this.crossfeed.loading) return;
+
+            this.crossfeed.loading = true;
+            try {
+                const newState = !this.crossfeed.enabled;
+                const response = await fetch('/crossfeed/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: newState,
+                        head_size: this.crossfeed.headSize,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Failed to toggle crossfeed');
+
+                const data = await response.json();
+                this.crossfeed.enabled = data.enabled;
+                this.showToast(data.message || 'クロスフィードを切り替えました', 'success');
+                await this.fetchStatus();
+            } catch (error) {
+                console.error('Failed to toggle crossfeed:', error);
+                this.showToast('クロスフィードの切り替えに失敗しました', 'error');
+            } finally {
+                this.crossfeed.loading = false;
+            }
+        },
+
+        async setHeadSize(size) {
+            if (!this.crossfeed.enabled || this.crossfeed.loading) return;
+
+            this.crossfeed.loading = true;
+            try {
+                const response = await fetch('/crossfeed/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: true,
+                        head_size: size,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('Failed to set head size');
+
+                const data = await response.json();
+                this.crossfeed.headSize = size;
+                this.showToast(data.message || '頭のサイズを変更しました', 'success');
+            } catch (error) {
+                console.error('Failed to set head size:', error);
+                this.showToast('頭のサイズの変更に失敗しました', 'error');
+            } finally {
+                this.crossfeed.loading = false;
             }
         },
 
@@ -271,14 +577,7 @@ function dashboardData() {
             }
         },
 
-        formatSampleRate(hz) {
-            if (!hz || hz <= 0) return '-';
-            if (hz >= 1000) return `${(hz / 1000).toFixed(1)} kHz`;
-            return `${hz} Hz`;
-        },
-
         showToast(message, type = 'info') {
-            // Simple toast notification (can be enhanced later)
             const toast = document.createElement('div');
             toast.className = `toast toast-${type}`;
             toast.textContent = message;

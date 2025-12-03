@@ -6,23 +6,14 @@
     "version": "1.0.0"
   },
   "paths": {
-    "/": {
+    "/legacy": {
       "get": {
-        "summary": "Dashboard Page",
-        "description": "Serve the Dashboard page.",
-        "operationId": "dashboard_page__get",
-        "parameters": [
-          {
-            "name": "lang",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "en",
-              "title": "Lang"
-            }
-          }
+        "tags": [
+          "status"
         ],
+        "summary": "Legacy Root",
+        "description": "Serve the embedded HTML page (legacy).",
+        "operationId": "legacy_root_legacy_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -30,16 +21,6 @@
               "text/html": {
                 "schema": {
                   "type": "string"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1710,6 +1691,47 @@
           }
         },
         "deprecated": true
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Dashboard Page",
+        "description": "Serve the Dashboard page.",
+        "operationId": "dashboard_page__get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/eq": {
