@@ -6,7 +6,7 @@ FastAPI-based control interface for the GPU audio upsampler daemon.
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +26,13 @@ from .routers import (
 )
 from .services import telemetry_poller
 from .templates import get_admin_html, get_rtp_sessions_html
+from .templates.pages import (
+    render_dashboard,
+    render_eq_settings,
+    render_crossfeed,
+    render_rtp_management,
+    render_system,
+)
 
 # OpenAPI tag descriptions
 tags_metadata = [
@@ -143,15 +150,45 @@ async def restart():
     return await daemon_restart()
 
 
-@app.get("/admin", response_class=HTMLResponse)
-async def admin_page():
-    """Serve the admin dashboard."""
-    return get_admin_html()
+@app.get("/", response_class=HTMLResponse)
+async def dashboard_page(lang: str = "en"):
+    """Serve the Dashboard page."""
+    return render_dashboard(lang=lang)
+
+
+@app.get("/eq", response_class=HTMLResponse)
+async def eq_page(lang: str = "en"):
+    """Serve the EQ Settings page."""
+    return render_eq_settings(lang=lang)
+
+
+@app.get("/crossfeed", response_class=HTMLResponse)
+async def crossfeed_page(lang: str = "en"):
+    """Serve the Crossfeed page."""
+    return render_crossfeed(lang=lang)
 
 
 @app.get("/rtp", response_class=HTMLResponse)
-async def rtp_page():
-    """Serve the RTP session management page."""
+async def rtp_management_page(lang: str = "en"):
+    """Serve the RTP Management page."""
+    return render_rtp_management(lang=lang)
+
+
+@app.get("/system", response_class=HTMLResponse)
+async def system_page(lang: str = "en"):
+    """Serve the System page."""
+    return render_system(lang=lang)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    """Serve the admin dashboard (legacy)."""
+    return get_admin_html()
+
+
+@app.get("/rtp-sessions", response_class=HTMLResponse)
+async def rtp_sessions_page():
+    """Serve the RTP session management page (legacy)."""
     return get_rtp_sessions_html()
 
 

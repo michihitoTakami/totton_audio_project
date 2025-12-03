@@ -8,12 +8,21 @@
   "paths": {
     "/": {
       "get": {
-        "tags": [
-          "status"
+        "summary": "Dashboard Page",
+        "description": "Serve the Dashboard page.",
+        "operationId": "dashboard_page__get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Lang"
+            }
+          }
         ],
-        "summary": "Root",
-        "description": "Serve the embedded HTML page.",
-        "operationId": "root__get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -21,6 +30,16 @@
               "text/html": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1693,10 +1712,174 @@
         "deprecated": true
       }
     },
+    "/eq": {
+      "get": {
+        "summary": "Eq Page",
+        "description": "Serve the EQ Settings page.",
+        "operationId": "eq_page_eq_get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crossfeed": {
+      "get": {
+        "summary": "Crossfeed Page",
+        "description": "Serve the Crossfeed page.",
+        "operationId": "crossfeed_page_crossfeed_get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rtp": {
+      "get": {
+        "summary": "Rtp Management Page",
+        "description": "Serve the RTP Management page.",
+        "operationId": "rtp_management_page_rtp_get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system": {
+      "get": {
+        "summary": "System Page",
+        "description": "Serve the System page.",
+        "operationId": "system_page_system_get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin": {
       "get": {
         "summary": "Admin Page",
-        "description": "Serve the admin dashboard.",
+        "description": "Serve the admin dashboard (legacy).",
         "operationId": "admin_page_admin_get",
         "responses": {
           "200": {
@@ -1712,11 +1895,11 @@
         }
       }
     },
-    "/rtp": {
+    "/rtp-sessions": {
       "get": {
-        "summary": "Rtp Page",
-        "description": "Serve the RTP session management page.",
-        "operationId": "rtp_page_rtp_get",
+        "summary": "Rtp Sessions Page",
+        "description": "Serve the RTP session management page (legacy).",
+        "operationId": "rtp_sessions_page_rtp_sessions_get",
         "responses": {
           "200": {
             "description": "Successful Response",

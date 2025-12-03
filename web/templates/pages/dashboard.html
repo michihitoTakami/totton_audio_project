@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t.get('nav.dashboard') }} - {{ t.get('app.title') }}{% endblock %}
+
+{% block content %}
+<div x-data="dashboardData()" x-init="init()">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1 class="page-title">{{ t.get('nav.dashboard') }}</h1>
+        <p class="page-subtitle">システム概要と入力モード切替</p>
+    </div>
+
+    <!-- System Status Cards -->
+    <div class="card-grid">
+        <!-- Daemon Status Card -->
+        <div class="status-card">
+            <div class="status-card-header">
+                <span class="status-icon">⚙️</span>
+                <h3>デーモン</h3>
+            </div>
+            <div class="status-card-body">
+                <div class="status-indicator" :class="status.daemon_running ? 'status-ok' : 'status-error'">
+                    <span x-text="status.daemon_running ? 'Running' : 'Stopped'"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Mode Card -->
+        <div class="status-card">
+            <div class="status-card-header">
+                <span class="status-icon">🎤</span>
+                <h3>入力モード</h3>
+            </div>
+            <div class="status-card-body">
+                <div class="status-indicator status-info">
+                    <span x-text="status.input_mode === 'rtp' ? 'RTP' : 'PipeWire'"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- EQ Status Card -->
+        <div class="status-card">
+            <div class="status-card-header">
+                <span class="status-icon">🎚️</span>
+                <h3>EQ</h3>
+            </div>
+            <div class="status-card-body">
+                <div class="status-indicator" :class="status.eq_active ? 'status-ok' : 'status-off'">
+                    <span x-text="status.eq_active ? 'ON' : 'OFF'"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sample Rate Card -->
+        <div class="status-card">
+            <div class="status-card-header">
+                <span class="status-icon">📊</span>
+                <h3>サンプルレート</h3>
+            </div>
+            <div class="status-card-body">
+                <div class="metric">
+                    <span class="metric-label">Input</span>
+                    <span class="metric-value" x-text="formatSampleRate(status.input_rate)"></span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Output</span>
+                    <span class="metric-value" x-text="formatSampleRate(status.output_rate)"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Mode Switcher -->
+    <div class="section">
+        <h2 class="section-title">入力モード切替</h2>
+        <div class="card">
+            <div class="mode-switcher">
+                <button
+                    class="mode-button"
+                    :class="{ 'active': status.input_mode === 'pipewire' }"
+                    @click="switchInputMode('pipewire')"
+                    :disabled="switching"
+                >
+                    <div class="mode-icon">🎧</div>
+                    <div class="mode-label">PipeWire</div>
+                    <div class="mode-desc">ローカル入力（最小遅延）</div>
+                </button>
+                <button
+                    class="mode-button"
+                    :class="{ 'active': status.input_mode === 'rtp' }"
+                    @click="switchInputMode('rtp')"
+                    :disabled="switching"
+                >
+                    <div class="mode-icon">🌐</div>
+                    <div class="mode-label">RTP</div>
+                    <div class="mode-desc">ネットワーク入力</div>
+                </button>
+            </div>
+            <div class="alert alert-info" x-show="switching">
+                <span>モード切り替え中...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="section">
+        <h2 class="section-title">クイックアクション</h2>
+        <div class="card">
+            <div class="action-grid">
+                <button
+                    class="action-button"
+                    @click="restartDaemon"
+                    :disabled="actionInProgress"
+                    hx-post="/daemon/restart"
+                    hx-trigger="click"
+                    hx-swap="none"
+                >
+                    <span class="action-icon">🔄</span>
+                    <span class="action-label">デーモン再起動</span>
+                </button>
+
+                <a href="/eq" class="action-button">
+                    <span class="action-icon">🎚️</span>
+                    <span class="action-label">EQ設定</span>
+                </a>
+
+                <a href="/crossfeed" class="action-button">
+                    <span class="action-icon">🎧</span>
+                    <span class="action-label">クロスフィード設定</span>
+                </a>
+
+                <a href="/rtp" class="action-button">
+                    <span class="action-icon">🌐</span>
+                    <span class="action-label">RTP管理</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebSocket Status Monitor (for debugging) -->
+    <template x-if="wsConnected">
+        <div class="ws-indicator ws-connected" title="WebSocket接続中">
+            <span class="ws-dot"></span>
+        </div>
+    </template>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function dashboardData() {
+    return {
+        status: {
+            daemon_running: false,
+            input_mode: 'pipewire',
+            eq_active: false,
+            input_rate: 0,
+            output_rate: 0,
+        },
+        switching: false,
+        actionInProgress: false,
+        wsConnected: false,
+        ws: null,
+
+        init() {
+            this.fetchStatus();
+            this.connectWebSocket();
+            // Poll status every 5 seconds as fallback
+            setInterval(() => this.fetchStatus(), 5000);
+        },
+
+        async fetchStatus() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) throw new Error('Status fetch failed');
+                const data = await response.json();
+                this.status = {
+                    daemon_running: data.daemon_running || false,
+                    input_mode: data.input_mode || 'pipewire',
+                    eq_active: data.eq_active || false,
+                    input_rate: data.input_rate || 0,
+                    output_rate: data.output_rate || 0,
+                };
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+            }
+        },
+
+        connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/stats`;
+
+            this.ws = new WebSocket(wsUrl);
+
+            this.ws.onopen = () => {
+                this.wsConnected = true;
+                console.log('WebSocket connected');
+            };
+
+            this.ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    this.status = {
+                        daemon_running: data.daemon_running || false,
+                        input_mode: data.input_mode || 'pipewire',
+                        eq_active: data.eq_active || false,
+                        input_rate: data.input_rate || 0,
+                        output_rate: data.output_rate || 0,
+                    };
+                } catch (error) {
+                    console.error('WebSocket message parse error:', error);
+                }
+            };
+
+            this.ws.onclose = () => {
+                this.wsConnected = false;
+                console.log('WebSocket disconnected, reconnecting in 3s...');
+                setTimeout(() => this.connectWebSocket(), 3000);
+            };
+
+            this.ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        },
+
+        async switchInputMode(mode) {
+            if (this.switching || this.status.input_mode === mode) return;
+
+            this.switching = true;
+            try {
+                const response = await fetch('/api/input-mode/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode }),
+                });
+
+                if (!response.ok) throw new Error('Mode switch failed');
+
+                const data = await response.json();
+                this.showToast(data.message || 'モードを切り替えました', 'success');
+                await this.fetchStatus();
+            } catch (error) {
+                console.error('Failed to switch input mode:', error);
+                this.showToast('モード切り替えに失敗しました', 'error');
+            } finally {
+                this.switching = false;
+            }
+        },
+
+        async restartDaemon() {
+            if (this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/daemon/restart', {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Restart failed');
+
+                const data = await response.json();
+                this.showToast(data.message || 'デーモンを再起動しました', 'success');
+
+                // Wait and refresh status
+                setTimeout(() => this.fetchStatus(), 2000);
+            } catch (error) {
+                console.error('Failed to restart daemon:', error);
+                this.showToast('再起動に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        formatSampleRate(hz) {
+            if (!hz || hz <= 0) return '-';
+            if (hz >= 1000) return `${(hz / 1000).toFixed(1)} kHz`;
+            return `${hz} Hz`;
+        },
+
+        showToast(message, type = 'info') {
+            // Simple toast notification (can be enhanced later)
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 12px 20px;
+                background: ${type === 'success' ? '#00ff88' : type === 'error' ? '#ff4444' : '#00d4ff'};
+                color: #0a0e12;
+                border-radius: 8px;
+                font-weight: 600;
+                z-index: 9999;
+                animation: slideIn 0.3s ease;
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        },
+    };
+}
+</script>
+{% endblock %}
