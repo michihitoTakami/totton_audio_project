@@ -50,7 +50,7 @@ class TestPhaseTypeGet:
             data = response.json()
             assert data["phase_type"] == "hybrid"
             assert data["latency_warning"] is not None
-            assert "6.7ms" in data["latency_warning"] or "6.7" in data["latency_warning"]
+            assert "10ms" in data["latency_warning"] or "10" in data["latency_warning"]
 
     def test_get_phase_type_daemon_error(self):
         """Test error handling when daemon communication fails."""

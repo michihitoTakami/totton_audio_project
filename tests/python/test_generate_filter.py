@@ -17,24 +17,6 @@ SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 
-class TestPhaseType:
-    """Tests for PhaseType enum."""
-
-    def test_phase_type_values(self):
-        """PhaseType should have correct values."""
-        from generate_filter import PhaseType
-
-        assert PhaseType.MINIMUM.value == "minimum"
-        assert PhaseType.HYBRID.value == "hybrid"
-
-    def test_phase_type_from_string(self):
-        """PhaseType should be constructible from string."""
-        from generate_filter import PhaseType
-
-        assert PhaseType("minimum") == PhaseType.MINIMUM
-        assert PhaseType("hybrid") == PhaseType.HYBRID
-
-
 class TestMinimumPhaseMethod:
     """Tests for MinimumPhaseMethod enum."""
 
@@ -51,7 +33,7 @@ class TestFilterConfig:
 
     def test_default_values(self):
         """FilterConfig should have correct defaults."""
-        from generate_filter import FilterConfig, PhaseType, MinimumPhaseMethod
+        from generate_filter import FilterConfig, MinimumPhaseMethod
 
         config = FilterConfig()
 
@@ -64,7 +46,6 @@ class TestFilterConfig:
             config.stopband_attenuation_db == 160
         )  # Updated: realistic target for min phase
         assert config.kaiser_beta == 28.0
-        assert config.phase_type == PhaseType.MINIMUM
         assert config.minimum_phase_method == MinimumPhaseMethod.HOMOMORPHIC
         assert config.target_dc_gain == config.upsample_ratio
         # dc_gain_factor: 全レートで音量統一（デフォルト0.99）
@@ -97,30 +78,16 @@ class TestFilterConfig:
         assert config_96k.family == "48k"
 
     def test_base_name_minimum_phase(self):
-        """base_name should include phase type for minimum phase."""
-        from generate_filter import FilterConfig, PhaseType
+        """base_name should include min_phase suffix."""
+        from generate_filter import FilterConfig
 
         config = FilterConfig(
             n_taps=2_000_000,
             input_rate=44100,
             upsample_ratio=16,
-            phase_type=PhaseType.MINIMUM,
         )
         # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
         assert config.base_name == "filter_44k_16x_2m_min_phase"
-
-    def test_base_name_hybrid_phase(self):
-        """base_name should include phase type label for hybrid phase."""
-        from generate_filter import FilterConfig, PhaseType
-
-        config = FilterConfig(
-            n_taps=2_000_000,
-            input_rate=48000,
-            upsample_ratio=8,
-            phase_type=PhaseType.HYBRID,
-        )
-        assert config.phase_label == "hybrid_phase"
-        assert config.base_name.endswith("_hybrid_phase")
 
     def test_base_name_custom_prefix(self):
         """output_prefix should override auto-generated name."""
@@ -129,38 +96,11 @@ class TestFilterConfig:
         config = FilterConfig(output_prefix="custom_filter")
         assert config.base_name == "custom_filter"
 
-    def test_hybrid_delay_samples_property(self):
-        """Hybrid delay samples should match delay ms."""
-        from generate_filter import FilterConfig, PhaseType
-
-        config = FilterConfig(
-            n_taps=8192,
-            input_rate=44100,
-            upsample_ratio=16,
-            phase_type=PhaseType.HYBRID,
-            hybrid_delay_ms=5.0,
-        )
-        expected = int(round(0.005 * 44100 * 16))
-        assert config.hybrid_delay_samples == expected
-
-    def test_hybrid_delay_validation(self):
-        """Hybrid delay must be shorter than tap length."""
-        from generate_filter import FilterConfig, PhaseType
-        import pytest
-
-        with pytest.raises(ValueError):
-            FilterConfig(
-                n_taps=2048,
-                input_rate=44100,
-                upsample_ratio=16,
-                phase_type=PhaseType.HYBRID,
-            )
-
     def test_minimum_phase_accepts_even_taps(self):
         """Minimum phase should accept even tap counts."""
-        from generate_filter import FilterConfig, PhaseType
+        from generate_filter import FilterConfig
 
-        config = FilterConfig(n_taps=2_000_000, phase_type=PhaseType.MINIMUM)
+        config = FilterConfig(n_taps=2_000_000)
         assert config.n_taps == 2_000_000
 
 
@@ -170,7 +110,7 @@ class TestFilterDesigner:
     @pytest.fixture
     def small_config(self):
         """Create a small config for fast testing."""
-        from generate_filter import FilterConfig, PhaseType
+        from generate_filter import FilterConfig
 
         return FilterConfig(
             n_taps=1600,
@@ -179,23 +119,6 @@ class TestFilterDesigner:
             passband_end=20000,
             stopband_start=22050,
             kaiser_beta=14,
-            phase_type=PhaseType.MINIMUM,
-        )
-
-    @pytest.fixture
-    def hybrid_config(self):
-        """Hybrid config with enough taps for 10ms delay."""
-        from generate_filter import FilterConfig, PhaseType
-
-        return FilterConfig(
-            n_taps=8192,
-            input_rate=44100,
-            upsample_ratio=16,
-            passband_end=20000,
-            stopband_start=22050,
-            kaiser_beta=14,
-            phase_type=PhaseType.HYBRID,
-            hybrid_fast_window_samples=4096,
         )
 
     def test_design_linear_phase(self, small_config):
@@ -229,9 +152,7 @@ class TestFilterDesigner:
 
     def test_design_returns_minimum_phase(self, small_config):
         """design() with MINIMUM should return minimum phase filter."""
-        from generate_filter import FilterDesigner, PhaseType
-
-        small_config.phase_type = PhaseType.MINIMUM
+        from generate_filter import FilterDesigner
         designer = FilterDesigner(small_config)
         h_final, h_linear = designer.design()
 
@@ -240,41 +161,6 @@ class TestFilterDesigner:
         # h_final should be minimum phase (energy at front)
         peak_idx = np.argmax(np.abs(h_final))
         assert peak_idx < len(h_final) * 0.1
-
-    def test_design_returns_hybrid_phase(self, hybrid_config):
-        """design() with HYBRID should align peak near delay samples."""
-        from generate_filter import FilterDesigner
-
-        designer = FilterDesigner(hybrid_config)
-        h_final, h_linear = designer.design()
-
-        assert h_linear is not None
-        assert len(h_final) == hybrid_config.n_taps
-
-        peak_idx = int(np.argmax(np.abs(h_final)))
-        delta = abs(peak_idx - hybrid_config.hybrid_delay_samples)
-        # Allow 2 ms tolerance due to windowing
-        tolerance = int(hybrid_config.output_rate * 0.002)
-        assert delta < tolerance
-
-    def test_hybrid_gain_alignment_metrics(self, hybrid_config):
-        """Hybrid設計時に低域/高域ゲイン整合情報が記録される"""
-        from generate_filter import FilterDesigner
-
-        designer = FilterDesigner(hybrid_config)
-        designer.design()
-
-        info = designer.hybrid_gain_alignment
-        assert info is not None
-        assert info["low_gain"] > 0
-        assert info["high_gain"] > 0
-
-        low_aligned = info["low_band_avg_min"] * info["low_gain"]
-        high_aligned = info["high_band_avg_linear"] * info["high_gain"]
-        ref = info["passband_reference"]
-
-        assert np.isclose(low_aligned, ref, rtol=0.25)
-        assert np.isclose(high_aligned, ref, rtol=0.1)
 
 
 class TestFilterValidator:
@@ -299,19 +185,17 @@ class TestFilterValidator:
         assert "stopband_attenuation_db" in results
         assert "is_minimum_phase" in results
         assert "is_symmetric" in results
-        assert "phase_type" in results
         assert "peak_position" in results
 
     def test_validate_detects_minimum_phase(self):
         """validate should detect minimum phase filters."""
-        from generate_filter import FilterConfig, FilterValidator, PhaseType
+        from generate_filter import FilterConfig, FilterValidator
 
         config = FilterConfig(
             n_taps=1000,
             input_rate=44100,
             upsample_ratio=16,
             stopband_attenuation_db=40,
-            phase_type=PhaseType.MINIMUM,
         )
         validator = FilterValidator(config)
 
@@ -328,13 +212,12 @@ class TestFilterValidator:
 
     def test_validate_detects_symmetric(self):
         """validate should detect symmetric (linear phase) filters."""
-        from generate_filter import FilterConfig, FilterValidator, PhaseType
+        from generate_filter import FilterConfig, FilterValidator
 
         config = FilterConfig(
             n_taps=1001,  # Odd tap count required for linear phase
             input_rate=44100,
             upsample_ratio=16,
-            phase_type=PhaseType.MINIMUM,
         )
         validator = FilterValidator(config)
 
@@ -674,7 +557,7 @@ class TestCoefficientFileLoading:
 
     def test_load_44k_16x_coefficients(self, coefficients_dir):
         """Should load 44.1kHz 16x coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_44k_16x_2m_hybrid_phase.bin"
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("44kHz 16x coefficient file not found")
@@ -686,7 +569,7 @@ class TestCoefficientFileLoading:
 
     def test_load_48k_16x_coefficients(self, coefficients_dir):
         """Should load 48kHz 16x coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_48k_16x_2m_hybrid_phase.bin"
+        coeff_path = coefficients_dir / "filter_48k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("48kHz 16x coefficient file not found")
@@ -698,7 +581,7 @@ class TestCoefficientFileLoading:
 
     def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):
         """Loaded coefficients should have DC gain close to target (L * 0.99)."""
-        coeff_path = coefficients_dir / "filter_44k_16x_2m_hybrid_phase.bin"
+        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("44kHz 16x coefficient file not found")
@@ -715,14 +598,14 @@ class TestCoefficientFileNaming:
 
     # Expected filenames for all 8 multi-rate configurations
     EXPECTED_FILENAMES = [
-        "filter_44k_16x_2m_hybrid_phase.bin",
-        "filter_44k_8x_2m_hybrid_phase.bin",
-        "filter_44k_4x_2m_hybrid_phase.bin",
-        "filter_44k_2x_2m_hybrid_phase.bin",
-        "filter_48k_16x_2m_hybrid_phase.bin",
-        "filter_48k_8x_2m_hybrid_phase.bin",
-        "filter_48k_4x_2m_hybrid_phase.bin",
-        "filter_48k_2x_2m_hybrid_phase.bin",
+        "filter_44k_16x_2m_min_phase.bin",
+        "filter_44k_8x_2m_min_phase.bin",
+        "filter_44k_4x_2m_min_phase.bin",
+        "filter_44k_2x_2m_min_phase.bin",
+        "filter_48k_16x_2m_min_phase.bin",
+        "filter_48k_8x_2m_min_phase.bin",
+        "filter_48k_4x_2m_min_phase.bin",
+        "filter_48k_2x_2m_min_phase.bin",
     ]
 
     def test_all_coefficient_files_exist(self, coefficients_dir):
@@ -757,7 +640,7 @@ class TestCoefficientFileNaming:
 
     def test_filter_config_generates_2m_filename(self):
         """FilterConfig should generate filenames with '2m' for 2M taps."""
-        from generate_filter import FilterConfig, PhaseType
+        from generate_filter import FilterConfig
 
         # Test all 8 configurations
         test_cases = [
@@ -776,7 +659,6 @@ class TestCoefficientFileNaming:
                 n_taps=2_000_000,
                 input_rate=input_rate,
                 upsample_ratio=ratio,
-                phase_type=PhaseType.MINIMUM,
             )
             assert (
                 config.base_name == expected_basename
@@ -784,14 +666,13 @@ class TestCoefficientFileNaming:
 
     def test_non_2m_taps_use_numeric_format(self):
         """Non-2M tap counts should use numeric format in filename."""
-        from generate_filter import FilterConfig, PhaseType
+        from generate_filter import FilterConfig
 
         # Test with different tap counts
         config_1m = FilterConfig(
             n_taps=1_000_000,
             input_rate=44100,
             upsample_ratio=16,
-            phase_type=PhaseType.MINIMUM,
         )
         assert "1000000" in config_1m.base_name
         assert "1m" not in config_1m.base_name
@@ -800,7 +681,6 @@ class TestCoefficientFileNaming:
             n_taps=500_000,
             input_rate=44100,
             upsample_ratio=16,
-            phase_type=PhaseType.MINIMUM,
         )
         assert "500000" in config_500k.base_name
 
@@ -892,29 +772,16 @@ class TestMultiRateConfigs:
 class TestMultiRateOutputFilename:
     """Tests for multi-rate output filename format."""
 
-    def test_filename_includes_phase_type(self):
-        """Output filename should include phase type."""
-        from generate_filter import FilterConfig, PhaseType
+    def test_filename_includes_min_phase_suffix(self):
+        """Output filename should include the min_phase suffix."""
+        from generate_filter import FilterConfig
 
-        # Minimum phase (even taps OK)
-        config_min = FilterConfig(
+        config = FilterConfig(
             n_taps=2_000_000,
             input_rate=44100,
             upsample_ratio=16,
-            phase_type=PhaseType.MINIMUM,
         )
-        # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
-        assert config_min.base_name == "filter_44k_16x_2m_min_phase"
-
-        # Hybrid phase (same taps as minimum)
-        config_hybrid = FilterConfig(
-            n_taps=2_000_000,
-            input_rate=44100,
-            upsample_ratio=16,
-            phase_type=PhaseType.HYBRID,
-        )
-        assert config_hybrid.base_name.endswith("_hybrid_phase")
-        assert "44k" in config_hybrid.base_name
+        assert config.base_name == "filter_44k_16x_2m_min_phase"
 
 
 class TestValidateTapCountMultiRate:
@@ -966,22 +833,6 @@ class TestFilterGenerator:
         assert isinstance(generator.exporter, FilterExporter)
         assert isinstance(generator.plotter, FilterPlotter)
 
-
-class TestPhaseTypeErrorHandling:
-    """Tests for error handling with invalid phase type parameters."""
-
-    def test_invalid_phase_type_string_raises_error(self):
-        """PhaseType should raise ValueError for invalid string."""
-        from generate_filter import PhaseType
-
-        with pytest.raises(ValueError):
-            PhaseType("invalid")
-
-        with pytest.raises(ValueError):
-            PhaseType("mixed")
-
-        with pytest.raises(ValueError):
-            PhaseType("")
 
     def test_invalid_minimum_phase_method_string_raises_error(self):
         """MinimumPhaseMethod should raise ValueError for invalid string."""
@@ -1118,10 +969,10 @@ class TestCoefficientDcGain:
         coeff_dir = Path(__file__).parent.parent.parent / "data" / "coefficients"
         # 新形式フィルタ: DCゲイン = L * 0.99
         cases = [
-            ("filter_44k_16x_2m_hybrid_phase.bin", 16.0 * 0.99),  # 15.84
-            ("filter_48k_16x_2m_hybrid_phase.bin", 16.0 * 0.99),  # 15.84
-            ("filter_44k_8x_2m_hybrid_phase.bin", 8.0 * 0.99),  # 7.92
-            ("filter_48k_8x_2m_hybrid_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_44k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_48k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_44k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_48k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
         ]
         for filename, expected_dc in cases:
             filepath = coeff_dir / filename

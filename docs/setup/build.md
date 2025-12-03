@@ -204,9 +204,10 @@ cmake --build build -j$(nproc)
 ビルド前にフィルタ係数が生成されていることを確認：
 
 ```bash
+ls -lh data/coefficients/filter_*_*x_2m_min_phase.bin
 ls -lh data/coefficients/filter_*_*x_2m_hybrid_phase.bin
 
-# 期待される出力:
+# 期待される出力（ハイブリッドの例）:
 # filter_44k_2x_2m_hybrid_phase.bin  (約7.6MB)
 # filter_44k_4x_2m_hybrid_phase.bin
 # filter_44k_8x_2m_hybrid_phase.bin
@@ -220,5 +221,6 @@ ls -lh data/coefficients/filter_*_*x_2m_hybrid_phase.bin
 フィルタがない場合は先に生成してください：
 
 ```bash
-uv run python scripts/generate_filter.py --generate-all --phase-type minimum
+uv run python scripts/generate_filter.py --generate-all          # 最小位相
+uv run python scripts/generate_mixed_phase.py --generate-all     # 混合位相（100Hz/10ms）
 ```

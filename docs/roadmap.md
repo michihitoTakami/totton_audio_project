@@ -41,8 +41,8 @@ Phase 3: Hardware Integration         [                    ] 0%
   - QAチェックリストへ低遅延モードの回帰項目を追加
 
 - [x] **Phase Type Selection** (#165, #166, #167)
-  - Minimum Phase / Linear Phase 切り替え機能
-  - `--phase-type` CLIオプション
+  - Minimum Phase / Mixed Phase 切り替え機能
+  - `scripts/generate_mixed_phase.py` による100Hzクロスオーバ/約10ms整列フィルタ
   - C++/CUDA側の位相タイプ対応（遅延計算含む）
   - 設定システム（`PhaseType` enum）
 
@@ -113,9 +113,13 @@ Phase 3: Hardware Integration         [                    ] 0%
 ### 実装状況
 
 #### 1. 係数生成 ✅
-- [x] 全8構成の係数ファイル生成スクリプト完成
+- [x] 全8構成の最小位相フィルタ生成スクリプト
   ```bash
   uv run python scripts/generate_filter.py --generate-all --taps 2000000
+  ```
+- [x] 全8構成の混合位相フィルタ生成スクリプト（100Hz/約10ms）
+  ```bash
+  uv run python scripts/generate_mixed_phase.py --generate-all --taps 640000
   ```
 - [x] C++が期待するファイル名パターンに対応 (`filter_{family}_{ratio}x_{taps}_{phase_label}.bin` 例: `_hybrid_phase`)
 

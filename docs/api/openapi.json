@@ -273,7 +273,7 @@
           "daemon"
         ],
         "summary": "Get Phase Type",
-        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid combines minimum phase below 150 Hz with linear phase above 150 Hz\n(~6.7 ms alignment, 1 period of crossover frequency) to retain imaging while keeping bass tight.",
+        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid keeps bass (≤100 Hz) minimum phase while aligning higher bands to a constant ~10 ms delay\n(1 period of the crossover frequency) to retain imaging while keeping bass tight.",
         "operationId": "get_phase_type_daemon_phase_type_get",
         "responses": {
           "200": {
@@ -293,7 +293,7 @@
           "daemon"
         ],
         "summary": "Set Phase Type",
-        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 150 Hz / linear phase above 150 Hz (~6.7 ms alignment, 1 period of crossover frequency)",
+        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 100 Hz / constant-delay region above 100 Hz (~10 ms alignment, 1 period of crossover frequency)",
         "operationId": "set_phase_type_daemon_phase_type_put",
         "requestBody": {
           "content": {
@@ -3049,7 +3049,7 @@
               }
             ],
             "title": "Latency Warning",
-            "description": "Info/warning message for hybrid phase (~6.7ms alignment above 150 Hz)"
+            "description": "Info/warning message for hybrid phase (~10ms alignment above 100 Hz)"
           }
         },
         "type": "object",

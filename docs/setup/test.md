@@ -233,7 +233,8 @@ Failed to load filter coefficients
 フィルタ係数を生成してください：
 
 ```bash
-uv run python scripts/generate_filter.py --generate-all --phase-type minimum
+uv run python scripts/generate_filter.py --generate-all
+uv run python scripts/generate_mixed_phase.py --generate-all
 ```
 
 ### セグメンテーションフォルト

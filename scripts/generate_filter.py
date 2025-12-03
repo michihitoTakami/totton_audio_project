@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """
-GPU Audio Upsampler - Multi-Rate Filter Coefficient Generation
+GPU Audio Upsampler - Multi-Rate Minimum-Phase Filter Generation
 
-FIRフィルタを生成し、検証する。位相タイプ（最小位相/ハイブリッド位相）を選択可能。
+最小位相FIRフィルタを生成し、検証する。
 
 サポートするアップサンプリング比率:
 - 16x: 44.1kHz → 705.6kHz, 48kHz → 768kHz
 - 8x:  88.2kHz → 705.6kHz, 96kHz → 768kHz
 - 4x:  176.4kHz → 705.6kHz, 192kHz → 768kHz
 - 2x:  352.8kHz → 705.6kHz, 384kHz → 768kHz
-
-位相タイプ:
-- minimum: 最小位相（プリリンギング排除、周波数依存遅延）【従来】
-- hybrid: 低域（≤150Hz）最小位相 + 高域線形位相（群遅延はクロスオーバー周波数の1周期に自動整列、150Hz時は約6.67ms）【新規】
 
 仕様:
 - タップ数: 640,000 (640k) デフォルト
@@ -22,7 +18,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/ハ�
 - 窓関数: Kaiser (β ≈ 28 / 32bit Float実装の量子ノイズ限界に合わせた最適値)
 
 注意:
-- 最小位相/ハイブリッド: タップ数はアップサンプリング比率の倍数であること
+- タップ数はアップサンプリング比率の倍数であること
 - クリッピング防止のため係数は正規化される
 """
 
@@ -54,13 +50,6 @@ except ImportError:
     cp_fft = None
 
 
-class PhaseType(Enum):
-    """フィルタの位相タイプ"""
-
-    MINIMUM = "minimum"  # 最小位相: プリリンギングなし、周波数依存遅延
-    HYBRID = "hybrid"  # 低域最小位相 + 高域線形位相（クロスオーバー周波数の1周期に自動整列）
-
-
 class MinimumPhaseMethod(Enum):
     """最小位相変換の手法"""
 
@@ -83,13 +72,6 @@ MULTI_RATE_CONFIGS = {
     "48k_2x": {"input_rate": 384000, "ratio": 2, "stopband": 192000},
 }
 
-HYBRID_DEFAULT_CROSSOVER_HZ = 150.0
-HYBRID_DEFAULT_TRANSITION_HZ = 40.0
-HYBRID_DEFAULT_DELAY_MS = 10.0
-HYBRID_DEFAULT_FAST_WINDOW = 32_768
-HYBRID_FAST_WINDOW_TARGET = 0.99
-
-
 @dataclass
 class FilterConfig:
     """フィルタ生成の設定"""
@@ -101,12 +83,7 @@ class FilterConfig:
     stopband_start: int | None = None  # Noneの場合は入力Nyquist周波数
     stopband_attenuation_db: int = 160  # 24bit品質に十分、最小位相変換後の現実的値
     kaiser_beta: float = 28.0
-    phase_type: PhaseType = PhaseType.MINIMUM
     minimum_phase_method: MinimumPhaseMethod = MinimumPhaseMethod.HOMOMORPHIC
-    hybrid_crossover_hz: float = HYBRID_DEFAULT_CROSSOVER_HZ
-    hybrid_transition_hz: float = HYBRID_DEFAULT_TRANSITION_HZ
-    hybrid_delay_ms: float = HYBRID_DEFAULT_DELAY_MS
-    hybrid_fast_window_samples: int = HYBRID_DEFAULT_FAST_WINDOW
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
     # 全レートで音量統一のため target_dc_gain × dc_gain_factor に設定
     target_dc_gain: float | None = None
@@ -164,38 +141,9 @@ class FilterConfig:
                 f"dc_gain_factorは0より大きく1.0以下である必要があります: {self.dc_gain_factor}"
             )
 
-        if self.phase_type == PhaseType.HYBRID:
-            if not (0 < self.hybrid_crossover_hz < self.passband_end):
-                raise ValueError(
-                    "hybrid_crossover_hz は0より大きく通過帯域終端未満である必要があります"
-                )
-            if self.hybrid_transition_hz <= 0:
-                raise ValueError("hybrid_transition_hz は正の値である必要があります")
-            # デフォルト値の場合はクロスオーバー周波数の1周期に基づいて自動計算
-            if self.hybrid_delay_ms == HYBRID_DEFAULT_DELAY_MS:
-                self.hybrid_delay_ms = 1000.0 / self.hybrid_crossover_hz
-            if self.hybrid_delay_ms <= 0:
-                raise ValueError("hybrid_delay_ms は正の値である必要があります")
-            if self.hybrid_fast_window_samples <= 0:
-                raise ValueError(
-                    "hybrid_fast_window_samples は正の整数である必要があります"
-                )
-            if self.hybrid_delay_samples >= self.n_taps:
-                raise ValueError(
-                    f"hybrid_delay_ms に対応するサンプル数 ({self.hybrid_delay_samples}) がタップ数 ({self.n_taps}) 以上です"
-                )
-
     @property
     def output_rate(self) -> int:
         return self.input_rate * self.upsample_ratio
-
-    @property
-    def hybrid_delay_seconds(self) -> float:
-        return self.hybrid_delay_ms / 1000.0
-
-    @property
-    def hybrid_delay_samples(self) -> int:
-        return int(round(self.hybrid_delay_seconds * self.output_rate))
 
     @property
     def family(self) -> str:
@@ -219,22 +167,10 @@ class FilterConfig:
         return str(self.final_taps)
 
     @property
-    def phase_label(self) -> str:
-        """ファイル名用の位相タイプラベル
-
-        C++ expects "min_phase" for minimum phase filters
-        """
-        if self.phase_type == PhaseType.MINIMUM:
-            return "min_phase"
-        if self.phase_type == PhaseType.HYBRID:
-            return "hybrid_phase"
-        return self.phase_type.value
-
-    @property
     def base_name(self) -> str:
         if self.output_prefix:
             return self.output_prefix
-        return f"filter_{self.family}_{self.upsample_ratio}x_{self.taps_label}_{self.phase_label}"
+        return f"filter_{self.family}_{self.upsample_ratio}x_{self.taps_label}_min_phase"
 
 
 class FilterDesigner:
@@ -242,7 +178,6 @@ class FilterDesigner:
 
     def __init__(self, config: FilterConfig) -> None:
         self.config = config
-        self.hybrid_gain_alignment: dict[str, float] | None = None
 
     def design_linear_phase(self) -> np.ndarray:
         """ベースとなる線形位相FIRフィルタを設計する"""
@@ -317,112 +252,6 @@ class FilterDesigner:
         print(f"  最小位相係数タップ数: {len(h_min_phase)}")
         return h_min_phase
 
-    def design_hybrid_phase(self, h_linear: np.ndarray) -> np.ndarray:
-        """ハイブリッド位相フィルタを設計する"""
-        print("\nハイブリッド位相フィルタ合成中...")
-        h_min_phase = self.convert_to_minimum_phase(h_linear)
-
-        n_fft = 2 ** int(np.ceil(np.log2(self.config.n_taps * 4)))
-        freqs = np.fft.rfftfreq(n_fft, d=1.0 / self.config.output_rate)
-
-        H_min = np.fft.rfft(h_min_phase, n=n_fft)
-        H_linear = np.fft.rfft(h_linear, n=n_fft)
-
-        mag_min = np.maximum(np.abs(H_min), 1e-12)
-        mag_linear = np.maximum(np.abs(H_linear), 1e-12)
-
-        crossover = self.config.hybrid_crossover_hz
-        width = self.config.hybrid_transition_hz
-        start = max(0.0, crossover - width / 2.0)
-        end = crossover + width / 2.0
-
-        low_band_mask = freqs <= start
-        if not np.any(low_band_mask):
-            low_band_mask = freqs <= crossover
-
-        high_band_mask = freqs >= end
-        if not np.any(high_band_mask):
-            high_band_mask = freqs >= crossover
-
-        passband_mask = freqs <= self.config.passband_end
-        if not np.any(passband_mask):
-            passband_mask = np.ones_like(freqs, dtype=bool)
-
-        def _band_avg(values: np.ndarray, mask: np.ndarray) -> float:
-            if np.any(mask):
-                return float(np.mean(values[mask]))
-            return float(np.mean(values))
-
-        passband_ref = _band_avg(mag_linear, passband_mask)
-        low_min_avg = _band_avg(mag_min, low_band_mask)
-        low_lin_avg = _band_avg(mag_linear, low_band_mask)
-        high_lin_avg = _band_avg(mag_linear, high_band_mask)
-
-        eps = 1e-12
-
-        def _compute_gain(target: float, actual: float) -> float:
-            if actual < eps:
-                return 1.0
-            gain = target / actual
-            return float(np.clip(gain, 0.125, 8.0))
-
-        low_gain = _compute_gain(passband_ref, low_min_avg)
-        high_gain = _compute_gain(passband_ref, high_lin_avg)
-
-        mag_low = mag_min * low_gain
-        mag_high = mag_linear * high_gain
-
-        low_weight = self._hybrid_lowpass_weight(freqs)
-        high_weight = 1.0 - low_weight
-
-        magnitude = low_weight * mag_low + high_weight * mag_high
-        phase_min = np.unwrap(np.angle(H_min))
-        phase_linear = -2 * np.pi * freqs * self.config.hybrid_delay_seconds
-
-        phase_hybrid = low_weight * phase_min + high_weight * phase_linear
-        H_hybrid = magnitude * np.exp(1j * phase_hybrid)
-
-        self.hybrid_gain_alignment = {
-            "passband_reference": passband_ref,
-            "low_gain": low_gain,
-            "high_gain": high_gain,
-            "low_band_avg_min": low_min_avg,
-            "low_band_avg_linear": low_lin_avg,
-            "high_band_avg_linear": high_lin_avg,
-            "transition_start_hz": float(start),
-            "transition_end_hz": float(end),
-            "crossover_hz": float(crossover),
-        }
-
-        print(
-            "  ハイブリッドゲイン整合: "
-            f"low x{low_gain:.3f} (min {low_min_avg:.6f} -> ref {passband_ref:.6f}), "
-            f"high x{high_gain:.3f} (lin {high_lin_avg:.6f} -> ref {passband_ref:.6f})"
-        )
-
-        h_time = np.fft.irfft(H_hybrid, n=n_fft).real
-        h_time = h_time[: self.config.n_taps]
-        print(
-            f"  ハイブリッド: クロスオーバー {self.config.hybrid_crossover_hz} Hz, "
-            f"遅延 {self.config.hybrid_delay_ms} ms"
-        )
-        return h_time
-
-    def _hybrid_lowpass_weight(self, freqs: np.ndarray) -> np.ndarray:
-        """クロスオーバー周波数で滑らかに接続するための重みを計算"""
-        crossover = self.config.hybrid_crossover_hz
-        width = self.config.hybrid_transition_hz
-        start = max(0.0, crossover - width / 2.0)
-        end = crossover + width / 2.0
-
-        weights = np.ones_like(freqs)
-        weights[freqs >= end] = 0.0
-        transition_mask = (freqs > start) & (freqs < end)
-        if np.any(transition_mask):
-            phase = (freqs[transition_mask] - start) / max(end - start, 1e-9)
-            weights[transition_mask] = 0.5 * (1 + np.cos(np.pi * phase))
-        return weights
-
     def _convert_to_minimum_phase_gpu(
         self, h_linear: np.ndarray, n_fft: int
     ) -> np.ndarray:
@@ -482,16 +311,9 @@ class FilterDesigner:
             tuple: (最終フィルタ係数, 基準線形位相係数 or None)
         """
         # 1. 基準線形位相フィルタを設計
-        self.hybrid_gain_alignment = None
         h_linear = self.design_linear_phase()
-
-        if self.config.phase_type == PhaseType.MINIMUM:
-            h_min_phase = self.convert_to_minimum_phase(h_linear)
-            return h_min_phase, h_linear
-        if self.config.phase_type == PhaseType.HYBRID:
-            h_hybrid = self.design_hybrid_phase(h_linear)
-            return h_hybrid, h_linear
-        raise ValueError(f"Unsupported phase type: {self.config.phase_type}")
+        h_min_phase = self.convert_to_minimum_phase(h_linear)
+        return h_min_phase, h_linear
 
 
 class FilterValidator:
@@ -530,16 +352,6 @@ class FilterValidator:
         # 線形位相の対称性チェック
         is_symmetric = self._check_symmetry(h)
 
-        fast_window = min(len(h), self.config.hybrid_fast_window_samples)
-        fast_energy = float(np.sum(h[:fast_window] ** 2))
-        total_energy = float(np.sum(h**2) + 1e-24)
-        fast_energy_ratio = fast_energy / total_energy if total_energy > 0 else 0.0
-        fast_target_ratio = (
-            HYBRID_FAST_WINDOW_TARGET
-            if self.config.phase_type == PhaseType.HYBRID
-            else None
-        )
-
         results = {
             "passband_ripple_db": float(passband_ripple_db),
             "stopband_attenuation_db": float(abs(stopband_attenuation)),
@@ -551,16 +363,7 @@ class FilterValidator:
             ),
             "is_minimum_phase": bool(is_peak_at_front and is_energy_causal),
             "is_symmetric": is_symmetric,
-            "phase_type": self.config.phase_type.value,
             "actual_taps": len(h),
-            "fast_window_samples": int(fast_window),
-            "fast_window_energy_ratio": float(fast_energy_ratio),
-            "fast_window_target_ratio": fast_target_ratio,
-            "meets_fast_window_spec": bool(
-                fast_energy_ratio >= fast_target_ratio
-                if fast_target_ratio is not None
-                else True
-            ),
         }
 
         self._print_results(results, stopband_attenuation)
@@ -573,7 +376,6 @@ class FilterValidator:
     def _print_results(
         self, results: dict[str, Any], stopband_attenuation: float
     ) -> None:
-        print(f"  位相タイプ: {results['phase_type']}")
         print(f"  実際のタップ数: {results['actual_taps']}")
         print(f"  通過帯域リップル: {results['passband_ripple_db']:.3f} dB")
         print(
@@ -590,29 +392,8 @@ class FilterValidator:
         print(
             f"  エネルギー比(前半/後半): {results['energy_ratio_first_to_second_half']:.1f}"
         )
-        fast_pct = results["fast_window_energy_ratio"] * 100.0
-        fast_samples = results["fast_window_samples"]
-        fast_target = results.get("fast_window_target_ratio")
-        if fast_target is not None:
-            target_pct = fast_target * 100.0
-            status = "合格" if results["meets_fast_window_spec"] else "要確認"
-            print(
-                f"  Fast window ({fast_samples} taps) energy: {fast_pct:.2f}% "
-                f"(target ≥ {target_pct:.1f}%) → {status}"
-            )
-        else:
-            print(
-                f"  Fast window ({fast_samples} taps) energy: {fast_pct:.2f}% (参考値)"
-            )
-
-        if self.config.phase_type == PhaseType.MINIMUM:
-            status = "確認" if results["is_minimum_phase"] else "未確認"
-            print(f"  最小位相特性: {status}")
-        elif self.config.phase_type == PhaseType.HYBRID:
-            print(
-                f"  ハイブリッド: crossover={self.config.hybrid_crossover_hz} Hz, "
-                f"delay={self.config.hybrid_delay_ms} ms"
-            )
+        status = "確認" if results["is_minimum_phase"] else "未確認"
+        print(f"  最小位相特性: {status}")
 
 
 class FilterExporter:
@@ -722,7 +503,7 @@ class FilterPlotter:
         h_display = h_final[:display_range]
 
         axes[0].plot(t, h_display, linewidth=0.5, color="orange")
-        title = f"{self.config.phase_type.value.title()} Phase Impulse Response"
+        title = "Minimum Phase Impulse Response"
         axes[0].set_title(title, fontsize=12)
         axes[0].set_xlabel("Sample")
         axes[0].set_ylabel("Amplitude")
@@ -768,7 +549,7 @@ class FilterPlotter:
         axes[0].plot(
             w_final / 1000,
             H_final_db,
-            label=f"{self.config.phase_type.value.title()} Phase",
+            label="Minimum Phase",
             linewidth=1,
             alpha=0.7,
         )
@@ -843,7 +624,7 @@ class FilterPlotter:
         ax.plot(
             w / 1000,
             phase_final,
-            label=f"{self.config.phase_type.value.title()} Phase",
+            label="Minimum Phase",
             linewidth=1,
             alpha=0.7,
         )
@@ -905,8 +686,6 @@ class FilterGenerator:
 
         # 3. 仕様検証
         validation_results = self.validator.validate(h_final)
-        if self.designer.hybrid_gain_alignment:
-            validation_results["hybrid_gain_alignment"] = self.designer.hybrid_gain_alignment
         validation_results["normalization"] = normalization_info
 
         # 4. プロット生成
@@ -940,13 +719,7 @@ class FilterGenerator:
             "stopband_start_hz": self.config.stopband_start,
             "target_stopband_attenuation_db": self.config.stopband_attenuation_db,
             "kaiser_beta": self.config.kaiser_beta,
-            "phase_type": self.config.phase_type.value,
             "minimum_phase_method": self.config.minimum_phase_method.value,
-            "hybrid_crossover_hz": self.config.hybrid_crossover_hz,
-            "hybrid_transition_hz": self.config.hybrid_transition_hz,
-            "hybrid_delay_ms": self.config.hybrid_delay_ms,
-            "hybrid_fast_window_samples": self.config.hybrid_fast_window_samples,
-            "hybrid_fast_window_target_ratio": HYBRID_FAST_WINDOW_TARGET,
             "target_dc_gain": self.config.target_dc_gain,
             "output_basename": self.config.base_name,
             "validation_results": validation_results,
@@ -967,7 +740,6 @@ class FilterGenerator:
         else:
             print(f"完了 - {actual_taps:,}タップフィルタ")
         print("=" * 70)
-        print(f"位相タイプ: {self.config.phase_type.value.title()} Phase")
         print(f"阻止帯域減衰: {validation_results['stopband_attenuation_db']:.1f} dB")
         spec_status = "合格" if validation_results["meets_stopband_spec"] else "不合格"
         print(f"  {spec_status} (目標: {self.config.stopband_attenuation_db} dB以上)")
@@ -976,21 +748,6 @@ class FilterGenerator:
             f"目標DC={normalization_info['target_dc_gain']:.6f}, "
             f"結果DC={normalization_info['normalized_dc_gain']:.6f}"
         )
-        if "fast_window_energy_ratio" in validation_results:
-            ratio = validation_results["fast_window_energy_ratio"] * 100.0
-            fast_samples = validation_results["fast_window_samples"]
-            fast_target = validation_results.get("fast_window_target_ratio")
-            if fast_target is not None:
-                target = fast_target * 100.0
-                status = "✅" if validation_results["meets_fast_window_spec"] else "⚠️"
-                print(
-                    f"{status} Fast window energy ({fast_samples} taps): "
-                    f"{ratio:.2f}% (target ≥ {target:.1f}%)"
-                )
-            else:
-                print(
-                    f"Fast window energy ({fast_samples} taps): {ratio:.2f}% (参考値)"
-                )
         max_coef = normalization_info.get("max_coefficient_amplitude", 0)
         print(f"最大係数振幅: {max_coef:.6f}")
         if max_coef > 1.0:
@@ -1388,13 +1145,8 @@ def generate_single_filter(
         stopband_start=args.stopband_start,
         stopband_attenuation_db=args.stopband_attenuation,
         kaiser_beta=args.kaiser_beta,
-        phase_type=PhaseType(args.phase_type),
         minimum_phase_method=MinimumPhaseMethod(args.minimum_phase_method),
         output_prefix=args.output_prefix,
-        hybrid_crossover_hz=args.hybrid_crossover_hz,
-        hybrid_transition_hz=args.hybrid_transition_hz,
-        hybrid_delay_ms=args.hybrid_delay_ms,
-        hybrid_fast_window_samples=args.hybrid_fast_window,
     )
 
     generator = FilterGenerator(config)
@@ -1426,13 +1178,8 @@ def _generate_filter_worker(
             stopband_start=cfg["stopband"],
             stopband_attenuation_db=args_dict["stopband_attenuation"],
             kaiser_beta=args_dict["kaiser_beta"],
-            phase_type=PhaseType(args_dict["phase_type"]),
             minimum_phase_method=MinimumPhaseMethod(args_dict["minimum_phase_method"]),
             output_prefix=None,
-            hybrid_crossover_hz=args_dict["hybrid_crossover_hz"],
-            hybrid_transition_hz=args_dict["hybrid_transition_hz"],
-            hybrid_delay_ms=args_dict["hybrid_delay_ms"],
-            hybrid_fast_window_samples=args_dict["hybrid_fast_window_samples"],
         )
 
         generator = FilterGenerator(config)
@@ -1456,7 +1203,6 @@ def generate_all_filters(args: argparse.Namespace) -> None:
     total = len(configs)
     print("=" * 70)
     print(f"Multi-Rate Filter Generation - {total} filters")
-    print(f"Phase Type: {args.phase_type}")
     if hasattr(args, "parallel") and args.parallel:
         workers = (
             args.workers
@@ -1480,12 +1226,7 @@ def generate_all_filters(args: argparse.Namespace) -> None:
         "passband_end": args.passband_end,
         "stopband_attenuation": args.stopband_attenuation,
         "kaiser_beta": args.kaiser_beta,
-        "phase_type": args.phase_type,
         "minimum_phase_method": args.minimum_phase_method,
-        "hybrid_crossover_hz": args.hybrid_crossover_hz,
-        "hybrid_transition_hz": args.hybrid_transition_hz,
-        "hybrid_delay_ms": args.hybrid_delay_ms,
-        "hybrid_fast_window_samples": args.hybrid_fast_window,
     }
 
     results = []
@@ -1556,15 +1297,12 @@ def generate_all_filters(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate FIR filter coefficients with selectable phase type.",
+        description="Generate minimum-phase FIR filter coefficients.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Generate single minimum phase filter (default, recommended)
   %(prog)s --input-rate 44100 --upsample-ratio 16
-
-  # Generate hybrid phase filter (150 Hz crossover, auto delay ~6.67ms)
-  %(prog)s --phase-type hybrid --hybrid-crossover-hz 150
 
   # Generate all 8 filter configurations
   %(prog)s --generate-all
@@ -1577,10 +1315,6 @@ Examples:
 
   # Generate with specific number of workers
   %(prog)s --generate-all --parallel --workers 4
-
-Phase Types:
-  minimum  - No pre-ringing, frequency-dependent delay (RECOMMENDED)
-  hybrid   - Minimum phase below crossover, linear phase above with aligned delay
 
 GPU Acceleration:
   Install CuPy for GPU-accelerated minimum phase conversion:
@@ -1643,42 +1377,11 @@ GPU Acceleration:
         help="Kaiser window beta. Default: 28 (32bit Float実装の量子ノイズ限界に合わせた最適値)",
     )
     parser.add_argument(
-        "--phase-type",
-        type=str,
-        choices=["minimum", "hybrid"],
-        default="minimum",
-        help="Phase type: minimum (recommended) or hybrid. Default: minimum",
-    )
-    parser.add_argument(
         "--minimum-phase-method",
         type=str,
         choices=["homomorphic", "hilbert"],
         default="homomorphic",
         help="Minimum phase conversion method. Default: homomorphic",
-    )
-    parser.add_argument(
-        "--hybrid-crossover-hz",
-        type=float,
-        default=HYBRID_DEFAULT_CROSSOVER_HZ,
-        help="Hybrid crossover frequency separating minimum and linear regions (Hz). Default: 150",
-    )
-    parser.add_argument(
-        "--hybrid-transition-hz",
-        type=float,
-        default=HYBRID_DEFAULT_TRANSITION_HZ,
-        help="Hybrid transition width around the crossover (Hz). Default: 40",
-    )
-    parser.add_argument(
-        "--hybrid-delay-ms",
-        type=float,
-        default=HYBRID_DEFAULT_DELAY_MS,
-        help="Absolute delay applied to the linear-phase portion (ms). Default: auto (1000/crossover_hz, e.g. 6.67ms for 150Hz)",
-    )
-    parser.add_argument(
-        "--hybrid-fast-window",
-        type=int,
-        default=HYBRID_DEFAULT_FAST_WINDOW,
-        help="Fast-partition window size used for energy checks (samples). Default: 32768",
     )
     parser.add_argument(
         "--output-prefix",
