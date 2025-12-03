@@ -7,7 +7,7 @@
     <!-- Page Header -->
     <div class="page-header">
         <h1 class="page-title">{{ t.get('nav.dashboard') }}</h1>
-        <p class="page-subtitle">システム概要と入力モード切替</p>
+        <p class="page-subtitle">{{ t.get('dashboard.subtitle') }}</p>
     </div>
 
     <!-- System Status Cards -->
@@ -16,11 +16,11 @@
         <div class="status-card">
             <div class="status-card-header">
                 <span class="status-icon">⚙️</span>
-                <h3>デーモン</h3>
+                <h3>{{ t.get('dashboard.daemon') }}</h3>
             </div>
             <div class="status-card-body">
                 <div class="status-indicator" :class="status.daemon_running ? 'status-ok' : 'status-error'">
-                    <span x-text="status.daemon_running ? 'Running' : 'Stopped'"></span>
+                    <span x-text="status.daemon_running ? '{{ t.get('dashboard.status.running') }}' : '{{ t.get('dashboard.status.stopped') }}'"></span>
                 </div>
             </div>
         </div>
@@ -29,7 +29,7 @@
         <div class="status-card">
             <div class="status-card-header">
                 <span class="status-icon">🎤</span>
-                <h3>入力モード</h3>
+                <h3>{{ t.get('dashboard.input_mode') }}</h3>
             </div>
             <div class="status-card-body">
                 <div class="status-indicator status-info">
@@ -42,11 +42,11 @@
         <div class="status-card">
             <div class="status-card-header">
                 <span class="status-icon">🎚️</span>
-                <h3>EQ</h3>
+                <h3>{{ t.get('dashboard.eq') }}</h3>
             </div>
             <div class="status-card-body">
                 <div class="status-indicator" :class="status.eq_active ? 'status-ok' : 'status-off'">
-                    <span x-text="status.eq_active ? 'ON' : 'OFF'"></span>
+                    <span x-text="status.eq_active ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'"></span>
                 </div>
             </div>
         </div>
@@ -55,15 +55,15 @@
         <div class="status-card">
             <div class="status-card-header">
                 <span class="status-icon">📊</span>
-                <h3>サンプルレート</h3>
+                <h3>{{ t.get('dashboard.sample_rate') }}</h3>
             </div>
             <div class="status-card-body">
                 <div class="metric">
-                    <span class="metric-label">Input</span>
+                    <span class="metric-label">{{ t.get('dashboard.input') }}</span>
                     <span class="metric-value" x-text="formatSampleRate(status.input_rate)"></span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Output</span>
+                    <span class="metric-label">{{ t.get('dashboard.output') }}</span>
                     <span class="metric-value" x-text="formatSampleRate(status.output_rate)"></span>
                 </div>
             </div>
@@ -72,7 +72,7 @@
 
     <!-- Input Mode Switcher -->
     <div class="section">
-        <h2 class="section-title">入力モード切替</h2>
+        <h2 class="section-title">{{ t.get('dashboard.mode_switch.title') }}</h2>
         <div class="card">
             <div class="mode-switcher">
                 <button
@@ -82,8 +82,8 @@
                     :disabled="switching"
                 >
                     <div class="mode-icon">🎧</div>
-                    <div class="mode-label">PipeWire</div>
-                    <div class="mode-desc">ローカル入力（最小遅延）</div>
+                    <div class="mode-label">{{ t.get('dashboard.mode_switch.pipewire') }}</div>
+                    <div class="mode-desc">{{ t.get('dashboard.mode_switch.pipewire_desc') }}</div>
                 </button>
                 <button
                     class="mode-button"
@@ -92,19 +92,19 @@
                     :disabled="switching"
                 >
                     <div class="mode-icon">🌐</div>
-                    <div class="mode-label">RTP</div>
-                    <div class="mode-desc">ネットワーク入力</div>
+                    <div class="mode-label">{{ t.get('dashboard.mode_switch.rtp') }}</div>
+                    <div class="mode-desc">{{ t.get('dashboard.mode_switch.rtp_desc') }}</div>
                 </button>
             </div>
             <div class="alert alert-info" x-show="switching">
-                <span>モード切り替え中...</span>
+                <span>{{ t.get('dashboard.mode_switch.switching') }}</span>
             </div>
         </div>
     </div>
 
     <!-- Quick Actions -->
     <div class="section">
-        <h2 class="section-title">クイックアクション</h2>
+        <h2 class="section-title">{{ t.get('dashboard.quick_actions') }}</h2>
         <div class="card">
             <div class="action-grid">
                 <button
@@ -116,22 +116,22 @@
                     hx-swap="none"
                 >
                     <span class="action-icon">🔄</span>
-                    <span class="action-label">デーモン再起動</span>
+                    <span class="action-label">{{ t.get('dashboard.action.restart_daemon') }}</span>
                 </button>
 
                 <a href="/eq" class="action-button">
                     <span class="action-icon">🎚️</span>
-                    <span class="action-label">EQ設定</span>
+                    <span class="action-label">{{ t.get('dashboard.action.eq_settings') }}</span>
                 </a>
 
                 <a href="/crossfeed" class="action-button">
                     <span class="action-icon">🎧</span>
-                    <span class="action-label">クロスフィード設定</span>
+                    <span class="action-label">{{ t.get('dashboard.action.crossfeed') }}</span>
                 </a>
 
                 <a href="/rtp" class="action-button">
                     <span class="action-icon">🌐</span>
-                    <span class="action-label">RTP管理</span>
+                    <span class="action-label">{{ t.get('dashboard.action.rtp_management') }}</span>
                 </a>
             </div>
         </div>
