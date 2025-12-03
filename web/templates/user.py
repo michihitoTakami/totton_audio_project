@@ -553,6 +553,10 @@ def get_embedded_html() -> str:
             return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
         }
 
+        async function restartDaemon() {
+            await fetch(API + '/daemon/restart', { method: 'POST' });
+        }
+
         /**
          * Convert RTP session metrics (from daemon telemetry) to discovery stream format.
          * This enables auto-started sessions to appear in the UI alongside scanned streams.
@@ -1095,7 +1099,7 @@ def get_embedded_html() -> str:
 
                 if (data.success && data.restart_required) {
                     btn.textContent = 'Restarting...';
-                    await fetch(API + '/restart', { method: 'POST' });
+                    await restartDaemon();
                     showMessage('Daemon restarting...', true);
                     setTimeout(fetchStatus, 2000);
                 } else {
@@ -1234,7 +1238,7 @@ def get_embedded_html() -> str:
                 showOpraMessage(data.message, data.success);
                 if (data.success && data.restart_required) {
                     btn.textContent = 'Restarting...';
-                    await fetch(API + '/restart', { method: 'POST' });
+                    await restartDaemon();
                     setTimeout(fetchStatus, 2000);
                 }
             } catch (e) {
@@ -1251,7 +1255,7 @@ def get_embedded_html() -> str:
                 const data = await res.json();
                 showOpraMessage(data.message, data.success);
                 if (data.success && data.restart_required) {
-                    await fetch(API + '/restart', { method: 'POST' });
+                    await restartDaemon();
                     setTimeout(fetchStatus, 2000);
                 }
             } catch (e) {
