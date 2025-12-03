@@ -1284,6 +1284,7 @@ body::before {
 .toggle-container {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 16px;
     padding: 12px 0;
 }
@@ -1437,6 +1438,7 @@ body::before {
 .checkbox-label {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     cursor: pointer;
     font-size: 13px;
@@ -1456,6 +1458,7 @@ body::before {
     color: rgba(128, 160, 160, 0.6);
     margin-top: 12px;
     line-height: 1.5;
+    text-align: center;
 }
 
 .info-text .icon {
@@ -1504,6 +1507,7 @@ body::before {
     display: flex;
     gap: 8px;
     margin-top: 8px;
+    justify-content: center;
 }
 
 .head-size-btn {
