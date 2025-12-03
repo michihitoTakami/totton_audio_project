@@ -983,6 +983,7 @@ body::before {
 .status-card-header {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 10px;
     margin-bottom: 12px;
 }
@@ -1005,6 +1006,7 @@ body::before {
 .status-card-body {
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: 12px;
 }
 
