@@ -16,26 +16,36 @@
         <div class="card">
             <template x-if="activeEq.active && activeEq.name">
                 <div>
-                    <div class="active-profile-info">
-                        <div class="active-profile-name" x-text="activeEq.name"></div>
-                        <div class="active-profile-meta">
-                            <span x-show="activeEq.source_type === 'opra'">
-                                <strong>{{ t.get('eq.active.source') }}:</strong> OPRA
-                            </span>
-                            <span x-show="activeEq.has_modern_target">
-                                <span class="badge badge-success">{{ t.get('eq.active.modern_target') }}</span>
-                            </span>
+                    <div class="active-profile-name" x-text="activeEq.name"></div>
+                    <div class="active-profile-meta">
+                        <span x-show="activeEq.source_type === 'opra'">
+                            <strong>{{ t.get('eq.active.source') }}:</strong> OPRA
+                        </span>
+                        <span x-show="activeEq.has_modern_target">
+                            <span class="badge badge-success">{{ t.get('eq.active.modern_target') }}</span>
+                        </span>
+                    </div>
+
+                    <!-- EQ Filters Display -->
+                    <div x-show="activeEq.filters && activeEq.filters.length > 0" style="margin-top: 16px;">
+                        <h3 class="eq-filters-title">{{ t.get('eq.active.filters_title') }}</h3>
+                        <div class="eq-filters-list">
+                            <template x-for="filter in activeEq.filters" :key="filter">
+                                <div class="eq-filter-item" x-text="filter"></div>
+                            </template>
                         </div>
                     </div>
-                    <button
-                        class="action-button btn-secondary"
-                        @click="deactivateEQ"
-                        :disabled="actionInProgress"
-                        style="margin-top: 12px;"
-                    >
-                        <span class="action-icon">✗</span>
-                        <span class="action-label">{{ t.get('eq.active.deactivate') }}</span>
-                    </button>
+
+                    <div style="text-align: center; margin-top: 16px;">
+                        <button
+                            class="action-button btn-secondary"
+                            @click="deactivateEQ"
+                            :disabled="actionInProgress"
+                        >
+                            <span class="action-icon">✗</span>
+                            <span class="action-label">{{ t.get('eq.active.deactivate') }}</span>
+                        </button>
+                    </div>
                 </div>
             </template>
             <template x-if="!activeEq.active || !activeEq.name">
@@ -43,25 +53,6 @@
                     <span class="icon">ℹ️</span>{{ t.get('eq.active.none') }}
                 </div>
             </template>
-        </div>
-    </div>
-
-    <!-- Phase Type Selection -->
-    <div class="section">
-        <h2 class="section-title">{{ t.get('eq.phase_type.title') }}</h2>
-        <div class="card">
-            <div class="form-group">
-                <label for="phaseType">{{ t.get('eq.phase_type.label') }}</label>
-                <select id="phaseType" x-model="phaseType.selected" @change="changePhaseType">
-                    <option value="minimum">{{ t.get('eq.phase_type.minimum') }}</option>
-                    <option value="hybrid">{{ t.get('eq.phase_type.hybrid') }}</option>
-                </select>
-            </div>
-            <div class="info-text">
-                <span class="icon">ℹ️</span>
-                <span x-show="phaseType.selected === 'minimum'">{{ t.get('eq.phase_type.info_minimum') }}</span>
-                <span x-show="phaseType.selected === 'hybrid'">{{ t.get('eq.phase_type.info_hybrid') }}</span>
-            </div>
         </div>
     </div>
 
@@ -130,6 +121,45 @@
         </div>
     </div>
 
+    <!-- Import EQ from Text -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('eq.import.title') }}</h2>
+        <div class="card">
+            <div class="form-group">
+                <label for="eqName">{{ t.get('eq.import.name_label') }}</label>
+                <input
+                    type="text"
+                    id="eqName"
+                    class="search-input"
+                    placeholder="{{ t.get('eq.import.name_placeholder') }}"
+                    x-model="textImport.name"
+                >
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+                <label for="eqText">{{ t.get('eq.import.content_label') }}</label>
+                <textarea
+                    id="eqText"
+                    class="text-area"
+                    rows="10"
+                    placeholder="{{ t.get('eq.import.content_placeholder') }}"
+                    x-model="textImport.content"
+                ></textarea>
+            </div>
+
+            <div style="text-align: center; margin-top: 16px;">
+                <button
+                    class="action-button btn-primary"
+                    @click="importFromText"
+                    :disabled="!textImport.name || !textImport.content || actionInProgress"
+                >
+                    <span class="action-icon">📥</span>
+                    <span class="action-label">{{ t.get('eq.import.import_button') }}</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Saved EQ Profiles -->
     <div class="section">
         <h2 class="section-title">{{ t.get('eq.profiles.title') }}</h2>
@@ -137,9 +167,12 @@
             <template x-if="profiles.list.length > 0">
                 <div class="profiles-list">
                     <template x-for="profile in profiles.list" :key="profile.filename">
-                        <div class="profile-item">
+                        <div class="profile-item" :class="{ 'profile-active': activeEq.name === profile.name }">
                             <div class="profile-info">
-                                <div class="profile-name" x-text="profile.name"></div>
+                                <div class="profile-name">
+                                    <span x-text="profile.name"></span>
+                                    <span x-show="activeEq.name === profile.name" class="badge badge-active" style="margin-left: 8px;">{{ t.get('eq.profiles.active') }}</span>
+                                </div>
                                 <div class="profile-meta">
                                     <span class="profile-type" x-text="profile.type"></span>
                                     <span class="profile-filters" x-text="profile.filter_count + ' filters'"></span>
@@ -150,7 +183,7 @@
                                 <button
                                     class="btn-icon btn-primary"
                                     @click="activateProfile(profile.name)"
-                                    :disabled="actionInProgress"
+                                    :disabled="actionInProgress || activeEq.name === profile.name"
                                     title="{{ t.get('eq.profiles.activate') }}"
                                 >
                                     ✓
@@ -187,10 +220,7 @@ function eqSettingsData() {
             name: null,
             source_type: null,
             has_modern_target: false,
-        },
-        phaseType: {
-            selected: 'minimum',
-            loading: false,
+            filters: [],
         },
         opra: {
             searchQuery: '',
@@ -205,11 +235,14 @@ function eqSettingsData() {
             list: [],
             loading: false,
         },
+        textImport: {
+            name: '',
+            content: '',
+        },
         actionInProgress: false,
 
         init() {
             this.fetchActiveEq();
-            this.fetchPhaseType();
             this.fetchProfiles();
         },
 
@@ -218,48 +251,24 @@ function eqSettingsData() {
                 const response = await fetch('/eq/active');
                 if (!response.ok) throw new Error('Failed to fetch active EQ');
                 const data = await response.json();
+
+                // Parse filters from original_filters or opra_filters
+                let filters = [];
+                if (data.original_filters && data.original_filters.length > 0) {
+                    filters = data.original_filters;
+                } else if (data.opra_filters && data.opra_filters.length > 0) {
+                    filters = data.opra_filters;
+                }
+
                 this.activeEq = {
                     active: data.active || false,
                     name: data.name || null,
                     source_type: data.source_type || null,
                     has_modern_target: data.has_modern_target || false,
+                    filters: filters,
                 };
             } catch (error) {
                 console.error('Failed to fetch active EQ:', error);
-            }
-        },
-
-        async fetchPhaseType() {
-            try {
-                const response = await fetch('/daemon/phase-type');
-                if (!response.ok) throw new Error('Failed to fetch phase type');
-                const data = await response.json();
-                this.phaseType.selected = data.phase_type || 'minimum';
-            } catch (error) {
-                console.error('Failed to fetch phase type:', error);
-            }
-        },
-
-        async changePhaseType() {
-            if (this.phaseType.loading) return;
-
-            this.phaseType.loading = true;
-            try {
-                const response = await fetch('/daemon/phase-type', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phase_type: this.phaseType.selected }),
-                });
-
-                if (!response.ok) throw new Error('Failed to change phase type');
-
-                const data = await response.json();
-                this.showToast(data.message || '位相タイプを変更しました', 'success');
-            } catch (error) {
-                console.error('Failed to change phase type:', error);
-                this.showToast('位相タイプの変更に失敗しました', 'error');
-            } finally {
-                this.phaseType.loading = false;
             }
         },
 
@@ -403,6 +412,41 @@ function eqSettingsData() {
             }
         },
 
+        async importFromText() {
+            if (!this.textImport.name || !this.textImport.content || this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/eq/import-text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: this.textImport.name,
+                        content: this.textImport.content,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to import EQ');
+                }
+
+                const data = await response.json();
+                this.showToast(data.message || 'EQをインポートしました', 'success');
+
+                // Clear form
+                this.textImport.name = '';
+                this.textImport.content = '';
+
+                await this.fetchProfiles();
+            } catch (error) {
+                console.error('Failed to import EQ:', error);
+                this.showToast(error.message || 'EQのインポートに失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
         formatFileSize(bytes) {
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -433,18 +477,11 @@ function eqSettingsData() {
 </script>
 
 <style>
-.active-profile-info {
-    padding: 12px;
-    background: rgba(0, 255, 136, 0.1);
-    border-radius: 8px;
-    border-left: 4px solid #00ff88;
-}
-
 .active-profile-name {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
     color: #00ff88;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
 }
 
 .active-profile-meta {
@@ -454,6 +491,38 @@ function eqSettingsData() {
 
 .active-profile-meta span {
     margin-right: 12px;
+}
+
+.eq-filters-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #00d4ff;
+    margin-bottom: 8px;
+}
+
+.eq-filters-list {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(0, 255, 170, 0.4);
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 13px;
+    font-family: monospace;
+    color: #8a9aa9;
+    line-height: 1.6;
+    text-align: left;
+}
+
+.eq-filter-item {
+    /* Override global styles - remove all borders and backgrounds */
+    display: block;
+    border: none !important;
+    background: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    gap: 0 !important;
+    margin: 0;
 }
 
 .badge {
@@ -467,6 +536,28 @@ function eqSettingsData() {
 .badge-success {
     background: #00ff88;
     color: #0a0e12;
+}
+
+.badge-active {
+    background: #00d4ff;
+    color: #0a0e12;
+}
+
+.text-area {
+    width: 100%;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #e8eef3;
+    font-family: monospace;
+    font-size: 14px;
+    resize: vertical;
+}
+
+.text-area:focus {
+    outline: none;
+    border-color: #00d4ff;
 }
 
 .profiles-list {
@@ -483,6 +574,11 @@ function eqSettingsData() {
     background: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.profile-item.profile-active {
+    background: rgba(0, 212, 255, 0.1);
+    border-color: #00d4ff;
 }
 
 .profile-info {
