@@ -383,7 +383,6 @@ body::before {
     margin-bottom: 12px;
     letter-spacing: 2px;
     opacity: 0.8;
-    text-align: left;
 }
 
 .status-card .card-value {
