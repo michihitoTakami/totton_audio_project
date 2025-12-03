@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 import json
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import List
 
 import numpy as np
 

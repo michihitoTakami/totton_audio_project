@@ -170,7 +170,7 @@ class PhaseTypeResponse(BaseModel):
     )
     latency_warning: Optional[str] = Field(
         default=None,
-        description="Info/warning message for hybrid phase (10ms alignment above 100 Hz)",
+        description="Info/warning message for hybrid phase (10ms alignment above 150 Hz)",
     )
 
 

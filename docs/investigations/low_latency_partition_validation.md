@@ -87,8 +87,8 @@ Outputs:
 - Printed partition table (taps, FFT size, energy share) plus:
   - **Fastパーティション累積エネルギー**（fastPartition taps内に収まるエネルギー%）
   - **プリリンギング比**（ピークより前のエネルギー%）
-  - **100 Hz帯域の群遅延**（平均と変動幅、グラフ表示）
-- JSON summary (`fast_partition_energy_pct`, `pre_ringing_pct`, `group_delay_100hz`) used by QA spreadsheets.
+  - **150 Hz帯域の群遅延**（平均と変動幅、グラフ表示）
+- JSON summary (`fast_partition_energy_pct`, `pre_ringing_pct`, `group_delay_150hz`) used by QA spreadsheets.
 
 ---
 
@@ -130,7 +130,7 @@ uv run python scripts/verify_frequency_response.py \
 - **Latency**: `inspect_impulse.py` reports `fast_window ≈ 32k samples` → `<11 ms @ 705.6 kHz`.
 - **Energy split**: `fast_partition_energy_pct ≥ 97%` forハイブリッド係数（32k fast taps基準）。
 - **Pre-ringing**: `pre_ringing_pct ≤ 0.10%`.
-- **Group delay continuity**: `group_delay_100hz.span_ms ≤ 0.40 ms`.
+- **Group delay continuity**: `group_delay_150hz.span_ms ≤ 0.40 ms`.
 - **Stopband**: `verify_frequency_response.py` shows stopband attenuation within 3 dB of the legacy (non-partitioned) pipeline.
 - **Hybrid vs legacy delta**: `reference_delta_max_db ≤ 0.4 dB` and `reference_delta_rms_db ≤ 0.15 dB`.
 - **XRUN**: `/proc/asound/.../status` stays at `XRUNs: 0` for at least 10 minutes during sweep playback.
