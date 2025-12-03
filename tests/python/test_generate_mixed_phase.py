@@ -18,6 +18,7 @@ from generate_mixed_phase import (  # noqa: E402
     MixedPhaseCombiner,
     MixedPhaseFilterGenerator,
     MixedPhaseSettings,
+    MixedPhaseSolverSettings,
 )
 
 
@@ -40,11 +41,14 @@ class TestMixedPhaseCombiner:
             kaiser_beta=10,
         )
         settings = MixedPhaseSettings(crossover_hz=100.0, transition_hz=30.0)
+        solver = MixedPhaseSolverSettings(
+            iterations=20, phase_blend=0.3, fft_oversample=2, gd_smooth_hz=100.0
+        )
         designer = FilterDesigner(config)
         h_linear = designer.design_linear_phase()
         h_min = designer.convert_to_minimum_phase(h_linear)
 
-        combiner = MixedPhaseCombiner(config, settings)
+        combiner = MixedPhaseCombiner(config, settings, solver)
         h_mixed, diagnostics = combiner.synthesize(h_linear, h_min)
 
         assert h_mixed.shape[0] == config.n_taps
@@ -63,7 +67,8 @@ class TestMixedPhaseFilterGenerator:
             output_prefix="test_mixed_phase",
         )
         settings = MixedPhaseSettings()
-        generator = MixedPhaseFilterGenerator(config, settings)
+        solver = MixedPhaseSolverSettings(iterations=5, fft_oversample=1, phase_blend=0.2)
+        generator = MixedPhaseFilterGenerator(config, settings, solver)
 
         # Avoid writing files / plots in tests
         monkeypatch.setattr(generator.plotter, "plot", lambda *args, **kwargs: None)
@@ -84,7 +89,8 @@ class TestMixedPhaseFilterGenerator:
         """When no prefix is supplied, generator should use *_hybrid_phase."""
         config = FilterConfig(n_taps=1024, input_rate=44100, upsample_ratio=2)
         settings = MixedPhaseSettings()
-        generator = MixedPhaseFilterGenerator(config, settings)
+        solver = MixedPhaseSolverSettings(iterations=5, fft_oversample=1)
+        generator = MixedPhaseFilterGenerator(config, settings, solver)
 
         monkeypatch.setattr(generator.plotter, "plot", lambda *args, **kwargs: None)
         monkeypatch.setattr(generator.exporter, "export", lambda *_a, **_k: generator.config.base_name)

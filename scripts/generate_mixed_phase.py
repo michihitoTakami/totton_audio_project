@@ -13,6 +13,7 @@ import argparse
 import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from types import SimpleNamespace
 
@@ -38,8 +39,8 @@ from generate_filter import (
 class MixedPhaseSettings:
     """設定値（クロスオーバー/遷移幅/整列遅延）"""
 
-    crossover_hz: float = 100.0
-    transition_hz: float = 30.0
+    crossover_hz: float = 300.0
+    transition_hz: float = 400.0
     delay_ms: float | None = None
 
     def __post_init__(self) -> None:
@@ -47,8 +48,6 @@ class MixedPhaseSettings:
             raise ValueError("crossover_hz must be > 0")
         if self.transition_hz <= 0:
             raise ValueError("transition_hz must be > 0")
-        if self.transition_hz >= self.crossover_hz:
-            raise ValueError("transition_hz must be smaller than crossover_hz")
         if self.delay_ms is None:
             self.delay_ms = 1000.0 / self.crossover_hz
         if self.delay_ms <= 0:
@@ -66,33 +65,101 @@ class MixedPhaseSettings:
         }
 
 
+@dataclass
+class MixedPhaseSolverSettings:
+    """位相最適化用の調整パラメータ"""
+
+    iterations: int = 200
+    min_iterations: int = 50
+    phase_blend: float = 0.2
+    amplitude_relax: float = 0.0
+    fft_oversample: int = 4
+    gd_smooth_hz: float = 200.0
+    tail_taps: int = 2048
+    tolerance: float = 1e-4
+
+
 class MixedPhaseCombiner:
     """線形位相＋最小位相フィルタから混合位相を合成する"""
 
-    def __init__(self, config: FilterConfig, settings: MixedPhaseSettings) -> None:
+    def __init__(
+        self,
+        config: FilterConfig,
+        settings: MixedPhaseSettings,
+        solver: MixedPhaseSolverSettings,
+    ) -> None:
         self.config = config
         self.settings = settings
+        self.solver = solver
 
     def synthesize(
         self, h_linear: np.ndarray, h_min: np.ndarray
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        n_fft = self.config.n_taps
+        n_fft = self.config.n_taps * max(1, self.solver.fft_oversample)
         freqs = np.fft.rfftfreq(n_fft, d=1.0 / self.config.output_rate)
         omega = 2.0 * np.pi * freqs
         h_min_use = h_min[: self.config.n_taps]
+        h_linear_use = h_linear[: self.config.n_taps]
 
-        magnitude = np.maximum(np.abs(np.fft.rfft(h_min_use, n_fft)), 1e-12)
-        phase_min = np.unwrap(np.angle(np.fft.rfft(h_min_use, n_fft)))
+        H_min = np.fft.rfft(h_min_use, n_fft)
+        H_linear = np.fft.rfft(h_linear_use, n_fft)
+
+        magnitude_target = np.maximum(np.abs(H_linear), 1e-12)
+        magnitude_current = magnitude_target.copy()
+        phase_min = np.unwrap(np.angle(H_min))
+
         gd_min_sec = -np.gradient(phase_min, omega, edge_order=2)
         gd_min_sec = np.clip(gd_min_sec, 0.0, None)
 
         gd_target_sec = self._build_target_group_delay(freqs, gd_min_sec)
-        delta_gd = gd_target_sec - gd_min_sec
-        phase_delta = self._integrate_phase(omega, delta_gd)
-        phase_target = phase_min + phase_delta
+        gd_target_sec = self._smooth_group_delay(
+            freqs, gd_target_sec, self.solver.gd_smooth_hz
+        )
+        phase_target = self._integrate_phase(omega, gd_target_sec)
+        phase_target += phase_min[0] - phase_target[0]
 
-        H_target = magnitude * np.exp(1j * phase_target)
+        phase_current = phase_target.copy()
+        control_mask = freqs <= self.config.passband_end
+        padded = np.zeros(n_fft, dtype=np.float64)
+        prev_phase = phase_current.copy()
+
+        max_iters = max(1, self.solver.iterations)
+        for idx in range(max_iters):
+            spectrum = magnitude_current * np.exp(1j * phase_current)
+            h_time = np.fft.irfft(spectrum, n_fft).real
+            h_time = h_time[: self.config.n_taps]
+            padded[:] = 0.0
+            padded[: self.config.n_taps] = h_time
+            spectrum_time = np.fft.rfft(padded, n_fft)
+
+            phase_proj = np.angle(spectrum_time)
+            phase_current = phase_proj
+            if np.any(control_mask):
+                delta = self._wrap_phase(phase_proj[control_mask] - phase_target[control_mask])
+                phase_current[control_mask] = (
+                    phase_proj[control_mask] - self.solver.phase_blend * delta
+                )
+
+            if self.solver.amplitude_relax > 0.0:
+                mag_measured = np.abs(spectrum_time)
+                magnitude_current = (
+                    (1 - self.solver.amplitude_relax) * magnitude_current
+                    + self.solver.amplitude_relax * mag_measured
+                )
+
+            if idx >= max(self.solver.min_iterations, 1):
+                phase_delta = np.max(
+                    np.abs(self._wrap_phase(phase_current - prev_phase))
+                )
+                prev_phase = phase_current.copy()
+                if phase_delta < self.solver.tolerance:
+                    break
+            else:
+                prev_phase = phase_current.copy()
+
+        H_target = magnitude_current * np.exp(1j * phase_current)
         h_time = np.fft.irfft(H_target, n_fft).real[: self.config.n_taps]
+        h_time = self._apply_time_taper(h_time)
 
         diagnostics = self._analyze(h_time, omega, gd_target_sec, freqs)
         return h_time, diagnostics
@@ -119,6 +186,34 @@ class MixedPhaseCombiner:
 
         target[low_mask] = gd_min_sec[low_mask]
         return np.clip(target, 0.0, None)
+
+    def _smooth_group_delay(
+        self, freqs: np.ndarray, gd_sec: np.ndarray, bandwidth_hz: float
+    ) -> np.ndarray:
+        if bandwidth_hz <= 0 or len(freqs) < 2:
+            return gd_sec
+        step = freqs[1] - freqs[0]
+        window = max(3, int(bandwidth_hz / max(step, 1e-9)))
+        if window % 2 == 0:
+            window += 1
+        if window >= len(gd_sec):
+            return np.full_like(gd_sec, gd_sec.mean())
+        kernel = np.hanning(window)
+        kernel /= np.sum(kernel)
+        return np.convolve(gd_sec, kernel, mode="same")
+
+    @staticmethod
+    def _wrap_phase(delta: np.ndarray) -> np.ndarray:
+        return (delta + np.pi) % (2 * np.pi) - np.pi
+
+    def _apply_time_taper(self, h: np.ndarray) -> np.ndarray:
+        tail = min(self.solver.tail_taps, h.size)
+        if tail <= 0:
+            return h
+        fade = 0.5 * (1 + np.cos(np.linspace(0, np.pi, tail, dtype=h.dtype)))
+        h = h.copy()
+        h[-tail:] *= fade
+        return h
 
     def _integrate_phase(self, omega: np.ndarray, gd_target_sec: np.ndarray) -> np.ndarray:
         phase = np.zeros_like(omega)
@@ -181,9 +276,15 @@ class MixedPhaseCombiner:
 class MixedPhaseFilterGenerator:
     """混合位相フィルタ生成のオーケストレーション"""
 
-    def __init__(self, config: FilterConfig, settings: MixedPhaseSettings) -> None:
+    def __init__(
+        self,
+        config: FilterConfig,
+        settings: MixedPhaseSettings,
+        solver: MixedPhaseSolverSettings,
+    ) -> None:
         self.config = config
         self.settings = settings
+        self.solver = solver
         if not self.config.output_prefix:
             hybrid_name = (
                 f"filter_{self.config.family}_{self.config.upsample_ratio}x_"
@@ -206,7 +307,7 @@ class MixedPhaseFilterGenerator:
 
         h_linear = self.designer.design_linear_phase()
         h_min = self.designer.convert_to_minimum_phase(h_linear)
-        combiner = MixedPhaseCombiner(self.config, self.settings)
+        combiner = MixedPhaseCombiner(self.config, self.settings, self.solver)
         h_mixed, diagnostics = combiner.synthesize(h_linear, h_min)
 
         h_final, normalization = normalize_coefficients(
@@ -230,6 +331,7 @@ class MixedPhaseFilterGenerator:
         meta = {
             "generation_mode": "mixed_phase",
             "mixed_phase_settings": self.settings.describe(),
+            "generation_date": datetime.now().isoformat(),
             "sample_rate_input": self.config.input_rate,
             "sample_rate_output": self.config.output_rate,
             "upsample_ratio": self.config.upsample_ratio,
@@ -295,7 +397,17 @@ def generate_single_filter(
         transition_hz=args.transition_hz,
         delay_ms=args.delay_ms,
     )
-    generator = MixedPhaseFilterGenerator(config, settings)
+    solver = MixedPhaseSolverSettings(
+        iterations=args.iterations,
+        min_iterations=args.min_iterations,
+        phase_blend=args.phase_blend,
+        amplitude_relax=args.amplitude_relax,
+        fft_oversample=args.fft_oversample,
+        gd_smooth_hz=args.gd_smooth_hz,
+        tail_taps=args.tail_taps,
+        tolerance=args.tolerance,
+    )
+    generator = MixedPhaseFilterGenerator(config, settings, solver)
     return generator.generate(filter_name, skip_header)
 
 
@@ -319,7 +431,17 @@ def _mixed_phase_worker(
             transition_hz=args_dict["transition_hz"],
             delay_ms=args_dict["delay_ms"],
         )
-        generator = MixedPhaseFilterGenerator(config, settings)
+        solver = MixedPhaseSolverSettings(
+            iterations=args_dict["iterations"],
+            min_iterations=args_dict["min_iterations"],
+            phase_blend=args_dict["phase_blend"],
+            amplitude_relax=args_dict["amplitude_relax"],
+            fft_oversample=args_dict["fft_oversample"],
+            gd_smooth_hz=args_dict["gd_smooth_hz"],
+            tail_taps=args_dict["tail_taps"],
+            tolerance=args_dict["tolerance"],
+        )
+        generator = MixedPhaseFilterGenerator(config, settings, solver)
         base_name, actual_taps = generator.generate(filter_name=name, skip_header=True)
         return (name, base_name, actual_taps, cfg, None)
     except Exception as exc:  # pragma: no cover - error path
@@ -355,6 +477,14 @@ def generate_all_filters(args: argparse.Namespace) -> None:
         "crossover_hz": args.crossover_hz,
         "transition_hz": args.transition_hz,
         "delay_ms": args.delay_ms,
+        "iterations": args.iterations,
+        "min_iterations": args.min_iterations,
+        "phase_blend": args.phase_blend,
+        "amplitude_relax": args.amplitude_relax,
+        "fft_oversample": args.fft_oversample,
+        "gd_smooth_hz": args.gd_smooth_hz,
+        "tail_taps": args.tail_taps,
+        "tolerance": args.tolerance,
     }
 
     results: list[tuple[str, str]] = []
@@ -493,14 +623,62 @@ Examples:
     parser.add_argument(
         "--transition-hz",
         type=float,
-        default=30.0,
-        help="Transition width around the crossover frequency. Default: 30",
+        default=400.0,
+        help="Transition width around the crossover frequency. Default: 400",
     )
     parser.add_argument(
         "--delay-ms",
         type=float,
         default=None,
         help="Absolute delay applied above crossover (ms). Default: auto (1000/crossover)",
+    )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=200,
+        help="Number of solver iterations for phase optimization. Default: 200",
+    )
+    parser.add_argument(
+        "--min-iterations",
+        type=int,
+        default=50,
+        help="Minimum iterations before convergence check. Default: 50",
+    )
+    parser.add_argument(
+        "--phase-blend",
+        type=float,
+        default=0.2,
+        help="Phase projection blend factor (0-1). Default: 0.2",
+    )
+    parser.add_argument(
+        "--amplitude-relax",
+        type=float,
+        default=0.0,
+        help="Blend factor for relaxing magnitude constraint (0 disables).",
+    )
+    parser.add_argument(
+        "--fft-oversample",
+        type=int,
+        default=4,
+        help="FFT oversample multiplier for solver. Default: 4",
+    )
+    parser.add_argument(
+        "--gd-smooth-hz",
+        type=float,
+        default=200.0,
+        help="Group delay smoothing bandwidth in Hz. Default: 200",
+    )
+    parser.add_argument(
+        "--tail-taps",
+        type=int,
+        default=2048,
+        help="Number of tail samples to cosine-fade for windowing. Default: 2048",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=1e-4,
+        help="Phase convergence tolerance (radians). Default: 1e-4",
     )
     parser.add_argument(
         "--output-prefix",
