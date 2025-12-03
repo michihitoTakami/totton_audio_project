@@ -6,9 +6,10 @@ FastAPI-based control interface for the GPU audio upsampler daemon.
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from .exceptions import register_exception_handlers
 from .models import ApiResponse
@@ -105,6 +106,10 @@ register_exception_handlers(app)
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+# Setup Jinja2 templates
+templates_dir = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(templates_dir))
 
 # Include routers
 app.include_router(status_router)
