@@ -106,6 +106,7 @@ body::before {
     overflow-y: auto;
     position: relative;
     z-index: 1;
+    text-align: center;
 }
 
 .page-header {
@@ -121,6 +122,7 @@ body::before {
     text-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
     font-weight: 700;
     letter-spacing: 1px;
+    text-align: left;
 }
 
 .page-header .subtitle {
@@ -129,6 +131,7 @@ body::before {
     text-transform: uppercase;
     letter-spacing: 1px;
     opacity: 0.8;
+    text-align: left;
 }
 
 /* Current Status (dashboard specific) */
@@ -186,12 +189,14 @@ body::before {
     color: #00ffff;
     margin-bottom: 20px;
     text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+    text-align: left;
 }
 
 .control-section .description {
     font-size: 13px;
     color: rgba(128, 160, 160, 0.6);
     margin-bottom: 16px;
+    text-align: left;
 }
 
 /* Search Container */
@@ -377,6 +382,7 @@ body::before {
     margin-bottom: 12px;
     letter-spacing: 2px;
     opacity: 0.8;
+    text-align: left;
 }
 
 .status-card .card-value {
@@ -957,6 +963,7 @@ body::before {
     color: #00ffff;
     margin-bottom: 16px;
     text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+    text-align: left;
 }
 
 /* Card Grid for Status Cards */
@@ -1282,6 +1289,7 @@ body::before {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    text-align: left;
 }
 
 .toggle-label span:first-child {
@@ -1343,6 +1351,7 @@ body::before {
     font-size: 13px;
     color: rgba(128, 160, 160, 0.8);
     font-weight: 500;
+    text-align: left;
 }
 
 .form-group select {
