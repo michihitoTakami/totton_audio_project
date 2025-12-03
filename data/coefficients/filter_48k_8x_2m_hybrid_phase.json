@@ -1,7 +1,10 @@
 {
-  "generation_date": "2025-12-03T12:43:27.526023",
-  "n_taps_specified": 640000,
-  "n_taps_actual": 640000,
+  "generation_mode": "mixed_phase",
+  "mixed_phase_settings": {
+    "crossover_hz": 100.0,
+    "transition_hz": 30.0,
+    "delay_ms": 10.0
+  },
   "sample_rate_input": 96000,
   "sample_rate_output": 768000,
   "upsample_ratio": 8,
@@ -9,39 +12,53 @@
   "stopband_start_hz": 48000,
   "target_stopband_attenuation_db": 160,
   "kaiser_beta": 28.0,
-  "phase_type": "hybrid",
   "minimum_phase_method": "homomorphic",
-  "hybrid_crossover_hz": 150.0,
-  "hybrid_transition_hz": 40.0,
-  "hybrid_delay_ms": 6.666666666666667,
-  "hybrid_fast_window_samples": 32768,
-  "hybrid_fast_window_target_ratio": 0.99,
   "target_dc_gain": 8.0,
   "output_basename": "filter_48k_8x_2m_hybrid_phase",
   "validation_results": {
-    "passband_ripple_db": 8.392261905109425,
-    "stopband_attenuation_db": 51.48903467224709,
-    "peak_position": 5120,
+    "passband_ripple_db": 20.381709703485914,
+    "stopband_attenuation_db": 161.05973834447977,
+    "peak_position": 7680,
     "peak_threshold_samples": 6400,
-    "energy_ratio_first_to_second_half": 332652825562.43365,
-    "meets_stopband_spec": false,
-    "is_minimum_phase": true,
+    "energy_ratio_first_to_second_half": 1840.674898819246,
+    "meets_stopband_spec": true,
+    "is_minimum_phase": false,
     "is_symmetric": false,
-    "phase_type": "hybrid",
     "actual_taps": 640000,
-    "fast_window_samples": 32768,
-    "fast_window_energy_ratio": 0.9999216698226845,
-    "fast_window_target_ratio": 0.99,
-    "meets_fast_window_spec": true,
+    "mixed_phase": {
+      "crossover_hz": 100.0,
+      "transition_hz": 30.0,
+      "target_delay_ms": 10.0,
+      "target_delay_samples": 7680.0,
+      "max_group_delay_error_samples": 14.939042041334206,
+      "peak_sample_index": 7680,
+      "analysis": [
+        {
+          "frequency_hz": 20.400000000000002,
+          "target_delay_samples": 19.647920725262757,
+          "actual_delay_samples": 19.647920725261447
+        },
+        {
+          "frequency_hz": 99.60000000000001,
+          "target_delay_samples": 3689.432856275349,
+          "actual_delay_samples": 3690.065222203767
+        },
+        {
+          "frequency_hz": 2000.4000000000003,
+          "target_delay_samples": 7680.0,
+          "actual_delay_samples": 7679.999999997108
+        }
+      ]
+    },
     "normalization": {
-      "original_dc_gain": 0.5535275798274392,
+      "original_dc_gain": 1.0000000247247816,
       "target_dc_gain": 8.0,
       "dc_gain_factor": 0.99,
-      "normalized_dc_gain": 7.920000000000004,
-      "applied_scale": 14.308230138178553,
-      "l1_norm": 96.58036359230674,
-      "l1_norm_ratio": 12.072545449038342,
-      "max_coefficient_amplitude": 2.526993308700143,
+      "normalized_dc_gain": 7.920000000000002,
+      "applied_scale": 7.919999804179735,
+      "l1_norm": 49.74750822387252,
+      "l1_norm_ratio": 6.218438527984065,
+      "max_coefficient_amplitude": 1.4002757881231362,
       "normalization_applied": true
     }
   }

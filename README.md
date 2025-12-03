@@ -250,11 +250,14 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 # 環境セットアップ
 uv sync
 
-# 44.1k系 2M-tap ハイブリッドフィルタ生成（≤150Hz最小位相/約6.7ms整列）
-uv run python scripts/generate_filter.py --taps 2000000 --phase-type hybrid
+# 44.1k系 2M-tap 最小位相フィルタ（基準）
+uv run python scripts/generate_filter.py --taps 2000000
 
-# 全構成（44k/48k × 2x/4x/8x/16x）一括生成（マルチレート対応）
-uv run python scripts/generate_filter.py --generate-all --phase-type hybrid
+# 44.1k系 2M-tap 混合位相フィルタ（100Hzクロスオーバ/約10ms整列）
+uv run python scripts/generate_mixed_phase.py --taps 2000000
+
+# 全構成（44k/48k × 2x/4x/8x/16x）混合位相フィルタを一括生成
+uv run python scripts/generate_mixed_phase.py --generate-all
 
 # 生成されるフィルタ:
 # - filter_44k_16x_2m_hybrid_phase.bin (44.1kHz → 705.6kHz)
@@ -308,7 +311,7 @@ cmake --build build -j$(nproc)
 |-----|-----|
 | FIRフィルタ | 2,000,000タップ |
 | 位相タイプ | ハイブリッド（デフォルト）/ 最小位相（オプション） |
-| ストップバンド減衰 | ハイブリッド: 50–67dB（150Hzクロスオーバ） |
+| ストップバンド減衰 | ハイブリッド: 150dB級（100Hzクロスオーバ） |
 | ウィンドウ関数 | Kaiser (β=25, Float32 GPU実装に最適化) |
 | DCゲイン | アップサンプリング倍率 × 0.99（全レートで音量統一） |
 | メタデータ | 各フィルタに`.json`ファイル（DCゲイン、入力/出力レート、倍率を含む） |

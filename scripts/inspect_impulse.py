@@ -21,7 +21,7 @@ from scripts.partition_analysis import (
     partition_energy_summary,
 )
 
-HYBRID_CROSSOVER_HZ = 150.0
+HYBRID_CROSSOVER_HZ = 100.0
 HYBRID_CROSSOVER_LABEL = f"{HYBRID_CROSSOVER_HZ:.0f} Hz"
 GROUP_DELAY_SUMMARY_KEY = f"group_delay_{int(HYBRID_CROSSOVER_HZ)}hz"
 
