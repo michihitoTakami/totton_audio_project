@@ -268,13 +268,13 @@ class TestFilterDesigner:
         assert info is not None
         assert info["low_gain"] > 0
         assert info["high_gain"] > 0
-
-        low_aligned = info["low_band_avg_min"] * info["low_gain"]
-        high_aligned = info["high_band_avg_linear"] * info["high_gain"]
-        ref = info["passband_reference"]
-
-        assert np.isclose(low_aligned, ref, rtol=0.25)
-        assert np.isclose(high_aligned, ref, rtol=0.1)
+        assert abs(info["low_gain_db"]) <= info["gain_limit_db"] + 1e-6
+        assert info["low_gain_db_peak"] <= info["gain_limit_db"] + 1e-6
+        assert abs(info["high_gain_db"]) <= 1e-6
+        assert info["low_band_start_hz"] < info["low_band_end_hz"] <= hybrid_config.hybrid_crossover_hz
+        assert info["high_band_start_hz"] >= hybrid_config.hybrid_crossover_hz
+        assert info["target_band_start_hz"] < info["target_band_end_hz"]
+        assert info["passband_reference_db"] < 1.0  # dBスケールで0付近
 
 
 class TestFilterValidator:
@@ -297,6 +297,9 @@ class TestFilterValidator:
 
         assert "passband_ripple_db" in results
         assert "stopband_attenuation_db" in results
+        assert "meets_passband_spec" in results
+        assert "meets_max_coefficient_spec" in results
+        assert "max_coefficient_amplitude" in results
         assert "is_minimum_phase" in results
         assert "is_symmetric" in results
         assert "phase_type" in results

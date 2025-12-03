@@ -88,6 +88,10 @@ HYBRID_DEFAULT_TRANSITION_HZ = 40.0
 HYBRID_DEFAULT_DELAY_MS = 10.0
 HYBRID_DEFAULT_FAST_WINDOW = 32_768
 HYBRID_FAST_WINDOW_TARGET = 0.99
+HYBRID_GAIN_REFERENCE_MIN_BANDWIDTH_HZ = 80.0
+HYBRID_GAIN_MAX_DB = 8.0
+PASSBAND_RIPPLE_LIMIT_DB = 0.1
+MAX_COEFFICIENT_ABS_LIMIT = 1.05
 
 
 @dataclass
@@ -242,7 +246,7 @@ class FilterDesigner:
 
     def __init__(self, config: FilterConfig) -> None:
         self.config = config
-        self.hybrid_gain_alignment: dict[str, float] | None = None
+        self.hybrid_gain_alignment: dict[str, Any] | None = None
 
     def design_linear_phase(self) -> np.ndarray:
         """ベースとなる線形位相FIRフィルタを設計する"""
@@ -331,46 +335,71 @@ class FilterDesigner:
         mag_min = np.maximum(np.abs(H_min), 1e-12)
         mag_linear = np.maximum(np.abs(H_linear), 1e-12)
 
+        dc_min = max(mag_min[0], 1e-12)
+        dc_linear = max(mag_linear[0], 1e-12)
+        mag_min_norm = mag_min / dc_min
+        mag_linear_norm = mag_linear / dc_linear
+
         crossover = self.config.hybrid_crossover_hz
         width = self.config.hybrid_transition_hz
         start = max(0.0, crossover - width / 2.0)
         end = crossover + width / 2.0
 
-        low_band_mask = freqs <= start
-        if not np.any(low_band_mask):
-            low_band_mask = freqs <= crossover
-
-        high_band_mask = freqs >= end
-        if not np.any(high_band_mask):
-            high_band_mask = freqs >= crossover
+        reference_width = max(
+            width, HYBRID_GAIN_REFERENCE_MIN_BANDWIDTH_HZ, self.config.hybrid_crossover_hz
+        )
+        low_band_start = max(0.0, crossover - reference_width)
+        low_band_end = crossover
+        high_band_start = crossover
+        high_band_end = crossover + reference_width
+        target_start = max(0.0, crossover - reference_width / 2.0)
+        target_end = crossover + reference_width / 2.0
 
         passband_mask = freqs <= self.config.passband_end
         if not np.any(passband_mask):
             passband_mask = np.ones_like(freqs, dtype=bool)
 
-        def _band_avg(values: np.ndarray, mask: np.ndarray) -> float:
-            if np.any(mask):
-                return float(np.mean(values[mask]))
-            return float(np.mean(values))
+        def _band_db(
+            values: np.ndarray, start_hz: float, end_hz: float, fallback: np.ndarray
+        ) -> float:
+            mask = (freqs >= start_hz) & (freqs <= end_hz)
+            if not np.any(mask):
+                mask = fallback
+            amps = np.maximum(values[mask], 1e-12)
+            return float(np.mean(20.0 * np.log10(amps)))
 
-        passband_ref = _band_avg(mag_linear, passband_mask)
-        low_min_avg = _band_avg(mag_min, low_band_mask)
-        low_lin_avg = _band_avg(mag_linear, low_band_mask)
-        high_lin_avg = _band_avg(mag_linear, high_band_mask)
+        low_fallback = freqs <= crossover
+        if not np.any(low_fallback):
+            low_fallback = passband_mask
 
-        eps = 1e-12
+        high_fallback = freqs >= crossover
+        if not np.any(high_fallback):
+            high_fallback = passband_mask
 
-        def _compute_gain(target: float, actual: float) -> float:
-            if actual < eps:
-                return 1.0
-            gain = target / actual
-            return float(np.clip(gain, 0.125, 8.0))
+        target_db = _band_db(mag_linear_norm, target_start, target_end, passband_mask)
+        low_db = _band_db(mag_min_norm, low_band_start, low_band_end, low_fallback)
+        high_db = _band_db(mag_linear_norm, high_band_start, high_band_end, high_fallback)
 
-        low_gain = _compute_gain(passband_ref, low_min_avg)
-        high_gain = _compute_gain(passband_ref, high_lin_avg)
+        low_freq_mask = freqs <= crossover
+        ratio_low = np.ones_like(freqs)
+        low_gain_db_values = np.array([0.0])
+        if np.any(low_freq_mask):
+            raw_ratio = mag_linear[low_freq_mask] / np.maximum(
+                mag_min[low_freq_mask], 1e-12
+            )
+            low_gain_db_values = np.clip(
+                20.0 * np.log10(raw_ratio), -HYBRID_GAIN_MAX_DB, HYBRID_GAIN_MAX_DB
+            )
+            ratio_low[low_freq_mask] = 10 ** (low_gain_db_values / 20.0)
 
-        mag_low = mag_min * low_gain
-        mag_high = mag_linear * high_gain
+        low_gain = float(np.mean(ratio_low[low_freq_mask])) if np.any(
+            low_freq_mask
+        ) else 1.0
+        low_gain_db = float(np.mean(low_gain_db_values)) if low_gain_db_values.size else 0.0
+        low_gain_db_peak = float(np.max(np.abs(low_gain_db_values)))
+
+        mag_low = mag_min * ratio_low
+        mag_high = mag_linear
 
         low_weight = self._hybrid_lowpass_weight(freqs)
         high_weight = 1.0 - low_weight
@@ -383,12 +412,21 @@ class FilterDesigner:
         H_hybrid = magnitude * np.exp(1j * phase_hybrid)
 
         self.hybrid_gain_alignment = {
-            "passband_reference": passband_ref,
+            "target_band_start_hz": float(target_start),
+            "target_band_end_hz": float(target_end),
+            "passband_reference_db": target_db,
             "low_gain": low_gain,
-            "high_gain": high_gain,
-            "low_band_avg_min": low_min_avg,
-            "low_band_avg_linear": low_lin_avg,
-            "high_band_avg_linear": high_lin_avg,
+            "low_gain_db": low_gain_db,
+            "low_band_db": low_db,
+            "low_band_start_hz": float(low_band_start),
+            "low_band_end_hz": float(low_band_end),
+            "high_gain": 1.0,
+            "high_gain_db": 0.0,
+            "high_band_db": high_db,
+            "high_band_start_hz": float(high_band_start),
+            "high_band_end_hz": float(high_band_end),
+            "gain_limit_db": HYBRID_GAIN_MAX_DB,
+            "low_gain_db_peak": low_gain_db_peak,
             "transition_start_hz": float(start),
             "transition_end_hz": float(end),
             "crossover_hz": float(crossover),
@@ -396,8 +434,9 @@ class FilterDesigner:
 
         print(
             "  ハイブリッドゲイン整合: "
-            f"low x{low_gain:.3f} (min {low_min_avg:.6f} -> ref {passband_ref:.6f}), "
-            f"high x{high_gain:.3f} (lin {high_lin_avg:.6f} -> ref {passband_ref:.6f})"
+            f"low avg {low_gain_db:+.3f} dB (|max| {low_gain_db_peak:.3f} dB, "
+            f"band {low_band_start:.1f}-{low_band_end:.1f} Hz), "
+            f"high {0.0:+.3f} dB (band {high_band_start:.1f}-{high_band_end:.1f} Hz)"
         )
 
         h_time = np.fft.irfft(H_hybrid, n=n_fft).real
@@ -422,6 +461,7 @@ class FilterDesigner:
             phase = (freqs[transition_mask] - start) / max(end - start, 1e-9)
             weights[transition_mask] = 0.5 * (1 + np.cos(np.pi * phase))
         return weights
+
 
     def _convert_to_minimum_phase_gpu(
         self, h_linear: np.ndarray, n_fft: int
@@ -516,6 +556,8 @@ class FilterValidator:
         stopband_mask = w >= self.config.stopband_start
         stopband_attenuation = np.min(H_db[stopband_mask])
 
+        max_coefficient = float(np.max(np.abs(h)))
+
         # 位相特性の検証
         peak_idx = np.argmax(np.abs(h))
         mid_point = len(h) // 2
@@ -543,12 +585,21 @@ class FilterValidator:
         results = {
             "passband_ripple_db": float(passband_ripple_db),
             "stopband_attenuation_db": float(abs(stopband_attenuation)),
+            "max_coefficient_amplitude": max_coefficient,
             "peak_position": int(peak_idx),
             "peak_threshold_samples": int(peak_threshold),
             "energy_ratio_first_to_second_half": float(energy_ratio),
             "meets_stopband_spec": bool(
                 abs(stopband_attenuation) >= self.config.stopband_attenuation_db
             ),
+            "meets_passband_spec": bool(
+                passband_ripple_db <= PASSBAND_RIPPLE_LIMIT_DB
+            ),
+            "passband_ripple_target_db": PASSBAND_RIPPLE_LIMIT_DB,
+            "meets_max_coefficient_spec": bool(
+                max_coefficient <= MAX_COEFFICIENT_ABS_LIMIT
+            ),
+            "max_coefficient_limit": MAX_COEFFICIENT_ABS_LIMIT,
             "is_minimum_phase": bool(is_peak_at_front and is_energy_causal),
             "is_symmetric": is_symmetric,
             "phase_type": self.config.phase_type.value,
@@ -576,11 +627,20 @@ class FilterValidator:
         print(f"  位相タイプ: {results['phase_type']}")
         print(f"  実際のタップ数: {results['actual_taps']}")
         print(f"  通過帯域リップル: {results['passband_ripple_db']:.3f} dB")
+        passband_status = "合格" if results["meets_passband_spec"] else "不合格"
+        print(
+            f"    (目標: ≤ {results['passband_ripple_target_db']:.2f} dB) → {passband_status}"
+        )
         print(
             f"  阻止帯域減衰: {abs(stopband_attenuation):.1f} dB (目標: {self.config.stopband_attenuation_db} dB)"
         )
         print(
             f"  阻止帯域スペック: {'合格' if results['meets_stopband_spec'] else '不合格'}"
+        )
+        max_coef_status = "合格" if results["meets_max_coefficient_spec"] else "不合格"
+        print(
+            f"  最大係数振幅: {results['max_coefficient_amplitude']:.6f} "
+            f"(許容 {results['max_coefficient_limit']:.2f}) → {max_coef_status}"
         )
         print(
             f"  ピーク位置: サンプル {results['peak_position']} "
