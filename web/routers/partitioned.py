@@ -52,6 +52,8 @@ async def update_partitioned_convolution_settings(
     daemon_running = check_daemon_running()
     phase_adjusted = False
     runtime_phase_updated = False
+    reload_success = False
+    reload_error_message: str | None = None
 
     if settings.enabled:
         phase_adjusted = save_phase_type("minimum")
@@ -61,7 +63,6 @@ async def update_partitioned_convolution_settings(
                     phase_response = client.send_command_v2("PHASE_TYPE_SET:minimum")
                     runtime_phase_updated = phase_response.success
                     if not phase_response.success and phase_response.error:
-                        # Only log client-side; API still succeeds because config was saved
                         message = str(phase_response.error)
                         print(
                             f"[Partition] Warning: Failed to force minimum phase: {message}"
@@ -71,15 +72,38 @@ async def update_partitioned_convolution_settings(
                     f"[Partition] Warning: Unable to contact daemon for phase sync: {exc}"
                 )
 
+    if daemon_running:
+        try:
+            with get_daemon_client() as client:
+                reload_success, reload_message = client.reload_config()
+                if not reload_success:
+                    reload_error_message = reload_message
+                    print(
+                        "[Partition] Warning: Daemon reload failed after partition update: "
+                        f"{reload_message}"
+                    )
+                else:
+                    reload_error_message = None
+        except Exception as exc:  # pragma: no cover - defensive logging
+            reload_error_message = str(exc)
+            print(
+                "[Partition] Warning: Failed to send reload command after partition update: "
+                f"{reload_error_message}"
+            )
+
     response_data: dict[str, Any] = {"partitioned_convolution": settings.model_dump()}
     if phase_adjusted:
         response_data["phase_type"] = "minimum"
         response_data["phase_adjusted"] = True
         response_data["phase_runtime_updated"] = runtime_phase_updated
+    if daemon_running:
+        response_data["daemon_reloaded"] = reload_success
+        if not reload_success and reload_error_message:
+            response_data["reload_error"] = reload_error_message
 
     return ApiResponse(
         success=True,
         message="Partitioned convolution settings updated",
         data=response_data,
-        restart_required=daemon_running,
+        restart_required=daemon_running and not reload_success,
     )

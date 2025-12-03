@@ -43,8 +43,8 @@ class TestPartitionedConvolutionGet:
 class TestPartitionedConvolutionPut:
     """PUT /partitioned-convolution."""
 
-    def test_updates_settings_and_reports_restart(self):
-        """Successful updates should return ApiResponse with restart flag."""
+    def test_updates_settings_and_triggers_reload(self):
+        """Daemon reload is triggered and restart_required clears when online."""
         payload = {
             "enabled": True,
             "fast_partition_taps": 65536,
@@ -68,6 +68,7 @@ class TestPartitionedConvolutionPut:
             mock_client.__enter__.return_value = mock_client
             mock_client.__exit__.return_value = False
             mock_client.send_command_v2.return_value = MagicMock(success=True)
+            mock_client.reload_config.return_value = (True, "Command executed")
             mock_get_client.return_value = mock_client
             response = client.put("/partitioned-convolution", json=payload)
 
@@ -75,12 +76,49 @@ class TestPartitionedConvolutionPut:
         mock_running.assert_called_once()
         mock_save_phase.assert_called_once_with("minimum")
         mock_client.send_command_v2.assert_called_once()
+        mock_client.reload_config.assert_called_once()
         assert response.status_code == 200
         body = response.json()
         assert body["success"] is True
-        assert body["restart_required"] is True
+        assert body["restart_required"] is False
         assert body["data"]["partitioned_convolution"]["max_partitions"] == 8
         assert body["data"]["phase_adjusted"] is True
+        assert body["data"]["daemon_reloaded"] is True
+
+    def test_reload_failure_requires_restart(self):
+        """If reload cannot be sent, we still report restart_required."""
+        payload = {
+            "enabled": True,
+            "fast_partition_taps": 49152,
+            "min_partition_taps": 8192,
+            "max_partitions": 6,
+            "tail_fft_multiple": 4,
+        }
+        with patch(
+            "web.routers.partitioned.save_partitioned_convolution_settings",
+            return_value=True,
+        ), patch(
+            "web.routers.partitioned.check_daemon_running",
+            return_value=True,
+        ), patch(
+            "web.routers.partitioned.save_phase_type",
+            return_value=True,
+        ), patch(
+            "web.routers.partitioned.get_daemon_client",
+        ) as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value = mock_client
+            mock_client.__exit__.return_value = False
+            mock_client.send_command_v2.return_value = MagicMock(success=True)
+            mock_client.reload_config.return_value = (False, "Reload failure")
+            mock_get_client.return_value = mock_client
+            response = client.put("/partitioned-convolution", json=payload)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["restart_required"] is True
+        assert body["data"]["daemon_reloaded"] is False
+        assert body["data"]["reload_error"] == "Reload failure"
 
     def test_enabling_forces_phase_to_minimum_even_when_daemon_stopped(self):
         """Even if daemon is offline we still mark phase as minimum."""
@@ -123,7 +161,10 @@ class TestPartitionedConvolutionPut:
             response = client.put("/partitioned-convolution", json=payload)
 
         assert response.status_code == 500
-        assert "Failed to save partitioned convolution settings" in response.json()["detail"]
+        assert (
+            "Failed to save partitioned convolution settings"
+            in response.json()["detail"]
+        )
 
     def test_validation_error_from_pydantic(self):
         """Invalid payload should map to VALIDATION_ERROR response."""
@@ -141,4 +182,3 @@ class TestPartitionedConvolutionPut:
         body = response.json()
         assert body["error_code"] == "VALIDATION_ERROR"
         assert "tail_fft_multiple" in body["detail"]
-
