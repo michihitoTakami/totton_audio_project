@@ -17,10 +17,8 @@ from __future__ import annotations
 
 import argparse
 import copy
-import math
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -28,6 +26,7 @@ from scipy import signal
 
 try:  # optional GPU backend
     import cupy as cp
+
     HAS_CUPY = True
 except Exception:  # pragma: no cover - optional dependency
     cp = None
@@ -53,22 +52,22 @@ from generate_filter import (
 class MixedPhaseSettings:
     """位相EQに関するパラメータ"""
 
-    eq_taps:       int   = 8_192     # 4096 → 8192 に増やす（自由度アップ）
-    eq_delay_ms:   float = 3.0
-    eq_low_hz:     float = 120.0     # 100 → 120 に少し上げる
-    eq_high_hz:    float = 600.0     # 500 → 600 に少し広げる
-    eq_max_freq:   float = 20_000.0
-    eq_low_cut_hz: float = 70.0      # 60 → 70 （もっと下は τ_eq=0 にする）
-    target_smooth_hz: float = 80.0   # 60 → 80 （ターゲットをよりなめらかに）
-    eq_iterations: int   = 100_000   # 50k → 100k
-    eq_tolerance:  float = 1e-6
-    eq_step_size:  float = 0.002     # 0.004 → 0.002（オーバーシュート抑制）
-    eq_oversample: int   = 4         # 2 → 4（周波数分解能アップ）
+    eq_taps: int = 8_192  # 4096 → 8192 に増やす（自由度アップ）
+    eq_delay_ms: float = 3.0
+    eq_low_hz: float = 120.0  # 100 → 120 に少し上げる
+    eq_high_hz: float = 600.0  # 500 → 600 に少し広げる
+    eq_max_freq: float = 20_000.0
+    eq_low_cut_hz: float = 70.0  # 60 → 70 （もっと下は τ_eq=0 にする）
+    target_smooth_hz: float = 80.0  # 60 → 80 （ターゲットをよりなめらかに）
+    eq_iterations: int = 100_000  # 50k → 100k
+    eq_tolerance: float = 1e-6
+    eq_step_size: float = 0.002  # 0.004 → 0.002（オーバーシュート抑制）
+    eq_oversample: int = 4  # 2 → 4（周波数分解能アップ）
     analysis_fft_exp: int = 22
-    weight_sub:       float = 0.001  # 0.01 → 0.001 （サブソニックはほぼ無視）
-    weight_low:       float = 0.05   # 0.1 → 0.05
-    weight_transition:float = 0.30   # 0.4 → 0.3
-    weight_high:      float = 1.0
+    weight_sub: float = 0.001  # 0.01 → 0.001 （サブソニックはほぼ無視）
+    weight_low: float = 0.05  # 0.1 → 0.05
+    weight_transition: float = 0.30  # 0.4 → 0.3
+    weight_high: float = 1.0
     use_gpu: bool = True
 
     def validate(self, fs: int) -> None:
@@ -168,9 +167,7 @@ def build_total_delay_target(
             settings.eq_high_hz - settings.eq_low_hz
         )
         smooth = 0.5 - 0.5 * np.cos(np.pi * np.clip(phase, 0.0, 1.0))
-        tau_total[mid_mask] = (
-            (1.0 - smooth) * tau_min[mid_mask] + smooth * const_delay
-        )
+        tau_total[mid_mask] = (1.0 - smooth) * tau_min[mid_mask] + smooth * const_delay
     tau_total[low_mask] = tau_min[low_mask]
     return smooth_curve(freqs, tau_total, settings.target_smooth_hz)
 
@@ -223,7 +220,9 @@ class PhaseEqDesigner:
         self.freqs = np.fft.rfftfreq(self.n_fft, d=1.0 / fs)
         self.use_gpu = bool(getattr(settings, "use_gpu", False) and HAS_CUPY)
         if getattr(settings, "use_gpu", False) and not HAS_CUPY:
-            print("[PhaseEqDesigner] CuPy not available, falling back to CPU (NumPy) backend.")
+            print(
+                "[PhaseEqDesigner] CuPy not available, falling back to CPU (NumPy) backend."
+            )
 
     def design(
         self, phase_target: np.ndarray, weights: np.ndarray
@@ -246,7 +245,6 @@ class PhaseEqDesigner:
         weights_host = weights.astype(np.float64, copy=False)
         target_host = np.exp(1j * phase_host)
 
-        phase_x = xp.asarray(phase_host) if self.use_gpu else phase_host
         weights_x = xp.asarray(weights_host) if self.use_gpu else weights_host
         target_x = xp.asarray(target_host) if self.use_gpu else target_host
 
@@ -260,7 +258,7 @@ class PhaseEqDesigner:
         def to_scalar(val: Any) -> float:
             if self.use_gpu:
                 # CuPy scalar to Python float
-                return float(val.get())  # type: ignore[attr-defined]
+                return float(val.get())
             return float(val)
 
         iterations_used = self.settings.eq_iterations
@@ -322,9 +320,12 @@ def summarize_group_delay(
     diff = tau_actual - tau_target
     mask = (freqs >= band[0]) & (freqs <= band[1])
     if not np.any(mask):
-        mask = slice(None)
-    max_error = float(np.max(np.abs(diff[mask])))
-    rms_error = float(np.sqrt(np.mean(diff[mask] ** 2)))
+        # Use all data if no points in band
+        diff_masked = diff
+    else:
+        diff_masked = diff[mask]
+    max_error = float(np.max(np.abs(diff_masked)))
+    rms_error = float(np.sqrt(np.mean(diff_masked**2)))
 
     sample_freqs = [100.0, 500.0, 1000.0, 5000.0, 10_000.0]
     sample_stats = []
@@ -388,9 +389,7 @@ class MixedPhaseGenerator:
         h_eq, eq_info = eq_designer.design(phase_interp, weights)
 
         print("\n=== Phase 4: 畳み込み・トリミング ===")
-        h_total = signal.fftconvolve(
-            h_min.astype(np.float64), h_eq.astype(np.float64)
-        )
+        h_total = signal.fftconvolve(h_min.astype(np.float64), h_eq.astype(np.float64))
         h_mixed = h_total[: len(h_min)]
 
         h_final, normalization = normalize_coefficients(
@@ -400,9 +399,7 @@ class MixedPhaseGenerator:
         )
 
         validation = self.validator.validate(h_final)
-        freqs_actual, _, tau_actual = measure_group_delay(
-            h_final, fs, analysis.n_fft
-        )
+        freqs_actual, _, tau_actual = measure_group_delay(h_final, fs, analysis.n_fft)
         if not np.allclose(freqs_actual, analysis.freqs):
             tau_actual = np.interp(analysis.freqs, freqs_actual, tau_actual)
         metrics = summarize_group_delay(analysis, tau_actual, fs)
@@ -454,7 +451,9 @@ class MixedPhaseGenerator:
     def _print_report(self, base_name: str, validation: dict[str, Any]) -> None:
         metrics = validation.get("group_delay_metrics", {})
         print("\n" + "=" * 70)
-        print(f"完了 - {validation.get('actual_taps', self.config.n_taps):,}タップ混合位相FIR")
+        print(
+            f"完了 - {validation.get('actual_taps', self.config.n_taps):,}タップ混合位相FIR"
+        )
         print("=" * 70)
         print(
             f"阻止帯域減衰: {validation['stopband_attenuation_db']:.1f} dB "
@@ -476,7 +475,9 @@ def build_filter_config(args: argparse.Namespace) -> FilterConfig:
     else:
         family = "44k" if args.input_rate % 44100 == 0 else "48k"
         taps_label = "2m" if args.taps == 640_000 else str(args.taps)
-        output_prefix = f"filter_{family}_{args.upsample_ratio}x_{taps_label}_hybrid_phase"
+        output_prefix = (
+            f"filter_{family}_{args.upsample_ratio}x_{taps_label}_hybrid_phase"
+        )
     return FilterConfig(
         n_taps=args.taps,
         input_rate=args.input_rate,
@@ -572,7 +573,9 @@ def parse_args() -> argparse.Namespace:
         description="Generate mixed-phase FIR filters with controlled group delay.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--generate-all", action="store_true", help="Generate all rate families.")
+    parser.add_argument(
+        "--generate-all", action="store_true", help="Generate all rate families."
+    )
     parser.add_argument(
         "--family",
         type=str,
@@ -580,8 +583,12 @@ def parse_args() -> argparse.Namespace:
         default="all",
         help="Rate family to use with --generate-all.",
     )
-    parser.add_argument("--input-rate", type=int, default=44100, help="Input sample rate (Hz).")
-    parser.add_argument("--upsample-ratio", type=int, default=16, help="Upsampling ratio.")
+    parser.add_argument(
+        "--input-rate", type=int, default=44100, help="Input sample rate (Hz)."
+    )
+    parser.add_argument(
+        "--upsample-ratio", type=int, default=16, help="Upsampling ratio."
+    )
     parser.add_argument("--taps", type=int, default=640_000, help="Target tap count.")
     parser.add_argument(
         "--passband-end", type=int, default=20000, help="Passband end frequency (Hz)."
@@ -598,7 +605,9 @@ def parse_args() -> argparse.Namespace:
         default=160,
         help="Target stopband attenuation (dB).",
     )
-    parser.add_argument("--kaiser-beta", type=float, default=28.0, help="Kaiser window beta.")
+    parser.add_argument(
+        "--kaiser-beta", type=float, default=28.0, help="Kaiser window beta."
+    )
     parser.add_argument(
         "--minimum-phase-method",
         type=str,
@@ -613,9 +622,15 @@ def parse_args() -> argparse.Namespace:
         help="Output basename (otherwise auto-generated).",
     )
     # Mixed-phase specific parameters
-    parser.add_argument("--eq-taps", type=int, default=4_096, help="Phase EQ FIR length.")
-    parser.add_argument("--eq-delay-ms", type=float, default=3.0, help="Target constant delay (ms).")
-    parser.add_argument("--eq-low-hz", type=float, default=100.0, help="Delay ramp start frequency.")
+    parser.add_argument(
+        "--eq-taps", type=int, default=4_096, help="Phase EQ FIR length."
+    )
+    parser.add_argument(
+        "--eq-delay-ms", type=float, default=3.0, help="Target constant delay (ms)."
+    )
+    parser.add_argument(
+        "--eq-low-hz", type=float, default=100.0, help="Delay ramp start frequency."
+    )
     parser.add_argument(
         "--eq-high-hz", type=float, default=500.0, help="Delay ramp end frequency."
     )
@@ -685,5 +700,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
