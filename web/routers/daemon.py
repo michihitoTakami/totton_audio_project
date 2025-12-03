@@ -148,7 +148,7 @@ async def get_phase_type():
     Get current phase type from daemon.
 
     Returns the current filter phase type (minimum or hybrid).
-    Hybrid combines minimum phase below 100 Hz with linear phase above 100 Hz
+    Hybrid combines minimum phase below 150 Hz with linear phase above 150 Hz
     (10 ms alignment) to retain imaging while keeping bass tight.
     """
     with get_daemon_client() as client:
@@ -210,7 +210,7 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
     All filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.
 
     - minimum: Minimum phase filter (recommended, no pre-ringing)
-    - hybrid: Minimum phase below 100 Hz / linear phase above 100 Hz (10 ms alignment)
+    - hybrid: Minimum phase below 150 Hz / linear phase above 150 Hz (10 ms alignment)
     """
     # Validation is handled by Pydantic Literal type (returns 422 for invalid values)
     with get_daemon_client() as client:

@@ -12,7 +12,7 @@ FIRフィルタを生成し、検証する。位相タイプ（最小位相/ハ�
 
 位相タイプ:
 - minimum: 最小位相（プリリンギング排除、周波数依存遅延）【従来】
-- hybrid: 低域（≤100Hz）最小位相 + 高域線形位相（群遅延10ms整列）【新規】
+- hybrid: 低域（≤150Hz）最小位相 + 高域線形位相（群遅延10ms整列）【新規】
 
 仕様:
 - タップ数: 640,000 (640k) デフォルト
@@ -83,7 +83,7 @@ MULTI_RATE_CONFIGS = {
     "48k_2x": {"input_rate": 384000, "ratio": 2, "stopband": 192000},
 }
 
-HYBRID_DEFAULT_CROSSOVER_HZ = 100.0
+HYBRID_DEFAULT_CROSSOVER_HZ = 150.0
 HYBRID_DEFAULT_TRANSITION_HZ = 40.0
 HYBRID_DEFAULT_DELAY_MS = 10.0
 HYBRID_DEFAULT_FAST_WINDOW = 32_768
@@ -1494,7 +1494,7 @@ Examples:
   # Generate single minimum phase filter (default, recommended)
   %(prog)s --input-rate 44100 --upsample-ratio 16
 
-  # Generate hybrid phase filter (100 Hz crossover, 10 ms delay)
+  # Generate hybrid phase filter (150 Hz crossover, 10 ms delay)
   %(prog)s --phase-type hybrid --hybrid-crossover-hz 120
 
   # Generate all 8 filter configurations
@@ -1591,7 +1591,7 @@ GPU Acceleration:
         "--hybrid-crossover-hz",
         type=float,
         default=HYBRID_DEFAULT_CROSSOVER_HZ,
-        help="Hybrid crossover frequency separating minimum and linear regions (Hz). Default: 100",
+        help="Hybrid crossover frequency separating minimum and linear regions (Hz). Default: 150",
     )
     parser.add_argument(
         "--hybrid-transition-hz",

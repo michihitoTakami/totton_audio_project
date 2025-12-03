@@ -200,7 +200,7 @@ uv sync
 # Generate 640k-tap minimum phase filter (default β≈28)
 uv run python scripts/generate_filter.py --taps 640000
 
-# Generate 640k-tap hybrid filter (≤100 Hz min-phase, >100 Hz 10 ms linear)
+# Generate 640k-tap hybrid filter (≤150 Hz min-phase, >150 Hz 10 ms linear)
 uv run python scripts/generate_filter.py --taps 640000 --phase-type hybrid
 
 # Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)

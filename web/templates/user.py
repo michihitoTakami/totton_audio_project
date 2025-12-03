@@ -434,14 +434,14 @@ def get_embedded_html() -> str:
             <label>Filter Phase</label>
             <select id="phaseType">
                 <option value="minimum" title="全帯域を最小位相で処理（最小レイテンシ）">Minimum Phase (推奨)</option>
-                <option value="hybrid" title="100Hz以下は最小位相 / 100Hz以上は線形位相（10ms整列）">Hybrid Phase (100Hz以下最小 / 100Hz以上線形)</option>
+                <option value="hybrid" title="150Hz以下は最小位相 / 150Hz以上は線形位相（10ms整列）">Hybrid Phase (150Hz以下最小 / 150Hz以上線形)</option>
             </select>
             <div style="font-size:12px; color:#9fb3ff; margin-top:8px; line-height:1.4;">
-                ハイブリッドは100Hz以下を最小位相、100Hz以上を線形位相（10ms整列）で処理し、定位を維持しながら低域のプレリンギングを抑えます。
+                ハイブリッドは150Hz以下を最小位相、150Hz以上を線形位相（10ms整列）で処理し、定位を維持しながら低域のプレリンギングを抑えます。
             </div>
         </div>
         <div id="phaseWarning" class="warning-banner">
-            ⚠️ ハイブリッドは100Hz以下を最小位相、100Hz以上を線形位相（10ms整列）で処理します。約10msの整列ディレイが発生し、低遅延モードとは併用できません。
+            ⚠️ ハイブリッドは150Hz以下を最小位相、150Hz以上を線形位相（10ms整列）で処理します。約10msの整列ディレイが発生し、低遅延モードとは併用できません。
         </div>
         <div id="phaseMessage" class="message"></div>
     </div>
@@ -1266,14 +1266,14 @@ def get_embedded_html() -> str:
         // Phase Type Functions
         let currentPhaseType = 'minimum';
         let isLowLatencyModeEnabled = false;
-        const HYBRID_PHASE_NOTE = 'ハイブリッドは100Hz以下を最小位相、100Hz以上を線形位相（10ms整列）で処理します。';
+        const HYBRID_PHASE_NOTE = 'ハイブリッドは150Hz以下を最小位相、150Hz以上を線形位相（10ms整列）で処理します。';
         const HYBRID_PHASE_WARNING_TEXT = HYBRID_PHASE_NOTE + ' 約10msの整列ディレイが発生し、低遅延モードとは併用できません。';
 
         function updatePhaseOptionAvailability() {
             const hybridOption = document.querySelector('#phaseType option[value="hybrid"]');
             if (!hybridOption) return;
             hybridOption.disabled = isLowLatencyModeEnabled;
-            hybridOption.title = isLowLatencyModeEnabled ? '低遅延モード中は選択できません' : '100Hz以下は最小位相 / 100Hz以上は線形位相（10ms整列）';
+            hybridOption.title = isLowLatencyModeEnabled ? '低遅延モード中は選択できません' : '150Hz以下は最小位相 / 150Hz以上は線形位相（10ms整列）';
         }
 
         async function fetchPartitionStatus() {

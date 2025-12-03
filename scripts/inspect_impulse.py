@@ -13,6 +13,10 @@ from typing import Any, Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
+HYBRID_CROSSOVER_HZ = 150.0
+HYBRID_CROSSOVER_LABEL = f"{HYBRID_CROSSOVER_HZ:.0f} Hz"
+GROUP_DELAY_SUMMARY_KEY = f"group_delay_{int(HYBRID_CROSSOVER_HZ)}hz"
+
 from scripts.partition_analysis import (
     PartitionConfig,
     build_partition_plan,
@@ -153,7 +157,7 @@ def _compute_group_delay_curve(coeffs: np.ndarray, sample_rate: Optional[int]):
 
 
 def _group_delay_metrics(
-    freqs, group_delay_ms, center_hz: float = 100.0, window_hz: float = 40.0
+    freqs, group_delay_ms, center_hz: float = HYBRID_CROSSOVER_HZ, window_hz: float = 40.0
 ):
     if freqs is None or group_delay_ms is None:
         return None
@@ -232,7 +236,9 @@ def main():
     pre_ringing_pct = _pre_ringing_ratio_pct(energy_cumsum, peak_idx)
     fast_partition_energy_pct = _fast_partition_energy_pct(cumulative_normalized, plan)
     group_delay_freqs, group_delay_ms = _compute_group_delay_curve(coeffs, output_rate)
-    group_delay_summary = _group_delay_metrics(group_delay_freqs, group_delay_ms)
+    group_delay_summary = _group_delay_metrics(
+        group_delay_freqs, group_delay_ms, center_hz=HYBRID_CROSSOVER_HZ
+    )
 
     if plan.enabled:
         print("\n[Partition Plan]")
@@ -263,7 +269,7 @@ def main():
     if group_delay_summary:
         window_half = group_delay_summary["window_hz"] / 2.0
         print(
-            "100 Hz帯域の群遅延: "
+            f"{HYBRID_CROSSOVER_LABEL}帯域の群遅延: "
             f"平均 {group_delay_summary['mean_ms']:.3f} ms / "
             f"変動幅 {group_delay_summary['span_ms']:.3f} ms "
             f"(±{window_half:.0f} Hz)"
@@ -326,7 +332,11 @@ def main():
         ax_gd.set_ylabel("Group delay (ms)")
         ax_gd.set_title("Group delay curve")
         ax_gd.axvline(
-            100, color="#ffbe0b", linestyle="--", alpha=0.7, label="100 Hz focus"
+            HYBRID_CROSSOVER_HZ,
+            color="#ffbe0b",
+            linestyle="--",
+            alpha=0.7,
+            label=f"{HYBRID_CROSSOVER_LABEL} focus",
         )
         if group_delay_summary:
             ax_gd.axhspan(
@@ -334,7 +344,7 @@ def main():
                 group_delay_summary["max_ms"],
                 color="#e0fbfc",
                 alpha=0.3,
-                label="100 Hz window range",
+                label=f"{HYBRID_CROSSOVER_LABEL} window range",
             )
         ax_gd.grid(True, alpha=0.3)
         ax_gd.legend()
@@ -357,7 +367,7 @@ def main():
             "energy_first_100_pct": energy_first_100 / total_energy * 100.0,
             "fast_partition_energy_pct": fast_partition_energy_pct,
             "pre_ringing_pct": pre_ringing_pct,
-            "group_delay_100hz": group_delay_summary,
+            GROUP_DELAY_SUMMARY_KEY: group_delay_summary,
             "metadata": metadata,
             "partition_plan": {
                 "enabled": plan.enabled,
