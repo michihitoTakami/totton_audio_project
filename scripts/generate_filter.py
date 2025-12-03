@@ -88,6 +88,10 @@ HYBRID_DEFAULT_TRANSITION_HZ = 40.0
 HYBRID_DEFAULT_DELAY_MS = 10.0
 HYBRID_DEFAULT_FAST_WINDOW = 32_768
 HYBRID_DEFAULT_ALLPASS_SECTIONS = 12
+HYBRID_DEFAULT_DELAY_MAX_MS = 3.0
+HYBRID_DEFAULT_DELAY_TRANSITION_START_HZ = 120.0
+HYBRID_DEFAULT_DELAY_TRANSITION_END_HZ = 500.0
+HYBRID_ALLPASS_IRLS_ITERATIONS = 2
 HYBRID_FAST_WINDOW_TARGET = 0.99
 HYBRID_ALLPASS_MIN_RADIUS = 0.05
 HYBRID_ALLPASS_MAX_RADIUS = 0.999
@@ -112,6 +116,12 @@ class FilterConfig:
     hybrid_delay_ms: float = HYBRID_DEFAULT_DELAY_MS
     hybrid_fast_window_samples: int = HYBRID_DEFAULT_FAST_WINDOW
     hybrid_allpass_sections: int = HYBRID_DEFAULT_ALLPASS_SECTIONS
+    hybrid_delay_max_ms: float = HYBRID_DEFAULT_DELAY_MAX_MS
+    hybrid_delay_transition_start_hz: float = (
+        HYBRID_DEFAULT_DELAY_TRANSITION_START_HZ
+    )
+    hybrid_delay_transition_end_hz: float = HYBRID_DEFAULT_DELAY_TRANSITION_END_HZ
+    hybrid_allpass_irls_iterations: int = HYBRID_ALLPASS_IRLS_ITERATIONS
     # DCゲインはゼロ詰めアップサンプル後の振幅を維持するためにアップサンプル比に合わせる
     # 全レートで音量統一のため target_dc_gain × dc_gain_factor に設定
     target_dc_gain: float | None = None
@@ -189,6 +199,21 @@ class FilterConfig:
                 raise ValueError(
                     "hybrid_allpass_sections は0以上の整数である必要があります"
                 )
+            if self.hybrid_delay_max_ms <= 0:
+                raise ValueError("hybrid_delay_max_ms は正の値である必要があります")
+            if not (
+                0
+                < self.hybrid_delay_transition_start_hz
+                < self.hybrid_delay_transition_end_hz
+                <= self.passband_end
+            ):
+                raise ValueError(
+                    "hybrid_delay_transition_*_hz は0 < start < end ≤ passband_end を満たす必要があります"
+                )
+            if self.hybrid_allpass_irls_iterations <= 0:
+                raise ValueError(
+                    "hybrid_allpass_irls_iterations は1以上の整数である必要があります"
+                )
             if self.hybrid_delay_samples >= self.n_taps:
                 raise ValueError(
                     f"hybrid_delay_ms に対応するサンプル数 ({self.hybrid_delay_samples}) がタップ数 ({self.n_taps}) 以上です"
@@ -201,6 +226,10 @@ class FilterConfig:
     @property
     def hybrid_delay_seconds(self) -> float:
         return self.hybrid_delay_ms / 1000.0
+
+    @property
+    def hybrid_delay_max_seconds(self) -> float:
+        return self.hybrid_delay_max_ms / 1000.0
 
     @property
     def hybrid_delay_samples(self) -> int:
@@ -371,9 +400,14 @@ class FilterDesigner:
                 n_fft,
             )
 
-        high_weight = 1.0 - self._hybrid_lowpass_weight(freqs)
         weight = np.zeros_like(delta_tau, dtype=np.float64)
-        weight[passband_mask] = np.clip(high_weight[passband_mask], 0.05, 1.0)
+        start = self.config.hybrid_delay_transition_start_hz
+        span = max(self.config.passband_end - start, 1.0)
+        band_mask = freqs >= start
+        if np.any(band_mask):
+            weight_values = (freqs[band_mask] - start) / span
+            weight[band_mask] = np.clip(weight_values, 0.2, 1.0)
+        weight = np.maximum(weight, 1e-6)
 
         H_allpass, allpass_info = self._design_allpass_response(
             omega, delta_tau, weight
@@ -405,6 +439,15 @@ class FilterDesigner:
             else 0.0
         )
 
+        passband_ratio = passband_hybrid / max(passband_ref, 1e-12)
+        passband_error_db = 20.0 * np.log10(np.clip(passband_ratio, 1e-12, 1e12))
+        if abs(passband_error_db) > 0.2:
+            raise ValueError(
+                f"ハイブリッド通過帯域ゲインが最小位相と乖離しています ({passband_error_db:.3f} dB)"
+            )
+
+        max_coeff = float(np.max(np.abs(h_time)))
+
         self.hybrid_gain_alignment = {
             "passband_reference": passband_ref,
             "passband_hybrid": passband_hybrid,
@@ -412,11 +455,20 @@ class FilterDesigner:
             "crossover_hz": float(self.config.hybrid_crossover_hz),
             "transition_hz": float(self.config.hybrid_transition_hz),
             "hybrid_delay_ms": float(self.config.hybrid_delay_ms),
+            "hybrid_delay_max_ms": float(self.config.hybrid_delay_max_ms),
+            "delay_transition_start_hz": float(
+                self.config.hybrid_delay_transition_start_hz
+            ),
+            "delay_transition_end_hz": float(
+                self.config.hybrid_delay_transition_end_hz
+            ),
             "group_delay_error_ms": max_group_delay_error,
             "allpass_sections": allpass_info.sections,
             "allpass_solver_status": allpass_info.status,
             "allpass_solver_iterations": allpass_info.iterations,
             "allpass_rmse_ms": allpass_info.rmse_seconds * 1000.0,
+            "passband_error_db": passband_error_db,
+            "max_coefficient_amplitude_pre_normalize": max_coeff,
         }
 
         print(
@@ -541,6 +593,14 @@ class FilterDesigner:
             else 0.0
         )
 
+        passband_ratio = passband_hybrid / max(passband_ref, 1e-12)
+        passband_error_db = 20.0 * np.log10(np.clip(passband_ratio, 1e-12, 1e12))
+        if abs(passband_error_db) > 0.2:
+            raise ValueError(
+                f"ハイブリッド通過帯域ゲインが最小位相と乖離しています ({passband_error_db:.3f} dB)"
+            )
+        max_coeff = float(np.max(np.abs(h_time)))
+
         self.hybrid_gain_alignment = {
             "passband_reference": passband_ref,
             "passband_hybrid": passband_hybrid,
@@ -560,6 +620,15 @@ class FilterDesigner:
             "allpass_solver_status": "blend_fallback",
             "allpass_solver_iterations": 0,
             "allpass_rmse_ms": 0.0,
+            "hybrid_delay_max_ms": float(self.config.hybrid_delay_max_ms),
+            "delay_transition_start_hz": float(
+                self.config.hybrid_delay_transition_start_hz
+            ),
+            "delay_transition_end_hz": float(
+                self.config.hybrid_delay_transition_end_hz
+            ),
+            "passband_error_db": passband_error_db,
+            "max_coefficient_amplitude_pre_normalize": max_coeff,
         }
 
         print(
@@ -612,10 +681,15 @@ class FilterDesigner:
             return float(np.log(ratio / (1 - ratio)))
 
         x0_list: list[float] = []
+        radius_guess = np.clip(
+            0.1,
+            HYBRID_ALLPASS_MIN_RADIUS + 1e-3,
+            HYBRID_ALLPASS_MAX_RADIUS - 1e-3,
+        )
         for theta0 in base_thetas:
             x0_list.append(
                 inv_logistic(
-                    0.85, HYBRID_ALLPASS_MIN_RADIUS, HYBRID_ALLPASS_MAX_RADIUS
+                    radius_guess, HYBRID_ALLPASS_MIN_RADIUS, HYBRID_ALLPASS_MAX_RADIUS
                 )
             )
             x0_list.append(inv_logistic(theta0, theta_min, theta_max))
@@ -631,31 +705,58 @@ class FilterDesigner:
                 packed.append((float(r), float(theta)))
             return packed
 
-        weight_safe = np.maximum(weight, 0.0)
+        weight_base = np.maximum(weight, 1e-6)
+        irls_iters = max(1, self.config.hybrid_allpass_irls_iterations)
+        best_rmse = np.inf
+        best_sections = None
+        current_params = x0.copy()
+        penalty_weight = 10.0
 
-        def residual(params: np.ndarray) -> np.ndarray:
-            sections_local = unpack(params)
-            tau_ap = self._allpass_group_delay_from_sections(sections_local, omega)
-            return np.sqrt(weight_safe) * (tau_ap - delta_tau)
+        for irls_idx in range(irls_iters):
+            weight_safe = weight_base.copy()
 
-        result = optimize.least_squares(
-            residual,
-            x0,
-            max_nfev=HYBRID_ALLPASS_SOLVER_MAX_EVAL,
-            ftol=1e-12,
-            xtol=1e-12,
-            gtol=1e-12,
-        )
-        info.status = "success" if result.success else "failure"
-        info.iterations = int(result.nfev)
+            def residual(params: np.ndarray) -> np.ndarray:
+                sections_local = unpack(params)
+                tau_ap = self._allpass_group_delay_from_sections(sections_local, omega)
+                error = tau_ap - delta_tau
+                penalty = np.maximum(
+                    0.0, np.abs(tau_ap) - self.config.hybrid_delay_max_seconds
+                )
+                return np.concatenate(
+                    (np.sqrt(weight_safe) * error, penalty_weight * penalty)
+                )
 
-        sections_opt = unpack(result.x)
-        H_allpass = self._allpass_response_from_sections(sections_opt, omega)
-        tau_ap = self._allpass_group_delay_from_sections(sections_opt, omega)
-        rmse_seconds = float(
-            np.sqrt(np.mean(((tau_ap - delta_tau) * np.sqrt(weight_safe)) ** 2))
-        )
-        info.rmse_seconds = rmse_seconds
+            result = optimize.least_squares(
+                residual,
+                current_params,
+                max_nfev=HYBRID_ALLPASS_SOLVER_MAX_EVAL,
+                ftol=1e-12,
+                xtol=1e-12,
+                gtol=1e-12,
+            )
+            info.iterations += int(result.nfev)
+            sections_opt = unpack(result.x)
+            tau_ap = self._allpass_group_delay_from_sections(sections_opt, omega)
+            weighted_error = (tau_ap - delta_tau) * np.sqrt(weight_safe)
+            rmse_seconds = float(np.sqrt(np.mean(weighted_error**2)))
+
+            if rmse_seconds < best_rmse:
+                best_rmse = rmse_seconds
+                best_sections = sections_opt
+                current_params = result.x
+
+            if irls_idx < irls_iters - 1:
+                error_mag = np.abs(tau_ap - delta_tau)
+                denom = self.config.hybrid_delay_max_seconds + 1e-9
+                scale = np.clip(error_mag / denom, 0.5, 4.0)
+                weight_base = np.maximum(weight_base, 1e-6) * scale
+
+        if best_sections is None:
+            best_sections = unpack(current_params)
+        info.status = "success" if best_rmse < np.inf else "failure"
+        info.rmse_seconds = float(best_rmse if best_rmse < np.inf else 0.0)
+
+        H_allpass = self._allpass_response_from_sections(best_sections, omega)
         return H_allpass, info
 
     @staticmethod
@@ -699,12 +800,28 @@ class FilterDesigner:
     def _target_group_delay(
         self, freqs: np.ndarray, tau_min: np.ndarray
     ) -> np.ndarray:
-        """低域は最小位相、上域は指定遅延に向かうターゲット群遅延を生成"""
-        low_weight = self._hybrid_lowpass_weight(freqs)
-        high_weight = 1.0 - low_weight
-        tau_linear = np.full_like(freqs, self.config.hybrid_delay_seconds)
-        tau_target = low_weight * tau_min + high_weight * tau_linear
-        return tau_target
+        """低域は最小位相、上域はΔτ_maxぶん遅延させたターゲット群遅延を生成"""
+        delta = self._hybrid_delay_offset_curve(freqs)
+        return tau_min + delta
+
+    def _hybrid_delay_offset_curve(self, freqs: np.ndarray) -> np.ndarray:
+        """120〜500Hzで0→Δτ_maxへ滑らかに遷移する遅延オフセットを生成"""
+        delta = np.zeros_like(freqs, dtype=np.float64)
+        start = self.config.hybrid_delay_transition_start_hz
+        end = self.config.hybrid_delay_transition_end_hz
+        if end <= start:
+            return delta
+
+        max_delay = self.config.hybrid_delay_max_seconds
+        high_mask = freqs >= end
+        delta[high_mask] = max_delay
+
+        transition_mask = (freqs > start) & (freqs < end)
+        if np.any(transition_mask):
+            phase = (freqs[transition_mask] - start) / (end - start)
+            smooth = 0.5 - 0.5 * np.cos(np.pi * np.clip(phase, 0.0, 1.0))
+            delta[transition_mask] = smooth * max_delay
+        return delta
 
     def _convert_to_minimum_phase_gpu(
         self, h_linear: np.ndarray, n_fft: int
@@ -1230,6 +1347,10 @@ class FilterGenerator:
             "hybrid_delay_ms": self.config.hybrid_delay_ms,
             "hybrid_fast_window_samples": self.config.hybrid_fast_window_samples,
             "hybrid_allpass_sections": self.config.hybrid_allpass_sections,
+            "hybrid_delay_max_ms": self.config.hybrid_delay_max_ms,
+            "hybrid_delay_transition_start_hz": self.config.hybrid_delay_transition_start_hz,
+            "hybrid_delay_transition_end_hz": self.config.hybrid_delay_transition_end_hz,
+            "hybrid_allpass_irls_iterations": self.config.hybrid_allpass_irls_iterations,
             "hybrid_fast_window_target_ratio": HYBRID_FAST_WINDOW_TARGET,
             "target_dc_gain": self.config.target_dc_gain,
             "output_basename": self.config.base_name,
@@ -1717,6 +1838,7 @@ def _generate_filter_worker(
             hybrid_transition_hz=args_dict["hybrid_transition_hz"],
             hybrid_delay_ms=args_dict["hybrid_delay_ms"],
             hybrid_fast_window_samples=args_dict["hybrid_fast_window_samples"],
+            hybrid_delay_max_ms=args_dict["hybrid_delay_max_ms"],
             hybrid_allpass_sections=args_dict["hybrid_allpass_sections"],
         )
 
@@ -1771,6 +1893,7 @@ def generate_all_filters(args: argparse.Namespace) -> None:
         "hybrid_transition_hz": args.hybrid_transition_hz,
         "hybrid_delay_ms": args.hybrid_delay_ms,
         "hybrid_fast_window_samples": args.hybrid_fast_window,
+        "hybrid_delay_max_ms": args.hybrid_delay_max_ms,
         "hybrid_allpass_sections": args.hybrid_allpass_sections,
     }
 
@@ -1965,6 +2088,12 @@ GPU Acceleration:
         type=int,
         default=HYBRID_DEFAULT_FAST_WINDOW,
         help="Fast-partition window size used for energy checks (samples). Default: 32768",
+    )
+    parser.add_argument(
+        "--hybrid-delay-max-ms",
+        type=float,
+        default=HYBRID_DEFAULT_DELAY_MAX_MS,
+        help="Maximum additional group delay (ms) applied above the minimum-phase baseline when designing hybrid filters. Default: 3.0",
     )
     parser.add_argument(
         "--hybrid-allpass-sections",
