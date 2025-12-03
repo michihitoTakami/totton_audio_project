@@ -53,23 +53,23 @@ from generate_filter import (
 class MixedPhaseSettings:
     """位相EQに関するパラメータ"""
 
-    eq_taps: int = 4_096
-    eq_delay_ms: float = 3.0
-    eq_low_hz: float = 100.0
-    eq_high_hz: float = 500.0
-    eq_max_freq: float = 20_000.0
-    eq_low_cut_hz: float = 60.0
-    target_smooth_hz: float = 60.0
-    eq_iterations: int = 50_000
-    eq_tolerance: float = 1e-6
-    eq_step_size: float = 0.004
-    eq_oversample: int = 2
+    eq_taps:       int   = 8_192     # 4096 → 8192 に増やす（自由度アップ）
+    eq_delay_ms:   float = 3.0
+    eq_low_hz:     float = 120.0     # 100 → 120 に少し上げる
+    eq_high_hz:    float = 600.0     # 500 → 600 に少し広げる
+    eq_max_freq:   float = 20_000.0
+    eq_low_cut_hz: float = 70.0      # 60 → 70 （もっと下は τ_eq=0 にする）
+    target_smooth_hz: float = 80.0   # 60 → 80 （ターゲットをよりなめらかに）
+    eq_iterations: int   = 100_000   # 50k → 100k
+    eq_tolerance:  float = 1e-6
+    eq_step_size:  float = 0.002     # 0.004 → 0.002（オーバーシュート抑制）
+    eq_oversample: int   = 4         # 2 → 4（周波数分解能アップ）
     analysis_fft_exp: int = 22
-    weight_sub: float = 0.01
-    weight_low: float = 0.1
-    weight_transition: float = 0.4
-    weight_high: float = 1.0
-    use_gpu: bool = False
+    weight_sub:       float = 0.001  # 0.01 → 0.001 （サブソニックはほぼ無視）
+    weight_low:       float = 0.05   # 0.1 → 0.05
+    weight_transition:float = 0.30   # 0.4 → 0.3
+    weight_high:      float = 1.0
+    use_gpu: bool = True
 
     def validate(self, fs: int) -> None:
         nyquist = fs / 2.0
