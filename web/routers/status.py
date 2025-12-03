@@ -21,9 +21,9 @@ from ..templates import get_embedded_html
 router = APIRouter(tags=["status"])
 
 
-@router.get("/", response_class=HTMLResponse)
-async def root():
-    """Serve the embedded HTML page."""
+@router.get("/legacy", response_class=HTMLResponse)
+async def legacy_root():
+    """Serve the embedded HTML page (legacy)."""
     return get_embedded_html()
 
 
@@ -70,7 +70,7 @@ async def websocket_stats(websocket: WebSocket):
                     "total_samples": stats["total_samples"],
                     "input_rate": stats["input_rate"],
                     "output_rate": stats["output_rate"],
-                        "peaks": stats["peaks"],
+                    "peaks": stats["peaks"],
                 }
             )
 
