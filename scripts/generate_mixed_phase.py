@@ -471,6 +471,12 @@ class MixedPhaseGenerator:
 
 def build_filter_config(args: argparse.Namespace) -> FilterConfig:
     stopband = args.stopband_start if args.stopband_start else args.input_rate // 2
+    if args.output_prefix:
+        output_prefix = args.output_prefix
+    else:
+        family = "44k" if args.input_rate % 44100 == 0 else "48k"
+        taps_label = "2m" if args.taps == 640_000 else str(args.taps)
+        output_prefix = f"filter_{family}_{args.upsample_ratio}x_{taps_label}_hybrid_phase"
     return FilterConfig(
         n_taps=args.taps,
         input_rate=args.input_rate,
@@ -480,7 +486,7 @@ def build_filter_config(args: argparse.Namespace) -> FilterConfig:
         stopband_attenuation_db=args.stopband_attenuation,
         kaiser_beta=args.kaiser_beta,
         minimum_phase_method=MinimumPhaseMethod(args.minimum_phase_method),
-        output_prefix=args.output_prefix,
+        output_prefix=output_prefix,
     )
 
 
