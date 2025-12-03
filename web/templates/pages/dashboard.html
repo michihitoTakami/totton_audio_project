@@ -421,7 +421,7 @@ function dashboardData() {
 
             this.opra.searching = true;
             try {
-                const response = await fetch(`/opra/search?query=${encodeURIComponent(this.opra.searchQuery)}`);
+                const response = await fetch(`/opra/search?q=${encodeURIComponent(this.opra.searchQuery)}`);
                 if (!response.ok) throw new Error('Search failed');
                 const data = await response.json();
                 this.opra.results = data.results || [];
@@ -446,16 +446,16 @@ function dashboardData() {
 
             this.actionInProgress = true;
             try {
-                const payload = {
-                    headphone: this.opra.selected.name,
-                    variant: this.opra.selectedEq,
-                    modern_target: this.opra.useModernTarget,
-                };
+                // Use the full eq_id from the selected result
+                const eqId = this.opra.selectedEq || this.opra.selected.eq_variants?.[0];
+                if (!eqId) {
+                    throw new Error('No EQ variant selected');
+                }
 
-                const response = await fetch('/opra/apply', {
+                // Build endpoint with path parameter and query parameter
+                const endpoint = `/opra/apply/${encodeURIComponent(eqId)}?apply_correction=${this.opra.useModernTarget}`;
+                const response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
                 });
 
                 if (!response.ok) throw new Error('Failed to apply EQ');
