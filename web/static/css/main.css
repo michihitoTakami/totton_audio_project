@@ -101,6 +101,8 @@ body::before {
 .main-content {
     flex: 1;
     padding: 40px;
+    max-width: 900px;
+    margin: 0 auto;
     overflow-y: auto;
     position: relative;
     z-index: 1;
@@ -391,7 +393,7 @@ body::before {
 .status-card {
     background: rgba(18, 22, 26, 0.9);
     border-radius: 4px;
-    padding: 20px;
+    padding: 16px;
     border: 1px solid rgba(0, 255, 255, 0.3);
     box-shadow:
         0 0 10px rgba(0, 255, 255, 0.1),
@@ -468,18 +470,7 @@ body::before {
     border-bottom: 1px solid rgba(0, 255, 255, 0.1);
 }
 
-.status-indicator {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #666;
-}
-
-.status-indicator.ok {
-    background: #00ff88;
-    box-shadow: 0 0 12px rgba(0, 255, 136, 0.6);
-    animation: pulse 2s infinite;
-}
+/* Old circular status indicator styles removed - now using badge style below */
 
 @keyframes pulse {
     0%, 100% { opacity: 1; }
@@ -1089,28 +1080,37 @@ body::before {
 /* Card Grid for Status Cards */
 .card-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 20px;
-    margin-bottom: 40px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 32px;
+}
+
+@media (max-width: 600px) {
+    .card-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .status-card-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: 10px;
+    margin-bottom: 12px;
 }
 
 .status-icon {
-    font-size: 24px;
+    font-size: 20px;
     filter: drop-shadow(0 0 8px rgba(0, 255, 255, 0.3));
 }
 
 .status-card h3 {
-    font-size: 14px;
+    font-size: 13px;
     color: rgba(224, 224, 224, 0.9);
     font-weight: 600;
     margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .status-card-body {
@@ -1120,13 +1120,15 @@ body::before {
 }
 
 .status-indicator {
-    display: inline-flex;
-    align-items: center;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 14px;
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 3px;
+    font-size: 12px;
     font-weight: 600;
     border: 1px solid;
+    white-space: nowrap;
+    width: fit-content;
+    line-height: 1.4;
 }
 
 .status-indicator.status-ok {
@@ -1367,7 +1369,7 @@ body::before {
 .toggle-container {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 16px;
     padding: 12px 0;
 }
 

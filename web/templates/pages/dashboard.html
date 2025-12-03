@@ -19,8 +19,7 @@
                 <h3>{{ t.get('dashboard.daemon') }}</h3>
             </div>
             <div class="status-card-body">
-                <div class="status-indicator" :class="status.daemon_running ? 'status-ok' : 'status-error'">
-                    <span x-text="status.daemon_running ? '{{ t.get('dashboard.status.running') }}' : '{{ t.get('dashboard.status.stopped') }}'"></span>
+                <div class="status-indicator" :class="status.daemon_running ? 'status-ok' : 'status-error'" x-text="status.daemon_running ? '{{ t.get('dashboard.status.running') }}' : '{{ t.get('dashboard.status.stopped') }}'">
                 </div>
             </div>
         </div>
@@ -32,8 +31,7 @@
                 <h3>{{ t.get('dashboard.eq') }}</h3>
             </div>
             <div class="status-card-body">
-                <div class="status-indicator" :class="status.eq_active ? 'status-ok' : 'status-off'">
-                    <span x-text="status.eq_active ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'"></span>
+                <div class="status-indicator" :class="status.eq_active ? 'status-ok' : 'status-off'" x-text="status.eq_active ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'">
                 </div>
             </div>
         </div>
@@ -42,11 +40,10 @@
         <div class="status-card">
             <div class="status-card-header">
                 <span class="status-icon">🎧</span>
-                <h3>クロスフィード</h3>
+                <h3>{{ t.get('dashboard.crossfeed') }}</h3>
             </div>
             <div class="status-card-body">
-                <div class="status-indicator" :class="status.crossfeed_enabled ? 'status-ok' : 'status-off'">
-                    <span x-text="status.crossfeed_enabled ? 'ON' : 'OFF'"></span>
+                <div class="status-indicator" :class="status.crossfeed_enabled ? 'status-ok' : 'status-off'" x-text="status.crossfeed_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'">
                 </div>
             </div>
         </div>
@@ -55,11 +52,10 @@
         <div class="status-card">
             <div class="status-card-header">
                 <span class="status-icon">⚡</span>
-                <h3>低遅延モード</h3>
+                <h3>{{ t.get('dashboard.low_latency') }}</h3>
             </div>
             <div class="status-card-body">
-                <div class="status-indicator" :class="status.low_latency_enabled ? 'status-ok' : 'status-off'">
-                    <span x-text="status.low_latency_enabled ? 'ON' : 'OFF'"></span>
+                <div class="status-indicator" :class="status.low_latency_enabled ? 'status-ok' : 'status-off'" x-text="status.low_latency_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'">
                 </div>
             </div>
         </div>
@@ -67,57 +63,57 @@
 
     <!-- Low Latency Mode -->
     <div class="section">
-        <h2 class="section-title">⚡ 低遅延モード (Partitioned Convolution)</h2>
+        <h2 class="section-title">{{ t.get('dashboard.low_latency.title') }}</h2>
         <div class="card">
             <div class="toggle-container">
                 <div class="toggle-label">
-                    <span>低遅延パーティション</span>
-                    <span class="toggle-desc">クロスフィードと排他利用</span>
+                    <span>{{ t.get('dashboard.low_latency.toggle') }}</span>
+                    <span class="toggle-desc">{{ t.get('dashboard.low_latency.exclusive') }}</span>
                 </div>
                 <div class="toggle-switch" :class="{ 'active': lowLatency.enabled }" @click="toggleLowLatency"></div>
             </div>
             <div class="alert alert-warning" x-show="lowLatency.enabled && status.crossfeed_enabled">
-                ⚠️ クロスフィードは低遅延モードでは利用できません。
+                {{ t.get('dashboard.low_latency.warning') }}
             </div>
             <div class="info-text">
-                <span class="icon">ℹ️</span>32kタップの高速パーティションで超低遅延を実現します。
+                <span class="icon">ℹ️</span>{{ t.get('dashboard.low_latency.info') }}
             </div>
         </div>
     </div>
 
     <!-- Phase Type Selection -->
     <div class="section">
-        <h2 class="section-title">🌊 位相タイプ</h2>
+        <h2 class="section-title">{{ t.get('dashboard.phase_type.title') }}</h2>
         <div class="card">
             <div class="form-group">
-                <label for="phaseType">Filter Phase</label>
+                <label for="phaseType">{{ t.get('dashboard.phase_type.label') }}</label>
                 <select id="phaseType" x-model="phaseType.selected" @change="changePhaseType">
-                    <option value="minimum">Minimum Phase (推奨)</option>
-                    <option value="hybrid">Hybrid Phase (150Hz以下最小 / 150Hz以上線形)</option>
+                    <option value="minimum">{{ t.get('dashboard.phase_type.minimum') }}</option>
+                    <option value="hybrid">{{ t.get('dashboard.phase_type.hybrid') }}</option>
                 </select>
             </div>
             <div class="info-text">
                 <span class="icon">ℹ️</span>
-                <span x-show="phaseType.selected === 'minimum'">全帯域を最小位相で処理（最小レイテンシ）</span>
-                <span x-show="phaseType.selected === 'hybrid'">150Hz以下は最小位相、150Hz以上は線形位相（約6.7ms整列）で処理</span>
+                <span x-show="phaseType.selected === 'minimum'">{{ t.get('dashboard.phase_type.info_minimum') }}</span>
+                <span x-show="phaseType.selected === 'hybrid'">{{ t.get('dashboard.phase_type.info_hybrid') }}</span>
             </div>
             <div class="alert alert-warning" x-show="phaseType.selected === 'hybrid' && lowLatency.enabled">
-                ⚠️ ハイブリッド位相は約6.7msの整列ディレイが発生し、低遅延モードとは併用できません。
+                {{ t.get('dashboard.phase_type.warning') }}
             </div>
         </div>
     </div>
 
     <!-- Headphone EQ (OPRA) -->
     <div class="section">
-        <h2 class="section-title">🎚️ ヘッドホンEQ (OPRA)</h2>
+        <h2 class="section-title">{{ t.get('dashboard.eq.title') }}</h2>
         <div class="card">
             <div class="form-group">
-                <label for="opraSearch">Search Headphones</label>
+                <label for="opraSearch">{{ t.get('dashboard.eq.search_label') }}</label>
                 <input
                     type="text"
                     id="opraSearch"
                     class="search-input"
-                    placeholder="e.g. HD650, DT770, AirPods..."
+                    placeholder="{{ t.get('dashboard.eq.search_placeholder') }}"
                     x-model="opra.searchQuery"
                     @input="searchOPRA"
                 >
@@ -139,7 +135,7 @@
                 <div class="opra-selected-vendor" x-text="opra.selected?.vendor"></div>
 
                 <div class="form-group" style="margin-top: 12px;" x-show="opra.eqOptions.length > 0">
-                    <label for="opraEqSelect">EQバリエーション</label>
+                    <label for="opraEqSelect">{{ t.get('dashboard.eq.variant') }}</label>
                     <select id="opraEqSelect" x-model="opra.selectedEq">
                         <template x-for="eq in opra.eqOptions" :key="eq">
                             <option :value="eq" x-text="eq"></option>
@@ -149,10 +145,10 @@
 
                 <label class="checkbox-label" style="margin-top: 12px;">
                     <input type="checkbox" x-model="opra.useModernTarget">
-                    <span>Modern Target (KB5000_7)</span>
+                    <span>{{ t.get('dashboard.eq.modern_target') }}</span>
                 </label>
                 <div class="info-text" style="margin-left: 24px;">
-                    最新のターゲットカーブに補正
+                    {{ t.get('dashboard.eq.modern_target_desc') }}
                 </div>
             </div>
 
@@ -163,7 +159,7 @@
                     :disabled="!opra.selected || actionInProgress"
                 >
                     <span class="action-icon">✓</span>
-                    <span class="action-label">Apply EQ</span>
+                    <span class="action-label">{{ t.get('dashboard.eq.apply') }}</span>
                 </button>
                 <button
                     class="action-button btn-secondary"
@@ -171,30 +167,30 @@
                     :disabled="actionInProgress"
                 >
                     <span class="action-icon">✗</span>
-                    <span class="action-label">EQ Off</span>
+                    <span class="action-label">{{ t.get('dashboard.eq.off') }}</span>
                 </button>
             </div>
 
             <div class="license-note">
-                EQ data: <a href="https://github.com/opra-project/OPRA" target="_blank" class="license-link">OPRA Project</a> (CC BY-SA 4.0)
+                {{ t.get('dashboard.eq.license') }} <a href="https://github.com/opra-project/OPRA" target="_blank" class="license-link">{{ t.get('dashboard.eq.license_link') }}</a> (CC BY-SA 4.0)
             </div>
         </div>
     </div>
 
     <!-- Crossfeed (HRTF) -->
     <div class="section">
-        <h2 class="section-title">🎧 クロスフィード (HRTF)</h2>
+        <h2 class="section-title">{{ t.get('dashboard.crossfeed.title') }}</h2>
         <div class="card">
             <div class="toggle-container">
                 <div class="toggle-label">
-                    <span>クロスフィード</span>
-                    <span class="toggle-desc">スピーカーリスニングを再現</span>
+                    <span>{{ t.get('dashboard.crossfeed.toggle') }}</span>
+                    <span class="toggle-desc">{{ t.get('dashboard.crossfeed.toggle_desc') }}</span>
                 </div>
                 <div class="toggle-switch" :class="{ 'active': crossfeed.enabled }" @click="toggleCrossfeed"></div>
             </div>
 
             <div class="form-group" style="margin-top: 16px;" x-show="crossfeed.enabled">
-                <label>頭のサイズ:</label>
+                <label>{{ t.get('dashboard.crossfeed.head_size') }}</label>
                 <div class="head-size-group">
                     <button
                         type="button"
@@ -235,15 +231,15 @@
             </div>
 
             <div class="alert alert-warning" x-show="crossfeed.enabled && lowLatency.enabled">
-                ⚠️ クロスフィードは低遅延モードと併用できません。
+                {{ t.get('dashboard.crossfeed.warning') }}
             </div>
 
             <div class="info-text">
-                <span class="icon">ℹ️</span>正三角形配置（±30°）でスピーカーリスニングを再現
+                <span class="icon">ℹ️</span>{{ t.get('dashboard.crossfeed.info') }}
             </div>
 
             <div class="license-note">
-                HRTF data: <a href="https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960" target="_blank" class="license-link">HUTUBS, TU Berlin</a> (CC BY 4.0)
+                {{ t.get('dashboard.crossfeed.license') }} <a href="https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960" target="_blank" class="license-link">{{ t.get('dashboard.crossfeed.license_link') }}</a> (CC BY 4.0)
             </div>
         </div>
     </div>
