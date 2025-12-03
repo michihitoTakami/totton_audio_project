@@ -200,7 +200,7 @@ body::before {
     margin-top: 12px;
 }
 
-.search-input {
+.search-container .search-input {
     width: 100%;
     padding: 12px 40px 12px 16px;
     background: rgba(10, 14, 18, 0.8);
@@ -213,13 +213,13 @@ body::before {
     transition: all 0.3s;
 }
 
-.search-input:focus {
+.search-container .search-input:focus {
     border-color: #00ffff;
     box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
     background: rgba(10, 14, 18, 0.95);
 }
 
-.search-input::placeholder {
+.search-container .search-input::placeholder {
     color: rgba(128, 160, 160, 0.5);
 }
 
@@ -1339,8 +1339,7 @@ body::before {
     font-weight: 500;
 }
 
-.form-group select,
-.search-input {
+.form-group select {
     width: 100%;
     padding: 12px;
     border: 1px solid rgba(0, 255, 255, 0.3);
@@ -1353,15 +1352,10 @@ body::before {
     transition: all 0.3s;
 }
 
-.form-group select:focus,
-.search-input:focus {
+.form-group select:focus {
     border-color: #00ffff;
     box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
     background: rgba(10, 14, 18, 0.95);
-}
-
-.search-input::placeholder {
-    color: rgba(128, 160, 160, 0.5);
 }
 
 /* OPRA Search Results */
