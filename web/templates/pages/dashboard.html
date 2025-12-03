@@ -376,9 +376,10 @@ function dashboardData() {
 
                 if (!response.ok) throw new Error('Failed to toggle low latency mode');
 
-                const data = await response.json();
-                this.lowLatency.enabled = data.enabled;
-                this.showToast(data.message || '低遅延モードを切り替えました', 'success');
+                const result = await response.json();
+                // ApiResponse format: { success, message, data: { partitioned_convolution: {...} } }
+                this.lowLatency.enabled = result.data?.partitioned_convolution?.enabled ?? newState;
+                this.showToast(result.message || '低遅延モードを切り替えました', 'success');
 
                 // Refresh status
                 await this.fetchStatus();
