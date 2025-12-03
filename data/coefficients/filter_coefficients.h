@@ -1,6 +1,6 @@
 // Auto-generated multi-rate filter coefficients
 // GPU Audio Upsampler - Multi-Rate Support
-// Generated: 2025-12-02T00:44:45.319642
+// Generated: 2025-12-03T13:26:54.846075
 
 #ifndef FILTER_COEFFICIENTS_H
 #define FILTER_COEFFICIENTS_H
@@ -12,7 +12,7 @@
 struct FilterConfig {
     const char* name;
     const char* filename;
-    size_t taps;  // Actual tap count (matches .bin file length)
+    size_t taps;        // Actual tap count (matches .bin file length)
     int32_t input_rate;
     int32_t output_rate;
     int32_t ratio;
@@ -31,4 +31,4 @@ constexpr FilterConfig FILTER_CONFIGS[FILTER_COUNT] = {
     {"48k_2x", "filter_48k_2x_2m_hybrid_phase.bin", 640000, 384000, 768000, 2},
 };
 
-#endif  // FILTER_COEFFICIENTS_H
+#endif // FILTER_COEFFICIENTS_H
