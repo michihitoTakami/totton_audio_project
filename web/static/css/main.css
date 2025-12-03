@@ -355,6 +355,7 @@ body::before {
         inset 0 0 20px rgba(0, 255, 255, 0.02);
     position: relative;
     transition: all 0.3s;
+    text-align: center;
 }
 
 .status-card::before {
@@ -1080,6 +1081,7 @@ body::before {
     border-radius: 4px;
     padding: 24px;
     box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
+    text-align: center;
 }
 
 /* Mode Switcher */
@@ -1177,6 +1179,7 @@ body::before {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 16px;
+    justify-items: center;
 }
 
 .action-button {
@@ -1493,6 +1496,7 @@ body::before {
     display: flex;
     gap: 12px;
     margin-top: 16px;
+    justify-content: center;
 }
 
 /* Head Size Group */
