@@ -332,8 +332,8 @@ static void trim_output_buffer_locked(size_t minFramesToRemove) {
     }
 }
 
-static size_t enqueue_output_frames_locked(const std::vector<float>& left,
-                                           const std::vector<float>& right) {
+template <typename Container>
+static size_t enqueue_output_frames_locked(const Container& left, const Container& right) {
     size_t framesAvailable = std::min(left.size(), right.size());
     if (framesAvailable == 0) {
         return 0;
@@ -1872,9 +1872,8 @@ static snd_pcm_t* open_and_configure_pcm(const std::string& device) {
     }
 
     std::cout << "ALSA: Output device " << device << " configured (" << rate
-              << " Hz, 32-bit int, stereo)"
-              << " buffer " << buffer_size << " frames, period " << period_size << " frames"
-              << std::endl;
+              << " Hz, 32-bit int, stereo)" << " buffer " << buffer_size << " frames, period "
+              << period_size << " frames" << std::endl;
     return pcm_handle;
 }
 
