@@ -22,16 +22,14 @@ namespace PlaybackBuffer {
  * @return Samples required before playback should resume.
  */
 inline size_t computeReadyThreshold(size_t periodSize, bool crossfeedActive,
-                                    size_t crossfeedBlockSize,
-                                    size_t producerBlockSize = 0,
+                                    size_t crossfeedBlockSize, size_t producerBlockSize = 0,
                                     size_t defaultMultiplier = 3) {
     size_t safePeriod = std::max<size_t>(periodSize, 1);
     size_t defaultReady = safePeriod * defaultMultiplier;
 
     if (!crossfeedActive || crossfeedBlockSize == 0) {
         if (producerBlockSize > 0) {
-            size_t clampedProducer =
-                std::clamp(producerBlockSize, safePeriod, defaultReady);
+            size_t clampedProducer = std::clamp(producerBlockSize, safePeriod, defaultReady);
             return clampedProducer;
         }
         return defaultReady;
@@ -92,5 +90,3 @@ inline CapacityDecision planCapacityEnforcement(size_t currentFrames, size_t pro
 }  // namespace PlaybackBuffer
 
 #endif  // PLAYBACK_BUFFER_H
-
-

@@ -273,7 +273,7 @@
           "daemon"
         ],
         "summary": "Get Phase Type",
-        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid keeps bass (≤100 Hz) minimum phase while aligning higher bands\nto a constant ~10 ms group delay (1 period of the crossover frequency) to retain imaging.",
+        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or linear).\nLinear phase provides constant group delay across all frequencies but introduces high latency (~0.45s @ 705.6kHz).",
         "operationId": "get_phase_type_daemon_phase_type_get",
         "responses": {
           "200": {
@@ -293,7 +293,7 @@
           "daemon"
         ],
         "summary": "Set Phase Type",
-        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 100 Hz / constant-delay region above 100 Hz (~10 ms alignment)",
+        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- linear: Linear phase filter (constant group delay across all frequencies, high latency ~0.45s @ 705.6kHz)",
         "operationId": "set_phase_type_daemon_phase_type_put",
         "requestBody": {
           "content": {
@@ -3239,10 +3239,10 @@
             "type": "string",
             "enum": [
               "minimum",
-              "hybrid"
+              "linear"
             ],
             "title": "Phase Type",
-            "description": "Current phase type: 'minimum' or 'hybrid'"
+            "description": "Current phase type: 'minimum' or 'linear'"
           },
           "latency_warning": {
             "anyOf": [
@@ -3254,7 +3254,7 @@
               }
             ],
             "title": "Latency Warning",
-            "description": "Info/warning message for hybrid phase (~10ms alignment above 100 Hz)"
+            "description": "Warning message for linear phase (high latency ~0.45s @ 705.6kHz)"
           }
         },
         "type": "object",
@@ -3270,10 +3270,10 @@
             "type": "string",
             "enum": [
               "minimum",
-              "hybrid"
+              "linear"
             ],
             "title": "Phase Type",
-            "description": "Target phase type: 'minimum' or 'hybrid'"
+            "description": "Target phase type: 'minimum' or 'linear'"
           }
         },
         "type": "object",

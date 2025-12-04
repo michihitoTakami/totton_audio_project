@@ -20,12 +20,9 @@ STATS_FILE_PATH = Path("/tmp/gpu_upsampler_stats.json")
 # ============================================================================
 
 PHASE_TYPE_MINIMUM = "minimum"
-PHASE_TYPE_HYBRID = "hybrid"
-DAEMON_PHASE_LINEAR = "linear"  # Runtime daemon string (kept for backwards compat)
-HYBRID_PHASE_DESCRIPTION = "100Hz以下は最小位相 / 100Hz以上は一定群遅延（約10ms整列）"
-HYBRID_PHASE_WARNING = (
-    f"ハイブリッド: {HYBRID_PHASE_DESCRIPTION}。約10msの整列ディレイが発生します。"
-)
+PHASE_TYPE_LINEAR = "linear"
+LINEAR_PHASE_DESCRIPTION = "全帯域で群遅延が一定（完全な位相直線性）"
+LINEAR_PHASE_WARNING = f"線形位相: {LINEAR_PHASE_DESCRIPTION}。約0.45秒のレイテンシが発生します（705.6kHz時）。"
 
 # ============================================================================
 # ZeroMQ
