@@ -131,7 +131,7 @@ git checkout phase1/filter-coefficient-generation
 git log --oneline -1  # c238324 が表示されることを確認
 
 # 実行
-uv run python scripts/generate_filter.py
+uv run python scripts/generate_minimum_phase.py
 
 # 結果確認
 cat data/coefficients/metadata.json | jq '.validation_results.is_minimum_phase'
