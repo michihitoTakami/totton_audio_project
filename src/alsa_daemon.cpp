@@ -25,6 +25,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cstddef>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -120,6 +121,7 @@ static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
 // Statistics (atomic for thread-safe access from stats writer)
 static std::atomic<size_t> g_clip_count{0};
 static std::atomic<size_t> g_total_samples{0};
+static std::atomic<size_t> g_buffer_drop_count{0};
 
 static std::atomic<float> g_peak_input_level{0.0f};
 static std::atomic<float> g_peak_upsampler_level{0.0f};
@@ -179,6 +181,25 @@ static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
 static std::atomic<int> g_current_output_rate{DEFAULT_OUTPUT_SAMPLE_RATE};
 static std::atomic<int> g_current_rate_family_int{
     static_cast<int>(ConvolutionEngine::RateFamily::RATE_44K)};
+
+static size_t get_max_output_buffer_frames() {
+    using namespace DaemonConstants;
+    double seconds = static_cast<double>(MAX_OUTPUT_BUFFER_SECONDS);
+    if (seconds <= 0.0) {
+        return DEFAULT_MAX_OUTPUT_BUFFER_FRAMES;
+    }
+
+    int outputRate = g_current_output_rate.load(std::memory_order_acquire);
+    if (outputRate <= 0) {
+        outputRate = DEFAULT_OUTPUT_SAMPLE_RATE;
+    }
+
+    double frames = seconds * static_cast<double>(outputRate);
+    if (frames <= 0.0) {
+        return DEFAULT_MAX_OUTPUT_BUFFER_FRAMES;
+    }
+    return static_cast<size_t>(frames);
+}
 
 // Pending rate change (set by PipeWire callback, processed in main loop)
 // Value: 0 = no change pending, >0 = detected input sample rate
@@ -283,6 +304,78 @@ static std::condition_variable g_buffer_cv;
 static std::vector<float> g_output_buffer_left;
 static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
+
+static void trim_output_buffer_locked(size_t minFramesToRemove) {
+    if (g_output_read_pos == 0) {
+        return;
+    }
+
+    size_t readable = g_output_buffer_left.size();
+    if (readable == 0) {
+        g_output_read_pos = 0;
+        return;
+    }
+
+    if (g_output_read_pos > readable) {
+        g_output_read_pos = readable;
+    }
+
+    if ((minFramesToRemove > 0 && g_output_read_pos >= minFramesToRemove) ||
+        g_output_read_pos == readable) {
+        auto eraseCount = static_cast<std::ptrdiff_t>(g_output_read_pos);
+        g_output_buffer_left.erase(g_output_buffer_left.begin(),
+                                   g_output_buffer_left.begin() + eraseCount);
+        g_output_buffer_right.erase(g_output_buffer_right.begin(),
+                                    g_output_buffer_right.begin() + eraseCount);
+        g_output_read_pos = 0;
+    }
+}
+
+static size_t enqueue_output_frames_locked(const std::vector<float>& left,
+                                           const std::vector<float>& right) {
+    size_t framesAvailable = std::min(left.size(), right.size());
+    if (framesAvailable == 0) {
+        return 0;
+    }
+
+    size_t capacityFrames = std::max<size_t>(1, get_max_output_buffer_frames());
+    size_t bufferSize = g_output_buffer_left.size();
+    size_t currentFrames = (bufferSize >= g_output_read_pos) ? (bufferSize - g_output_read_pos) : 0;
+    auto decision = PlaybackBuffer::planCapacityEnforcement(currentFrames, framesAvailable,
+                                                            capacityFrames);
+
+    size_t totalDropped = decision.dropFromExisting + decision.newDataOffset;
+    if (totalDropped > 0) {
+        int outputRate = g_current_output_rate.load(std::memory_order_acquire);
+        if (outputRate <= 0) {
+            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
+        }
+        float seconds = static_cast<float>(totalDropped) / static_cast<float>(outputRate);
+        LOG_WARN("Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, "
+                 "max={}]",
+                 totalDropped, seconds, currentFrames, framesAvailable, capacityFrames);
+        g_buffer_drop_count.fetch_add(totalDropped, std::memory_order_relaxed);
+    }
+
+    if (decision.dropFromExisting > 0) {
+        g_output_read_pos += decision.dropFromExisting;
+    }
+
+    trim_output_buffer_locked(capacityFrames);
+
+    if (decision.framesToStore == 0) {
+        return 0;
+    }
+
+    size_t startIndex = framesAvailable - decision.framesToStore;
+    auto startOffset = static_cast<std::ptrdiff_t>(startIndex);
+    auto endOffset = static_cast<std::ptrdiff_t>(framesAvailable);
+    g_output_buffer_left.insert(g_output_buffer_left.end(), left.begin() + startOffset,
+                                left.begin() + endOffset);
+    g_output_buffer_right.insert(g_output_buffer_right.end(), right.begin() + startOffset,
+                                 right.begin() + endOffset);
+    return decision.framesToStore;
+}
 
 // Streaming input accumulation buffers
 static StreamFloatVector g_stream_input_left;
@@ -556,6 +649,12 @@ static nlohmann::json collect_runtime_stats_json() {
     stats["fallback"] = make_fallback_stats_json();
 
     stats["dac"] = g_dac_manager.buildStatsSummaryJson();
+
+    nlohmann::json bufferJson;
+    bufferJson["max_seconds"] = DaemonConstants::MAX_OUTPUT_BUFFER_SECONDS;
+    bufferJson["capacity_frames"] = get_max_output_buffer_frames();
+    bufferJson["dropped_frames"] = g_buffer_drop_count.load(std::memory_order_relaxed);
+    stats["buffer"] = bufferJson;
 
     return stats;
 }
@@ -1496,10 +1595,7 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
                     update_peak_level(g_peak_post_crossfeed_level, cfPeak);
                 }
                 std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                g_output_buffer_left.insert(g_output_buffer_left.end(), g_cf_output_left.begin(),
-                                            g_cf_output_left.end());
-                g_output_buffer_right.insert(g_output_buffer_right.end(), g_cf_output_right.begin(),
-                                             g_cf_output_right.end());
+                enqueue_output_frames_locked(g_cf_output_left, g_cf_output_right);
                 g_buffer_cv.notify_one();
                 return;
             }
@@ -1508,9 +1604,7 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
     }
 
     std::lock_guard<std::mutex> lock(g_buffer_mutex);
-    g_output_buffer_left.insert(g_output_buffer_left.end(), output_left.begin(), output_left.end());
-    g_output_buffer_right.insert(g_output_buffer_right.end(), output_right.begin(),
-                                 output_right.end());
+    enqueue_output_frames_locked(output_left, output_right);
     g_buffer_cv.notify_one();
     if (frames_generated > 0) {
         float postPeak =
@@ -2093,15 +2187,9 @@ void alsa_output_thread() {
             }
             g_output_read_pos += period_size;
 
-            // Clear consumed data more frequently to avoid large vector reallocations
-            // Reallocations can cause audio glitches due to memory operations
-            if (g_output_read_pos > period_size * 4) {  // Clean up after 4 periods
-                g_output_buffer_left.erase(g_output_buffer_left.begin(),
-                                           g_output_buffer_left.begin() + g_output_read_pos);
-                g_output_buffer_right.erase(g_output_buffer_right.begin(),
-                                            g_output_buffer_right.begin() + g_output_read_pos);
-                g_output_read_pos = 0;
-            }
+            size_t cleanupThreshold =
+                std::max<size_t>(static_cast<size_t>(period_size) * 4, static_cast<size_t>(1));
+            trim_output_buffer_locked(cleanupThreshold);
 
             lock.unlock();
 

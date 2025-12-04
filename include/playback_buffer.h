@@ -44,6 +44,51 @@ inline size_t computeReadyThreshold(size_t periodSize, bool crossfeedActive,
     return clampedCrossfeed;
 }
 
+struct CapacityDecision {
+    size_t dropFromExisting = 0;
+    size_t newDataOffset = 0;
+    size_t framesToStore = 0;
+};
+
+/**
+ * @brief Determine how many frames must be dropped when applying a hard
+ *        capacity limit to the playback buffer.
+ *
+ * @param currentFrames Currently queued frames (per channel).
+ * @param producedFrames Frames produced by the upsampler for this block.
+ * @param maxFrames Maximum number of frames allowed in the buffer.
+ *
+ * @return Decision describing how many existing frames to drop, how many new
+ *         frames need to be skipped, and how many frames should be stored.
+ */
+inline CapacityDecision planCapacityEnforcement(size_t currentFrames, size_t producedFrames,
+                                                size_t maxFrames) {
+    CapacityDecision decision{};
+
+    if (maxFrames == 0) {
+        decision.dropFromExisting = currentFrames;
+        decision.newDataOffset = producedFrames;
+        decision.framesToStore = 0;
+        return decision;
+    }
+
+    size_t framesToStore = producedFrames;
+    size_t newDataOffset = 0;
+    if (framesToStore > maxFrames) {
+        newDataOffset = framesToStore - maxFrames;
+        framesToStore = maxFrames;
+    }
+
+    size_t clampedCurrent = std::min(currentFrames, maxFrames);
+    size_t combined = clampedCurrent + framesToStore;
+    size_t dropExisting = (combined > maxFrames) ? (combined - maxFrames) : 0;
+
+    decision.dropFromExisting = std::min(dropExisting, clampedCurrent);
+    decision.newDataOffset = newDataOffset;
+    decision.framesToStore = framesToStore;
+    return decision;
+}
+
 }  // namespace PlaybackBuffer
 
 #endif  // PLAYBACK_BUFFER_H
