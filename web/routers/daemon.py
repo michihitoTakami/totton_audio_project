@@ -8,9 +8,8 @@ from fastapi import APIRouter, HTTPException
 
 from ..constants import (
     DAEMON_BINARY,
-    DAEMON_PHASE_LINEAR,
-    HYBRID_PHASE_WARNING,
-    PHASE_TYPE_HYBRID,
+    LINEAR_PHASE_WARNING,
+    PHASE_TYPE_LINEAR,
     PHASE_TYPE_MINIMUM,
     PID_FILE_PATH,
 )
@@ -147,9 +146,8 @@ async def get_phase_type():
     """
     Get current phase type from daemon.
 
-    Returns the current filter phase type (minimum or hybrid).
-    Hybrid keeps bass (≤100 Hz) minimum phase while aligning higher bands
-    to a constant ~10 ms group delay (1 period of the crossover frequency) to retain imaging.
+    Returns the current filter phase type (minimum or linear).
+    Linear phase provides constant group delay across all frequencies but introduces high latency (~0.45s @ 705.6kHz).
     """
     with get_daemon_client() as client:
         response = client.send_command_v2("PHASE_TYPE_GET")
@@ -177,23 +175,19 @@ async def get_phase_type():
             )
 
         phase_type_raw = data.get("phase_type")
-        if phase_type_raw not in (
-            PHASE_TYPE_MINIMUM,
-            PHASE_TYPE_HYBRID,
-            DAEMON_PHASE_LINEAR,
-        ):
+        if phase_type_raw not in ("minimum", "linear"):
             raise DaemonError(
                 error_code="IPC_PROTOCOL_ERROR",
                 message=f"Invalid phase type from daemon: {phase_type_raw}",
             )
 
         ui_phase_type = (
-            PHASE_TYPE_HYBRID
-            if phase_type_raw in (DAEMON_PHASE_LINEAR, PHASE_TYPE_HYBRID)
+            phase_type_raw
+            if phase_type_raw in ["minimum", "linear"]
             else PHASE_TYPE_MINIMUM
         )
         latency_warning = (
-            HYBRID_PHASE_WARNING if ui_phase_type == PHASE_TYPE_HYBRID else None
+            LINEAR_PHASE_WARNING if ui_phase_type == PHASE_TYPE_LINEAR else None
         )
 
         return PhaseTypeResponse(
@@ -210,15 +204,11 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
     All filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.
 
     - minimum: Minimum phase filter (recommended, no pre-ringing)
-    - hybrid: Minimum phase below 100 Hz / constant-delay region above 100 Hz (~10 ms alignment)
+    - linear: Linear phase filter (constant group delay across all frequencies, high latency ~0.45s @ 705.6kHz)
     """
     # Validation is handled by Pydantic Literal type (returns 422 for invalid values)
     with get_daemon_client() as client:
-        daemon_phase = (
-            DAEMON_PHASE_LINEAR
-            if request.phase_type == PHASE_TYPE_HYBRID
-            else PHASE_TYPE_MINIMUM
-        )
+        daemon_phase = request.phase_type  # UI層とダイモン層で統一
         response = client.send_command_v2(f"PHASE_TYPE_SET:{daemon_phase}")
         if not response.success:
             # Raise DaemonError to trigger RFC 9457 error handler
@@ -226,7 +216,7 @@ async def set_phase_type(request: PhaseTypeUpdateRequest):
 
         save_phase_type(request.phase_type)
         partition_disabled = False
-        if request.phase_type == PHASE_TYPE_HYBRID:
+        if request.phase_type == PHASE_TYPE_LINEAR:
             current_partition = load_partitioned_convolution_settings()
             if current_partition.enabled:
                 current_partition.enabled = False

@@ -159,18 +159,18 @@ class ZmqPingResponse(BaseModel):
     daemon_running: bool
 
 
-PhaseType = Literal["minimum", "hybrid"]
+PhaseType = Literal["minimum", "linear"]
 
 
 class PhaseTypeResponse(BaseModel):
     """Phase type response model."""
 
     phase_type: PhaseType = Field(
-        description="Current phase type: 'minimum' or 'hybrid'"
+        description="Current phase type: 'minimum' or 'linear'"
     )
     latency_warning: Optional[str] = Field(
         default=None,
-        description="Info/warning message for hybrid phase (~10ms alignment above 100 Hz)",
+        description="Warning message for linear phase (high latency ~0.45s @ 705.6kHz)",
     )
 
 
@@ -178,7 +178,7 @@ class PhaseTypeUpdateRequest(BaseModel):
     """Phase type update request model."""
 
     phase_type: PhaseType = Field(
-        description="Target phase type: 'minimum' or 'hybrid'"
+        description="Target phase type: 'minimum' or 'linear'"
     )
 
 
