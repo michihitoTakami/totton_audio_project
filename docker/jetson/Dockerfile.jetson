@@ -65,6 +65,7 @@ RUN chmod +x build/gpu_upsampler_alsa build/gpu_upsampler_daemon \
 # Copy data files (filter coefficients + EQ)
 COPY data/coefficients/ data/coefficients/
 COPY data/EQ/ data/EQ/
+COPY data/crossfeed/ data/crossfeed/
 # Use Docker-specific config (pipewireEnabled: false)
 COPY docker/jetson/config.docker.json ./config.json
 
