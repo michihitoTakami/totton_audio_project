@@ -113,8 +113,8 @@ uv run python scripts/generate_minimum_phase.py --taps 2000000 --kaiser-beta 55
 ```
 
 生成されるファイル：
-- `data/coefficients/filter_*_hybrid_phase.bin` - バイナリ係数
-- `data/coefficients/filter_*_hybrid_phase.json` - メタデータ
+- `data/coefficients/filter_*_linear_phase.bin` - バイナリ係数
+- `data/coefficients/filter_*_linear_phase.json` - メタデータ
 - `plots/analysis/*.png` - 検証用プロット
 
 ### 6. ビルド

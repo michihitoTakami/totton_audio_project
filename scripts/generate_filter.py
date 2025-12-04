@@ -201,8 +201,24 @@ class FilterExporter:
 
     def _export_metadata(self, metadata: dict[str, Any], base_name: str) -> None:
         metadata_path = self.output_dir / f"{base_name}.json"
+
+        # Convert numpy types to native Python types for JSON serialization
+        def convert_numpy_types(obj: Any) -> Any:
+            if isinstance(obj, np.bool_):
+                return bool(obj)
+            if isinstance(obj, np.integer):
+                return int(obj)
+            if isinstance(obj, np.floating):
+                return float(obj)
+            if isinstance(obj, dict):
+                return {k: convert_numpy_types(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            return obj
+
+        serializable_metadata = convert_numpy_types(metadata)
         with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
+            json.dump(serializable_metadata, f, indent=2, ensure_ascii=False)
         print(f"  保存: {metadata_path}")
 
 
