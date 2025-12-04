@@ -581,7 +581,7 @@ int main(int argc, char* argv[]) {
         loop, "GPU Upsampler Input",
         pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
                           PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
-                          "GPU Upsampler Input", PW_KEY_NODE_TARGET, "gpu_upsampler_sink.monitor",
+                          "GPU Upsampler Input", PW_KEY_TARGET_OBJECT, "gpu_upsampler_sink.monitor",
                           "audio.channels", "2", "audio.position", "FL,FR", nullptr),
         &input_stream_events, &data);
 
@@ -610,7 +610,7 @@ int main(int argc, char* argv[]) {
     data.output_stream = pw_stream_new_simple(
         loop, "GPU Upsampler Output",
         pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
-                          PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_TARGET,
+                          PW_KEY_MEDIA_ROLE, "Music", PW_KEY_TARGET_OBJECT,
                           "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo", "audio.channels",
                           "2", "audio.position", "FL,FR", nullptr),
         &output_stream_events, &data);
@@ -682,7 +682,7 @@ int main(int argc, char* argv[]) {
             data.output_stream = pw_stream_new_simple(
                 loop, "GPU Upsampler Output",
                 pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
-                                  PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_TARGET,
+                                  PW_KEY_MEDIA_ROLE, "Music", PW_KEY_TARGET_OBJECT,
                                   "alsa_output.usb-SMSL_SMSL_USB_AUDIO-00.iec958-stereo",
                                   "audio.channels", "2", "audio.position", "FL,FR", nullptr),
                 &output_stream_events, &data);
