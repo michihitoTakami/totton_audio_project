@@ -15,17 +15,12 @@ def test_render_eq_settings_english():
 
     # Check sections are present
     assert "Active EQ Profile" in html
-    assert "Phase Type" in html
     assert "OPRA Headphone Search" in html
     assert "Saved EQ Profiles" in html
 
     # Check Modern Target checkbox
     assert "Modern Target (KB5000_7)" in html
     assert "Correct to latest target curve" in html
-
-    # Check Phase Type options
-    assert "Minimum Phase (Recommended)" in html
-    assert "Hybrid Phase" in html
 
 
 def test_render_eq_settings_japanese():
@@ -38,7 +33,6 @@ def test_render_eq_settings_japanese():
 
     # Check sections are present
     assert "有効なEQプロファイル" in html
-    assert "位相タイプ" in html
     assert "OPRAヘッドホン検索" in html
     assert "保存済みEQプロファイル" in html
 
@@ -56,12 +50,10 @@ def test_eq_settings_page_structure():
 
     # Check API endpoints are referenced
     assert "/eq/active" in html
-    assert "/daemon/phase-type" in html
     assert "/eq/profiles" in html
     assert "/opra/search" in html
 
     # Check form elements
-    assert 'id="phaseType"' in html
     assert 'id="opraSearch"' in html
 
     # Check action buttons
