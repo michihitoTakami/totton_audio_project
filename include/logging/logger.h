@@ -24,7 +24,7 @@ namespace logging {
 /**
  * @brief Log level enumeration
  */
-enum class LogLevel : std::uint8_t {
+enum class LogLevel {
     Trace,     // Very detailed debugging information
     Debug,     // Debug information
     Info,      // General information
@@ -39,8 +39,8 @@ enum class LogLevel : std::uint8_t {
  */
 struct LogConfig {
     LogLevel level = LogLevel::Info;
-    std::string filePath = "";                                   // Empty = no file output
-    size_t maxFileSize = static_cast<size_t>(10 * 1024 * 1024);  // 10 MB
+    std::string filePath = "";              // Empty = no file output
+    size_t maxFileSize = 10 * 1024 * 1024;  // 10 MB
     size_t maxBackups = 5;
     bool consoleOutput = true;
     bool coloredOutput = true;

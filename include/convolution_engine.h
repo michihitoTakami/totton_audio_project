@@ -19,7 +19,7 @@ namespace ConvolutionEngine {
 using StreamFloatVector = CudaPinnedVector<float>;
 
 // Rate family enumeration for multi-rate support
-enum class RateFamily : std::int8_t {
+enum class RateFamily {
     RATE_44K = 0,  // 44.1kHz family (44100, 88200, 176400 Hz)
     RATE_48K = 1,  // 48kHz family (48000, 96000, 192000 Hz)
     RATE_UNKNOWN = -1
@@ -27,12 +27,10 @@ enum class RateFamily : std::int8_t {
 
 // Detect rate family from sample rate
 inline RateFamily detectRateFamily(int sampleRate) {
-    if (sampleRate % 44100 == 0) {
+    if (sampleRate % 44100 == 0)
         return RateFamily::RATE_44K;
-    }
-    if (sampleRate % 48000 == 0) {
+    if (sampleRate % 48000 == 0)
         return RateFamily::RATE_48K;
-    }
     return RateFamily::RATE_UNKNOWN;
 }
 
@@ -298,9 +296,8 @@ class GPUUpsampler {
     // Get latency in seconds for current phase type
     double getLatencySeconds() const {
         int outputRate = getOutputSampleRate();
-        if (outputRate <= 0) {
+        if (outputRate <= 0)
             return 0.0;
-        }
         return static_cast<double>(getLatencySamples()) / outputRate;
     }
 

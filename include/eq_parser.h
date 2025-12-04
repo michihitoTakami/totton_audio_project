@@ -8,7 +8,7 @@ namespace EQ {
 
 // Filter types supported by Equalizer APO format
 // Reference: https://sourceforge.net/p/equalizerapo/wiki/Configuration%20reference/
-enum class FilterType : std::uint8_t {
+enum class FilterType {
     // Peaking filters
     PK,     // Peaking (parametric)
     MODAL,  // Modal filter (same as PK)

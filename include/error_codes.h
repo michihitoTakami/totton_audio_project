@@ -19,7 +19,7 @@ namespace AudioEngine {
  * - 0x5xxx: Validation
  * - 0xFxxx: Internal (reserved)
  */
-enum class ErrorCode : std::uint16_t {
+enum class ErrorCode : uint32_t {
     OK = 0,
 
     // Audio Processing (0x1000)

@@ -25,7 +25,7 @@ namespace FallbackManager {
 /**
  * @brief Fallback state
  */
-enum class FallbackState : std::uint8_t {
+enum class FallbackState {
     Normal,   // Normal operation (GPU processing enabled)
     Fallback  // Fallback mode (GPU processing disabled/bypassed)
 };

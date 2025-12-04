@@ -12,7 +12,7 @@
 namespace CrossfeedEngine {
 
 // Head size categories matching HRTF filter files
-enum class HeadSize : std::uint8_t {
+enum class HeadSize {
     S = 0,   // Small
     M = 1,   // Medium
     L = 2,   // Large
@@ -38,24 +38,23 @@ inline const char* headSizeToString(HeadSize size) {
 
 // Convert string to HeadSize (for API commands)
 inline HeadSize stringToHeadSize(const std::string& str) {
-    if (str == "xs" || str == "XS" || str == "s" || str == "S") {
+    if (str == "xs" || str == "XS") {
         // Note: xs is not in enum, map to S for now
         return HeadSize::S;
-    }
-    if (str == "m" || str == "M") {
+    } else if (str == "s" || str == "S") {
+        return HeadSize::S;
+    } else if (str == "m" || str == "M") {
         return HeadSize::M;
-    }
-    if (str == "l" || str == "L") {
+    } else if (str == "l" || str == "L") {
         return HeadSize::L;
-    }
-    if (str == "xl" || str == "XL") {
+    } else if (str == "xl" || str == "XL") {
         return HeadSize::XL;
     }
     return HeadSize::M;  // Default to M
 }
 
 // Rate family (shared with ConvolutionEngine)
-enum class RateFamily : std::int8_t {
+enum class RateFamily {
     RATE_44K = 0,  // 44.1kHz family (705.6kHz output)
     RATE_48K = 1,  // 48kHz family (768kHz output)
     RATE_UNKNOWN = -1
