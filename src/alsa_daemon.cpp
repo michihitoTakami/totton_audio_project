@@ -491,6 +491,22 @@ static dac::DacManager::Dependencies make_dac_dependencies() {
 
 static dac::DacManager g_dac_manager(make_dac_dependencies());
 
+static void mark_dac_connected(
+    const std::string& device,
+    const char* log_message = "DAC connected - input processing enabled") {
+    g_output_ready.store(true, std::memory_order_release);
+    LOG_INFO(log_message);
+    g_dac_manager.markActiveDevice(device, true);
+}
+
+static void mark_dac_disconnected(
+    const std::string& device,
+    const char* log_message = "DAC disconnected - stopping input processing") {
+    g_output_ready.store(false, std::memory_order_release);
+    LOG_INFO(log_message);
+    g_dac_manager.markActiveDevice(device, false);
+}
+
 // ========== PID File Lock (flock-based) ==========
 
 // File descriptor for the PID lock file (kept open while running)
@@ -1997,9 +2013,7 @@ void alsa_output_thread() {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             currentDevice = g_dac_manager.waitForSelection();
         } else {
-            g_dac_manager.markActiveDevice(currentDevice, true);
-            g_output_ready.store(true, std::memory_order_release);
-            LOG_INFO("DAC connected - input processing enabled");
+            mark_dac_connected(currentDevice);
         }
     }
     std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
@@ -2032,9 +2046,7 @@ void alsa_output_thread() {
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
                 }
-                g_output_ready.store(false, std::memory_order_release);
-                LOG_INFO("DAC disconnected - stopping input processing");
-                g_dac_manager.markActiveDevice(currentDevice, false);
+                mark_dac_disconnected(currentDevice);
                 while (g_running && !pcm_handle) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
                     currentDevice = g_dac_manager.waitForSelection();
@@ -2043,9 +2055,8 @@ void alsa_output_thread() {
                     pcm_handle = open_and_configure_pcm(currentDevice);
                 }
                 if (pcm_handle) {
-                    g_dac_manager.markActiveDevice(currentDevice, true);
-                    g_output_ready.store(true, std::memory_order_release);
-                    LOG_INFO("DAC reconnected - resuming input processing");
+                    mark_dac_connected(currentDevice,
+                                       "DAC reconnected - resuming input processing");
                 }
                 // Reset buffer positions to avoid backlog after long downtime
                 {
@@ -2104,9 +2115,7 @@ void alsa_output_thread() {
                 if (pcm_handle) {
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
-                    g_output_ready.store(false, std::memory_order_release);
-                    LOG_INFO("DAC disconnected - stopping input processing");
-                    g_dac_manager.markActiveDevice(currentDevice, false);
+                    mark_dac_disconnected(currentDevice);
                 }
                 currentDevice = nextDevice;
                 while (g_running && !pcm_handle) {
@@ -2121,9 +2130,7 @@ void alsa_output_thread() {
                 if (!pcm_handle) {
                     continue;
                 }
-                g_dac_manager.markActiveDevice(currentDevice, true);
-                g_output_ready.store(true, std::memory_order_release);
-                LOG_INFO("DAC reconnected - resuming input processing");
+                mark_dac_connected(currentDevice, "DAC reconnected - resuming input processing");
             }
         }
 
@@ -2238,9 +2245,7 @@ void alsa_output_thread() {
                               << std::endl;
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
-                    g_output_ready.store(false, std::memory_order_release);
-                    LOG_INFO("DAC disconnected - stopping input processing");
-                    g_dac_manager.markActiveDevice(currentDevice, false);
+                    mark_dac_disconnected(currentDevice);
                     while (g_running && !pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
                         std::string next = g_dac_manager.getSelectedDevice();
@@ -2252,9 +2257,8 @@ void alsa_output_thread() {
                         pcm_handle = open_and_configure_pcm(currentDevice);
                     }
                     if (pcm_handle) {
-                        g_dac_manager.markActiveDevice(currentDevice, true);
-                        g_output_ready.store(true, std::memory_order_release);
-                        LOG_INFO("DAC reconnected - resuming input processing");
+                        mark_dac_connected(currentDevice,
+                                           "DAC reconnected - resuming input processing");
                         // resize buffer to new period size if needed
                         snd_pcm_uframes_t new_period = 0;
                         snd_pcm_hw_params_t* hw_params;
@@ -2303,9 +2307,7 @@ void alsa_output_thread() {
                         snd_pcm_close(pcm_handle);
                         pcm_handle = nullptr;
                     }
-                    g_output_ready.store(false, std::memory_order_release);
-                    LOG_INFO("DAC disconnected - stopping input processing");
-                    g_dac_manager.markActiveDevice(currentDevice, false);
+                    mark_dac_disconnected(currentDevice);
                     while (g_running && !pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
                         std::string next = g_dac_manager.getSelectedDevice();
@@ -2317,9 +2319,8 @@ void alsa_output_thread() {
                         pcm_handle = open_and_configure_pcm(currentDevice);
                     }
                     if (pcm_handle) {
-                        g_dac_manager.markActiveDevice(currentDevice, true);
-                        g_output_ready.store(true, std::memory_order_release);
-                        LOG_INFO("DAC reconnected - resuming input processing");
+                        mark_dac_connected(currentDevice,
+                                           "DAC reconnected - resuming input processing");
                     }
                 }
             }
@@ -2330,8 +2331,7 @@ void alsa_output_thread() {
     if (pcm_handle) {
         snd_pcm_drain(pcm_handle);
         snd_pcm_close(pcm_handle);
-        g_dac_manager.markActiveDevice(currentDevice, false);
-        g_output_ready.store(false, std::memory_order_release);
+        mark_dac_disconnected(currentDevice);
     }
     std::cout << "ALSA: Output thread terminated" << std::endl;
 }
