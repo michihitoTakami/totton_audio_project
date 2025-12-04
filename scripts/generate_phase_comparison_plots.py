@@ -23,7 +23,9 @@ from scipy import signal
 SCRIPTS_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from generate_filter import FilterConfig, FilterDesigner, PhaseType  # noqa: E402
+from generate_filter import FilterConfig  # noqa: E402
+from generate_linear_phase import LinearPhaseDesigner  # noqa: E402
+from generate_minimum_phase import MinimumPhaseDesigner  # noqa: E402
 
 
 def generate_comparison_plots(
@@ -47,21 +49,21 @@ def generate_comparison_plots(
         input_rate=44100,
         upsample_ratio=16,
         kaiser_beta=14,  # 小さいタップ用
-        phase_type=PhaseType.MINIMUM,
+        phase_suffix="min_phase",
     )
     config_lin = FilterConfig(
         n_taps=n_taps,
         input_rate=44100,
         upsample_ratio=16,
         kaiser_beta=14,
-        phase_type=PhaseType.LINEAR,
+        phase_suffix="linear_phase",
     )
 
-    designer_min = FilterDesigner(config_min)
-    designer_lin = FilterDesigner(config_lin)
+    designer_min = MinimumPhaseDesigner(config_min)
+    designer_lin = LinearPhaseDesigner(config_lin)
 
     h_min, _ = designer_min.design()
-    h_lin, _ = designer_lin.design()
+    h_lin = designer_lin.design()
 
     fs = config_min.output_rate
 

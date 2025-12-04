@@ -251,23 +251,26 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 uv sync
 
 # 44.1k系 2M-tap 最小位相フィルタ（基準）
-uv run python scripts/generate_filter.py --taps 2000000
+uv run python scripts/generate_minimum_phase.py --taps 2000000
 
-# 44.1k系 2M-tap 混合位相フィルタ（100Hzクロスオーバ/約10ms整列）
-uv run python scripts/generate_mixed_phase.py --taps 2000000
+# 44.1k系 2M-tap 線形位相フィルタ
+uv run python scripts/generate_linear_phase.py --taps 2000000
 
-# 全構成（44k/48k × 2x/4x/8x/16x）混合位相フィルタを一括生成
-uv run python scripts/generate_mixed_phase.py --generate-all
+# 全構成（44k/48k × 2x/4x/8x/16x）最小位相フィルタを一括生成
+uv run python scripts/generate_minimum_phase.py --generate-all
+
+# 全構成（44k/48k × 2x/4x/8x/16x）線形位相フィルタを一括生成
+uv run python scripts/generate_linear_phase.py --generate-all
 
 # 生成されるフィルタ:
-# - filter_44k_16x_2m_hybrid_phase.bin (44.1kHz → 705.6kHz)
-# - filter_44k_8x_2m_hybrid_phase.bin  (88.2kHz → 705.6kHz)
-# - filter_44k_4x_2m_hybrid_phase.bin  (176.4kHz → 705.6kHz)
-# - filter_44k_2x_2m_hybrid_phase.bin  (352.8kHz → 705.6kHz)
-# - filter_48k_16x_2m_hybrid_phase.bin (48kHz → 768kHz)
-# - filter_48k_8x_2m_hybrid_phase.bin  (96kHz → 768kHz)
-# - filter_48k_4x_2m_hybrid_phase.bin  (192kHz → 768kHz)
-# - filter_48k_2x_2m_hybrid_phase.bin  (384kHz → 768kHz)
+# - filter_44k_16x_2m_min_phase.bin (44.1kHz → 705.6kHz)
+# - filter_44k_8x_2m_min_phase.bin  (88.2kHz → 705.6kHz)
+# - filter_44k_4x_2m_min_phase.bin  (176.4kHz → 705.6kHz)
+# - filter_44k_2x_2m_min_phase.bin  (352.8kHz → 705.6kHz)
+# - filter_48k_16x_2m_min_phase.bin (48kHz → 768kHz)
+# - filter_48k_8x_2m_min_phase.bin  (96kHz → 768kHz)
+# - filter_48k_4x_2m_min_phase.bin  (192kHz → 768kHz)
+# - filter_48k_2x_2m_min_phase.bin  (384kHz → 768kHz)
 # 各フィルタには対応するメタデータJSON（DCゲイン・レート情報含む）が生成されます
 ```
 
@@ -322,14 +325,14 @@ cmake --build build -j$(nproc)
 
 | 入力レート | 出力レート | 倍率 | 使用フィルタ |
 |-----------|----------|------|------------|
-| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_hybrid_phase.bin |
-| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_hybrid_phase.bin |
-| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_hybrid_phase.bin |
-| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_hybrid_phase.bin |
-| 48kHz | 768kHz | 16x | filter_48k_16x_2m_hybrid_phase.bin |
-| 96kHz | 768kHz | 8x | filter_48k_8x_2m_hybrid_phase.bin |
-| 192kHz | 768kHz | 4x | filter_48k_4x_2m_hybrid_phase.bin |
-| 384kHz | 768kHz | 2x | filter_48k_2x_2m_hybrid_phase.bin |
+| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_min_phase.bin |
+| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_min_phase.bin |
+| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_min_phase.bin |
+| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_min_phase.bin |
+| 48kHz | 768kHz | 16x | filter_48k_16x_2m_min_phase.bin |
+| 96kHz | 768kHz | 8x | filter_48k_8x_2m_min_phase.bin |
+| 192kHz | 768kHz | 4x | filter_48k_4x_2m_min_phase.bin |
+| 384kHz | 768kHz | 2x | filter_48k_2x_2m_min_phase.bin |
 
 **フィルタ配布**: 各レート・倍率に対応するフィルタ係数ファイル（`.bin`）とメタデータ（`.json`）が`data/coefficients/`に配置されています。メタデータにはDCゲイン、入力/出力レート、アップサンプリング倍率が記載されています。
 
@@ -375,8 +378,8 @@ cmake --build build -j$(nproc)
 1. **パーティション構成の確認**
    ```bash
    uv run python scripts/inspect_impulse.py \
-     --coeff data/coefficients/filter_44k_16x_2m_hybrid_phase.bin \
-     --metadata data/coefficients/filter_44k_16x_2m_hybrid_phase.json \
+     --coeff data/coefficients/filter_44k_16x_2m_min_phase.bin \
+     --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
      --config config.json --enable-partition \
      --summary-json plots/analysis/partition_summary.json
    ```
@@ -387,7 +390,7 @@ cmake --build build -j$(nproc)
    uv run python scripts/verify_frequency_response.py \
      test_data/low_latency/test_sweep_44100hz.wav \
      test_output/lowlat_sweep.wav \
-     --metadata data/coefficients/filter_44k_16x_2m_hybrid_phase.json \
+     --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
      --config config.json \
      --analysis-window-seconds 1.5 \
      --compare-fast-tail
@@ -452,8 +455,9 @@ gpu_os/
 │   └── routers/
 │
 ├── scripts/               # ユーティリティスクリプト
-│   ├── generate_filter.py # フィルタ係数生成
-│   └── daemon.sh          # デーモン管理
+│   ├── generate_minimum_phase.py # 最小位相フィルタ生成
+│   ├── generate_linear_phase.py  # 線形位相フィルタ生成
+│   └── daemon.sh               # デーモン管理
 │
 ├── data/
 │   ├── coefficients/      # FIRフィルタ係数
