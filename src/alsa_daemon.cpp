@@ -25,12 +25,12 @@
 #include <array>
 #include <atomic>
 #include <cctype>
-#include <cstddef>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <csignal>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -109,6 +109,7 @@ static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_reload_requested{false};
 static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_run() is active
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
+static std::atomic<bool> g_output_ready{false};  // Indicates ALSA DAC is ready for input processing
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
 static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
@@ -341,8 +342,8 @@ static size_t enqueue_output_frames_locked(const std::vector<float>& left,
     size_t capacityFrames = std::max<size_t>(1, get_max_output_buffer_frames());
     size_t bufferSize = g_output_buffer_left.size();
     size_t currentFrames = (bufferSize >= g_output_read_pos) ? (bufferSize - g_output_read_pos) : 0;
-    auto decision = PlaybackBuffer::planCapacityEnforcement(currentFrames, framesAvailable,
-                                                            capacityFrames);
+    auto decision =
+        PlaybackBuffer::planCapacityEnforcement(currentFrames, framesAvailable, capacityFrames);
 
     size_t totalDropped = decision.dropFromExisting + decision.newDataOffset;
     if (totalDropped > 0) {
@@ -351,9 +352,10 @@ static size_t enqueue_output_frames_locked(const std::vector<float>& left,
             outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
         }
         float seconds = static_cast<float>(totalDropped) / static_cast<float>(outputRate);
-        LOG_WARN("Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, "
-                 "max={}]",
-                 totalDropped, seconds, currentFrames, framesAvailable, capacityFrames);
+        LOG_WARN(
+            "Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, "
+            "max={}]",
+            totalDropped, seconds, currentFrames, framesAvailable, capacityFrames);
         g_buffer_drop_count.fetch_add(totalDropped, std::memory_order_relaxed);
     }
 
@@ -1534,6 +1536,17 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
         return;
     }
 
+    if (!g_output_ready.load(std::memory_order_acquire)) {
+        static auto last_warn = std::chrono::steady_clock::now() -
+                                std::chrono::seconds(6);  // allow immediate first log
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_warn > std::chrono::seconds(5)) {
+            LOG_DEBUG("Dropping input: DAC not ready");
+            last_warn = now;
+        }
+        return;
+    }
+
     std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
 
     std::vector<float> left(n_frames);
@@ -1986,6 +1999,8 @@ void alsa_output_thread() {
             currentDevice = g_dac_manager.waitForSelection();
         } else {
             g_dac_manager.markActiveDevice(currentDevice, true);
+            g_output_ready.store(true, std::memory_order_release);
+            LOG_INFO("DAC connected - input processing enabled");
         }
     }
     std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
@@ -2018,6 +2033,8 @@ void alsa_output_thread() {
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
                 }
+                g_output_ready.store(false, std::memory_order_release);
+                LOG_INFO("DAC disconnected - stopping input processing");
                 g_dac_manager.markActiveDevice(currentDevice, false);
                 while (g_running && !pcm_handle) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -2028,6 +2045,8 @@ void alsa_output_thread() {
                 }
                 if (pcm_handle) {
                     g_dac_manager.markActiveDevice(currentDevice, true);
+                    g_output_ready.store(true, std::memory_order_release);
+                    LOG_INFO("DAC reconnected - resuming input processing");
                 }
                 // Reset buffer positions to avoid backlog after long downtime
                 {
@@ -2086,6 +2105,8 @@ void alsa_output_thread() {
                 if (pcm_handle) {
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
+                    g_output_ready.store(false, std::memory_order_release);
+                    LOG_INFO("DAC disconnected - stopping input processing");
                     g_dac_manager.markActiveDevice(currentDevice, false);
                 }
                 currentDevice = nextDevice;
@@ -2102,6 +2123,8 @@ void alsa_output_thread() {
                     continue;
                 }
                 g_dac_manager.markActiveDevice(currentDevice, true);
+                g_output_ready.store(true, std::memory_order_release);
+                LOG_INFO("DAC reconnected - resuming input processing");
             }
         }
 
@@ -2216,6 +2239,8 @@ void alsa_output_thread() {
                               << std::endl;
                     snd_pcm_close(pcm_handle);
                     pcm_handle = nullptr;
+                    g_output_ready.store(false, std::memory_order_release);
+                    LOG_INFO("DAC disconnected - stopping input processing");
                     g_dac_manager.markActiveDevice(currentDevice, false);
                     while (g_running && !pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -2229,6 +2254,8 @@ void alsa_output_thread() {
                     }
                     if (pcm_handle) {
                         g_dac_manager.markActiveDevice(currentDevice, true);
+                        g_output_ready.store(true, std::memory_order_release);
+                        LOG_INFO("DAC reconnected - resuming input processing");
                         // resize buffer to new period size if needed
                         snd_pcm_uframes_t new_period = 0;
                         snd_pcm_hw_params_t* hw_params;
@@ -2277,6 +2304,8 @@ void alsa_output_thread() {
                         snd_pcm_close(pcm_handle);
                         pcm_handle = nullptr;
                     }
+                    g_output_ready.store(false, std::memory_order_release);
+                    LOG_INFO("DAC disconnected - stopping input processing");
                     g_dac_manager.markActiveDevice(currentDevice, false);
                     while (g_running && !pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -2290,6 +2319,8 @@ void alsa_output_thread() {
                     }
                     if (pcm_handle) {
                         g_dac_manager.markActiveDevice(currentDevice, true);
+                        g_output_ready.store(true, std::memory_order_release);
+                        LOG_INFO("DAC reconnected - resuming input processing");
                     }
                 }
             }
@@ -2301,6 +2332,7 @@ void alsa_output_thread() {
         snd_pcm_drain(pcm_handle);
         snd_pcm_close(pcm_handle);
         g_dac_manager.markActiveDevice(currentDevice, false);
+        g_output_ready.store(false, std::memory_order_release);
     }
     std::cout << "ALSA: Output thread terminated" << std::endl;
 }
