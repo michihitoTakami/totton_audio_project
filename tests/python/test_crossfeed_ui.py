@@ -133,6 +133,8 @@ class TestCrossfeedUITemplate:
         assert "width=device-width" in html
         assert "initial-scale=1.0" in html
 
-        assert "display: flex" in html
-        assert ".head-size-group" in html
-        assert ".toggle-container" in html
+        # Check that external CSS is properly linked
+        assert "/static/css/main.css" in html
+        # Check that head-size-group and toggle-container classes are used in HTML
+        assert 'class="head-size-group"' in html
+        assert 'class="toggle-container"' in html
