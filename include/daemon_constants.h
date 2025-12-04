@@ -1,6 +1,8 @@
 #ifndef DAEMON_CONSTANTS_H
 #define DAEMON_CONSTANTS_H
 
+#include <cstddef>  // for size_t
+
 // Common constants shared between alsa_daemon and pipewire_daemon
 // Issue #105: Daemon common code extraction
 
