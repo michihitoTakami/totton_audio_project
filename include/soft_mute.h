@@ -7,7 +7,7 @@
 namespace SoftMute {
 
 // Mute state machine
-enum class MuteState {
+enum class MuteState : std::uint8_t {
     PLAYING,     // Normal playback, gain = 1.0
     FADING_OUT,  // Transitioning to muted state
     MUTED,       // Silent, gain = 0.0
@@ -15,7 +15,7 @@ enum class MuteState {
 };
 
 // Fade curve type
-enum class FadeCurve {
+enum class FadeCurve : std::uint8_t {
     LINEAR,      // Linear fade (simple but can sound abrupt)
     LOGARITHMIC  // Logarithmic fade (more natural for audio)
 };

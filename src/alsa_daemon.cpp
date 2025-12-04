@@ -198,10 +198,12 @@ static inline float compute_stereo_peak(const float* left, const float* right, s
     for (size_t i = 0; i < frames; ++i) {
         float l = std::fabs(left[i]);
         float r = std::fabs(right[i]);
-        if (l > peak)
+        if (l > peak) {
             peak = l;
-        if (r > peak)
+        }
+        if (r > peak) {
             peak = r;
+        }
     }
     return peak;
 }
@@ -238,7 +240,7 @@ static std::atomic<int> g_current_rate_family_int{
 
 static size_t get_max_output_buffer_frames() {
     using namespace DaemonConstants;
-    double seconds = static_cast<double>(MAX_OUTPUT_BUFFER_SECONDS);
+    auto seconds = static_cast<double>(MAX_OUTPUT_BUFFER_SECONDS);
     if (seconds <= 0.0) {
         return DEFAULT_MAX_OUTPUT_BUFFER_FRAMES;
     }
@@ -593,8 +595,9 @@ static int g_pid_lock_fd = -1;
 // Read PID from lock file (for display purposes)
 static pid_t read_pid_from_lockfile() {
     std::ifstream pidfile(PID_FILE_PATH);
-    if (!pidfile.is_open())
+    if (!pidfile.is_open()) {
         return 0;
+    }
     pid_t pid = 0;
     pidfile >> pid;
     return pid;
@@ -974,18 +977,24 @@ static void load_runtime_config() {
     g_config = loaded;
     ensure_output_config(g_config);
 
-    if (g_config.alsaDevice.empty())
+    if (g_config.alsaDevice.empty()) {
         set_preferred_output_device(g_config, DEFAULT_ALSA_DEVICE);
-    if (g_config.filterPath.empty())
+    }
+    if (g_config.filterPath.empty()) {
         g_config.filterPath = DEFAULT_FILTER_PATH;
-    if (g_config.upsampleRatio <= 0)
+    }
+    if (g_config.upsampleRatio <= 0) {
         g_config.upsampleRatio = DEFAULT_UPSAMPLE_RATIO;
-    if (g_config.blockSize <= 0)
+    }
+    if (g_config.blockSize <= 0) {
         g_config.blockSize = DEFAULT_BLOCK_SIZE;
-    if (g_config.bufferSize <= 0)
+    }
+    if (g_config.bufferSize <= 0) {
         g_config.bufferSize = 262144;
-    if (g_config.periodSize <= 0)
+    }
+    if (g_config.periodSize <= 0) {
         g_config.periodSize = 32768;
+    }
     if (g_input_sample_rate != 44100 && g_input_sample_rate != 48000) {
         g_input_sample_rate = DEFAULT_INPUT_SAMPLE_RATE;
     }

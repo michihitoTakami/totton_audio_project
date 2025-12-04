@@ -8,13 +8,13 @@
 constexpr const char* DEFAULT_CONFIG_FILE = "config.json";
 
 // Phase type for FIR filter
-enum class PhaseType {
+enum class PhaseType : std::uint8_t {
     Minimum,  // Minimum phase: no pre-ringing, frequency-dependent delay (recommended)
     Linear    // Linear phase: pre-ringing present, constant delay, symmetric
 };
 
 // Output pipeline mode (Issue #515)
-enum class OutputMode { Usb };
+enum class OutputMode : std::uint8_t { Usb };
 
 struct OutputUsbOptions {
     std::string preferredDevice = "hw:USB";
