@@ -5,6 +5,7 @@ These tests verify the Python DaemonClient class and ZeroMQ API endpoints.
 Tests that require the daemon to NOT be running will stop daemon if running.
 """
 
+import os
 import subprocess
 import sys
 import time
@@ -19,6 +20,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # Import the DaemonClient from web module
 from web.constants import ZEROMQ_IPC_PATH  # noqa: E402
 from web.services.daemon_client import DaemonClient, get_daemon_client  # noqa: E402
+
+
+def _expected_zmq_endpoint() -> str:
+    """Return the endpoint DaemonClient should default to."""
+    return os.environ.get("ZMQ_ENDPOINT", ZEROMQ_IPC_PATH)
 
 
 def get_daemon_pids() -> list[int]:
@@ -86,7 +92,7 @@ class TestDaemonClient:
     def test_client_initialization(self):
         """Test that DaemonClient initializes with correct defaults."""
         client = DaemonClient()
-        assert client.endpoint == ZEROMQ_IPC_PATH
+        assert client.endpoint == _expected_zmq_endpoint()
         assert client.timeout_ms == 3000
         assert client._context is None
         assert client._socket is None
@@ -114,17 +120,12 @@ class TestDaemonClient:
         assert client._socket is None
         assert client._context is None
 
-    def test_factory_function_returns_client(self):
-        """Test that get_daemon_client returns a DaemonClient instance."""
-        client = get_daemon_client()
-        assert isinstance(client, DaemonClient)
-        assert client.timeout_ms == 3000
-        client.close()
-
-    def test_factory_function_custom_timeout(self):
-        """Test that get_daemon_client respects custom timeout."""
-        client = get_daemon_client(timeout_ms=500)
-        assert client.timeout_ms == 500
+    def test_client_respects_env_endpoint(self, monkeypatch):
+        """DaemonClient should prefer ZMQ_ENDPOINT when set."""
+        custom_endpoint = "ipc:///tmp/custom.sock"
+        monkeypatch.setenv("ZMQ_ENDPOINT", custom_endpoint)
+        client = DaemonClient()
+        assert client.endpoint == custom_endpoint
         client.close()
 
     def test_send_command_timeout_when_daemon_not_running(self):
@@ -261,7 +262,7 @@ class TestFactoryFunction:
         """Test that factory returns DaemonClient instance."""
         client = get_daemon_client()
         assert isinstance(client, DaemonClient)
-        assert client.endpoint == ZEROMQ_IPC_PATH
+        assert client.endpoint == _expected_zmq_endpoint()
         client.close()
 
     def test_factory_custom_timeout(self):
@@ -276,3 +277,11 @@ class TestFactoryFunction:
             assert isinstance(client, DaemonClient)
         # Socket should be cleaned up after context exit
         assert client._socket is None
+
+    def test_factory_uses_env_endpoint(self, monkeypatch):
+        """Factory should respect ZMQ_ENDPOINT overrides."""
+        custom_endpoint = "ipc:///tmp/factory.sock"
+        monkeypatch.setenv("ZMQ_ENDPOINT", custom_endpoint)
+        client = get_daemon_client()
+        assert client.endpoint == custom_endpoint
+        client.close()
