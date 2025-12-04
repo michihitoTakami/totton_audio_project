@@ -54,8 +54,7 @@ TEST(PlaybackBufferCapacityTest, NoOverflowStoresAllFrames) {
     constexpr size_t kCurrent = 64;
     constexpr size_t kProduced = 128;
     constexpr size_t kMax = 256;
-    auto decision =
-        PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
+    auto decision = PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
     EXPECT_EQ(decision.dropFromExisting, 0u);
     EXPECT_EQ(decision.newDataOffset, 0u);
     EXPECT_EQ(decision.framesToStore, kProduced);
@@ -65,8 +64,7 @@ TEST(PlaybackBufferCapacityTest, DropsOldFramesWhenNearLimit) {
     constexpr size_t kCurrent = 200;
     constexpr size_t kProduced = 120;
     constexpr size_t kMax = 256;
-    auto decision =
-        PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
+    auto decision = PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
     EXPECT_EQ(decision.dropFromExisting, (kCurrent + kProduced - kMax));
     EXPECT_EQ(decision.newDataOffset, 0u);
     EXPECT_EQ(decision.framesToStore, kProduced);
@@ -76,8 +74,7 @@ TEST(PlaybackBufferCapacityTest, TrimsNewFramesWhenProducerExceedsLimit) {
     constexpr size_t kCurrent = 0;
     constexpr size_t kProduced = 400;
     constexpr size_t kMax = 256;
-    auto decision =
-        PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
+    auto decision = PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
     EXPECT_EQ(decision.dropFromExisting, 0u);
     EXPECT_EQ(decision.newDataOffset, kProduced - kMax);
     EXPECT_EQ(decision.framesToStore, kMax);
@@ -87,11 +84,8 @@ TEST(PlaybackBufferCapacityTest, CombinedDropAndTrim) {
     constexpr size_t kCurrent = 240;
     constexpr size_t kProduced = 300;
     constexpr size_t kMax = 256;
-    auto decision =
-        PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
+    auto decision = PlaybackBuffer::planCapacityEnforcement(kCurrent, kProduced, kMax);
     EXPECT_EQ(decision.newDataOffset, kProduced - kMax);
     EXPECT_EQ(decision.framesToStore, kMax);
     EXPECT_EQ(decision.dropFromExisting, kCurrent);
 }
-
-
