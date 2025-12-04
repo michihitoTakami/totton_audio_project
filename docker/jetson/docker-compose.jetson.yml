@@ -41,6 +41,10 @@ services:
     # Shared memory for audio buffers
     shm_size: '256m'
 
+    # Mount data directory (EQ profiles, coefficients, OPRA database)
+    volumes:
+      - ../../data:/opt/magicbox/data:ro
+
     # Environment (NVIDIA)
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
