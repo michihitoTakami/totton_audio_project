@@ -655,6 +655,18 @@ target_include_directories(audio_common_tests PRIVATE
 )
 gtest_discover_tests(audio_common_tests)
 
+# Stall detector unit tests
+add_executable(audio_input_stall_tests
+    tests/cpp/test_audio_input_stall.cpp
+)
+target_link_libraries(audio_input_stall_tests
+    GTest::gtest_main
+)
+target_include_directories(audio_input_stall_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+gtest_discover_tests(audio_input_stall_tests)
+
 # Crossfeed Engine tests (GPU required)
 add_executable(crossfeed_tests
     tests/gpu/test_crossfeed_engine.cu

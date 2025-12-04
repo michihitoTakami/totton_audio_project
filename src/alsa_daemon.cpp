@@ -6,6 +6,7 @@
 #include "dac_capability.h"
 #include "daemon/dac_manager.h"
 #include "daemon/rtp_engine_coordinator.h"
+#include "daemon/streaming_cache_manager.h"
 #include "daemon/zmq_server.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
@@ -31,6 +32,7 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -452,6 +454,10 @@ static std::mutex g_streaming_mutex;  // Protects streaming buffer state during 
 static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
 
+static std::unique_ptr<streaming_cache::StreamingCacheManager> g_streaming_cache_manager;
+
+static void initialize_streaming_cache_manager();
+
 static void elevate_realtime_priority(const char* name, int priority = 65) {
 #ifdef __linux__
     sched_param params{};
@@ -513,6 +519,27 @@ static void reset_crossfeed_stream_state_locked() {
     if (g_hrtf_processor) {
         g_hrtf_processor->resetStreaming();
     }
+}
+
+static void initialize_streaming_cache_manager() {
+    streaming_cache::StreamingCacheDependencies deps;
+    deps.outputBufferLeft = &g_output_buffer_left;
+    deps.outputBufferRight = &g_output_buffer_right;
+    deps.bufferMutex = &g_buffer_mutex;
+    deps.outputReadPos = &g_output_read_pos;
+
+    deps.streamInputLeft = &g_stream_input_left;
+    deps.streamInputRight = &g_stream_input_right;
+    deps.streamAccumulatedLeft = &g_stream_accumulated_left;
+    deps.streamAccumulatedRight = &g_stream_accumulated_right;
+    deps.streamingMutex = &g_streaming_mutex;
+
+    deps.upsamplerPtr = &g_upsampler;
+    deps.onCrossfeedReset = []() {
+        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        reset_crossfeed_stream_state_locked();
+    };
+    g_streaming_cache_manager = std::make_unique<streaming_cache::StreamingCacheManager>(deps);
 }
 
 // ========== DAC Device Monitoring & ZeroMQ PUB ==========
@@ -814,6 +841,8 @@ static void refresh_current_headroom(const std::string& reason) {
 }
 
 static void reset_runtime_state() {
+    g_streaming_cache_manager.reset();
+
     g_output_buffer_left.clear();
     g_output_buffer_right.clear();
     g_output_read_pos = 0;
@@ -1681,6 +1710,10 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
             last_warn = now;
         }
         return;
+    }
+
+    if (g_streaming_cache_manager) {
+        g_streaming_cache_manager->handleInputBlock();
     }
 
     std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
@@ -2751,6 +2784,7 @@ int main(int argc, char* argv[]) {
             g_upsampler->getStreamValidInputPerBlock() * g_config.upsampleRatio * 2;
         g_upsampler_output_left.reserve(upsampler_output_capacity);
         g_upsampler_output_right.reserve(upsampler_output_capacity);
+        initialize_streaming_cache_manager();
 
         if (!g_config.partitionedConvolution.enabled) {
             // Initialize HRTF processor for crossfeed (optional feature)
