@@ -79,7 +79,7 @@ SAFE_PROFILE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 # - "sysdefault:CARD=name" format
 SAFE_ALSA_DEVICE_PATTERN = re.compile(
     r"^(default|"  # default device
-    r"(?:plug)?hw:[A-Za-z0-9_,:]+|"  # hw:USB, hw:0,0, plughw:USB_2
+    r"(?:plug)?hw:(?:[A-Za-z_][A-Za-z0-9_]*|\d{1,2})(?:,\d{1,2})?|"  # hw:USB or hw:0,0 (card/dev 0-99)
     r"sysdefault(?::[A-Za-z0-9_,:=]+)?"  # sysdefault:CARD=PCH
     r")$"
 )
