@@ -97,6 +97,8 @@ TEST_F(ConfigLoaderTest, LoadFullConfig) {
     EXPECT_EQ(config.filterPath, "custom/filter.bin");
     EXPECT_TRUE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "data/EQ/custom.txt");
+    EXPECT_EQ(config.output.mode, OutputMode::Usb);
+    EXPECT_EQ(config.output.usb.preferredDevice, "hw:Audio");
 }
 
 TEST_F(ConfigLoaderTest, LoadPartialConfigKeepsDefaults) {
@@ -164,6 +166,43 @@ TEST_F(ConfigLoaderTest, LoadConfigWithExtraFieldsIgnoresThem) {
     EXPECT_EQ(config.alsaDevice, "hw:Test");
 }
 
+TEST_F(ConfigLoaderTest, LoadOutputSectionOverridesLegacyAlsaDevice) {
+    writeConfig(R"({
+        "alsaDevice": "hw:Legacy",
+        "output": {
+            "mode": "usb",
+            "options": {
+                "usb": {
+                    "preferredDevice": "hw:Preferred"
+                }
+            }
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+    EXPECT_EQ(config.alsaDevice, "hw:Preferred");
+    EXPECT_EQ(config.output.usb.preferredDevice, "hw:Preferred");
+}
+
+TEST_F(ConfigLoaderTest, UnsupportedOutputModeFallsBackToUsb) {
+    writeConfig(R"({
+        "alsaDevice": "hw:Audio",
+        "output": {
+            "mode": "spdif",
+            "options": {
+                "usb": {
+                    "preferredDevice": "hw:Audio"
+                }
+            }
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+    EXPECT_EQ(config.output.mode, OutputMode::Usb);
+}
+
 // ============================================================
 // AppConfig default values tests
 // ============================================================
@@ -181,6 +220,8 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultValues) {
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");
+    EXPECT_EQ(config.output.mode, OutputMode::Usb);
+    EXPECT_EQ(config.output.usb.preferredDevice, "hw:USB");
 }
 
 // ============================================================
@@ -224,6 +265,24 @@ TEST_F(ConfigLoaderTest, PhaseTypeToStringLinear) {
 TEST_F(ConfigLoaderTest, AppConfigDefaultPhaseType) {
     AppConfig config;
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
+}
+
+// ============================================================
+// OutputMode tests
+// ============================================================
+
+TEST(ConfigLoaderStandaloneTests, ParseOutputModeUsb) {
+    EXPECT_EQ(parseOutputMode("usb"), OutputMode::Usb);
+    EXPECT_EQ(parseOutputMode("USB"), OutputMode::Usb);
+}
+
+TEST(ConfigLoaderStandaloneTests, ParseOutputModeInvalidDefaultsToUsb) {
+    EXPECT_EQ(parseOutputMode("spdif"), OutputMode::Usb);
+    EXPECT_EQ(parseOutputMode(""), OutputMode::Usb);
+}
+
+TEST(ConfigLoaderStandaloneTests, OutputModeToStringUsb) {
+    EXPECT_STREQ(outputModeToString(OutputMode::Usb), "usb");
 }
 
 TEST_F(ConfigLoaderTest, PartitionedConvolutionDefaults) {

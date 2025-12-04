@@ -1,5 +1,13 @@
 {
   "alsaDevice": "hw:AUDIO",
+  "output": {
+    "mode": "usb",
+    "options": {
+      "usb": {
+        "preferredDevice": "hw:AUDIO"
+      }
+    }
+  },
   "bufferSize": 262144,
   "periodSize": 32768,
   "upsampleRatio": 16,

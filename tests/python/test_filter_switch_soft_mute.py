@@ -26,13 +26,13 @@ class TestPhaseTypeSwitchSoftMute:
         """Test that phase type switch triggers soft mute sequence."""
         with patch.object(daemon_client, "send_command") as mock_send:
             # Mock successful phase type switch
-            mock_send.return_value = (True, "OK:Phase type set to hybrid")
+            mock_send.return_value = (True, "OK:Phase type set to linear")
 
             # Switch phase type
-            success, message = daemon_client.set_phase_type("hybrid")
+            success, message = daemon_client.set_phase_type("linear")
 
             # Verify command was sent
-            mock_send.assert_called_once_with("PHASE_TYPE_SET:hybrid")
+            mock_send.assert_called_once_with("PHASE_TYPE_SET:linear")
             assert success is True
             assert "Phase type set" in message
 
@@ -51,16 +51,16 @@ class TestPhaseTypeSwitchSoftMute:
     def test_phase_type_switch_error_handling(self, daemon_client):
         """Test error handling during phase type switch."""
         with patch.object(daemon_client, "send_command") as mock_send:
-            # Mock error response
+            # Mock error response for invalid phase type
             mock_send.return_value = (
                 False,
-                "ERR:Runtime switching unavailable",
+                "ERR:Invalid phase type: invalid",
             )
 
-            success, message = daemon_client.set_phase_type("hybrid")
+            success, message = daemon_client.set_phase_type("invalid")
 
             assert success is False
-            assert "Runtime switching unavailable" in message
+            assert "Invalid phase type" in message
 
 
 class TestCrossfeedSwitchSoftMute:
@@ -113,10 +113,10 @@ class TestFilterSwitchSoftMuteIntegration:
     def test_soft_mute_timing_phase_type_switch(self, daemon_client):
         """Test that phase type switch includes soft mute timing."""
         with patch.object(daemon_client, "send_command") as mock_send:
-            mock_send.return_value = (True, "OK:Phase type set to hybrid")
+            mock_send.return_value = (True, "OK:Phase type set to linear")
 
             start_time = time.time()
-            success, _ = daemon_client.set_phase_type("hybrid")
+            success, _ = daemon_client.set_phase_type("linear")
             elapsed = time.time() - start_time
 
             # Command should complete quickly (soft mute happens in daemon)
@@ -171,9 +171,9 @@ class TestFilterSwitchSoftMuteEdgeCases:
             mock_send.return_value = (True, "OK:Phase type set")
 
             # Rapid switches
-            daemon_client.set_phase_type("hybrid")
+            daemon_client.set_phase_type("linear")
             daemon_client.set_phase_type("minimum")
-            daemon_client.set_phase_type("hybrid")
+            daemon_client.set_phase_type("linear")
 
             # Should handle gracefully (daemon manages soft mute state)
             assert mock_send.call_count == 3
@@ -184,7 +184,7 @@ class TestFilterSwitchSoftMuteEdgeCases:
             mock_send.return_value = (True, "OK:Phase type set")
 
             # Start first switch
-            daemon_client.set_phase_type("hybrid")
+            daemon_client.set_phase_type("linear")
 
             # Immediately start second switch (before first completes)
             # In real implementation, daemon should handle this gracefully

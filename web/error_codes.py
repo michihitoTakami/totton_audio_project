@@ -75,6 +75,7 @@ class ErrorCode(str, Enum):
     VALIDATION_FILE_NOT_FOUND = "VALIDATION_FILE_NOT_FOUND"
     VALIDATION_PROFILE_EXISTS = "VALIDATION_PROFILE_EXISTS"
     VALIDATION_INVALID_HEADPHONE = "VALIDATION_INVALID_HEADPHONE"
+    ERR_UNSUPPORTED_MODE = "ERR_UNSUPPORTED_MODE"
 
     # Crossfeed/HRTF (0x6000) - #150
     CROSSFEED_NOT_INITIALIZED = "CROSSFEED_NOT_INITIALIZED"
@@ -191,6 +192,9 @@ ERROR_MAPPINGS: dict[ErrorCode, ErrorMapping] = {
     ),
     ErrorCode.VALIDATION_INVALID_HEADPHONE: ErrorMapping(
         404, ErrorCategory.VALIDATION, "Headphone Not Found in OPRA DB"
+    ),
+    ErrorCode.ERR_UNSUPPORTED_MODE: ErrorMapping(
+        400, ErrorCategory.VALIDATION, "Unsupported Output Mode"
     ),
     # Crossfeed/HRTF (4 codes) - #150
     ErrorCode.CROSSFEED_NOT_INITIALIZED: ErrorMapping(

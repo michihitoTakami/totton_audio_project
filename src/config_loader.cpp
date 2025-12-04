@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <cctype>
 #include <nlohmann/json.hpp>
 
 PhaseType parsePhaseType(const std::string& str) {
@@ -22,6 +23,24 @@ const char* phaseTypeToString(PhaseType type) {
     case PhaseType::Minimum:
     default:
         return "minimum";
+    }
+}
+
+OutputMode parseOutputMode(const std::string& str) {
+    std::string lower = str;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lower == "usb") {
+        return OutputMode::Usb;
+    }
+    return OutputMode::Usb;
+}
+
+const char* outputModeToString(OutputMode mode) {
+    switch (mode) {
+    case OutputMode::Usb:
+    default:
+        return "usb";
     }
 }
 
@@ -67,6 +86,46 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("phaseType"))
             outConfig.phaseType = parsePhaseType(j["phaseType"].get<std::string>());
 
+        // Keep output config aligned with legacy alsaDevice field by default
+        outConfig.output.mode = OutputMode::Usb;
+        outConfig.output.usb.preferredDevice = outConfig.alsaDevice;
+
+        if (j.contains("output") && j["output"].is_object()) {
+            auto output = j["output"];
+            try {
+                if (output.contains("mode") && output["mode"].is_string()) {
+                    std::string modeStr = output["mode"].get<std::string>();
+                    OutputMode parsed = parseOutputMode(modeStr);
+                    std::string normalized = modeStr;
+                    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                                   [](unsigned char c) {
+                                       return static_cast<char>(std::tolower(c));
+                                   });
+                    if (normalized != "usb" && verbose) {
+                        std::cerr << "Config: Unsupported output.mode '" << modeStr
+                                  << "', falling back to 'usb'" << std::endl;
+                    }
+                    outConfig.output.mode = parsed;
+                }
+
+                if (output.contains("options") && output["options"].is_object()) {
+                    auto options = output["options"];
+                    if (options.contains("usb") && options["usb"].is_object()) {
+                        auto usb = options["usb"];
+                        if (usb.contains("preferredDevice") && usb["preferredDevice"].is_string()) {
+                            outConfig.output.usb.preferredDevice = usb["preferredDevice"].get<std::string>();
+                        }
+                    }
+                }
+            } catch (const std::exception& e) {
+                if (verbose) {
+                    std::cerr << "Config: Invalid output settings, using defaults: " << e.what()
+                              << std::endl;
+                }
+                outConfig.output = OutputConfig{};
+            }
+        }
+
         if (j.contains("filterPath44kMin"))
             outConfig.filterPath44kMin = j["filterPath44kMin"].get<std::string>();
         if (j.contains("filterPath48kMin"))
@@ -75,6 +134,14 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             outConfig.filterPath44kLinear = j["filterPath44kLinear"].get<std::string>();
         if (j.contains("filterPath48kLinear"))
             outConfig.filterPath48kLinear = j["filterPath48kLinear"].get<std::string>();
+        // Synchronize legacy alsaDevice with structured output config
+        if (outConfig.output.mode == OutputMode::Usb) {
+            if (!outConfig.output.usb.preferredDevice.empty()) {
+                outConfig.alsaDevice = outConfig.output.usb.preferredDevice;
+            } else if (!outConfig.alsaDevice.empty()) {
+                outConfig.output.usb.preferredDevice = outConfig.alsaDevice;
+            }
+        }
 
         // Multi-rate mode settings (Issue #219)
         if (j.contains("multiRateEnabled"))

@@ -63,6 +63,7 @@ enum class ErrorCode : uint32_t {
     VALIDATION_FILE_NOT_FOUND = 0x5004,
     VALIDATION_PROFILE_EXISTS = 0x5005,
     VALIDATION_INVALID_HEADPHONE = 0x5006,
+    ERR_UNSUPPORTED_MODE = 0x5007,
 
     // Internal (0xF000) - Reserved for fallback
     /** @brief Unknown/unmapped error */

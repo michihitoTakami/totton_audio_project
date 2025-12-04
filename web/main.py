@@ -20,6 +20,7 @@ from .routers import (
     eq_router,
     input_mode_router,
     opra_router,
+    output_mode_router,
     partitioned_router,
     rtp_router,
     status_router,
@@ -67,6 +68,10 @@ tags_metadata = [
     {
         "name": "input-mode",
         "description": "Switch between PipeWire and RTP input sources",
+    },
+    {
+        "name": "output",
+        "description": "Output mode selection and device preferences",
     },
     {
         "name": "legacy",
@@ -128,6 +133,7 @@ app.include_router(crossfeed_router)
 app.include_router(rtp_router)
 app.include_router(partitioned_router)
 app.include_router(input_mode_router)
+app.include_router(output_mode_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)
