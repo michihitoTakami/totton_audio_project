@@ -651,16 +651,29 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     std::cout << "    " << h_filterCoeffs48k_linear_.size() << " taps" << std::endl;
     filterCentroid48kLinear_ = baseFilterCentroid_;
 
-    // Verify all 4 coefficient files have the same tap count
+    // Verify coefficient tap counts are consistent for each phase family
     size_t taps44kMin = h_filterCoeffs44k_.size();
     size_t taps48kMin = h_filterCoeffs48k_.size();
     size_t taps44kLinear = h_filterCoeffs44k_linear_.size();
     size_t taps48kLinear = h_filterCoeffs48k_linear_.size();
 
-    if (taps44kMin != taps48kMin || taps44kMin != taps44kLinear || taps44kMin != taps48kLinear) {
-        std::cerr << "Error: Coefficient tap counts do not match:" << std::endl;
-        std::cerr << "  44k min: " << taps44kMin << ", 48k min: " << taps48kMin
-                  << ", 44k linear: " << taps44kLinear << ", 48k linear: " << taps48kLinear << std::endl;
+    if (taps44kMin != taps48kMin) {
+        std::cerr << "Error: Minimum phase tap counts differ between families (44k vs 48k): "
+                  << taps44kMin << " vs " << taps48kMin << std::endl;
+        return false;
+    }
+
+    if (taps44kLinear != taps48kLinear) {
+        std::cerr << "Error: Linear phase tap counts differ between families (44k vs 48k): "
+                  << taps44kLinear << " vs " << taps48kLinear << std::endl;
+        return false;
+    }
+
+    const size_t minTapCount = taps44kMin;
+    const size_t linearTapCount = taps44kLinear;
+    if (linearTapCount != minTapCount && linearTapCount != minTapCount + 1) {
+        std::cerr << "Error: Unexpected relationship between minimum and linear phase taps: "
+                  << "min=" << minTapCount << ", linear=" << linearTapCount << std::endl;
         return false;
     }
 
