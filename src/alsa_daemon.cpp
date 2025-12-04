@@ -2818,7 +2818,7 @@ int main(int argc, char* argv[]) {
                 loop, "GPU Upsampler Input",
                 pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture",
                                   PW_KEY_MEDIA_ROLE, "Music", PW_KEY_NODE_DESCRIPTION,
-                                  "GPU Upsampler Input", PW_KEY_NODE_TARGET,
+                                  "GPU Upsampler Input", PW_KEY_TARGET_OBJECT,
                                   "gpu_upsampler_sink.monitor", "audio.channels", "2",
                                   "audio.position", "FL,FR", nullptr),
                 &input_stream_events, &data);
