@@ -1021,3 +1021,25 @@ class CrossfeedSizeResponse(BaseModel):
 
     success: bool
     headSize: str
+
+
+# ============================================================================
+# System Models
+# ============================================================================
+
+
+class SystemLogsResponse(BaseModel):
+    """System logs response model."""
+
+    logs: list[str] = Field(
+        description="Array of log lines",
+    )
+    total_lines: int = Field(
+        description="Total number of lines in the log file",
+    )
+    file_path: str = Field(
+        description="Path to the log file",
+    )
+    file_size: int = Field(
+        description="Size of the log file in bytes",
+    )

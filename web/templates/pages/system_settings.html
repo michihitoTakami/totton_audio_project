@@ -1,0 +1,695 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t.get('nav.system') }} - {{ t.get('app.title') }}{% endblock %}
+
+{% block content %}
+<div x-data="systemSettingsData()" x-init="init()">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1 class="page-title">{{ t.get('nav.system') }}</h1>
+        <p class="page-subtitle">{{ t.get('system.subtitle') }}</p>
+    </div>
+
+    <!-- Daemon Status Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('system.daemon.title') }}</h2>
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-size: 18px; margin-bottom: 8px;">
+                        <span x-text="daemon.running ? '{{ t.get('system.daemon.running') }}' : '{{ t.get('system.daemon.stopped') }}'"></span>
+                        <span x-show="daemon.running" style="color: #00ff88;">●</span>
+                        <span x-show="!daemon.running" style="color: #ff4444;">●</span>
+                    </div>
+                    <div x-show="daemon.pid" style="font-size: 14px; opacity: 0.8;">
+                        {{ t.get('system.daemon.pid') }}: <span x-text="daemon.pid"></span>
+                    </div>
+                    <div x-show="daemon.binaryPath" style="font-size: 12px; opacity: 0.6; font-family: monospace;">
+                        {{ t.get('system.daemon.binary') }}: <span x-text="daemon.binaryPath"></span>
+                    </div>
+                </div>
+                <button
+                    class="action-button btn-secondary"
+                    @click="restartDaemon"
+                    :disabled="actionInProgress"
+                >
+                    {{ t.get('system.daemon.restart') }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- DAC Information Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('system.dac.title') }}</h2>
+
+        <!-- Current DAC -->
+        <div class="card" style="margin-bottom: 16px;">
+            <h3 style="font-size: 16px; margin-bottom: 12px;">{{ t.get('system.dac.current') }}</h3>
+            <div x-show="dac.runtimeState && dac.runtimeState.active_device">
+                <div style="font-family: monospace; font-size: 14px; margin-bottom: 8px;">
+                    <strong>{{ t.get('system.dac.device') }}:</strong>
+                    <span x-text="dac.runtimeState?.active_device || 'N/A'"></span>
+                </div>
+                <div style="font-size: 14px; opacity: 0.8;" x-show="dac.runtimeState?.output_rate">
+                    <strong>{{ t.get('system.dac.sample_rate') }}:</strong>
+                    <span x-text="dac.runtimeState?.output_rate || 'N/A'"></span> Hz
+                </div>
+            </div>
+            <div x-show="!dac.runtimeState || !dac.runtimeState.active_device" class="info-text">
+                {{ t.get('system.dac.no_devices') }}
+            </div>
+        </div>
+
+        <!-- Available Devices -->
+        <div class="card">
+            <h3 style="font-size: 16px; margin-bottom: 12px;">{{ t.get('system.dac.available') }}</h3>
+            <div x-show="dac.devices.length > 0">
+                <template x-for="device in dac.devices" :key="device.id">
+                    <div style="padding: 12px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="flex: 1;">
+                                <div style="font-family: monospace; font-size: 14px; margin-bottom: 4px;" x-text="device.id"></div>
+                                <div style="font-size: 12px; opacity: 0.8;" x-text="device.name"></div>
+                                <div style="font-size: 12px; opacity: 0.6;" x-show="device.description" x-text="device.description"></div>
+                            </div>
+                            <button
+                                class="action-button btn-secondary"
+                                @click="selectDac(device.id)"
+                                :disabled="actionInProgress || dac.runtimeState?.active_device === device.id"
+                                style="margin-left: 16px;"
+                            >
+                                <span x-text="dac.runtimeState?.active_device === device.id ? '{{ t.get('eq.profiles.active') }}' : '{{ t.get('system.dac.select') }}'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div x-show="dac.devices.length === 0" class="info-text">
+                {{ t.get('system.dac.no_devices') }}
+            </div>
+        </div>
+    </div>
+
+    <!-- RTP Session Management Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('system.rtp.title') }}</h2>
+
+        <!-- Input Mode Switch -->
+        <div class="card" style="margin-bottom: 16px;">
+            <h3 style="font-size: 16px; margin-bottom: 12px;">{{ t.get('system.rtp.mode') }}</h3>
+            <div style="display: flex; gap: 12px;">
+                <button
+                    class="action-button"
+                    :class="{ 'btn-primary': rtp.currentMode === 'pipewire', 'btn-secondary': rtp.currentMode !== 'pipewire' }"
+                    @click="switchInputMode('pipewire')"
+                    :disabled="actionInProgress || rtp.currentMode === 'pipewire'"
+                >
+                    {{ t.get('system.rtp.switch_to_pipewire') }}
+                </button>
+                <button
+                    class="action-button"
+                    :class="{ 'btn-primary': rtp.currentMode === 'rtp', 'btn-secondary': rtp.currentMode !== 'rtp' }"
+                    @click="switchInputMode('rtp')"
+                    :disabled="actionInProgress || rtp.currentMode === 'rtp'"
+                >
+                    {{ t.get('system.rtp.switch_to_rtp') }}
+                </button>
+            </div>
+        </div>
+
+        <!-- Active Sessions -->
+        <div class="card" style="margin-bottom: 16px;">
+            <h3 style="font-size: 16px; margin-bottom: 12px;">{{ t.get('system.rtp.sessions') }}</h3>
+            <div x-show="rtp.sessions.length > 0">
+                <template x-for="session in rtp.sessions" :key="session.session_id">
+                    <div style="padding: 12px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-family: monospace; font-size: 14px;" x-text="session.session_id"></div>
+                                <div style="font-size: 12px; opacity: 0.8;">
+                                    <span x-text="session.config?.bind_address || 'N/A'"></span>:<span x-text="session.config?.port || 'N/A'"></span>
+                                </div>
+                            </div>
+                            <button
+                                class="action-button btn-secondary"
+                                @click="deleteRtpSession(session.session_id)"
+                                :disabled="actionInProgress"
+                            >
+                                {{ t.get('system.rtp.delete') }}
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div x-show="rtp.sessions.length === 0" class="info-text">
+                {{ t.get('system.rtp.no_sessions') }}
+            </div>
+        </div>
+
+        <!-- Discover Streams -->
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 style="font-size: 16px;">{{ t.get('system.rtp.discovered') }}</h3>
+                <button
+                    class="action-button btn-secondary"
+                    @click="discoverRtp"
+                    :disabled="rtp.discovering || actionInProgress"
+                >
+                    {{ t.get('system.rtp.discover') }}
+                </button>
+            </div>
+            <div x-show="rtp.discoveredStreams.length > 0">
+                <template x-for="stream in rtp.discoveredStreams" :key="stream.sender_address + ':' + stream.port">
+                    <div style="padding: 12px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 14px;">
+                                    <span x-text="stream.sender_address"></span>:<span x-text="stream.port"></span>
+                                </div>
+                                <div style="font-size: 12px; opacity: 0.8;" x-show="stream.sample_rate">
+                                    <span x-text="stream.sample_rate"></span> Hz, <span x-text="stream.channels"></span>ch
+                                </div>
+                            </div>
+                            <button
+                                class="action-button btn-secondary"
+                                @click="connectRtp(stream)"
+                                :disabled="actionInProgress"
+                            >
+                                {{ t.get('system.rtp.connect') }}
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div x-show="rtp.discoveredStreams.length === 0 && !rtp.discovering" class="info-text">
+                {{ t.get('system.rtp.no_streams') }}
+            </div>
+        </div>
+    </div>
+
+    <!-- System Logs Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('system.logs.title') }}</h2>
+        <div class="card">
+            <!-- Log Controls -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <select x-model="logs.levelFilter" @change="fetchLogs" style="padding: 8px; border-radius: 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white;">
+                        <option value="">{{ t.get('system.logs.filter_all') }}</option>
+                        <option value="debug">Debug</option>
+                        <option value="info">Info</option>
+                        <option value="warning">Warning</option>
+                        <option value="error">Error</option>
+                    </select>
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 14px;">
+                        <input type="checkbox" x-model="logs.autoRefresh">
+                        {{ t.get('system.logs.auto_refresh') }}
+                    </label>
+                </div>
+                <button
+                    class="action-button btn-secondary"
+                    @click="fetchLogs"
+                    :disabled="logs.loading"
+                >
+                    {{ t.get('system.logs.refresh') }}
+                </button>
+            </div>
+
+            <!-- Log Viewer -->
+            <div style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 16px; margin-bottom: 12px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.5;">
+                <template x-for="(line, index) in logs.lines" :key="index">
+                    <div x-text="line" style="white-space: pre-wrap; word-break: break-all;"></div>
+                </template>
+                <div x-show="logs.lines.length === 0" class="info-text">
+                    {{ t.get('system.logs.no_logs') }}
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
+                <div style="opacity: 0.8;">
+                    {{ t.get('system.logs.page') }}: <span x-text="logs.currentPage + 1"></span> / <span x-text="Math.ceil(logs.totalLines / logs.linesPerPage) || 1"></span>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button
+                        class="action-button btn-secondary"
+                        @click="previousPage"
+                        :disabled="logs.currentPage === 0 || logs.loading"
+                    >
+                        {{ t.get('system.logs.previous') }}
+                    </button>
+                    <button
+                        class="action-button btn-secondary"
+                        @click="nextPage"
+                        :disabled="logs.currentPage >= Math.floor(logs.totalLines / logs.linesPerPage) || logs.loading"
+                    >
+                        {{ t.get('system.logs.next') }}
+                    </button>
+                </div>
+            </div>
+
+            <!-- Log File Info -->
+            <div style="margin-top: 12px; font-size: 12px; opacity: 0.6;">
+                <div>{{ t.get('system.logs.file_path') }}: <span x-text="logs.filePath"></span></div>
+                <div>{{ t.get('system.logs.file_size') }}: <span x-text="formatFileSize(logs.fileSize)"></span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Advanced Settings Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('system.advanced.title') }}</h2>
+
+        <!-- Partitioned Convolution -->
+        <div class="card" style="margin-bottom: 16px;">
+            <h3 style="font-size: 16px; margin-bottom: 8px;">{{ t.get('system.partitioned.title') }}</h3>
+            <p style="font-size: 14px; opacity: 0.8; margin-bottom: 12px;">{{ t.get('system.partitioned.info') }}</p>
+
+            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                <input type="checkbox" x-model="partitioned.enabled">
+                {{ t.get('system.partitioned.enable') }}
+            </label>
+
+            <div x-show="partitioned.enabled" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                <div class="form-group">
+                    <label>{{ t.get('system.partitioned.fast_taps') }}</label>
+                    <input type="number" x-model.number="partitioned.fastPartitionTaps" min="4096" max="131072" step="4096">
+                </div>
+                <div class="form-group">
+                    <label>{{ t.get('system.partitioned.min_taps') }}</label>
+                    <input type="number" x-model.number="partitioned.minPartitionTaps" min="4096" max="131072" step="4096">
+                </div>
+                <div class="form-group">
+                    <label>{{ t.get('system.partitioned.max_partitions') }}</label>
+                    <input type="number" x-model.number="partitioned.maxPartitions" min="1" max="16" step="1">
+                </div>
+                <div class="form-group">
+                    <label>{{ t.get('system.partitioned.tail_multiple') }}</label>
+                    <input type="number" x-model.number="partitioned.tailFftMultiple" min="1" max="8" step="1">
+                </div>
+            </div>
+
+            <button
+                class="action-button btn-primary"
+                @click="savePartitionedSettings"
+                :disabled="partitioned.loading || actionInProgress"
+            >
+                {{ t.get('system.partitioned.save') }}
+            </button>
+        </div>
+
+        <!-- Read-Only Config Display -->
+        <div class="card" style="margin-bottom: 16px;">
+            <h3 style="font-size: 16px; margin-bottom: 12px;">{{ t.get('system.buffer.title') }}</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 14px;">
+                <div>
+                    <strong>{{ t.get('system.buffer.size') }}:</strong>
+                    <span x-text="config.bufferSize || 'N/A'"></span>
+                </div>
+                <div>
+                    <strong>{{ t.get('system.buffer.period') }}:</strong>
+                    <span x-text="config.periodSize || 'N/A'"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 style="font-size: 16px; margin-bottom: 12px;">{{ t.get('system.gain.title') }}</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 14px;">
+                <div>
+                    <strong>{{ t.get('system.gain.gain') }}:</strong>
+                    <span x-text="config.gain || 'N/A'"></span>
+                </div>
+                <div>
+                    <strong>{{ t.get('system.gain.headroom') }}:</strong>
+                    <span x-text="config.headroomTarget || 'N/A'"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function systemSettingsData() {
+    return {
+        // DAC state
+        dac: {
+            devices: [],
+            currentDevice: '',
+            runtimeState: null,
+            loading: false,
+        },
+
+        // RTP sessions
+        rtp: {
+            sessions: [],
+            discoveredStreams: [],
+            currentMode: 'pipewire',
+            discovering: false,
+            loading: false,
+        },
+
+        // System logs
+        logs: {
+            lines: [],
+            totalLines: 0,
+            filePath: '',
+            fileSize: 0,
+            currentPage: 0,
+            linesPerPage: 100,
+            levelFilter: '',
+            loading: false,
+            autoRefresh: false,
+        },
+
+        // Partitioned settings
+        partitioned: {
+            enabled: false,
+            fastPartitionTaps: 32768,
+            minPartitionTaps: 32768,
+            maxPartitions: 4,
+            tailFftMultiple: 2,
+            loading: false,
+        },
+
+        // Daemon state
+        daemon: {
+            running: false,
+            pid: null,
+            binaryPath: '',
+        },
+
+        // Config (read-only display)
+        config: {
+            bufferSize: null,
+            periodSize: null,
+            gain: null,
+            headroomTarget: null,
+        },
+
+        actionInProgress: false,
+        refreshInterval: null,
+
+        init() {
+            this.fetchAll();
+            this.startAutoRefresh();
+        },
+
+        async fetchAll() {
+            await Promise.all([
+                this.fetchDaemonStatus(),
+                this.fetchDacDevices(),
+                this.fetchDacState(),
+                this.fetchRtpSessions(),
+                this.fetchLogs(),
+                this.fetchPartitionedSettings(),
+                this.fetchConfig(),
+            ]);
+        },
+
+        startAutoRefresh() {
+            this.refreshInterval = setInterval(() => {
+                if (!this.actionInProgress) {
+                    this.fetchDaemonStatus();
+                    this.fetchDacState();
+                    this.fetchRtpSessions();
+                    if (this.logs.autoRefresh) {
+                        this.fetchLogs();
+                    }
+                }
+            }, 5000);
+        },
+
+        async fetchDaemonStatus() {
+            try {
+                const response = await fetch('/daemon/status');
+                if (!response.ok) return;
+                const data = await response.json();
+                this.daemon.running = data.running;
+                this.daemon.pid = data.pid;
+                this.daemon.binaryPath = data.binary_path;
+                this.rtp.currentMode = data.input_mode || 'pipewire';
+            } catch (error) {
+                console.error('Failed to fetch daemon status:', error);
+            }
+        },
+
+        async fetchDacDevices() {
+            this.dac.loading = true;
+            try {
+                const response = await fetch('/dac/devices');
+                if (!response.ok) throw new Error('Failed to fetch DAC devices');
+                const data = await response.json();
+                this.dac.devices = data.devices || [];
+            } catch (error) {
+                console.error('Failed to fetch DAC devices:', error);
+            } finally {
+                this.dac.loading = false;
+            }
+        },
+
+        async fetchDacState() {
+            try {
+                const response = await fetch('/dac/state');
+                if (!response.ok) return;
+                const data = await response.json();
+                this.dac.runtimeState = data;
+            } catch (error) {
+                console.error('Failed to fetch DAC state:', error);
+            }
+        },
+
+        async fetchRtpSessions() {
+            this.rtp.loading = true;
+            try {
+                const response = await fetch('/api/rtp/sessions');
+                if (!response.ok) throw new Error('Failed to fetch RTP sessions');
+                const data = await response.json();
+                this.rtp.sessions = data.sessions || [];
+            } catch (error) {
+                console.error('Failed to fetch RTP sessions:', error);
+            } finally {
+                this.rtp.loading = false;
+            }
+        },
+
+        async fetchLogs() {
+            this.logs.loading = true;
+            try {
+                const offset = this.logs.currentPage * this.logs.linesPerPage;
+                let url = `/api/system/logs?lines=${this.logs.linesPerPage}&offset=${offset}`;
+                if (this.logs.levelFilter) {
+                    url += `&level=${this.logs.levelFilter}`;
+                }
+                const response = await fetch(url);
+                if (!response.ok) throw new Error('Failed to fetch logs');
+                const data = await response.json();
+                this.logs.lines = data.logs || [];
+                this.logs.totalLines = data.total_lines || 0;
+                this.logs.filePath = data.file_path || '';
+                this.logs.fileSize = data.file_size || 0;
+            } catch (error) {
+                console.error('Failed to fetch logs:', error);
+                this.logs.lines = [];
+            } finally {
+                this.logs.loading = false;
+            }
+        },
+
+        async fetchPartitionedSettings() {
+            try {
+                const response = await fetch('/partitioned-convolution');
+                if (!response.ok) return;
+                const data = await response.json();
+                this.partitioned.enabled = data.enabled || false;
+                this.partitioned.fastPartitionTaps = data.fast_partition_taps || 32768;
+                this.partitioned.minPartitionTaps = data.min_partition_taps || 32768;
+                this.partitioned.maxPartitions = data.max_partitions || 4;
+                this.partitioned.tailFftMultiple = data.tail_fft_multiple || 2;
+            } catch (error) {
+                console.error('Failed to fetch partitioned settings:', error);
+            }
+        },
+
+        async fetchConfig() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data.settings) {
+                    this.config.bufferSize = data.settings.buffer_size;
+                    this.config.periodSize = data.settings.period_size;
+                    this.config.gain = data.settings.gain;
+                    this.config.headroomTarget = data.settings.headroom_target;
+                }
+            } catch (error) {
+                console.error('Failed to fetch config:', error);
+            }
+        },
+
+        async restartDaemon() {
+            if (!confirm('Restart daemon? This will briefly interrupt audio processing.')) return;
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/daemon/restart', { method: 'POST' });
+                if (!response.ok) throw new Error('Failed to restart daemon');
+                alert('Daemon restarted successfully');
+                await this.fetchDaemonStatus();
+            } catch (error) {
+                alert('Failed to restart daemon: ' + error.message);
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async selectDac(deviceId) {
+            if (!confirm('Switch DAC device? This may restart the daemon.')) return;
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/dac/select', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device: deviceId, persist: true }),
+                });
+                if (!response.ok) throw new Error('DAC selection failed');
+                alert('DAC switched successfully');
+                await this.fetchDacState();
+            } catch (error) {
+                alert('Failed to switch DAC: ' + error.message);
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async switchInputMode(mode) {
+            if (!confirm(`Switch to ${mode.toUpperCase()} mode?`)) return;
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/api/input-mode/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_mode: mode }),
+                });
+                if (!response.ok) throw new Error('Input mode switch failed');
+                alert('Input mode switched successfully');
+                await this.fetchDaemonStatus();
+            } catch (error) {
+                alert('Failed to switch input mode: ' + error.message);
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async discoverRtp() {
+            this.rtp.discovering = true;
+            try {
+                const response = await fetch('/api/rtp/discover');
+                if (!response.ok) throw new Error('RTP discovery failed');
+                const data = await response.json();
+                this.rtp.discoveredStreams = data.streams || [];
+                if (this.rtp.discoveredStreams.length === 0) {
+                    alert('No RTP streams discovered');
+                }
+            } catch (error) {
+                alert('Failed to discover RTP streams: ' + error.message);
+            } finally {
+                this.rtp.discovering = false;
+            }
+        },
+
+        async connectRtp(stream) {
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/api/rtp/sessions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: `stream_${Date.now()}`,
+                        sender_address: stream.sender_address,
+                        port: stream.port,
+                        sample_rate: stream.sample_rate || 48000,
+                        channels: stream.channels || 2,
+                    }),
+                });
+                if (!response.ok) throw new Error('Failed to connect to RTP stream');
+                alert('Connected to RTP stream successfully');
+                await this.fetchRtpSessions();
+            } catch (error) {
+                alert('Failed to connect to RTP stream: ' + error.message);
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async deleteRtpSession(sessionId) {
+            if (!confirm('Delete this RTP session?')) return;
+            this.actionInProgress = true;
+            try {
+                const response = await fetch(`/api/rtp/sessions/${sessionId}`, { method: 'DELETE' });
+                if (!response.ok) throw new Error('Failed to delete RTP session');
+                alert('RTP session deleted');
+                await this.fetchRtpSessions();
+            } catch (error) {
+                alert('Failed to delete RTP session: ' + error.message);
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async savePartitionedSettings() {
+            this.partitioned.loading = true;
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/partitioned-convolution', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: this.partitioned.enabled,
+                        fast_partition_taps: this.partitioned.fastPartitionTaps,
+                        min_partition_taps: this.partitioned.minPartitionTaps,
+                        max_partitions: this.partitioned.maxPartitions,
+                        tail_fft_multiple: this.partitioned.tailFftMultiple,
+                    }),
+                });
+                if (!response.ok) throw new Error('Failed to save partitioned settings');
+                alert('Partitioned convolution settings saved');
+                await this.fetchPartitionedSettings();
+            } catch (error) {
+                alert('Failed to save settings: ' + error.message);
+            } finally {
+                this.partitioned.loading = false;
+                this.actionInProgress = false;
+            }
+        },
+
+        previousPage() {
+            if (this.logs.currentPage > 0) {
+                this.logs.currentPage--;
+                this.fetchLogs();
+            }
+        },
+
+        nextPage() {
+            const maxPage = Math.floor(this.logs.totalLines / this.logs.linesPerPage);
+            if (this.logs.currentPage < maxPage) {
+                this.logs.currentPage++;
+                this.fetchLogs();
+            }
+        },
+
+        formatFileSize(bytes) {
+            if (!bytes) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let size = bytes;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            return `${size.toFixed(2)} ${units[unitIndex]}`;
+        },
+    };
+}
+</script>
+{% endblock %}

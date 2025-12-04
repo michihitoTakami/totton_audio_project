@@ -24,6 +24,7 @@ from .routers import (
     partitioned_router,
     rtp_router,
     status_router,
+    system_router,
 )
 from .services import telemetry_poller
 from .templates import get_admin_html, get_rtp_sessions_html
@@ -72,6 +73,10 @@ tags_metadata = [
     {
         "name": "output",
         "description": "Output mode selection and device preferences",
+    },
+    {
+        "name": "system",
+        "description": "System information and logs access",
     },
     {
         "name": "legacy",
@@ -134,6 +139,7 @@ app.include_router(rtp_router)
 app.include_router(partitioned_router)
 app.include_router(input_mode_router)
 app.include_router(output_mode_router)
+app.include_router(system_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)

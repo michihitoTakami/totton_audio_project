@@ -1732,6 +1732,85 @@
         }
       }
     },
+    "/api/system/logs": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Get System Logs",
+        "description": "Retrieve system logs from the daemon log file.\n\nArgs:\n    lines: Number of lines to return (1-1000)\n    offset: Number of lines to skip from the beginning\n    level: Optional log level filter\n\nReturns:\n    SystemLogsResponse containing logs and metadata\n\nRaises:\n    HTTPException: If log file is too large or cannot be read",
+        "operationId": "get_system_logs_api_system_logs_get",
+        "parameters": [
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "description": "Number of lines to return",
+              "default": 100,
+              "title": "Lines"
+            },
+            "description": "Number of lines to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of lines to skip",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Number of lines to skip"
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by log level (debug, info, warning, error)",
+              "title": "Level"
+            },
+            "description": "Filter by log level (debug, info, warning, error)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemLogsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -4914,6 +4993,42 @@
         "title": "Status",
         "description": "System status response model."
       },
+      "SystemLogsResponse": {
+        "properties": {
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs",
+            "description": "Array of log lines"
+          },
+          "total_lines": {
+            "type": "integer",
+            "title": "Total Lines",
+            "description": "Total number of lines in the log file"
+          },
+          "file_path": {
+            "type": "string",
+            "title": "File Path",
+            "description": "Path to the log file"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size",
+            "description": "Size of the log file in bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "logs",
+          "total_lines",
+          "file_path",
+          "file_size"
+        ],
+        "title": "SystemLogsResponse",
+        "description": "System logs response model."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -5013,6 +5128,10 @@
     {
       "name": "output",
       "description": "Output mode selection and device preferences"
+    },
+    {
+      "name": "system",
+      "description": "System information and logs access"
     },
     {
       "name": "legacy",

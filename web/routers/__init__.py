@@ -10,6 +10,7 @@ from .partitioned import router as partitioned_router
 from .status import router as status_router
 from .rtp import router as rtp_router
 from .output_mode import router as output_mode_router
+from .system import router as system_router
 
 __all__ = [
     "crossfeed_router",
@@ -22,4 +23,5 @@ __all__ = [
     "partitioned_router",
     "status_router",
     "rtp_router",
+    "system_router",
 ]
