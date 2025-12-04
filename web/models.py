@@ -7,6 +7,7 @@ import re
 from typing import Annotated, Any, Literal, Optional
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     Field,
     ConfigDict,
@@ -52,6 +53,7 @@ class CrossfeedSettingsUpdate(BaseModel):
 
 
 InputMode = Literal["pipewire", "rtp"]
+OutputModeName = Literal["usb"]
 
 
 class Settings(BaseModel):
@@ -79,6 +81,47 @@ class SettingsUpdate(BaseModel):
     input_rate: Optional[int] = None
     output_rate: Optional[int] = None
     crossfeed: Optional[CrossfeedSettingsUpdate] = None
+
+
+# ============================================================================
+# Output Mode Models
+# ============================================================================
+
+
+class OutputModeUsbOptions(BaseModel):
+    """USB-specific output mode options."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    preferred_device: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("preferred_device", "preferredDevice"),
+        serialization_alias="preferred_device",
+        description="Preferred ALSA device identifier",
+    )
+
+
+class OutputModeOptions(BaseModel):
+    """Container for per-mode option structures."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    usb: OutputModeUsbOptions = Field(default_factory=OutputModeUsbOptions)
+
+
+class OutputModeResponse(BaseModel):
+    """Response payload for GET /api/output/mode."""
+
+    mode: OutputModeName
+    available_modes: list[OutputModeName]
+    options: OutputModeOptions
+
+
+class OutputModeUpdateRequest(BaseModel):
+    """Request payload for POST /api/output/mode."""
+
+    mode: OutputModeName = Field(default="usb")
+    options: OutputModeOptions = Field(default_factory=OutputModeOptions)
 
 
 class PartitionedConvolutionSettings(BaseModel):

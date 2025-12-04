@@ -31,6 +31,10 @@ const char* commandTypeToString(CommandType type) {
         return "RESTORE_EQ";
     case CommandType::SHUTDOWN:
         return "SHUTDOWN";
+    case CommandType::OUTPUT_MODE_GET:
+        return "OUTPUT_MODE_GET";
+    case CommandType::OUTPUT_MODE_SET:
+        return "OUTPUT_MODE_SET";
     case CommandType::CROSSFEED_ENABLE:
         return "CROSSFEED_ENABLE";
     case CommandType::CROSSFEED_DISABLE:
@@ -68,6 +72,8 @@ CommandType stringToCommandType(const std::string& str) {
         {"APPLY_EQ", CommandType::APPLY_EQ},
         {"RESTORE_EQ", CommandType::RESTORE_EQ},
         {"SHUTDOWN", CommandType::SHUTDOWN},
+        {"OUTPUT_MODE_GET", CommandType::OUTPUT_MODE_GET},
+        {"OUTPUT_MODE_SET", CommandType::OUTPUT_MODE_SET},
         {"CROSSFEED_ENABLE", CommandType::CROSSFEED_ENABLE},
         {"CROSSFEED_DISABLE", CommandType::CROSSFEED_DISABLE},
         {"CROSSFEED_SET_COMBINED", CommandType::CROSSFEED_SET_COMBINED},
@@ -697,6 +703,19 @@ CommandResult ZMQClient::crossfeedGenerateWoodworth(const std::string& rateFamil
     model["diffuse_tilt_db"] = diffuseFieldTiltDb;
     params["model"] = model;
     return sendCommand(CommandType::CROSSFEED_GENERATE_WOODWORTH, params.dump());
+}
+
+CommandResult ZMQClient::outputModeGet() {
+    return sendCommand(CommandType::OUTPUT_MODE_GET);
+}
+
+CommandResult ZMQClient::outputModeSet(const std::string& mode, const std::string& preferredDevice) {
+    json params;
+    params["mode"] = mode;
+    if (!preferredDevice.empty()) {
+        params["options"]["usb"]["preferred_device"] = preferredDevice;
+    }
+    return sendCommand(CommandType::OUTPUT_MODE_SET, params.dump());
 }
 
 CommandResult ZMQClient::rtpStartSession(const std::string& paramsJson) {

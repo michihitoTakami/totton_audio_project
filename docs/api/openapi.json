@@ -273,7 +273,7 @@
           "daemon"
         ],
         "summary": "Get Phase Type",
-        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid keeps bass (≤100 Hz) minimum phase while aligning higher bands\nto a constant ~10 ms group delay (1 period of the crossover frequency) to retain imaging.",
+        "description": "Get current phase type from daemon.\n\nReturns the current filter phase type (minimum or hybrid).\nHybrid keeps bass (\u2264100 Hz) minimum phase while aligning higher bands\nto a constant ~10 ms group delay (1 period of the crossover frequency) to retain imaging.",
         "operationId": "get_phase_type_daemon_phase_type_get",
         "responses": {
           "200": {
@@ -293,7 +293,7 @@
           "daemon"
         ],
         "summary": "Set Phase Type",
-        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear × rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 100 Hz / constant-delay region above 100 Hz (~10 ms alignment)",
+        "description": "Set phase type on daemon.\n\nAll filter variants (min/linear \u00d7 rate families) are preloaded by default, so changes take effect immediately without daemon restart.\n\n- minimum: Minimum phase filter (recommended, no pre-ringing)\n- hybrid: Minimum phase below 100 Hz / constant-delay region above 100 Hz (~10 ms alignment)",
         "operationId": "set_phase_type_daemon_phase_type_put",
         "requestBody": {
           "content": {
@@ -1634,7 +1634,7 @@
           "input-mode"
         ],
         "summary": "Switch Input Mode",
-        "description": "Toggle PipeWire ⇄ RTP input modes.",
+        "description": "Toggle PipeWire \u21c4 RTP input modes.",
         "operationId": "switch_input_mode_api_input_mode_switch_post",
         "requestBody": {
           "content": {
@@ -1653,6 +1653,68 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InputModeSwitchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/output/mode": {
+      "get": {
+        "tags": [
+          "output"
+        ],
+        "summary": "Get current output mode",
+        "description": "Return current output mode and available modes.",
+        "operationId": "get_output_mode_api_output_mode_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutputModeResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "output"
+        ],
+        "summary": "Update output mode and options",
+        "description": "Update output mode and USB preferred device.",
+        "operationId": "update_output_mode_api_output_mode_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutputModeUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
                 }
               }
             }
@@ -3156,6 +3218,79 @@
         ],
         "title": "OpraVendorsResponse",
         "description": "OPRA vendors list response model."
+      },
+      "OutputModeOptions": {
+        "properties": {
+          "usb": {
+            "$ref": "#/components/schemas/OutputModeUsbOptions"
+          }
+        },
+        "type": "object",
+        "title": "OutputModeOptions",
+        "description": "Container for per-mode option structures."
+      },
+      "OutputModeResponse": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "usb",
+            "title": "Mode"
+          },
+          "available_modes": {
+            "items": {
+              "type": "string",
+              "const": "usb"
+            },
+            "type": "array",
+            "title": "Available Modes"
+          },
+          "options": {
+            "$ref": "#/components/schemas/OutputModeOptions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "available_modes",
+          "options"
+        ],
+        "title": "OutputModeResponse",
+        "description": "Response payload for GET /api/output/mode."
+      },
+      "OutputModeUpdateRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "usb",
+            "title": "Mode",
+            "default": "usb"
+          },
+          "options": {
+            "$ref": "#/components/schemas/OutputModeOptions"
+          }
+        },
+        "type": "object",
+        "title": "OutputModeUpdateRequest",
+        "description": "Request payload for POST /api/output/mode."
+      },
+      "OutputModeUsbOptions": {
+        "properties": {
+          "preferred_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Device",
+            "description": "Preferred ALSA device identifier"
+          }
+        },
+        "type": "object",
+        "title": "OutputModeUsbOptions",
+        "description": "USB-specific output mode options."
       },
       "PartitionedConvolutionSettings": {
         "properties": {
@@ -4874,6 +5009,10 @@
     {
       "name": "input-mode",
       "description": "Switch between PipeWire and RTP input sources"
+    },
+    {
+      "name": "output",
+      "description": "Output mode selection and device preferences"
     },
     {
       "name": "legacy",

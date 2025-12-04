@@ -109,7 +109,7 @@ class TestOpenAPISchema:
         tags = {tag["name"]: tag for tag in schema.get("tags", [])}
 
         # Should have all expected tags
-        expected_tags = ["status", "daemon", "eq", "opra", "input-mode", "legacy"]
+        expected_tags = ["status", "daemon", "eq", "opra", "input-mode", "output", "legacy"]
         for tag_name in expected_tags:
             assert tag_name in tags, f"Missing tag: {tag_name}"
             assert (
@@ -128,6 +128,8 @@ class TestOpenAPISchema:
             ("/daemon/status", "get"),
             ("/daemon/zmq/ping", "get"),
             ("/api/input-mode/switch", "post"),
+            ("/api/output/mode", "get"),
+            ("/api/output/mode", "post"),
             ("/eq/profiles", "get"),
             ("/eq/active", "get"),
         ]

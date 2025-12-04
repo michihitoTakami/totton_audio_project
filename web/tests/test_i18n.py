@@ -163,6 +163,21 @@ class TestDashboardTranslations:
             assert key in TRANSLATIONS["en"], f"Missing EN key: {key}"
             assert key in TRANSLATIONS["ja"], f"Missing JA key: {key}"
 
+    def test_output_mode_keys_exist(self):
+        """Test output mode section keys exist in both languages."""
+        keys = [
+            "dashboard.output_mode.title",
+            "dashboard.output_mode.subtitle",
+            "dashboard.output_mode.mode_label",
+            "dashboard.output_mode.device_label",
+            "dashboard.output_mode.save",
+            "dashboard.output_mode.success",
+            "dashboard.output_mode.error",
+        ]
+        for key in keys:
+            assert key in TRANSLATIONS["en"], f"Missing EN key: {key}"
+            assert key in TRANSLATIONS["ja"], f"Missing JA key: {key}"
+
 
 class TestTranslationConsistency:
     """Test consistency between English and Japanese translations."""

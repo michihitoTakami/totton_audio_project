@@ -22,6 +22,8 @@ enum class CommandType {
     APPLY_EQ,     // Apply EQ magnitude
     RESTORE_EQ,   // Restore original filter (remove EQ)
     SHUTDOWN,     // Shutdown daemon
+    OUTPUT_MODE_GET,  // Get current output mode + options
+    OUTPUT_MODE_SET,  // Set output mode + options
 
     // Crossfeed commands (#150)
     CROSSFEED_ENABLE,            // Enable crossfeed processing
@@ -163,6 +165,10 @@ class ZMQClient {
                                              float earSpacingMeters = 0.18f,
                                              float farEarShadowDb = -8.0f,
                                              float diffuseFieldTiltDb = -2.0f);
+
+    // Output mode commands
+    CommandResult outputModeGet();
+    CommandResult outputModeSet(const std::string& mode, const std::string& preferredDevice);
 
     // RTP session controls
     CommandResult rtpStartSession(const std::string& paramsJson);

@@ -11,6 +11,27 @@
 #include <utility>
 
 namespace dac {
+namespace {
+
+std::string resolvePreferredDevice(const AppConfig* config, const std::string& fallback) {
+    if (!config)
+        return fallback;
+    if (!config->output.usb.preferredDevice.empty())
+        return config->output.usb.preferredDevice;
+    if (!config->alsaDevice.empty())
+        return config->alsaDevice;
+    return fallback;
+}
+
+void updatePreferredDevice(AppConfig* config, const std::string& device) {
+    if (!config)
+        return;
+    config->alsaDevice = device;
+    config->output.mode = OutputMode::Usb;
+    config->output.usb.preferredDevice = device;
+}
+
+}  // namespace
 
 DacManager::DacManager(Dependencies deps) : deps_(std::move(deps)) {}
 
@@ -244,9 +265,7 @@ void DacManager::initialize() {
     stop();
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        requestedDevice_ = (deps_.config && !deps_.config->alsaDevice.empty())
-                               ? deps_.config->alsaDevice
-                               : deps_.defaultDevice;
+        requestedDevice_ = resolvePreferredDevice(deps_.config, deps_.defaultDevice);
         selectedDevice_.clear();
         activePlaybackDevice_.clear();
         activeCapability_ = DacCapability::Capability();
@@ -322,9 +341,7 @@ void DacManager::requestDevice(const std::string& device) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         requestedDevice_ = device;
-        if (deps_.config) {
-            deps_.config->alsaDevice = device;
-        }
+        updatePreferredDevice(deps_.config, device);
         std::string candidate = pickPreferredDeviceLocked(devices_);
         setSelectedDeviceLocked(candidate, "manual_select");
     }
