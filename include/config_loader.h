@@ -13,6 +13,18 @@ enum class PhaseType {
     Linear    // Linear phase: pre-ringing present, constant delay, symmetric
 };
 
+// Output pipeline mode (Issue #515)
+enum class OutputMode { Usb };
+
+struct OutputUsbOptions {
+    std::string preferredDevice = "hw:USB";
+};
+
+struct OutputConfig {
+    OutputMode mode = OutputMode::Usb;
+    OutputUsbOptions usb;
+};
+
 struct AppConfig {
     std::string alsaDevice = "hw:USB";
     int bufferSize = 262144;
@@ -106,6 +118,8 @@ struct AppConfig {
         bool discoveryEnableMulticast = true;
         bool discoveryEnableUnicast = true;
     } rtp;
+
+    OutputConfig output;
 };
 
 // Convert string to PhaseType (returns Minimum for invalid input)
@@ -113,6 +127,12 @@ PhaseType parsePhaseType(const std::string& str);
 
 // Convert PhaseType to string
 const char* phaseTypeToString(PhaseType type);
+
+// Convert string to OutputMode (invalid -> Usb)
+OutputMode parseOutputMode(const std::string& str);
+
+// Convert OutputMode to string value ("usb", ...)
+const char* outputModeToString(OutputMode mode);
 
 bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig,
                    bool verbose = true);

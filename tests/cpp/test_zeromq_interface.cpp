@@ -57,6 +57,8 @@ TEST_F(ZMQInterfaceTest, CommandTypeToString) {
     EXPECT_STREQ(commandTypeToString(CommandType::APPLY_EQ), "APPLY_EQ");
     EXPECT_STREQ(commandTypeToString(CommandType::RESTORE_EQ), "RESTORE_EQ");
     EXPECT_STREQ(commandTypeToString(CommandType::SHUTDOWN), "SHUTDOWN");
+    EXPECT_STREQ(commandTypeToString(CommandType::OUTPUT_MODE_GET), "OUTPUT_MODE_GET");
+    EXPECT_STREQ(commandTypeToString(CommandType::OUTPUT_MODE_SET), "OUTPUT_MODE_SET");
     EXPECT_STREQ(commandTypeToString(CommandType::RTP_START_SESSION), "RTP_START_SESSION");
     EXPECT_STREQ(commandTypeToString(CommandType::RTP_LIST_SESSIONS), "RTP_LIST_SESSIONS");
 }
@@ -70,6 +72,8 @@ TEST_F(ZMQInterfaceTest, StringToCommandType) {
     EXPECT_EQ(stringToCommandType("APPLY_EQ"), CommandType::APPLY_EQ);
     EXPECT_EQ(stringToCommandType("RESTORE_EQ"), CommandType::RESTORE_EQ);
     EXPECT_EQ(stringToCommandType("SHUTDOWN"), CommandType::SHUTDOWN);
+    EXPECT_EQ(stringToCommandType("OUTPUT_MODE_GET"), CommandType::OUTPUT_MODE_GET);
+    EXPECT_EQ(stringToCommandType("OUTPUT_MODE_SET"), CommandType::OUTPUT_MODE_SET);
     EXPECT_EQ(stringToCommandType("RTP_START_SESSION"), CommandType::RTP_START_SESSION);
     EXPECT_EQ(stringToCommandType("RTP_STOP_SESSION"), CommandType::RTP_STOP_SESSION);
     EXPECT_EQ(stringToCommandType("RTP_GET_SESSION"), CommandType::RTP_GET_SESSION);

@@ -9,6 +9,7 @@ from .opra import router as opra_router
 from .partitioned import router as partitioned_router
 from .status import router as status_router
 from .rtp import router as rtp_router
+from .output_mode import router as output_mode_router
 
 __all__ = [
     "crossfeed_router",
@@ -17,6 +18,7 @@ __all__ = [
     "eq_router",
     "opra_router",
     "input_mode_router",
+    "output_mode_router",
     "partitioned_router",
     "status_router",
     "rtp_router",

@@ -18,6 +18,10 @@ from ..models import (
     Settings,
 )
 
+DEFAULT_OUTPUT_MODE = "usb"
+DEFAULT_OUTPUT_DEVICE = "hw:USB"
+SUPPORTED_OUTPUT_MODES: tuple[str, ...] = (DEFAULT_OUTPUT_MODE,)
+
 
 def _build_profile_path(profile_name: str | None) -> str | None:
     """Return full path for the given EQ profile name, or None."""
@@ -33,6 +37,51 @@ def _resolve_input_mode(config_data: dict[str, Any]) -> InputMode:
     if isinstance(rtp_section, dict):
         enabled = bool(rtp_section.get("enabled"))
     return "rtp" if enabled else "pipewire"
+
+
+def _normalize_output_mode(mode: str | None) -> str:
+    """Normalize output mode string."""
+    if not mode:
+        return DEFAULT_OUTPUT_MODE
+    normalized = str(mode).strip().lower()
+    return normalized or DEFAULT_OUTPUT_MODE
+
+
+def _extract_preferred_device(config_data: dict[str, Any]) -> str:
+    """Extract preferred USB device from output options or legacy alsaDevice."""
+    output_section = config_data.get("output", {})
+    preferred = None
+    if isinstance(output_section, dict):
+        options = output_section.get("options", {})
+        if isinstance(options, dict):
+            usb = options.get("usb", {})
+            if isinstance(usb, dict):
+                preferred = (
+                    usb.get("preferredDevice")
+                    or usb.get("preferred_device")
+                    or usb.get("preferred_device_name")
+                )
+        if not preferred and isinstance(output_section.get("preferredDevice"), str):
+            preferred = output_section["preferredDevice"]
+    if not preferred:
+        preferred = config_data.get("alsaDevice")
+    preferred_str = str(preferred).strip() if preferred else ""
+    return preferred_str or DEFAULT_OUTPUT_DEVICE
+
+
+def _ensure_output_section(existing: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return mutable output and options sections."""
+    output_section = existing.get("output")
+    if not isinstance(output_section, dict):
+        output_section = {}
+    options_section = output_section.get("options")
+    if not isinstance(options_section, dict):
+        options_section = {}
+    output_section["options"] = options_section
+    existing["output"] = output_section
+    if "usb" not in options_section or not isinstance(options_section["usb"], dict):
+        options_section["usb"] = {}
+    return output_section, options_section
 
 
 def load_config() -> Settings:
@@ -73,8 +122,10 @@ def load_config() -> Settings:
 
             input_mode = _resolve_input_mode(data)
 
+            preferred_device = _extract_preferred_device(data)
+
             return Settings(
-                alsa_device=data.get("alsaDevice", "default"),
+                alsa_device=preferred_device,
                 upsample_ratio=data.get("upsampleRatio", 8),
                 eq_enabled=bool(eq_enabled and eq_profile_path),
                 eq_profile=eq_profile,
@@ -193,6 +244,10 @@ def save_config(settings: Settings) -> bool:
         existing["eqProfile"] = settings.eq_profile if eq_enabled else None
         existing["eqProfilePath"] = eq_profile_path if eq_enabled else None
 
+        output_section, options_section = _ensure_output_section(existing)
+        output_section["mode"] = DEFAULT_OUTPUT_MODE
+        options_section["usb"]["preferredDevice"] = settings.alsa_device
+
         # Remove deprecated fields if present (inputRate/outputRate are auto-negotiated)
         existing.pop("inputRate", None)
         existing.pop("outputRate", None)
@@ -235,6 +290,44 @@ def save_input_mode(mode: InputMode) -> bool:
             rtp_section = {}
         rtp_section["enabled"] = normalized == "rtp"
         existing["rtp"] = rtp_section
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+def load_output_mode() -> dict[str, Any]:
+    """Load structured output mode configuration for API responses."""
+    raw = load_raw_config()
+    mode = _normalize_output_mode(raw.get("output", {}).get("mode") if isinstance(raw.get("output"), dict) else raw.get("output"))
+    if mode not in SUPPORTED_OUTPUT_MODES:
+        mode = DEFAULT_OUTPUT_MODE
+    preferred_device = _extract_preferred_device(raw)
+    return {
+        "mode": mode,
+        "available_modes": list(SUPPORTED_OUTPUT_MODES),
+        "options": {
+            "usb": {
+                "preferred_device": preferred_device,
+            }
+        },
+    }
+
+
+def save_output_mode(mode: str, preferred_device: str) -> bool:
+    """Persist output mode settings into config.json."""
+    normalized_mode = _normalize_output_mode(mode)
+    if normalized_mode not in SUPPORTED_OUTPUT_MODES:
+        normalized_mode = DEFAULT_OUTPUT_MODE
+    device = preferred_device.strip() or DEFAULT_OUTPUT_DEVICE
+
+    try:
+        existing = load_raw_config()
+        output_section, options_section = _ensure_output_section(existing)
+        output_section["mode"] = normalized_mode
+        options_section["usb"]["preferredDevice"] = device
+        existing["alsaDevice"] = device
         with open(CONFIG_PATH, "w") as f:
             json.dump(existing, f, indent=2)
         return True

@@ -6,7 +6,13 @@ from typing import Any
 from unittest.mock import patch
 
 
-from web.services.config import load_config, load_raw_config, save_config
+from web.services.config import (
+    load_config,
+    load_output_mode,
+    load_raw_config,
+    save_config,
+    save_output_mode,
+)
 from web.models import CrossfeedSettings, Settings
 
 
@@ -130,6 +136,10 @@ class TestSaveConfig:
         assert saved_config["phaseType"] == "minimum"
         assert saved_config["eqEnabled"] is True
         assert saved_config["eqProfilePath"] == "/path/to/new_eq.txt"
+        assert saved_config["output"]["mode"] == "usb"
+        assert (
+            saved_config["output"]["options"]["usb"]["preferredDevice"] == "hw:NEW"
+        )
 
         # Auto-negotiated fields should be removed
         assert "inputRate" not in saved_config
@@ -155,6 +165,7 @@ class TestSaveConfig:
         saved_config = json.loads(config_file.read_text())
         assert saved_config["alsaDevice"] == "hw:USB"
         assert saved_config["upsampleRatio"] == 8
+        assert saved_config["output"]["options"]["usb"]["preferredDevice"] == "hw:USB"
 
     def test_save_with_none_eq_profile(self, tmp_path: Path) -> None:
         """Test that save_config handles None eq_profile."""
@@ -175,6 +186,34 @@ class TestSaveConfig:
 
         saved_config = json.loads(config_file.read_text())
         assert saved_config["eqProfile"] is None
+
+
+class TestOutputModeConfig:
+    """Tests for load_output_mode/save_output_mode helpers."""
+
+    def test_load_output_mode_defaults(self, tmp_path: Path, monkeypatch) -> None:
+        """When output section missing, defaults should be returned."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{}")
+        monkeypatch.setattr("web.services.config.CONFIG_PATH", config_file)
+
+        state = load_output_mode()
+        assert state["mode"] == "usb"
+        assert state["available_modes"] == ["usb"]
+        assert state["options"]["usb"]["preferred_device"] == "hw:USB"
+
+    def test_save_output_mode_updates_config(self, tmp_path: Path, monkeypatch) -> None:
+        """save_output_mode should persist output + legacy alsa fields."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"alsaDevice": "hw:OLD"}))
+        monkeypatch.setattr("web.services.config.CONFIG_PATH", config_file)
+
+        assert save_output_mode("usb", "hw:USB2")
+
+        saved_config = json.loads(config_file.read_text())
+        assert saved_config["alsaDevice"] == "hw:USB2"
+        assert saved_config["output"]["mode"] == "usb"
+        assert saved_config["output"]["options"]["usb"]["preferredDevice"] == "hw:USB2"
 
 
 class TestLoadConfig:

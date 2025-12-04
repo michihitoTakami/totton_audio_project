@@ -87,6 +87,57 @@ constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
 constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
+static constexpr std::array<const char*, 1> kSupportedOutputModes = {"usb"};
+
+static std::string normalize_output_mode(const std::string& value) {
+    std::string normalized = value;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return normalized;
+}
+
+static bool is_supported_output_mode(const std::string& normalized) {
+    for (const auto* mode : kSupportedOutputModes) {
+        if (normalized == mode) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void set_preferred_output_device(AppConfig& config, const std::string& device) {
+    std::string resolved = device;
+    if (resolved.empty()) {
+        resolved = DEFAULT_ALSA_DEVICE;
+    }
+    config.output.mode = OutputMode::Usb;
+    config.output.usb.preferredDevice = resolved;
+    config.alsaDevice = resolved;
+}
+
+static void ensure_output_config(AppConfig& config) {
+    std::string current = outputModeToString(config.output.mode);
+    std::string normalized = normalize_output_mode(current);
+    if (!is_supported_output_mode(normalized)) {
+        std::cout << "Config: Unsupported output mode '" << current << "', forcing 'usb'"
+                  << std::endl;
+        config.output.mode = OutputMode::Usb;
+        normalized = "usb";
+    }
+
+    if (config.output.usb.preferredDevice.empty()) {
+        if (!config.alsaDevice.empty()) {
+            config.output.usb.preferredDevice = config.alsaDevice;
+        } else {
+            config.output.usb.preferredDevice = DEFAULT_ALSA_DEVICE;
+        }
+    }
+
+    if (config.alsaDevice.empty()) {
+        config.alsaDevice = config.output.usb.preferredDevice;
+    }
+}
+
 // Runtime configuration (loaded from config.json)
 static AppConfig g_config;
 static std::atomic<float> g_output_gain{1.0f};
@@ -695,6 +746,8 @@ static void print_config_summary(const AppConfig& cfg) {
     int outputRate = g_input_sample_rate * cfg.upsampleRatio;
     LOG_INFO("Config:");
     LOG_INFO("  ALSA device:    {}", cfg.alsaDevice);
+    LOG_INFO("  Output mode:    {} (preferred USB device: {})",
+             outputModeToString(cfg.output.mode), cfg.output.usb.preferredDevice);
     LOG_INFO("  Input rate:     {} Hz (auto-negotiated)", g_input_sample_rate);
     LOG_INFO("  Output rate:    {} Hz ({:.1f} kHz)", outputRate, outputRate / 1000.0);
     LOG_INFO("  Buffer size:    {}", cfg.bufferSize);
@@ -890,9 +943,10 @@ static void load_runtime_config() {
     AppConfig loaded;
     bool found = loadAppConfig(CONFIG_FILE_PATH, loaded);
     g_config = loaded;
+    ensure_output_config(g_config);
 
     if (g_config.alsaDevice.empty())
-        g_config.alsaDevice = DEFAULT_ALSA_DEVICE;
+        set_preferred_output_device(g_config, DEFAULT_ALSA_DEVICE);
     if (g_config.filterPath.empty())
         g_config.filterPath = DEFAULT_FILTER_PATH;
     if (g_config.upsampleRatio <= 0)
@@ -1339,6 +1393,70 @@ static std::string handle_dac_rescan(const daemon_ipc::ZmqRequest& request) {
     return build_ok_response(request, "DAC rescan scheduled", g_dac_manager.buildDevicesJson());
 }
 
+static nlohmann::json build_output_mode_json() {
+    nlohmann::json data;
+    data["mode"] = outputModeToString(g_config.output.mode);
+
+    nlohmann::json modes = nlohmann::json::array();
+    for (const auto* mode : kSupportedOutputModes) {
+        modes.push_back(mode);
+    }
+    data["available_modes"] = modes;
+
+    nlohmann::json options;
+    options["usb"]["preferred_device"] = g_config.output.usb.preferredDevice;
+    data["options"] = options;
+    return data;
+}
+
+static std::string handle_output_mode_get(const daemon_ipc::ZmqRequest& request) {
+    return build_ok_response(request, "", build_output_mode_json());
+}
+
+static std::string handle_output_mode_set(const daemon_ipc::ZmqRequest& request) {
+    if (!request.json || !request.json->contains("params") ||
+        !(*request.json)["params"].is_object()) {
+        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params object");
+    }
+
+    const auto& params = (*request.json)["params"];
+    std::string requestedMode = outputModeToString(g_config.output.mode);
+    if (params.contains("mode") && params["mode"].is_string()) {
+        requestedMode = params["mode"].get<std::string>();
+    }
+    std::string normalizedMode = normalize_output_mode(requestedMode);
+    if (!is_supported_output_mode(normalizedMode)) {
+        return build_error_response(request, "ERR_UNSUPPORTED_MODE",
+                                    "Output mode '" + requestedMode + "' is not supported");
+    }
+
+    std::string preferredDevice = g_config.output.usb.preferredDevice;
+    if (params.contains("options") && params["options"].is_object()) {
+        const auto& options = params["options"];
+        if (options.contains("usb") && options["usb"].is_object()) {
+            const auto& usb = options["usb"];
+            if (usb.contains("preferred_device") && usb["preferred_device"].is_string()) {
+                preferredDevice = usb["preferred_device"].get<std::string>();
+            } else if (usb.contains("preferredDevice") && usb["preferredDevice"].is_string()) {
+                preferredDevice = usb["preferredDevice"].get<std::string>();
+            }
+        }
+    }
+
+    if (preferredDevice.empty()) {
+        preferredDevice = DEFAULT_ALSA_DEVICE;
+    }
+
+    if (!g_dac_manager.isValidDeviceName(preferredDevice)) {
+        return build_error_response(request, "IPC_INVALID_PARAMS", "Invalid ALSA device name");
+    }
+
+    set_preferred_output_device(g_config, preferredDevice);
+    g_dac_manager.requestDevice(preferredDevice);
+
+    return build_ok_response(request, "Output mode updated", build_output_mode_json());
+}
+
 static std::string handle_phase_type_get(const daemon_ipc::ZmqRequest& request) {
     if (!g_upsampler) {
         return build_error_response(request, "IPC_INVALID_COMMAND", "Upsampler not initialized");
@@ -1431,6 +1549,8 @@ static void register_zmq_handlers() {
     g_zmq_server->registerCommand("DAC_STATUS", handle_dac_status);
     g_zmq_server->registerCommand("DAC_SELECT", handle_dac_select);
     g_zmq_server->registerCommand("DAC_RESCAN", handle_dac_rescan);
+    g_zmq_server->registerCommand("OUTPUT_MODE_GET", handle_output_mode_get);
+    g_zmq_server->registerCommand("OUTPUT_MODE_SET", handle_output_mode_set);
     g_zmq_server->registerCommand("PHASE_TYPE_GET", handle_phase_type_get);
     g_zmq_server->registerCommand("PHASE_TYPE_SET", handle_phase_type_set);
 
@@ -2378,7 +2498,7 @@ int main(int argc, char* argv[]) {
 
         // Environment variable overrides config.json
         if (const char* env_dev = std::getenv("ALSA_DEVICE")) {
-            g_config.alsaDevice = env_dev;
+            set_preferred_output_device(g_config, env_dev);
             std::cout << "Config: ALSA_DEVICE env override: " << env_dev << std::endl;
         }
 

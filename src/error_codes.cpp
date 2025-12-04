@@ -51,6 +51,7 @@ static const std::unordered_map<ErrorCode, const char*> kErrorCodeStrings = {
     {ErrorCode::VALIDATION_FILE_NOT_FOUND, "VALIDATION_FILE_NOT_FOUND"},
     {ErrorCode::VALIDATION_PROFILE_EXISTS, "VALIDATION_PROFILE_EXISTS"},
     {ErrorCode::VALIDATION_INVALID_HEADPHONE, "VALIDATION_INVALID_HEADPHONE"},
+    {ErrorCode::ERR_UNSUPPORTED_MODE, "ERR_UNSUPPORTED_MODE"},
 
     // Internal
     {ErrorCode::INTERNAL_UNKNOWN, "INTERNAL_UNKNOWN"},
@@ -101,6 +102,7 @@ static const std::unordered_map<ErrorCode, int> kHttpStatusMap = {
     {ErrorCode::VALIDATION_FILE_NOT_FOUND, 404},
     {ErrorCode::VALIDATION_PROFILE_EXISTS, 409},
     {ErrorCode::VALIDATION_INVALID_HEADPHONE, 404},
+    {ErrorCode::ERR_UNSUPPORTED_MODE, 400},
 
     // Internal
     {ErrorCode::INTERNAL_UNKNOWN, 500},
@@ -151,6 +153,7 @@ static const std::unordered_map<std::string, ErrorCode> kStringToErrorCode = {
     {"VALIDATION_FILE_NOT_FOUND", ErrorCode::VALIDATION_FILE_NOT_FOUND},
     {"VALIDATION_PROFILE_EXISTS", ErrorCode::VALIDATION_PROFILE_EXISTS},
     {"VALIDATION_INVALID_HEADPHONE", ErrorCode::VALIDATION_INVALID_HEADPHONE},
+    {"ERR_UNSUPPORTED_MODE", ErrorCode::ERR_UNSUPPORTED_MODE},
 
     // Internal
     {"INTERNAL_UNKNOWN", ErrorCode::INTERNAL_UNKNOWN},
