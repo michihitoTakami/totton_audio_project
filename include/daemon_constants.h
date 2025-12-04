@@ -16,6 +16,11 @@ constexpr int CHANNELS = 2;
 constexpr int DEFAULT_OUTPUT_SAMPLE_RATE =
     DEFAULT_INPUT_SAMPLE_RATE * DEFAULT_UPSAMPLE_RATIO;  // 705600 Hz
 
+// Output buffer safety limits
+constexpr float MAX_OUTPUT_BUFFER_SECONDS = 2.0f;  // Keep at most 2 seconds of audio
+constexpr size_t DEFAULT_MAX_OUTPUT_BUFFER_FRAMES =
+    static_cast<size_t>(DEFAULT_OUTPUT_SAMPLE_RATE * MAX_OUTPUT_BUFFER_SECONDS);
+
 // Peak limiter defaults
 constexpr float DEFAULT_HEADROOM_TARGET = 0.92f;
 constexpr float MIN_HEADROOM_TARGET = 0.5f;
