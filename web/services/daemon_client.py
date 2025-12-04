@@ -8,8 +8,7 @@ from typing import Any
 import zmq
 
 from ..constants import (
-    DAEMON_PHASE_LINEAR,
-    PHASE_TYPE_HYBRID,
+    PHASE_TYPE_LINEAR,
     PHASE_TYPE_MINIMUM,
     ZEROMQ_IPC_PATH,
 )
@@ -277,7 +276,7 @@ class DaemonClient:
         Get current phase type from daemon.
 
         Returns:
-            (success, {"phase_type": "minimum"|"hybrid"}) on success
+            (success, {"phase_type": "minimum"|"linear"}) on success
             (False, error_message) on failure
         """
         result = self.send_command_v2("PHASE_TYPE_GET")
@@ -285,10 +284,9 @@ class DaemonClient:
             if isinstance(result.data, dict):
                 phase = result.data.get("phase_type")
                 if isinstance(phase, str):
-                    if phase in (DAEMON_PHASE_LINEAR, PHASE_TYPE_HYBRID):
-                        result.data["phase_type"] = PHASE_TYPE_HYBRID
-                    else:
-                        result.data["phase_type"] = PHASE_TYPE_MINIMUM
+                    result.data["phase_type"] = (
+                        phase if phase in ["minimum", "linear"] else PHASE_TYPE_MINIMUM
+                    )
                 return True, result.data
             if isinstance(result.data, str):
                 try:
@@ -296,10 +294,11 @@ class DaemonClient:
                     if isinstance(data, dict):
                         phase = data.get("phase_type")
                         if isinstance(phase, str):
-                            if phase in (DAEMON_PHASE_LINEAR, PHASE_TYPE_HYBRID):
-                                data["phase_type"] = PHASE_TYPE_HYBRID
-                            else:
-                                data["phase_type"] = PHASE_TYPE_MINIMUM
+                            data["phase_type"] = (
+                                phase
+                                if phase in ["minimum", "linear"]
+                                else PHASE_TYPE_MINIMUM
+                            )
                     return True, data
                 except json.JSONDecodeError:
                     return False, f"Invalid JSON response: {result.data}"
@@ -311,21 +310,16 @@ class DaemonClient:
         Set phase type on daemon.
 
         Args:
-            phase_type: "minimum" or "hybrid"
+            phase_type: "minimum" or "linear"
 
         Returns:
             (success, message) tuple
         """
         normalized = str(phase_type).lower()
-        allowed = {PHASE_TYPE_MINIMUM, PHASE_TYPE_HYBRID, DAEMON_PHASE_LINEAR}
+        allowed = {PHASE_TYPE_MINIMUM, PHASE_TYPE_LINEAR}
         if normalized not in allowed:
             return False, f"Invalid phase type: {phase_type}"
-        daemon_value = (
-            PHASE_TYPE_HYBRID
-            if normalized in (PHASE_TYPE_HYBRID, DAEMON_PHASE_LINEAR)
-            else PHASE_TYPE_MINIMUM
-        )
-        return self.send_command(f"PHASE_TYPE_SET:{daemon_value}")
+        return self.send_command(f"PHASE_TYPE_SET:{normalized}")
 
     # ========== JSON Command Methods (#150) ==========
 

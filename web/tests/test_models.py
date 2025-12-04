@@ -144,16 +144,16 @@ class TestPhaseType:
     def test_phase_type_response_with_warning(self):
         """Test PhaseTypeResponse with warning."""
         response = PhaseTypeResponse(
-            phase_type="hybrid",
+            phase_type="linear",
             latency_warning="~6.7ms alignment above 150 Hz",
         )
-        assert response.phase_type == "hybrid"
+        assert response.phase_type == "linear"
         assert response.latency_warning is not None
 
     def test_phase_type_update_request(self):
         """Test PhaseTypeUpdateRequest model."""
-        request = PhaseTypeUpdateRequest(phase_type="hybrid")
-        assert request.phase_type == "hybrid"
+        request = PhaseTypeUpdateRequest(phase_type="linear")
+        assert request.phase_type == "linear"
 
 
 class TestRtpSessionCreate:
@@ -214,6 +214,6 @@ class TestModelSerialization:
 
     def test_phase_type_request_serialization(self):
         """Test PhaseTypeUpdateRequest serialization."""
-        request = PhaseTypeUpdateRequest(phase_type="hybrid")
+        request = PhaseTypeUpdateRequest(phase_type="linear")
         data = request.model_dump()
-        assert data["phase_type"] == "hybrid"
+        assert data["phase_type"] == "linear"

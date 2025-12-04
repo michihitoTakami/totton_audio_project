@@ -123,15 +123,15 @@
                 <label for="phaseType">{{ t.get('dashboard.phase_type.label') }}</label>
                 <select id="phaseType" x-model="phaseType.selected" @change="changePhaseType">
                     <option value="minimum">{{ t.get('dashboard.phase_type.minimum') }}</option>
-                    <option value="hybrid">{{ t.get('dashboard.phase_type.hybrid') }}</option>
+                    <option value="linear">{{ t.get('dashboard.phase_type.linear') }}</option>
                 </select>
             </div>
             <div class="info-text">
                 <span class="icon">ℹ️</span>
                 <span x-show="phaseType.selected === 'minimum'">{{ t.get('dashboard.phase_type.info_minimum') }}</span>
-                <span x-show="phaseType.selected === 'hybrid'">{{ t.get('dashboard.phase_type.info_hybrid') }}</span>
+                <span x-show="phaseType.selected === 'linear'">{{ t.get('dashboard.phase_type.info_linear') }}</span>
             </div>
-            <div class="alert alert-warning" x-show="phaseType.selected === 'hybrid' && lowLatency.enabled">
+            <div class="alert alert-warning" x-show="phaseType.selected === 'linear' && lowLatency.enabled">
                 {{ t.get('dashboard.phase_type.warning') }}
             </div>
         </div>

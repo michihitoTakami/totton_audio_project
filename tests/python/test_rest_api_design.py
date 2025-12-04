@@ -268,7 +268,7 @@ class TestPhaseTypeEndpoints:
 
         # Should have PhaseTypeResponse model fields
         assert "phase_type" in data, "Missing field: phase_type"
-        assert data["phase_type"] in ["minimum", "hybrid"], "Invalid phase_type value"
+        assert data["phase_type"] in ["minimum", "linear"], "Invalid phase_type value"
         # latency_warning is optional (null for minimum phase)
         assert "latency_warning" in data
 

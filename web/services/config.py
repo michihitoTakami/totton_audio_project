@@ -8,9 +8,7 @@ from pydantic import ValidationError
 
 from ..constants import (
     CONFIG_PATH,
-    DAEMON_PHASE_LINEAR,
     EQ_PROFILES_DIR,
-    PHASE_TYPE_HYBRID,
     PHASE_TYPE_MINIMUM,
 )
 from ..models import (
@@ -213,11 +211,7 @@ def save_partitioned_convolution_settings(
 def save_phase_type(phase_type: str) -> bool:
     """Persist phaseType field in config.json."""
     phase = str(phase_type).lower()
-    normalized = (
-        PHASE_TYPE_HYBRID
-        if phase in (DAEMON_PHASE_LINEAR, PHASE_TYPE_HYBRID)
-        else PHASE_TYPE_MINIMUM
-    )
+    normalized = phase if phase in ["minimum", "linear"] else PHASE_TYPE_MINIMUM
     try:
         existing = load_raw_config()
         existing["phaseType"] = normalized

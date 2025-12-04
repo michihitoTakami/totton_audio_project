@@ -434,14 +434,14 @@ def get_embedded_html() -> str:
             <label>Filter Phase</label>
             <select id="phaseType">
                 <option value="minimum" title="全帯域を最小位相で処理（最小レイテンシ）">Minimum Phase (推奨)</option>
-                <option value="hybrid" title="100Hz以下は最小位相 / 100Hz以上は一定群遅延（約10ms整列）">Hybrid Phase (100Hz以下最小 / 100Hz以上整列)</option>
+                <option value="linear" title="全帯域で群遅延が一定（完全な位相直線性、約0.45秒のレイテンシ）">Linear Phase (全帯域群遅延一定)</option>
             </select>
             <div style="font-size:12px; color:#9fb3ff; margin-top:8px; line-height:1.4;">
-                ハイブリッドは100Hz以下を最小位相、100Hz以上を一定群遅延（約10ms整列）に揃え、定位を維持しながら低域のプレリンギングを抑えます。
+                線形位相は全帯域で群遅延が一定です（完全な位相直線性）。約0.45秒のレイテンシが発生します（705.6kHz時）。
             </div>
         </div>
         <div id="phaseWarning" class="warning-banner">
-            ⚠️ ハイブリッドは100Hz以下を最小位相、100Hz以上を一定群遅延（約10ms整列）で処理します。約10msの整列ディレイが発生し、低遅延モードとは併用できません。
+            ⚠️ 線形位相は全帯域で群遅延が一定です（完全な位相直線性）。約0.45秒のレイテンシが発生し（705.6kHz時）、低遅延モードとは併用できません。
         </div>
         <div id="phaseMessage" class="message"></div>
     </div>
@@ -1266,14 +1266,14 @@ def get_embedded_html() -> str:
         // Phase Type Functions
         let currentPhaseType = 'minimum';
         let isLowLatencyModeEnabled = false;
-        const HYBRID_PHASE_NOTE = 'ハイブリッドは100Hz以下を最小位相、100Hz以上を一定群遅延（約10ms整列）で処理します。';
-        const HYBRID_PHASE_WARNING_TEXT = HYBRID_PHASE_NOTE + ' 約10msの整列ディレイが発生し、低遅延モードとは併用できません。';
+        const LINEAR_PHASE_NOTE = '線形位相は全帯域で群遅延が一定です（完全な位相直線性）。';
+        const LINEAR_PHASE_WARNING_TEXT = LINEAR_PHASE_NOTE + ' 約0.45秒のレイテンシが発生し（705.6kHz時）、低遅延モードとは併用できません。';
 
         function updatePhaseOptionAvailability() {
-            const hybridOption = document.querySelector('#phaseType option[value="hybrid"]');
-            if (!hybridOption) return;
-            hybridOption.disabled = isLowLatencyModeEnabled;
-            hybridOption.title = isLowLatencyModeEnabled ? '低遅延モード中は選択できません' : '100Hz以下は最小位相 / 100Hz以上は一定群遅延（約10ms整列）';
+            const linearOption = document.querySelector('#phaseType option[value="linear"]');
+            if (!linearOption) return;
+            linearOption.disabled = isLowLatencyModeEnabled;
+            linearOption.title = isLowLatencyModeEnabled ? '低遅延モード中は選択できません' : '全帯域で群遅延が一定（完全な位相直線性、約0.45秒のレイテンシ）';
         }
 
         async function fetchPartitionStatus() {
@@ -1331,8 +1331,8 @@ def get_embedded_html() -> str:
 
         function updatePhaseWarning(phaseType, apiWarning) {
             const warning = document.getElementById('phaseWarning');
-            const message = apiWarning || HYBRID_PHASE_WARNING_TEXT;
-            if (phaseType === 'hybrid') {
+            const message = apiWarning || LINEAR_PHASE_WARNING_TEXT;
+            if (phaseType === 'linear') {
                 warning.textContent = '⚠️ ' + message;
                 warning.classList.add('visible');
                 return;
@@ -1371,7 +1371,7 @@ def get_embedded_html() -> str:
                     if (data.data && data.data.partition_disabled) {
                         isLowLatencyModeEnabled = false;
                         updatePhaseOptionAvailability();
-                        successMessage += '（ハイブリッドに切り替えたため低遅延モードを自動で無効化しました）';
+                        successMessage += '（線形位相に切り替えたため低遅延モードを自動で無効化しました）';
                     }
                     showPhaseMessage(successMessage, true);
                     // Refresh partition status to keep availability in sync
