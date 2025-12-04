@@ -1,6 +1,8 @@
 #ifndef DAEMON_CONSTANTS_H
 #define DAEMON_CONSTANTS_H
 
+#include <cstddef>  // for size_t
+
 // Common constants shared between alsa_daemon and pipewire_daemon
 // Issue #105: Daemon common code extraction
 
@@ -15,6 +17,11 @@ constexpr int CHANNELS = 2;
 // Derived constants
 constexpr int DEFAULT_OUTPUT_SAMPLE_RATE =
     DEFAULT_INPUT_SAMPLE_RATE * DEFAULT_UPSAMPLE_RATIO;  // 705600 Hz
+
+// Output buffer safety limits
+constexpr float MAX_OUTPUT_BUFFER_SECONDS = 2.0f;  // Keep at most 2 seconds of audio
+constexpr size_t DEFAULT_MAX_OUTPUT_BUFFER_FRAMES =
+    static_cast<size_t>(DEFAULT_OUTPUT_SAMPLE_RATE * MAX_OUTPUT_BUFFER_SECONDS);
 
 // Peak limiter defaults
 constexpr float DEFAULT_HEADROOM_TARGET = 0.92f;

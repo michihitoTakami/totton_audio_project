@@ -221,6 +221,6 @@ ls -lh data/coefficients/filter_*_*x_2m_hybrid_phase.bin
 フィルタがない場合は先に生成してください：
 
 ```bash
-uv run python scripts/generate_filter.py --generate-all          # 最小位相
-uv run python scripts/generate_mixed_phase.py --generate-all     # 混合位相（100Hz/10ms）
+uv run python scripts/generate_minimum_phase.py --generate-all          # 最小位相
+uv run python scripts/generate_linear_phase.py --generate-all     # 線形位相（100Hz/10ms）
 ```

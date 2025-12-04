@@ -25,7 +25,7 @@ aqua i
 uv sync
 
 # 5. フィルタ係数の生成
-uv run python scripts/generate_filter.py --taps 1000000
+uv run python scripts/generate_minimum_phase.py --taps 1000000
 
 # 6. ビルド
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -106,10 +106,10 @@ uv sync --all-groups
 
 ```bash
 # 1M-tap minimum phase FIRフィルタを生成
-uv run python scripts/generate_filter.py --taps 1000000
+uv run python scripts/generate_minimum_phase.py --taps 1000000
 
 # 2M-tapを生成する場合 (メモリ8GB以上推奨)
-uv run python scripts/generate_filter.py --taps 2000000 --kaiser-beta 55
+uv run python scripts/generate_minimum_phase.py --taps 2000000 --kaiser-beta 55
 ```
 
 生成されるファイル：

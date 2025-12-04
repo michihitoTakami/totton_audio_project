@@ -198,17 +198,20 @@ graph TD
 uv sync
 
 # Generate 640k-tap minimum phase filter (default β≈28)
-uv run python scripts/generate_filter.py --taps 640000
+uv run python scripts/generate_minimum_phase.py --taps 640000
 
-# Generate 640k-tap mixed-phase filter (≤100 Hz min-phase, >100 Hz ~10 ms aligned)
-uv run python scripts/generate_mixed_phase.py --taps 640000
+# Generate 640k-tap linear phase filter
+uv run python scripts/generate_linear_phase.py --taps 640000
 
-# Generate all 8 configurations (44k/48k × 2x/4x/8x/16x)
-uv run python scripts/generate_mixed_phase.py --generate-all
+# Generate all 8 minimum-phase configurations
+uv run python scripts/generate_minimum_phase.py --generate-all
 
-# Output (example for hybrid phase, 44.1kHz input, 16x upsample):
-# - data/coefficients/filter_44k_16x_2m_hybrid_phase.bin (2.44 MB binary)
-# - data/coefficients/filter_44k_16x_2m_hybrid_phase.json (metadata)
+# Generate all 8 linear-phase configurations
+uv run python scripts/generate_linear_phase.py --generate-all
+
+# Output (example for minimum-phase result, 44.1kHz input, 16x upsample):
+# - data/coefficients/filter_44k_16x_2m_min_phase.bin (2.44 MB binary)
+# - data/coefficients/filter_44k_16x_2m_min_phase.json (metadata)
 # - plots/analysis/44k_16x_* (validation plots)
 ```
 

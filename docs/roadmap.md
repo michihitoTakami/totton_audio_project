@@ -41,8 +41,8 @@ Phase 3: Hardware Integration         [                    ] 0%
   - QAチェックリストへ低遅延モードの回帰項目を追加
 
 - [x] **Phase Type Selection** (#165, #166, #167)
-  - Minimum Phase / Mixed Phase 切り替え機能
-  - `scripts/generate_mixed_phase.py` による100Hzクロスオーバ/約10ms整列フィルタ
+  - Minimum Phase / Linear Phase 切り替え機能
+  - `scripts/generate_linear_phase.py` による線形位相フィルタ生成
   - C++/CUDA側の位相タイプ対応（遅延計算含む）
   - 設定システム（`PhaseType` enum）
 
@@ -101,27 +101,27 @@ Phase 3: Hardware Integration         [                    ] 0%
 
 | Rate Family | Input Rate | Upsample Ratio | Output Rate | Coefficient File |
 |-------------|------------|----------------|-------------|------------------|
-| 44.1k系 | 44,100 Hz | 16x | 705,600 Hz | `filter_44k_16x_2m_hybrid_phase.bin` |
-| 44.1k系 | 88,200 Hz | 8x | 705,600 Hz | `filter_44k_8x_2m_hybrid_phase.bin` |
-| 44.1k系 | 176,400 Hz | 4x | 705,600 Hz | `filter_44k_4x_2m_hybrid_phase.bin` |
-| 44.1k系 | 352,800 Hz | 2x | 705,600 Hz | `filter_44k_2x_2m_hybrid_phase.bin` |
-| 48k系 | 48,000 Hz | 16x | 768,000 Hz | `filter_48k_16x_2m_hybrid_phase.bin` |
-| 48k系 | 96,000 Hz | 8x | 768,000 Hz | `filter_48k_8x_2m_hybrid_phase.bin` |
-| 48k系 | 192,000 Hz | 4x | 768,000 Hz | `filter_48k_4x_2m_hybrid_phase.bin` |
-| 48k系 | 384,000 Hz | 2x | 768,000 Hz | `filter_48k_2x_2m_hybrid_phase.bin` |
+| 44.1k系 | 44,100 Hz | 16x | 705,600 Hz | `filter_44k_16x_2m_min_phase.bin` |
+| 44.1k系 | 88,200 Hz | 8x | 705,600 Hz | `filter_44k_8x_2m_min_phase.bin` |
+| 44.1k系 | 176,400 Hz | 4x | 705,600 Hz | `filter_44k_4x_2m_min_phase.bin` |
+| 44.1k系 | 352,800 Hz | 2x | 705,600 Hz | `filter_44k_2x_2m_min_phase.bin` |
+| 48k系 | 48,000 Hz | 16x | 768,000 Hz | `filter_48k_16x_2m_min_phase.bin` |
+| 48k系 | 96,000 Hz | 8x | 768,000 Hz | `filter_48k_8x_2m_min_phase.bin` |
+| 48k系 | 192,000 Hz | 4x | 768,000 Hz | `filter_48k_4x_2m_min_phase.bin` |
+| 48k系 | 384,000 Hz | 2x | 768,000 Hz | `filter_48k_2x_2m_min_phase.bin` |
 
 ### 実装状況
 
 #### 1. 係数生成 ✅
 - [x] 全8構成の最小位相フィルタ生成スクリプト
   ```bash
-  uv run python scripts/generate_filter.py --generate-all --taps 2000000
+  uv run python scripts/generate_minimum_phase.py --generate-all --taps 2000000
   ```
-- [x] 全8構成の混合位相フィルタ生成スクリプト（100Hz/約10ms）
+- [x] 全8構成の線形位相フィルタ生成スクリプト
   ```bash
-  uv run python scripts/generate_mixed_phase.py --generate-all --taps 640000
+  uv run python scripts/generate_linear_phase.py --generate-all --taps 640000
   ```
-- [x] C++が期待するファイル名パターンに対応 (`filter_{family}_{ratio}x_{taps}_{phase_label}.bin` 例: `_hybrid_phase`)
+- [x] C++が期待するファイル名パターンに対応 (`filter_{family}_{ratio}x_{taps}_{phase_label}.bin` 例: `_min_phase`)
 
 #### 2. GPUUpsampler Multi-Rate対応 ✅
 - [x] `MULTI_RATE_CONFIGS`: 全8構成定義 (`include/convolution_engine.h`)
@@ -148,7 +148,7 @@ Phase 3: Hardware Integration         [                    ] 0%
 Rate Detection: 48k Family (96000 % 48000 == 0)
   │
   ▼
-Load Coefficients: filter_48k_16x_2m_hybrid_phase.bin
+Load Coefficients: filter_48k_16x_2m_min_phase.bin
   │
   ▼
 Strategy: 96k × 8 = 768k (within DAC capability)

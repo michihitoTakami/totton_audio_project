@@ -38,16 +38,16 @@ uv sync
 
 ```bash
 # 全構成（44k/48k × 2x/4x/8x/16x）最小位相フィルタ
-uv run python scripts/generate_filter.py --generate-all
+uv run python scripts/generate_minimum_phase.py --generate-all
 
-# 全構成の混合位相フィルタ（100Hzクロスオーバ/約10ms整列）
-uv run python scripts/generate_mixed_phase.py --generate-all
+# 全構成の線形位相フィルタ
+uv run python scripts/generate_linear_phase.py --generate-all
 
 # 生成されるファイル:
 # data/coefficients/filter_44k_{2,4,8,16}x_2m_min_phase.bin
-# data/coefficients/filter_44k_{2,4,8,16}x_2m_hybrid_phase.bin
+# data/coefficients/filter_44k_{2,4,8,16}x_2m_linear_phase.bin
 # data/coefficients/filter_48k_{2,4,8,16}x_2m_min_phase.bin
-# data/coefficients/filter_48k_{2,4,8,16}x_2m_hybrid_phase.bin
+# data/coefficients/filter_48k_{2,4,8,16}x_2m_linear_phase.bin
 # 各ファイルに対応する.jsonメタデータ
 ```
 
@@ -109,7 +109,7 @@ cmake -B build -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
 
 ```bash
 # メモリ不足の場合、個別に生成
-uv run python scripts/generate_filter.py --input-rate 44100 --upsample-ratio 16
+uv run python scripts/generate_minimum_phase.py --input-rate 44100 --upsample-ratio 16
 
 # 依存関係の確認
 uv pip list | grep -E "numpy|scipy"

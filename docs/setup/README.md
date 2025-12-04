@@ -95,10 +95,10 @@ uv sync
 
 ```bash
 # 全構成（44k/48k × 2x/4x/8x/16x）最小位相フィルタ
-uv run python scripts/generate_filter.py --generate-all
+uv run python scripts/generate_minimum_phase.py --generate-all
 
-# 全構成の混合位相フィルタ（100Hzクロスオーバ/約10ms整列）
-uv run python scripts/generate_mixed_phase.py --generate-all
+# 全構成の線形位相フィルタ（100Hzクロスオーバ/約10ms整列）
+uv run python scripts/generate_linear_phase.py --generate-all
 ```
 
 ### Step 3: ビルド
