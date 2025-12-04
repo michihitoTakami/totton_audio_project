@@ -33,8 +33,8 @@ class TestPhaseTypeGet:
             assert data["phase_type"] == "minimum"
             assert data["latency_warning"] is None
 
-    def test_get_phase_type_hybrid_with_warning(self):
-        """Test getting hybrid phase type includes latency warning."""
+    def test_get_phase_type_linear_with_warning(self):
+        """Test getting linear phase type includes latency warning."""
         with patch("web.routers.daemon.get_daemon_client") as mock_client:
             mock_instance = MagicMock()
             mock_instance.__enter__ = MagicMock(return_value=mock_instance)
@@ -48,9 +48,11 @@ class TestPhaseTypeGet:
 
             assert response.status_code == 200
             data = response.json()
-            assert data["phase_type"] == "hybrid"
+            assert data["phase_type"] == "linear"
             assert data["latency_warning"] is not None
-            assert "10ms" in data["latency_warning"] or "10" in data["latency_warning"]
+            assert (
+                "0.45" in data["latency_warning"] or "705.6" in data["latency_warning"]
+            )
 
     def test_get_phase_type_daemon_error(self):
         """Test error handling when daemon communication fails."""
@@ -108,8 +110,8 @@ class TestPhaseTypeSet:
             mock_save_phase.assert_called_once_with("minimum")
             mock_save_partition.assert_not_called()
 
-    def test_set_phase_type_hybrid(self):
-        """Test setting phase type to hybrid."""
+    def test_set_phase_type_linear(self):
+        """Test setting phase type to linear."""
         with patch("web.routers.daemon.get_daemon_client") as mock_client, patch(
             "web.routers.daemon.save_phase_type"
         ) as mock_save_phase, patch(
@@ -134,15 +136,15 @@ class TestPhaseTypeSet:
 
             response = client.put(
                 "/daemon/phase-type",
-                json={"phase_type": "hybrid"},
+                json={"phase_type": "linear"},
             )
 
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
-            assert data["data"]["phase_type"] == "hybrid"
+            assert data["data"]["phase_type"] == "linear"
             assert data["data"]["partition_disabled"] is True
-            mock_save_phase.assert_called_once_with("hybrid")
+            mock_save_phase.assert_called_once_with("linear")
             mock_save_partition.assert_called_once()
 
     def test_set_phase_type_invalid(self):
@@ -176,7 +178,7 @@ class TestPhaseTypeSet:
 
             response = client.put(
                 "/daemon/phase-type",
-                json={"phase_type": "hybrid"},
+                json={"phase_type": "linear"},
             )
 
             assert response.status_code == 503
@@ -199,7 +201,7 @@ class TestDaemonClientPhaseType:
             success, result = client.get_phase_type()
 
             assert success is True
-            assert result == {"phase_type": "hybrid"}
+            assert result == {"phase_type": "linear"}
 
     def test_get_phase_type_invalid_json(self):
         """Test that get_phase_type handles daemon error."""
@@ -238,6 +240,6 @@ class TestDaemonClientPhaseType:
         with patch.object(client, "send_command") as mock_send:
             mock_send.return_value = (True, "Phase type set")
 
-            client.set_phase_type("hybrid")
+            client.set_phase_type("linear")
 
-            mock_send.assert_called_once_with("PHASE_TYPE_SET:hybrid")
+            mock_send.assert_called_once_with("PHASE_TYPE_SET:linear")
