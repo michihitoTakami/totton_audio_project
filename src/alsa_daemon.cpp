@@ -1187,7 +1187,7 @@ static std::string handle_crossfeed_set_combined(const daemon_ipc::ZmqRequest& r
     auto decodedRR = Base64::decode(combinedRR);
 
     constexpr size_t CUFFT_COMPLEX_SIZE = 8;
-    constexpr size_t MAX_FILTER_BYTES = 256 * 1024;
+    constexpr size_t MAX_FILTER_BYTES = static_cast<size_t>(256 * 1024);
 
     bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
                      (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
@@ -1813,7 +1813,7 @@ static void on_input_process(void* userdata) {
     }
 
     struct spa_buffer* spa_buf = buf->buffer;
-    float* input_samples = static_cast<float*>(spa_buf->datas[0].data);
+    auto* input_samples = static_cast<float*>(spa_buf->datas[0].data);
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
     if (input_samples && n_frames > 0 && data->gpu_ready) {
@@ -1944,7 +1944,7 @@ static bool handle_rate_change(int detected_sample_rate) {
             if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
                 size_t filterFftSize = g_upsampler->getFilterFftSize();
                 size_t fullFftSize = g_upsampler->getFullFftSize();
-                double outputSampleRate = static_cast<double>(new_output_rate);
+                auto outputSampleRate = static_cast<double>(new_output_rate);
                 auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
                                                                 outputSampleRate, eqProfile);
 
@@ -1996,10 +1996,15 @@ static snd_pcm_t* open_and_configure_pcm(const std::string& device) {
     snd_pcm_hw_params_alloca(&hw_params);
     snd_pcm_hw_params_any(pcm_handle, hw_params);
 
-    if ((err = snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
-            0 ||
-        (err = snd_pcm_hw_params_set_format(pcm_handle, hw_params, SND_PCM_FORMAT_S32_LE)) < 0) {
-        std::cerr << "ALSA: Cannot set access/format: " << snd_strerror(err) << std::endl;
+    err = snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    if (err < 0) {
+        std::cerr << "ALSA: Cannot set access: " << snd_strerror(err) << std::endl;
+        snd_pcm_close(pcm_handle);
+        return nullptr;
+    }
+    err = snd_pcm_hw_params_set_format(pcm_handle, hw_params, SND_PCM_FORMAT_S32_LE);
+    if (err < 0) {
+        std::cerr << "ALSA: Cannot set format: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
         return nullptr;
     }
@@ -2008,13 +2013,15 @@ static snd_pcm_t* open_and_configure_pcm(const std::string& device) {
     if (configuredOutputRate <= 0) {
         configuredOutputRate = g_input_sample_rate * g_config.upsampleRatio;
     }
-    unsigned int rate = static_cast<unsigned int>(configuredOutputRate);
-    if ((err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0)) < 0) {
+    auto rate = static_cast<unsigned int>(configuredOutputRate);
+    err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0);
+    if (err < 0) {
         std::cerr << "ALSA: Cannot set sample rate: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
         return nullptr;
     }
-    if ((err = snd_pcm_hw_params_set_channels(pcm_handle, hw_params, CHANNELS)) < 0) {
+    err = snd_pcm_hw_params_set_channels(pcm_handle, hw_params, CHANNELS);
+    if (err < 0) {
         std::cerr << "ALSA: Cannot set channel count: " << snd_strerror(err) << std::endl;
         snd_pcm_close(pcm_handle);
         return nullptr;
@@ -2212,8 +2219,9 @@ void alsa_output_thread() {
                 while (g_running && !pcm_handle) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
                     currentDevice = g_dac_manager.waitForSelection();
-                    if (currentDevice.empty())
+                    if (currentDevice.empty()) {
                         continue;
+                    }
                     pcm_handle = open_and_configure_pcm(currentDevice);
                 }
                 if (pcm_handle) {
@@ -2285,8 +2293,9 @@ void alsa_output_thread() {
                     if (!pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
                         currentDevice = g_dac_manager.waitForSelection();
-                        if (currentDevice.empty())
+                        if (currentDevice.empty()) {
                             break;
+                        }
                     }
                 }
                 if (!pcm_handle) {
@@ -2304,8 +2313,9 @@ void alsa_output_thread() {
                    !g_running;
         });
 
-        if (!g_running)
+        if (!g_running) {
             break;
+        }
 
         size_t available = g_output_buffer_left.size() - g_output_read_pos;
         if (available >= period_size) {
@@ -2414,8 +2424,9 @@ void alsa_output_thread() {
                         if (!next.empty()) {
                             currentDevice = next;
                         }
-                        if (currentDevice.empty())
+                        if (currentDevice.empty()) {
                             continue;
+                        }
                         pcm_handle = open_and_configure_pcm(currentDevice);
                     }
                     if (pcm_handle) {
@@ -2476,8 +2487,9 @@ void alsa_output_thread() {
                         if (!next.empty()) {
                             currentDevice = next;
                         }
-                        if (currentDevice.empty())
+                        if (currentDevice.empty()) {
                             continue;
+                        }
                         pcm_handle = open_and_configure_pcm(currentDevice);
                     }
                     if (pcm_handle) {
