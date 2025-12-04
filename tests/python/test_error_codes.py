@@ -20,8 +20,8 @@ class TestErrorCodeEnum:
     """Tests for ErrorCode enum."""
 
     def test_all_codes_defined(self):
-        """Verify all error codes are defined (30 base + 4 crossfeed + 2 RTP)."""
-        assert len(ErrorCode) == 36
+        """Verify all error codes are defined (30 base + 4 crossfeed + 2 RTP + 1 output)."""
+        assert len(ErrorCode) == 37
 
     def test_no_duplicate_values(self):
         """Verify no duplicate enum values."""
@@ -95,8 +95,8 @@ class TestErrorMappings:
     """Tests for ERROR_MAPPINGS dictionary."""
 
     def test_all_codes_have_mappings(self):
-        """Verify all error codes have mappings (30 base + 4 crossfeed + 2 RTP)."""
-        assert len(ERROR_MAPPINGS) == 36
+        """Verify all error codes have mappings (30 base + 4 crossfeed + 2 RTP + 1 output)."""
+        assert len(ERROR_MAPPINGS) == 37
         for code in ErrorCode:
             assert code in ERROR_MAPPINGS, f"Missing mapping for {code}"
 

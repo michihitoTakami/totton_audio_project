@@ -14,23 +14,23 @@ namespace ZMQComm {
 
 // Command types from Control Plane to Data Plane
 enum class CommandType {
-    LOAD_IR,      // Load IR coefficients
-    SET_GAIN,     // Set output gain
-    SOFT_RESET,   // Soft reset (clear buffers)
-    GET_STATUS,   // Get current status
-    SWITCH_RATE,  // Switch rate family (44k/48k)
-    APPLY_EQ,     // Apply EQ magnitude
-    RESTORE_EQ,   // Restore original filter (remove EQ)
-    SHUTDOWN,     // Shutdown daemon
+    LOAD_IR,          // Load IR coefficients
+    SET_GAIN,         // Set output gain
+    SOFT_RESET,       // Soft reset (clear buffers)
+    GET_STATUS,       // Get current status
+    SWITCH_RATE,      // Switch rate family (44k/48k)
+    APPLY_EQ,         // Apply EQ magnitude
+    RESTORE_EQ,       // Restore original filter (remove EQ)
+    SHUTDOWN,         // Shutdown daemon
     OUTPUT_MODE_GET,  // Get current output mode + options
     OUTPUT_MODE_SET,  // Set output mode + options
 
     // Crossfeed commands (#150)
-    CROSSFEED_ENABLE,            // Enable crossfeed processing
-    CROSSFEED_DISABLE,           // Disable crossfeed processing
-    CROSSFEED_SET_COMBINED,      // Set combined filter (4ch x 2 rate families, Base64 encoded)
-    CROSSFEED_SET_SIZE,          // Set head size (xs/s/m/l/xl)
-    CROSSFEED_GET_STATUS,        // Get crossfeed status (enabled, head_size, headphone)
+    CROSSFEED_ENABLE,              // Enable crossfeed processing
+    CROSSFEED_DISABLE,             // Disable crossfeed processing
+    CROSSFEED_SET_COMBINED,        // Set combined filter (4ch x 2 rate families, Base64 encoded)
+    CROSSFEED_SET_SIZE,            // Set head size (xs/s/m/l/xl)
+    CROSSFEED_GET_STATUS,          // Get crossfeed status (enabled, head_size, headphone)
     CROSSFEED_GENERATE_WOODWORTH,  // Procedurally generate Woodworth HRTF
 
     // RTP session management (#358)

@@ -216,7 +216,7 @@ TEST_F(ConfigLoaderTest, AppConfigDefaultValues) {
     EXPECT_EQ(config.upsampleRatio, 16);
     EXPECT_EQ(config.blockSize, 4096);
     EXPECT_FLOAT_EQ(config.gain, 1.0f);
-    EXPECT_EQ(config.filterPath, "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin");
+    EXPECT_EQ(config.filterPath, "data/coefficients/filter_44k_16x_2m_linear_phase.bin");
     EXPECT_EQ(config.phaseType, PhaseType::Minimum);
     EXPECT_FALSE(config.eqEnabled);
     EXPECT_EQ(config.eqProfilePath, "");

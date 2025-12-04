@@ -76,3 +76,4 @@ worktrees/
 # Track only the 5 required measured SOFA files for head sizes XS/S/M/L/XL
 # Exclude simulated files (~6MB each) - pattern: *_simulated.sofa
 data/crossfeed/raw/**/*_simulated.sofa
+.mypy_cache/

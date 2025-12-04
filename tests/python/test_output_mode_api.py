@@ -52,7 +52,11 @@ class TestOutputModeApi:
                     "mode": payload["mode"],
                     "available_modes": ["usb"],
                     "options": {
-                        "usb": {"preferred_device": payload["options"]["usb"]["preferred_device"]}
+                        "usb": {
+                            "preferred_device": payload["options"]["usb"][
+                                "preferred_device"
+                            ]
+                        }
                     },
                 },
                 False,
@@ -74,7 +78,8 @@ class TestOutputModeApi:
         body = response.json()
         assert body["success"] is True
         assert (
-            body["data"]["output_mode"]["options"]["usb"]["preferred_device"] == "hw:USB2"
+            body["data"]["output_mode"]["options"]["usb"]["preferred_device"]
+            == "hw:USB2"
         )
 
         saved_config = json.loads(config_file.read_text())
@@ -92,4 +97,3 @@ class TestOutputModeApi:
             },
         )
         assert response.status_code == 400
-

@@ -692,7 +692,8 @@ CommandResult ZMQClient::crossfeedGetStatus() {
 
 CommandResult ZMQClient::crossfeedGenerateWoodworth(const std::string& rateFamily, float azimuthDeg,
                                                     float headRadiusMeters, float earSpacingMeters,
-                                                    float farEarShadowDb, float diffuseFieldTiltDb) {
+                                                    float farEarShadowDb,
+                                                    float diffuseFieldTiltDb) {
     json params;
     params["rate_family"] = rateFamily;
     params["azimuth_deg"] = azimuthDeg;
@@ -709,7 +710,8 @@ CommandResult ZMQClient::outputModeGet() {
     return sendCommand(CommandType::OUTPUT_MODE_GET);
 }
 
-CommandResult ZMQClient::outputModeSet(const std::string& mode, const std::string& preferredDevice) {
+CommandResult ZMQClient::outputModeSet(const std::string& mode,
+                                       const std::string& preferredDevice) {
     json params;
     params["mode"] = mode;
     if (!preferredDevice.empty()) {

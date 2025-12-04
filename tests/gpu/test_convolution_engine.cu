@@ -10,9 +10,19 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <system_error>
 #include "convolution_engine.h"
 
 using namespace ConvolutionEngine;
+
+static size_t getCoefficientTapCount(const char* coeffPath) {
+    std::error_code ec;
+    auto fileSize = std::filesystem::file_size(coeffPath, ec);
+    if (ec) {
+        return 0;
+    }
+    return static_cast<size_t>(fileSize) / sizeof(float);
+}
 
 // Helper function to prepare streaming input buffer with appropriate size
 static void prepareStreamInputBuffer(GPUUpsampler& upsampler, StreamFloatVector& buffer) {
@@ -57,7 +67,7 @@ public:
 
         for (const char* config : configs) {
             std::string filename = path_ + "/filter_" + config + "_" +
-                                   std::to_string(TEST_TAPS) + "_hybrid_phase.bin";
+                                   std::to_string(TEST_TAPS) + "_linear_phase.bin";
             if (!writeCoeffFile(filename, impulse)) {
                 error_ = "Failed to write coefficient file: " + filename;
                 cleanup();
@@ -100,7 +110,7 @@ public:
 
     // Helper methods for quad-phase tests
     std::string getMinPhasePath(const std::string& rateFamily) const {
-        return path_ + "/filter_" + rateFamily + "_16x_" + std::to_string(TEST_TAPS) + "_hybrid_phase.bin";
+        return path_ + "/filter_" + rateFamily + "_16x_" + std::to_string(TEST_TAPS) + "_linear_phase.bin";
     }
 
     std::string getLinearPhasePath(const std::string& rateFamily) const {
@@ -167,7 +177,7 @@ TEST_F(ConvolutionEngineTest, ConstructorDestructor) {
 TEST_F(ConvolutionEngineTest, InitializeWithCoefficients) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -183,8 +193,8 @@ TEST_F(ConvolutionEngineTest, InitializeWithCoefficients) {
 TEST_F(ConvolutionEngineTest, DualRateInitialize) {
     GPUUpsampler upsampler;
 
-    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
+    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_linear_phase.bin";
 
     // Check if files exist
     FILE* f44 = fopen(coeff44k, "rb");
@@ -207,8 +217,8 @@ TEST_F(ConvolutionEngineTest, DualRateInitialize) {
 TEST_F(ConvolutionEngineTest, SwitchRateFamily) {
     GPUUpsampler upsampler;
 
-    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
+    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_linear_phase.bin";
 
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
@@ -243,7 +253,7 @@ TEST_F(ConvolutionEngineTest, SwitchRateFamily) {
 TEST_F(ConvolutionEngineTest, ProcessImpulse) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -273,7 +283,7 @@ TEST_F(ConvolutionEngineTest, ProcessImpulse) {
 TEST_F(ConvolutionEngineTest, ProcessStereo) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -300,14 +310,31 @@ TEST_F(ConvolutionEngineTest, ProcessStereo) {
     EXPECT_EQ(leftOutput.size(), inputFrames * 16);
     EXPECT_EQ(rightOutput.size(), inputFrames * 16);
 
-    // Outputs should be different (different impulse positions)
-    bool outputsDiffer = false;
-    for (size_t i = 0; i < leftOutput.size() && !outputsDiffer; ++i) {
-        if (std::abs(leftOutput[i] - rightOutput[i]) > 1e-6f) {
-            outputsDiffer = true;
+    int upsampleRatio = upsampler.getUpsampleRatio();
+    EXPECT_EQ(upsampleRatio, 16);
+
+    auto findPeakIndex = [](const std::vector<float>& data) {
+        size_t peakIndex = 0;
+        float peakMagnitude = 0.0f;
+        for (size_t i = 0; i < data.size(); ++i) {
+            float magnitude = std::abs(data[i]);
+            if (magnitude > peakMagnitude) {
+                peakMagnitude = magnitude;
+                peakIndex = i;
+            }
         }
-    }
-    EXPECT_TRUE(outputsDiffer);
+        return peakIndex;
+    };
+
+    size_t leftPeak = findPeakIndex(leftOutput);
+    size_t rightPeak = findPeakIndex(rightOutput);
+    EXPECT_NE(leftPeak, rightPeak);
+    EXPECT_LT(leftPeak, rightPeak);
+
+    constexpr size_t kImpulseOffsetFrames = 100;
+    size_t expectedShift = kImpulseOffsetFrames * static_cast<size_t>(upsampleRatio);
+    double observedShift = static_cast<double>(rightPeak) - static_cast<double>(leftPeak);
+    EXPECT_NEAR(observedShift, static_cast<double>(expectedShift), 16.0);
 }
 
 // ============================================================
@@ -317,7 +344,7 @@ TEST_F(ConvolutionEngineTest, ProcessStereo) {
 TEST_F(ConvolutionEngineTest, InitializeStreaming) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -334,7 +361,7 @@ TEST_F(ConvolutionEngineTest, InitializeStreaming) {
 TEST_F(ConvolutionEngineTest, ResetStreaming) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -404,7 +431,7 @@ TEST_F(ConvolutionEngineTest, PartitionModeSupportsMultiRateSwitch) {
 TEST_F(ConvolutionEngineTest, EqInitiallyNotApplied) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -420,7 +447,7 @@ TEST_F(ConvolutionEngineTest, EqInitiallyNotApplied) {
 TEST_F(ConvolutionEngineTest, ApplyFlatEq) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -442,7 +469,7 @@ TEST_F(ConvolutionEngineTest, ApplyFlatEq) {
 TEST_F(ConvolutionEngineTest, RestoreOriginalFilter) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -478,7 +505,7 @@ TEST_F(ConvolutionEngineTest, StatsInitiallyZero) {
 TEST_F(ConvolutionEngineTest, StatsAfterProcessing) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -502,7 +529,7 @@ TEST_F(ConvolutionEngineTest, StatsAfterProcessing) {
 TEST_F(ConvolutionEngineTest, ResetStats) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -530,7 +557,7 @@ TEST_F(ConvolutionEngineTest, ResetStats) {
 TEST_F(ConvolutionEngineTest, GetUpsampleRatio) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -546,8 +573,8 @@ TEST_F(ConvolutionEngineTest, GetUpsampleRatio) {
 TEST_F(ConvolutionEngineTest, GetSampleRates) {
     GPUUpsampler upsampler;
 
-    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
-    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin";
+    const char* coeff44k = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
+    const char* coeff48k = "data/coefficients/filter_48k_16x_2m_linear_phase.bin";
 
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
@@ -574,7 +601,7 @@ TEST_F(ConvolutionEngineTest, GetSampleRates) {
 TEST_F(ConvolutionEngineTest, GetFftSizes) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -601,7 +628,7 @@ TEST_F(ConvolutionEngineTest, GetFftSizes) {
 TEST_F(ConvolutionEngineTest, OutputNotAllZeros) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -629,7 +656,7 @@ TEST_F(ConvolutionEngineTest, OutputNotAllZeros) {
 TEST_F(ConvolutionEngineTest, OutputFiniteValues) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -842,7 +869,7 @@ TEST_F(ConvolutionEngineTest, SwitchToInvalidInputRate) {
 TEST_F(ConvolutionEngineTest, SwitchToInputRateWithoutMultiRateInit) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
 
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
@@ -879,7 +906,7 @@ TEST_F(ConvolutionEngineTest, SetPhaseType) {
 TEST_F(ConvolutionEngineTest, SetInputSampleRate44k) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -896,7 +923,7 @@ TEST_F(ConvolutionEngineTest, SetInputSampleRate44k) {
 TEST_F(ConvolutionEngineTest, SetInputSampleRate48k) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -913,7 +940,7 @@ TEST_F(ConvolutionEngineTest, SetInputSampleRate48k) {
 TEST_F(ConvolutionEngineTest, LatencyMinimumPhaseIsZero) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -930,7 +957,7 @@ TEST_F(ConvolutionEngineTest, LatencyMinimumPhaseIsZero) {
 TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -942,18 +969,19 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
     upsampler.setInputSampleRate(44100);
     upsampler.setPhaseType(PhaseType::Linear);
 
-    // 640k taps: (640000 - 1) / 2 = 319999.5 -> 319999 samples
-    EXPECT_EQ(upsampler.getLatencySamples(), 319999);
-
-    // 319999 / 705600 ≈ 0.454 seconds
-    double expectedLatency = 319999.0 / 705600.0;
-    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
+    size_t tapCount = getCoefficientTapCount(coeffPath);
+    ASSERT_GT(tapCount, 0u);
+    size_t expectedLatencySamples = (tapCount - 1) / 2;
+    EXPECT_EQ(upsampler.getLatencySamples(), static_cast<int>(expectedLatencySamples));
+    double expectedLatencySeconds =
+        static_cast<double>(expectedLatencySamples) / upsampler.getOutputSampleRate();
+    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatencySeconds, 0.001);
 }
 
 TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -965,18 +993,19 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
     upsampler.setInputSampleRate(48000);  // 48k family
     upsampler.setPhaseType(PhaseType::Linear);
 
-    // 640k taps: (640000 - 1) / 2 = 319999 samples
-    EXPECT_EQ(upsampler.getLatencySamples(), 319999);
-
-    // 319999 / 768000 ≈ 0.417 seconds (different from 44k!)
-    double expectedLatency = 319999.0 / 768000.0;
-    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
+    size_t tapCount = getCoefficientTapCount(coeffPath);
+    ASSERT_GT(tapCount, 0u);
+    size_t expectedLatencySamples = (tapCount - 1) / 2;
+    EXPECT_EQ(upsampler.getLatencySamples(), static_cast<int>(expectedLatencySamples));
+    double expectedLatencySeconds =
+        static_cast<double>(expectedLatencySamples) / upsampler.getOutputSampleRate();
+    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatencySeconds, 0.001);
 }
 
 TEST_F(ConvolutionEngineTest, ApplyEqLinearPhase) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -1002,7 +1031,7 @@ TEST_F(ConvolutionEngineTest, ApplyEqLinearPhase) {
 TEST_F(ConvolutionEngineTest, ApplyEqLinearPhaseWithBoost) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -1027,7 +1056,7 @@ TEST_F(ConvolutionEngineTest, ApplyEqLinearPhaseWithBoost) {
 TEST_F(ConvolutionEngineTest, RestoreFilterAfterLinearPhaseEq) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";
@@ -1125,7 +1154,7 @@ TEST_F(ConvolutionEngineTest, SwitchPhaseTypeInQuadPhase) {
 TEST_F(ConvolutionEngineTest, SwitchPhaseTypeFailsWithoutQuadPhase) {
     GPUUpsampler upsampler;
 
-    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin";
+    const char* coeffPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     FILE* f = fopen(coeffPath, "rb");
     if (f == nullptr) {
         GTEST_SKIP() << "Coefficient file not found";

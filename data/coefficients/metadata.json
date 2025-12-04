@@ -14,7 +14,7 @@
   "kaiser_beta": 28.0,
   "minimum_phase_method": "homomorphic",
   "target_dc_gain": 16.0,
-  "output_basename": "filter_44k_16x_2m_hybrid_phase",
+  "output_basename": "filter_44k_16x_2m_linear_phase",
   "validation_results": {
     "passband_ripple_db": 19.842023505066997,
     "stopband_attenuation_db": 148.48299951572235,

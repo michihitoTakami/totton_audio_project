@@ -18,7 +18,7 @@
 
 - The minimum-phase FIR is correctly normalized for unity DC gain **after** the 16× upsampler,
   which means the impulse response itself contains coefficients larger than 1.0.
-- `data/coefficients/filter_44k_16x_2m_hybrid_phase.json` lists
+- `data/coefficients/filter_44k_16x_2m_linear_phase.json` lists
   `max_coefficient_amplitude: 1.031726...` (≈ +0.26 dBFS). Any transient that excites that
   coefficient—e.g. a 0 dBFS snare or impulse—will exceed the ±1.0 digital full scale before
   we reach the ALSA driver.
@@ -31,7 +31,7 @@
 1. **Filter audit**
    ```bash
    uv run python scripts/check_headroom.py \
-     --filter data/coefficients/filter_44k_16x_2m_hybrid_phase.bin
+     --filter data/coefficients/filter_44k_16x_2m_linear_phase.bin
    ```
    Reports the theoretical maximum coefficient and required headroom.
 

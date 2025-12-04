@@ -16,7 +16,7 @@ void printUsage(const char* programName) {
     std::cout << "Options:" << std::endl;
     std::cout << "  --filter <path>    Path to filter coefficients .bin file" << std::endl;
     std::cout
-        << "                     (default: data/coefficients/filter_44k_16x_2m_hybrid_phase.bin)"
+        << "                     (default: data/coefficients/filter_44k_16x_2m_linear_phase.bin)"
         << std::endl;
     std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << std::endl;
     std::cout << "  --block <size>     Block size for processing (default: 8192)" << std::endl;

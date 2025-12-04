@@ -84,10 +84,10 @@ class TestSaveConfig:
         existing_config: dict[str, Any] = {
             "alsaDevice": "hw:OLD",
             "upsampleRatio": 8,
-            "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
-            "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
-            "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin",
-            "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin",
+            "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
+            "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
+            "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
+            "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
             "phaseType": "minimum",
             "eqEnabled": True,
             "eqProfilePath": "/path/to/eq.txt",
@@ -119,27 +119,25 @@ class TestSaveConfig:
         # Non-Settings fields should be preserved
         assert (
             saved_config["filterPath44kMin"]
-            == "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin"
+            == "data/coefficients/filter_44k_16x_2m_linear_phase.bin"
         )
         assert (
             saved_config["filterPath48kMin"]
-            == "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin"
+            == "data/coefficients/filter_48k_16x_2m_linear_phase.bin"
         )
         assert (
             saved_config["filterPath44kLinear"]
-            == "data/coefficients/filter_44k_16x_2m_hybrid_phase.bin"
+            == "data/coefficients/filter_44k_16x_2m_linear_phase.bin"
         )
         assert (
             saved_config["filterPath48kLinear"]
-            == "data/coefficients/filter_48k_16x_2m_hybrid_phase.bin"
+            == "data/coefficients/filter_48k_16x_2m_linear_phase.bin"
         )
         assert saved_config["phaseType"] == "minimum"
         assert saved_config["eqEnabled"] is True
         assert saved_config["eqProfilePath"] == "/path/to/new_eq.txt"
         assert saved_config["output"]["mode"] == "usb"
-        assert (
-            saved_config["output"]["options"]["usb"]["preferredDevice"] == "hw:NEW"
-        )
+        assert saved_config["output"]["options"]["usb"]["preferredDevice"] == "hw:NEW"
 
         # Auto-negotiated fields should be removed
         assert "inputRate" not in saved_config
