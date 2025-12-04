@@ -1,7 +1,11 @@
-"""ZeroMQ client for communicating with the C++ audio daemon."""
+"""ZeroMQ client for communicating with the C++ audio daemon.
+
+This client prefers ``ZMQ_ENDPOINT`` if set; otherwise it falls back to ``web.constants.ZEROMQ_IPC_PATH``. Pass an explicit endpoint to override both.
+"""
 
 import base64
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -13,6 +17,11 @@ from ..constants import (
     ZEROMQ_IPC_PATH,
 )
 from ..error_codes import ErrorCode, get_error_mapping
+
+
+def _get_default_endpoint() -> str:
+    """Resolve default ZeroMQ endpoint using env override."""
+    return os.environ.get("ZMQ_ENDPOINT", ZEROMQ_IPC_PATH)
 
 
 @dataclass
@@ -85,8 +94,8 @@ class DaemonClient:
         }
     """
 
-    def __init__(self, endpoint: str = ZEROMQ_IPC_PATH, timeout_ms: int = 3000):
-        self.endpoint = endpoint
+    def __init__(self, endpoint: str | None = None, timeout_ms: int = 3000):
+        self.endpoint = endpoint if endpoint is not None else _get_default_endpoint()
         self.timeout_ms = timeout_ms
         self._context: zmq.Context | None = None
         self._socket: zmq.Socket | None = None
@@ -497,12 +506,18 @@ class DaemonClient:
         return self.send_json_command_v2("RTP_DISCOVER_STREAMS")
 
 
-def get_daemon_client(timeout_ms: int = 3000) -> DaemonClient:
+def get_daemon_client(
+    timeout_ms: int = 3000, endpoint: str | None = None
+) -> DaemonClient:
     """
     Factory function to get a DaemonClient instance.
 
     Usage:
         with get_daemon_client() as client:
             success, msg = client.reload_config()
+
+    Args:
+        timeout_ms: Socket timeout in milliseconds.
+        endpoint: Optional explicit ZeroMQ endpoint (overrides `ZMQ_ENDPOINT`).
     """
-    return DaemonClient(timeout_ms=timeout_ms)
+    return DaemonClient(endpoint=endpoint, timeout_ms=timeout_ms)
