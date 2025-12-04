@@ -48,8 +48,7 @@ class StreamingCacheManager {
 
    private:
     void flushCache(std::chrono::nanoseconds gap) {
-        if (deps_.bufferMutex) {
-            std::lock_guard<std::mutex> lock(*deps_.bufferMutex);
+        auto resetPlaybackBuffers = [&]() {
             if (deps_.outputBufferLeft && deps_.outputBufferRight) {
                 deps_.outputBufferLeft->clear();
                 deps_.outputBufferRight->clear();
@@ -57,10 +56,9 @@ class StreamingCacheManager {
             if (deps_.outputReadPos) {
                 *deps_.outputReadPos = 0;
             }
-        }
+        };
 
-        if (deps_.streamingMutex) {
-            std::lock_guard<std::mutex> streamLock(*deps_.streamingMutex);
+        auto resetStreamingBuffers = [&]() {
             if (deps_.streamInputLeft) {
                 std::fill(deps_.streamInputLeft->begin(), deps_.streamInputLeft->end(), 0.0f);
             }
@@ -73,10 +71,33 @@ class StreamingCacheManager {
             if (deps_.streamAccumulatedRight) {
                 *deps_.streamAccumulatedRight = 0;
             }
-        }
+        };
 
-        if (deps_.upsamplerPtr && *deps_.upsamplerPtr) {
-            (*deps_.upsamplerPtr)->resetStreaming();
+        auto resetStreamingEngine = [&]() {
+            if (deps_.upsamplerPtr && *deps_.upsamplerPtr) {
+                (*deps_.upsamplerPtr)->resetStreaming();
+            }
+        };
+
+        bool hasStreamingLock = deps_.streamingMutex != nullptr;
+        bool hasBufferLock = deps_.bufferMutex != nullptr;
+
+        if (hasStreamingLock && hasBufferLock) {
+            std::scoped_lock<std::mutex, std::mutex> lock(*deps_.streamingMutex,
+                                                          *deps_.bufferMutex);
+            resetPlaybackBuffers();
+            resetStreamingBuffers();
+            resetStreamingEngine();
+        } else {
+            if (hasBufferLock) {
+                std::lock_guard<std::mutex> lock(*deps_.bufferMutex);
+                resetPlaybackBuffers();
+            }
+            if (hasStreamingLock) {
+                std::lock_guard<std::mutex> streamLock(*deps_.streamingMutex);
+                resetStreamingBuffers();
+                resetStreamingEngine();
+            }
         }
 
         if (deps_.onCrossfeedReset) {
