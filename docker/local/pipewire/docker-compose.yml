@@ -29,6 +29,7 @@ services:
     shm_size: '256m'
     volumes:
       - zmq-socket:/tmp
+      - ../../../data:/opt/magicbox/data:ro
     cap_add:
       - SYS_NICE
     healthcheck:
@@ -53,6 +54,7 @@ services:
       - "80:80"
     volumes:
       - zmq-socket:/tmp
+      - ../../../data:/opt/magicbox/data:ro
     environment:
       - ZMQ_ENDPOINT=ipc:///tmp/gpu_os.sock
     healthcheck:
