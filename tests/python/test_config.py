@@ -137,9 +137,7 @@ class TestSaveConfig:
         assert saved_config["eqEnabled"] is True
         assert saved_config["eqProfilePath"] == "/path/to/new_eq.txt"
         assert saved_config["output"]["mode"] == "usb"
-        assert (
-            saved_config["output"]["options"]["usb"]["preferredDevice"] == "hw:NEW"
-        )
+        assert saved_config["output"]["options"]["usb"]["preferredDevice"] == "hw:NEW"
 
         # Auto-negotiated fields should be removed
         assert "inputRate" not in saved_config

@@ -3,9 +3,9 @@
 #include "daemon_constants.h"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iostream>
-#include <cctype>
 #include <nlohmann/json.hpp>
 
 PhaseType parsePhaseType(const std::string& str) {
@@ -97,10 +97,9 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                     std::string modeStr = output["mode"].get<std::string>();
                     OutputMode parsed = parseOutputMode(modeStr);
                     std::string normalized = modeStr;
-                    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                                   [](unsigned char c) {
-                                       return static_cast<char>(std::tolower(c));
-                                   });
+                    std::transform(
+                        normalized.begin(), normalized.end(), normalized.begin(),
+                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                     if (normalized != "usb" && verbose) {
                         std::cerr << "Config: Unsupported output.mode '" << modeStr
                                   << "', falling back to 'usb'" << std::endl;
@@ -113,7 +112,8 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                     if (options.contains("usb") && options["usb"].is_object()) {
                         auto usb = options["usb"];
                         if (usb.contains("preferredDevice") && usb["preferredDevice"].is_string()) {
-                            outConfig.output.usb.preferredDevice = usb["preferredDevice"].get<std::string>();
+                            outConfig.output.usb.preferredDevice =
+                                usb["preferredDevice"].get<std::string>();
                         }
                     }
                 }

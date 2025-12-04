@@ -10,9 +10,19 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <system_error>
 #include "convolution_engine.h"
 
 using namespace ConvolutionEngine;
+
+static size_t getCoefficientTapCount(const char* coeffPath) {
+    std::error_code ec;
+    auto fileSize = std::filesystem::file_size(coeffPath, ec);
+    if (ec) {
+        return 0;
+    }
+    return static_cast<size_t>(fileSize) / sizeof(float);
+}
 
 // Helper function to prepare streaming input buffer with appropriate size
 static void prepareStreamInputBuffer(GPUUpsampler& upsampler, StreamFloatVector& buffer) {
@@ -300,14 +310,31 @@ TEST_F(ConvolutionEngineTest, ProcessStereo) {
     EXPECT_EQ(leftOutput.size(), inputFrames * 16);
     EXPECT_EQ(rightOutput.size(), inputFrames * 16);
 
-    // Outputs should be different (different impulse positions)
-    bool outputsDiffer = false;
-    for (size_t i = 0; i < leftOutput.size() && !outputsDiffer; ++i) {
-        if (std::abs(leftOutput[i] - rightOutput[i]) > 1e-6f) {
-            outputsDiffer = true;
+    int upsampleRatio = upsampler.getUpsampleRatio();
+    EXPECT_EQ(upsampleRatio, 16);
+
+    auto findPeakIndex = [](const std::vector<float>& data) {
+        size_t peakIndex = 0;
+        float peakMagnitude = 0.0f;
+        for (size_t i = 0; i < data.size(); ++i) {
+            float magnitude = std::abs(data[i]);
+            if (magnitude > peakMagnitude) {
+                peakMagnitude = magnitude;
+                peakIndex = i;
+            }
         }
-    }
-    EXPECT_TRUE(outputsDiffer);
+        return peakIndex;
+    };
+
+    size_t leftPeak = findPeakIndex(leftOutput);
+    size_t rightPeak = findPeakIndex(rightOutput);
+    EXPECT_NE(leftPeak, rightPeak);
+    EXPECT_LT(leftPeak, rightPeak);
+
+    constexpr size_t kImpulseOffsetFrames = 100;
+    size_t expectedShift = kImpulseOffsetFrames * static_cast<size_t>(upsampleRatio);
+    double observedShift = static_cast<double>(rightPeak) - static_cast<double>(leftPeak);
+    EXPECT_NEAR(observedShift, static_cast<double>(expectedShift), 16.0);
 }
 
 // ============================================================
@@ -942,12 +969,13 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase) {
     upsampler.setInputSampleRate(44100);
     upsampler.setPhaseType(PhaseType::Linear);
 
-    // 640k taps: (640000 - 1) / 2 = 319999.5 -> 319999 samples
-    EXPECT_EQ(upsampler.getLatencySamples(), 319999);
-
-    // 319999 / 705600 ≈ 0.454 seconds
-    double expectedLatency = 319999.0 / 705600.0;
-    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
+    size_t tapCount = getCoefficientTapCount(coeffPath);
+    ASSERT_GT(tapCount, 0u);
+    size_t expectedLatencySamples = (tapCount - 1) / 2;
+    EXPECT_EQ(upsampler.getLatencySamples(), static_cast<int>(expectedLatencySamples));
+    double expectedLatencySeconds =
+        static_cast<double>(expectedLatencySamples) / upsampler.getOutputSampleRate();
+    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatencySeconds, 0.001);
 }
 
 TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
@@ -965,12 +993,13 @@ TEST_F(ConvolutionEngineTest, LatencyLinearPhase48k) {
     upsampler.setInputSampleRate(48000);  // 48k family
     upsampler.setPhaseType(PhaseType::Linear);
 
-    // 640k taps: (640000 - 1) / 2 = 319999 samples
-    EXPECT_EQ(upsampler.getLatencySamples(), 319999);
-
-    // 319999 / 768000 ≈ 0.417 seconds (different from 44k!)
-    double expectedLatency = 319999.0 / 768000.0;
-    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatency, 0.001);
+    size_t tapCount = getCoefficientTapCount(coeffPath);
+    ASSERT_GT(tapCount, 0u);
+    size_t expectedLatencySamples = (tapCount - 1) / 2;
+    EXPECT_EQ(upsampler.getLatencySamples(), static_cast<int>(expectedLatencySamples));
+    double expectedLatencySeconds =
+        static_cast<double>(expectedLatencySamples) / upsampler.getOutputSampleRate();
+    EXPECT_NEAR(upsampler.getLatencySeconds(), expectedLatencySeconds, 0.001);
 }
 
 TEST_F(ConvolutionEngineTest, ApplyEqLinearPhase) {

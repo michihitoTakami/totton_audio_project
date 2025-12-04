@@ -61,7 +61,9 @@ def _apply_runtime_output_mode(payload: dict) -> tuple[dict | None, bool]:
     return runtime_state, restart_required
 
 
-@router.get("/mode", response_model=OutputModeResponse, summary="Get current output mode")
+@router.get(
+    "/mode", response_model=OutputModeResponse, summary="Get current output mode"
+)
 async def get_output_mode():
     """Return current output mode and available modes."""
     runtime_state = _fetch_runtime_output_mode()
@@ -70,7 +72,9 @@ async def get_output_mode():
     return load_output_mode()
 
 
-@router.post("/mode", response_model=ApiResponse, summary="Update output mode and options")
+@router.post(
+    "/mode", response_model=ApiResponse, summary="Update output mode and options"
+)
 async def update_output_mode(request: OutputModeUpdateRequest):
     """Update output mode and USB preferred device."""
     current_state = load_output_mode()
@@ -107,4 +111,3 @@ async def update_output_mode(request: OutputModeUpdateRequest):
         data={"output_mode": response_state},
         restart_required=restart_required,
     )
-

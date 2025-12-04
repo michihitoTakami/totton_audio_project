@@ -69,7 +69,9 @@ def _extract_preferred_device(config_data: dict[str, Any]) -> str:
     return preferred_str or DEFAULT_OUTPUT_DEVICE
 
 
-def _ensure_output_section(existing: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _ensure_output_section(
+    existing: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return mutable output and options sections."""
     output_section = existing.get("output")
     if not isinstance(output_section, dict):
@@ -300,7 +302,11 @@ def save_input_mode(mode: InputMode) -> bool:
 def load_output_mode() -> dict[str, Any]:
     """Load structured output mode configuration for API responses."""
     raw = load_raw_config()
-    mode = _normalize_output_mode(raw.get("output", {}).get("mode") if isinstance(raw.get("output"), dict) else raw.get("output"))
+    mode = _normalize_output_mode(
+        raw.get("output", {}).get("mode")
+        if isinstance(raw.get("output"), dict)
+        else raw.get("output")
+    )
     if mode not in SUPPORTED_OUTPUT_MODES:
         mode = DEFAULT_OUTPUT_MODE
     preferred_device = _extract_preferred_device(raw)

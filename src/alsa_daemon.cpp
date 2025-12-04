@@ -746,8 +746,8 @@ static void print_config_summary(const AppConfig& cfg) {
     int outputRate = g_input_sample_rate * cfg.upsampleRatio;
     LOG_INFO("Config:");
     LOG_INFO("  ALSA device:    {}", cfg.alsaDevice);
-    LOG_INFO("  Output mode:    {} (preferred USB device: {})",
-             outputModeToString(cfg.output.mode), cfg.output.usb.preferredDevice);
+    LOG_INFO("  Output mode:    {} (preferred USB device: {})", outputModeToString(cfg.output.mode),
+             cfg.output.usb.preferredDevice);
     LOG_INFO("  Input rate:     {} Hz (auto-negotiated)", g_input_sample_rate);
     LOG_INFO("  Output rate:    {} Hz ({:.1f} kHz)", outputRate, outputRate / 1000.0);
     LOG_INFO("  Buffer size:    {}", cfg.bufferSize);
