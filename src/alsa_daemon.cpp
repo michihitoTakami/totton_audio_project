@@ -4,6 +4,7 @@
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
+#include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/control/zmq_server.h"
 #include "daemon/metrics/runtime_stats.h"
