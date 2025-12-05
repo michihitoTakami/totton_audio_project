@@ -77,7 +77,7 @@
                 <template x-for="result in opra.results" :key="result.name">
                     <div class="opra-result-item" @click="selectHeadphone(result)">
                         <div class="opra-result-name" x-text="result.name"></div>
-                        <div class="opra-result-vendor" x-text="result.vendor"></div>
+                        <div class="opra-result-vendor" x-text="result.vendor?.name || result.vendor"></div>
                     </div>
                 </template>
             </div>
@@ -85,13 +85,13 @@
             <!-- Selected Headphone -->
             <div class="opra-selected" x-show="opra.selected" style="margin-top: 16px;">
                 <div class="opra-selected-name" x-text="opra.selected?.name"></div>
-                <div class="opra-selected-vendor" x-text="opra.selected?.vendor"></div>
+                <div class="opra-selected-vendor" x-text="opra.selected?.vendor?.name || opra.selected?.vendor"></div>
 
-                <div class="form-group" style="margin-top: 12px;" x-show="opra.eqOptions.length > 0">
+                <div class="form-group" style="margin-top: 12px;" x-show="opra.eqProfiles.length > 0">
                     <label for="opraEqSelect">{{ t.get('eq.opra.variant') }}</label>
-                    <select id="opraEqSelect" x-model="opra.selectedEq">
-                        <template x-for="eq in opra.eqOptions" :key="eq">
-                            <option :value="eq" x-text="eq"></option>
+                    <select id="opraEqSelect" x-model="opra.selectedEqId">
+                        <template x-for="eq in opra.eqProfiles" :key="eq.id">
+                            <option :value="eq.id" x-text="eq.name || eq.id"></option>
                         </template>
                     </select>
                 </div>
@@ -226,8 +226,8 @@ function eqSettingsData() {
             searchQuery: '',
             results: [],
             selected: null,
-            eqOptions: [],
-            selectedEq: '',
+            eqProfiles: [],
+            selectedEqId: '',
             useModernTarget: true,
             searching: false,
         },
@@ -311,8 +311,9 @@ function eqSettingsData() {
             this.opra.selected = result;
             this.opra.results = [];
             this.opra.searchQuery = result.name;
-            this.opra.eqOptions = result.eq_variants || [];
-            this.opra.selectedEq = this.opra.eqOptions[0] || '';
+            // eq_profiles is an array of {id, name, author}
+            this.opra.eqProfiles = result.eq_profiles || [];
+            this.opra.selectedEqId = this.opra.eqProfiles[0]?.id || '';
         },
 
         async applyOPRA() {
@@ -320,9 +321,9 @@ function eqSettingsData() {
 
             this.actionInProgress = true;
             try {
-                const eqId = this.opra.selectedEq || this.opra.selected.eq_variants?.[0];
+                const eqId = this.opra.selectedEqId || this.opra.eqProfiles[0]?.id;
                 if (!eqId) {
-                    throw new Error('No EQ variant selected');
+                    throw new Error('No EQ profile selected');
                 }
 
                 const endpoint = `/opra/apply/${encodeURIComponent(eqId)}?apply_correction=${this.opra.useModernTarget}`;

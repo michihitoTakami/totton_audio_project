@@ -120,9 +120,9 @@ class TestDashboardTranslations:
             "dashboard.phase_type.title",
             "dashboard.phase_type.label",
             "dashboard.phase_type.minimum",
-            "dashboard.phase_type.hybrid",
+            "dashboard.phase_type.linear",
             "dashboard.phase_type.info_minimum",
-            "dashboard.phase_type.info_hybrid",
+            "dashboard.phase_type.info_linear",
             "dashboard.phase_type.warning",
         ]
         for key in keys:

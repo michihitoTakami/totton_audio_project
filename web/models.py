@@ -417,10 +417,35 @@ class OpraVendorsResponse(BaseModel):
     count: int
 
 
+class OpraVendor(BaseModel):
+    """OPRA vendor information model."""
+
+    id: str
+    name: str
+
+
+class OpraEqProfileInfo(BaseModel):
+    """OPRA EQ profile information model."""
+
+    id: str
+    name: str
+    author: str = ""
+
+
+class OpraSearchResult(BaseModel):
+    """OPRA search result item model."""
+
+    id: str
+    name: str
+    type: str
+    vendor: OpraVendor
+    eq_profiles: list[OpraEqProfileInfo]
+
+
 class OpraSearchResponse(BaseModel):
     """OPRA search results response model."""
 
-    results: list[dict[str, Any]]
+    results: list[OpraSearchResult]
     count: int
     query: str
 

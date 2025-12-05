@@ -3086,6 +3086,30 @@
         "title": "OpraEqAttribution",
         "description": "OPRA EQ attribution model."
       },
+      "OpraEqProfileInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OpraEqProfileInfo",
+        "description": "OPRA EQ profile information model."
+      },
       "OpraEqResponse": {
         "properties": {
           "id": {
@@ -3139,8 +3163,7 @@
         "properties": {
           "results": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/OpraSearchResult"
             },
             "type": "array",
             "title": "Results"
@@ -3162,6 +3185,42 @@
         ],
         "title": "OpraSearchResponse",
         "description": "OPRA search results response model."
+      },
+      "OpraSearchResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "vendor": {
+            "$ref": "#/components/schemas/OpraVendor"
+          },
+          "eq_profiles": {
+            "items": {
+              "$ref": "#/components/schemas/OpraEqProfileInfo"
+            },
+            "type": "array",
+            "title": "Eq Profiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "vendor",
+          "eq_profiles"
+        ],
+        "title": "OpraSearchResult",
+        "description": "OPRA search result item model."
       },
       "OpraStats": {
         "properties": {
@@ -3196,6 +3255,25 @@
         ],
         "title": "OpraStats",
         "description": "OPRA database statistics response model."
+      },
+      "OpraVendor": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OpraVendor",
+        "description": "OPRA vendor information model."
       },
       "OpraVendorsResponse": {
         "properties": {
