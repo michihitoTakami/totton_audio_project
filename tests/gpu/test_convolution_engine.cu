@@ -424,6 +424,36 @@ TEST_F(ConvolutionEngineTest, PartitionModeSupportsMultiRateSwitch) {
     ASSERT_TRUE(upsampler.initializeStreaming());
 }
 
+TEST_F(ConvolutionEngineTest, PartitionModeReinitializesLegacyStreaming) {
+    TempCoeffDir tempDir;
+    if (!tempDir.isValid()) {
+        GTEST_SKIP() << tempDir.error();
+    }
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initialize(tempDir.getMinPhasePath("44k"), 16, 1024));
+
+    AppConfig::PartitionedConvolutionConfig partitionConfig;
+    partitionConfig.enabled = true;
+    partitionConfig.fastPartitionTaps = 256;
+    partitionConfig.minPartitionTaps = 256;
+    partitionConfig.maxPartitions = 2;
+    partitionConfig.tailFftMultiple = 2;
+
+    upsampler.setPartitionedConvolutionConfig(partitionConfig);
+    ASSERT_TRUE(upsampler.initializeStreaming());
+    size_t partitionBlock = upsampler.getStreamValidInputPerBlock();
+
+    partitionConfig.enabled = false;
+    upsampler.setPartitionedConvolutionConfig(partitionConfig);
+    ASSERT_TRUE(upsampler.initializeStreaming());
+    size_t legacyBlock = upsampler.getStreamValidInputPerBlock();
+
+    EXPECT_GT(partitionBlock, 0u);
+    EXPECT_GT(legacyBlock, 0u);
+    EXPECT_GE(legacyBlock, partitionBlock);
+}
+
 // ============================================================
 // EQ Tests
 // ============================================================

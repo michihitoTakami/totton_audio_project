@@ -749,6 +749,53 @@ static void reset_runtime_state() {
     g_cf_output_buffer_right.clear();
 }
 
+static bool reinitialize_streaming_for_legacy_mode() {
+    if (!g_upsampler) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> streamLock(g_streaming_mutex);
+    g_upsampler->resetStreaming();
+    {
+        std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
+        g_output_buffer_left.clear();
+        g_output_buffer_right.clear();
+        g_output_read_pos = 0;
+    }
+
+    g_stream_input_left.clear();
+    g_stream_input_right.clear();
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+    g_upsampler_output_left.clear();
+    g_upsampler_output_right.clear();
+
+    // Rebuild legacy streams so the buffers match the full FFT (avoids invalid cudaMemset after
+    // disabling partitions).
+    if (!g_upsampler->initializeStreaming()) {
+        std::cerr << "[Partition] Failed to initialize legacy streaming buffers" << std::endl;
+        return false;
+    }
+
+    size_t buffer_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+    if (buffer_capacity > 0) {
+        g_stream_input_left.resize(buffer_capacity, 0.0f);
+        g_stream_input_right.resize(buffer_capacity, 0.0f);
+    } else {
+        g_stream_input_left.clear();
+        g_stream_input_right.clear();
+    }
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+
+    size_t upsampler_output_capacity =
+        g_upsampler->getStreamValidInputPerBlock() * g_upsampler->getUpsampleRatio() * 2;
+    g_upsampler_output_left.reserve(upsampler_output_capacity);
+    g_upsampler_output_right.reserve(upsampler_output_capacity);
+
+    return true;
+}
+
 static bool handle_rate_switch(int newInputRate) {
     if (!g_upsampler || !g_upsampler->isMultiRateEnabled()) {
         std::cerr << "[Rate] Multi-rate mode not enabled" << std::endl;
@@ -1403,6 +1450,8 @@ static std::string handle_phase_type_set(const daemon_ipc::ZmqRequest& request) 
 
     PhaseType newPhase = (phaseStr == "minimum") ? PhaseType::Minimum : PhaseType::Linear;
     PhaseType oldPhase = g_upsampler->getPhaseType();
+    bool disablePartitionForLinear =
+        (newPhase == PhaseType::Linear && g_config.partitionedConvolution.enabled);
 
     if (oldPhase == newPhase) {
         return build_ok_response(request, "Phase type already " + phaseStr);
@@ -1410,6 +1459,19 @@ static std::string handle_phase_type_set(const daemon_ipc::ZmqRequest& request) 
 
     bool switch_success = false;
     applySoftMuteForFilterSwitch([&]() {
+        if (disablePartitionForLinear) {
+            std::cout << "[Partition] Linear phase selected, disabling low-latency partitioned "
+                         "convolution."
+                      << std::endl;
+            g_config.partitionedConvolution.enabled = false;
+            g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
+            if (!reinitialize_streaming_for_legacy_mode()) {
+                g_config.partitionedConvolution.enabled = true;
+                g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
+                return false;
+            }
+        }
+
         switch_success = g_upsampler->switchPhaseType(newPhase);
         if (switch_success) {
             g_active_phase_type = newPhase;
@@ -1442,13 +1504,6 @@ static std::string handle_phase_type_set(const daemon_ipc::ZmqRequest& request) 
         return build_error_response(request, "IPC_PROTOCOL_ERROR", "Failed to switch phase type");
     }
 
-    if (newPhase == PhaseType::Linear && g_config.partitionedConvolution.enabled) {
-        std::cout << "[Partition] Linear phase selected, disabling low-latency partitioned "
-                     "convolution."
-                  << std::endl;
-        g_config.partitionedConvolution.enabled = false;
-        g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
-    }
     return build_ok_response(request, "Phase type set to " + phaseStr);
 }
 
