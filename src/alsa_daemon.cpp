@@ -6,6 +6,7 @@
 #include "dac_capability.h"
 #include "daemon/dac_manager.h"
 #include "daemon/rtp_engine_coordinator.h"
+#include "daemon/runtime_stats.h"
 #include "daemon/streaming_cache_manager.h"
 #include "daemon/zmq_server.h"
 #include "daemon_constants.h"
@@ -81,6 +82,8 @@ static void enforce_phase_partition_constraints(AppConfig& config) {
 
 // Stats file path (JSON format for Web API)
 constexpr const char* STATS_FILE_PATH = "/tmp/gpu_upsampler_stats.json";
+
+static runtime_stats::Dependencies build_runtime_stats_dependencies();
 
 // Default configuration values (using common constants)
 using namespace DaemonConstants;
@@ -171,24 +174,6 @@ static std::mutex g_input_process_mutex;
 static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
 
 static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
-
-// Statistics (atomic for thread-safe access from stats writer)
-static std::atomic<size_t> g_clip_count{0};
-static std::atomic<size_t> g_total_samples{0};
-static std::atomic<size_t> g_buffer_drop_count{0};
-
-static std::atomic<float> g_peak_input_level{0.0f};
-static std::atomic<float> g_peak_upsampler_level{0.0f};
-static std::atomic<float> g_peak_post_crossfeed_level{0.0f};
-static std::atomic<float> g_peak_post_gain_level{0.0f};
-
-static inline void update_peak_level(std::atomic<float>& peak, float candidate) {
-    float absValue = std::fabs(candidate);
-    float current = peak.load(std::memory_order_relaxed);
-    while (absValue > current &&
-           !peak.compare_exchange_weak(current, absValue, std::memory_order_relaxed,
-                                       std::memory_order_relaxed)) {}
-}
 
 static inline float compute_stereo_peak(const float* left, const float* right, size_t frames) {
     if (!left || !right || frames == 0) {
@@ -409,7 +394,7 @@ static size_t enqueue_output_frames_locked(const Container& left, const Containe
             "Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, "
             "max={}]",
             totalDropped, seconds, currentFrames, framesAvailable, capacityFrames);
-        g_buffer_drop_count.fetch_add(totalDropped, std::memory_order_relaxed);
+        runtime_stats::addDroppedFrames(totalDropped);
     }
 
     if (decision.dropFromExisting > 0) {
@@ -569,6 +554,22 @@ static dac::DacManager::Dependencies make_dac_dependencies() {
 
 static dac::DacManager g_dac_manager(make_dac_dependencies());
 
+static runtime_stats::Dependencies build_runtime_stats_dependencies() {
+    runtime_stats::Dependencies deps;
+    deps.config = &g_config;
+    deps.upsampler = g_upsampler;
+    deps.headroomCache = &g_headroom_cache;
+    deps.dacManager = &g_dac_manager;
+    deps.fallbackManager = g_fallback_manager;
+    deps.fallbackActive = &g_fallback_active;
+    deps.inputSampleRate = &g_input_sample_rate;
+    deps.headroomGain = &g_headroom_gain;
+    deps.outputGain = &g_output_gain;
+    deps.limiterGain = &g_limiter_gain;
+    deps.effectiveGain = &g_effective_gain;
+    return deps;
+}
+
 static void mark_dac_connected(
     const std::string& device,
     const char* log_message = "DAC connected - input processing enabled") {
@@ -651,120 +652,6 @@ static void release_pid_lock() {
     unlink(PID_FILE_PATH);
     // Remove the stats file on clean shutdown
     unlink(STATS_FILE_PATH);
-}
-
-// ========== Statistics File ==========
-
-// Write statistics to JSON file for Web API consumption
-static constexpr double PEAK_DBFS_FLOOR = -200.0;
-
-static double linear_to_dbfs(double value) {
-    if (value <= 0.0) {
-        return PEAK_DBFS_FLOOR;
-    }
-    return 20.0 * std::log10(static_cast<double>(value));
-}
-
-static nlohmann::json make_peak_json(float linear_value) {
-    nlohmann::json peak_json;
-    peak_json["linear"] = linear_value;
-    peak_json["dbfs"] = linear_to_dbfs(linear_value);
-    return peak_json;
-}
-
-static nlohmann::json make_fallback_stats_json() {
-    nlohmann::json fallback_json = nlohmann::json::object();
-    bool enabled = g_config.fallback.enabled;
-    fallback_json["enabled"] = enabled;
-    fallback_json["active"] = g_fallback_active.load(std::memory_order_relaxed);
-    fallback_json["gpu_utilization"] = 0.0;
-    fallback_json["monitoring_enabled"] =
-        (g_fallback_manager ? g_fallback_manager->isMonitoringEnabled() : false);
-
-    if (enabled && g_fallback_manager) {
-        fallback_json["gpu_utilization"] = g_fallback_manager->getGpuUtilization();
-        auto fbStats = g_fallback_manager->getStats();
-        fallback_json["xrun_count"] = fbStats.xrunCount;
-        fallback_json["activations"] = fbStats.fallbackActivations;
-        fallback_json["recoveries"] = fbStats.fallbackRecoveries;
-    } else {
-        fallback_json["xrun_count"] = 0;
-        fallback_json["activations"] = 0;
-        fallback_json["recoveries"] = 0;
-    }
-
-    return fallback_json;
-}
-
-static nlohmann::json collect_runtime_stats_json() {
-    size_t clips = g_clip_count.load(std::memory_order_relaxed);
-    size_t total = g_total_samples.load(std::memory_order_relaxed);
-    double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
-
-    int input_rate = g_input_sample_rate;
-    int upsample_ratio = g_config.upsampleRatio;
-    int output_rate = input_rate * upsample_ratio;
-
-    auto now = std::chrono::system_clock::now();
-    auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-
-    std::string phaseTypeStr = "minimum";
-    if (g_upsampler) {
-        phaseTypeStr = (g_upsampler->getPhaseType() == PhaseType::Minimum) ? "minimum" : "linear";
-    } else {
-        phaseTypeStr = (g_config.phaseType == PhaseType::Minimum) ? "minimum" : "linear";
-    }
-
-    nlohmann::json stats;
-    stats["clip_count"] = clips;
-    stats["total_samples"] = total;
-    stats["clip_rate"] = clip_rate;
-    stats["input_rate"] = input_rate;
-    stats["output_rate"] = output_rate;
-    stats["upsample_ratio"] = upsample_ratio;
-    stats["eq_enabled"] = g_config.eqEnabled;
-    stats["phase_type"] = phaseTypeStr;
-    stats["last_updated"] = epoch;
-    nlohmann::json gainJson;
-    gainJson["user"] = g_config.gain;
-    gainJson["headroom"] = g_headroom_gain.load(std::memory_order_relaxed);
-    gainJson["headroom_effective"] = g_output_gain.load(std::memory_order_relaxed);
-    gainJson["limiter"] = g_limiter_gain.load(std::memory_order_relaxed);
-    gainJson["effective"] = g_effective_gain.load(std::memory_order_relaxed);
-    gainJson["target_peak"] = g_config.headroomTarget;
-    gainJson["metadata_peak"] = g_headroom_cache.getTargetPeak();
-    stats["gain"] = gainJson;
-
-    nlohmann::json peaks;
-    peaks["input"] = make_peak_json(g_peak_input_level.load(std::memory_order_relaxed));
-    peaks["upsampler"] = make_peak_json(g_peak_upsampler_level.load(std::memory_order_relaxed));
-    peaks["post_mix"] = make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
-    peaks["post_gain"] = make_peak_json(g_peak_post_gain_level.load(std::memory_order_relaxed));
-    stats["peaks"] = peaks;
-
-    stats["fallback"] = make_fallback_stats_json();
-
-    stats["dac"] = g_dac_manager.buildStatsSummaryJson();
-
-    nlohmann::json bufferJson;
-    bufferJson["max_seconds"] = DaemonConstants::MAX_OUTPUT_BUFFER_SECONDS;
-    bufferJson["capacity_frames"] = get_max_output_buffer_frames();
-    bufferJson["dropped_frames"] = g_buffer_drop_count.load(std::memory_order_relaxed);
-    stats["buffer"] = bufferJson;
-
-    return stats;
-}
-
-static void write_stats_file() {
-    nlohmann::json stats = collect_runtime_stats_json();
-
-    std::string tmp_path = std::string(STATS_FILE_PATH) + ".tmp";
-    std::ofstream ofs(tmp_path);
-    if (ofs) {
-        ofs << stats.dump(2) << std::endl;
-        ofs.close();
-        std::rename(tmp_path.c_str(), STATS_FILE_PATH);
-    }
 }
 
 // ========== Configuration ==========
@@ -1058,7 +945,9 @@ static std::string handle_reload(const daemon_ipc::ZmqRequest& request) {
 }
 
 static std::string handle_stats_command(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request, "", collect_runtime_stats_json());
+    auto stats =
+        runtime_stats::collect(build_runtime_stats_dependencies(), get_max_output_buffer_frames());
+    return build_ok_response(request, "", stats);
 }
 
 static std::string handle_crossfeed_enable(const daemon_ipc::ZmqRequest& request) {
@@ -1722,7 +1611,7 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
     std::vector<float> right(n_frames);
     AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
     float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
-    update_peak_level(g_peak_input_level, inputPeak);
+    runtime_stats::updateInputPeak(inputPeak);
 
     StreamFloatVector& output_left = g_upsampler_output_left;
     StreamFloatVector& output_right = g_upsampler_output_right;
@@ -1758,7 +1647,7 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
     if (frames_generated > 0) {
         float upsamplerPeak =
             compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_upsampler_level, upsamplerPeak);
+        runtime_stats::updateUpsamplerPeak(upsamplerPeak);
     }
 
     if (g_crossfeed_enabled.load()) {
@@ -1774,7 +1663,7 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
                 if (cf_frames > 0) {
                     float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
                                                        g_cf_output_right.data(), cf_frames);
-                    update_peak_level(g_peak_post_crossfeed_level, cfPeak);
+                    runtime_stats::updatePostCrossfeedPeak(cfPeak);
                 }
                 std::lock_guard<std::mutex> lock(g_buffer_mutex);
                 enqueue_output_frames_locked(g_cf_output_left, g_cf_output_right);
@@ -1791,7 +1680,7 @@ static void process_interleaved_block(const float* input_samples, uint32_t n_fra
     if (frames_generated > 0) {
         float postPeak =
             compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_post_crossfeed_level, postPeak);
+        runtime_stats::updatePostCrossfeedPeak(postPeak);
     }
 }
 
@@ -2322,7 +2211,7 @@ void alsa_output_thread() {
 
             // Apply limiter and track peak after gain & soft mute
             float postGainPeak = apply_output_limiter(float_buffer.data(), period_size);
-            update_peak_level(g_peak_post_gain_level, postGainPeak);
+            runtime_stats::updatePostGainPeak(postGainPeak);
 
             // Step 3: Clipping detection, clamping, and float→int32 conversion
             static auto last_stats_write = std::chrono::steady_clock::now();
@@ -2336,7 +2225,7 @@ void alsa_output_thread() {
                 if (left_sample > 1.0f || left_sample < -1.0f || right_sample > 1.0f ||
                     right_sample < -1.0f) {
                     current_clips++;
-                    g_clip_count.fetch_add(1, std::memory_order_relaxed);
+                    runtime_stats::recordClip();
                 }
 
                 // Hard clipping as safety net only
@@ -2351,11 +2240,11 @@ void alsa_output_thread() {
                     static_cast<int32_t>(std::lroundf(right_sample * INT32_MAX_FLOAT));
             }
 
-            g_total_samples.fetch_add(period_size * 2, std::memory_order_relaxed);
+            runtime_stats::addSamples(period_size * 2);
 
             // Report clipping infrequently to avoid log spam
-            size_t total = g_total_samples.load(std::memory_order_relaxed);
-            size_t clips = g_clip_count.load(std::memory_order_relaxed);
+            size_t total = runtime_stats::totalSamples();
+            size_t clips = runtime_stats::clipCount();
             if (total % (period_size * 2 * 100) == 0 && clips > 0) {
                 std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
                           << total << " (" << (100.0 * clips / total) << "%)" << std::endl;
@@ -2364,7 +2253,8 @@ void alsa_output_thread() {
             // Write stats file every second
             auto now = std::chrono::steady_clock::now();
             if (now - last_stats_write >= std::chrono::seconds(1)) {
-                write_stats_file();
+                runtime_stats::writeStatsFile(build_runtime_stats_dependencies(),
+                                              get_max_output_buffer_frames(), STATS_FILE_PATH);
                 last_stats_write = now;
             }
             g_output_read_pos += period_size;
