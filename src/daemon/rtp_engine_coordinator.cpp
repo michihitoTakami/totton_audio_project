@@ -542,12 +542,12 @@ void RtpEngineCoordinator::startFromConfig() {
     ensureManagerInitialized();
     Network::SessionConfig sessionCfg = buildSessionConfig(deps_.config->rtp);
     std::string error;
+    flushStreamingCache();
     if (!manager_->startSession(sessionCfg, error)) {
         LOG_ERROR("Failed to auto-start RTP session {}: {}", sessionCfg.sessionId, error);
     } else {
         LOG_INFO("RTP session '{}' auto-started on {}:{}", sessionCfg.sessionId,
                  sessionCfg.bindAddress, sessionCfg.port);
-        flushStreamingCache();
         maybeSwitchRateForRtp(sessionCfg.sampleRate, sessionCfg.sessionId);
     }
 }
@@ -597,7 +597,6 @@ bool RtpEngineCoordinator::handleZeroMqCommand(const std::string& cmdType,
         resp["message"] = "RTP session started";
         resp["data"] = Network::sessionConfigToJson(sessionCfg);
         responseOut = resp.dump();
-        flushStreamingCache();
         maybeSwitchRateForRtp(sessionCfg.sampleRate, sessionCfg.sessionId);
         return true;
     } else if (cmdType == "RTP_STOP_SESSION" || cmdType == "StopSession") {
