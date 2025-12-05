@@ -1,4 +1,4 @@
-#include "daemon/dac_manager.h"
+#include "daemon/pcm/dac_manager.h"
 
 #include "logging/logger.h"
 
