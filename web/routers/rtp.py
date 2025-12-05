@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Path, status
 
 from ..models import (
     ApiResponse,
+    RtpConfigUpdate,
     RtpDiscoveryResponse,
     RtpSessionCreateRequest,
     RtpSessionCreateResponse,
@@ -167,3 +168,35 @@ async def delete_session(session_id: str = SESSION_ID_PARAM) -> ApiResponse:
         message="RTP session stopped",
         data={"session_id": session_id},
     )
+
+
+@router.put(
+    "/config",
+    response_model=ApiResponse,
+    summary="Update RTP configuration",
+)
+async def update_rtp_config(config: RtpConfigUpdate) -> ApiResponse:
+    """
+    Update RTP receiver configuration.
+
+    Note: Configuration changes will be applied to config.json and will
+    require a daemon restart to take effect.
+    """
+    from ..services.config import update_rtp_config as update_config_file
+
+    try:
+        update_config_file(config.model_dump(exclude_none=True))
+
+        # TODO: Trigger daemon restart here when daemon restart API is implemented
+        # For now, just update config.json and inform the user to restart manually
+
+        return ApiResponse(
+            success=True,
+            message="RTP configuration updated. Please restart the daemon for changes to take effect.",
+            data=config.model_dump(exclude_none=True),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update RTP configuration: {str(e)}",
+        )

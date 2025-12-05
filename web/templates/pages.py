@@ -87,12 +87,10 @@ def render_rtp_management(lang: str = "en", current_page: str = "rtp") -> str:
     Returns:
         Rendered HTML string
     """
-    # TODO: Implement in Issue #413
-    template = env.get_template("base.html")
+    template = env.get_template("pages/rtp_management.html")
     return template.render(
         t=get_translations(lang),
         current_page=current_page,
-        content="<h2>RTP Management - Coming Soon</h2>",
     )
 
 

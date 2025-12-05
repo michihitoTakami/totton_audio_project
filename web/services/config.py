@@ -339,3 +339,34 @@ def save_output_mode(mode: str, preferred_device: str) -> bool:
         return True
     except IOError:
         return False
+
+
+def update_rtp_config(updates: dict[str, Any]) -> bool:
+    """Update RTP configuration in config.json.
+
+    Args:
+        updates: Dictionary containing RTP config updates (port, bind_address, payload_type)
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        existing = load_raw_config()
+        rtp_section = existing.get("rtp", {})
+        if not isinstance(rtp_section, dict):
+            rtp_section = {}
+
+        # Update only provided fields (camelCase for JSON)
+        if "port" in updates:
+            rtp_section["port"] = updates["port"]
+        if "bind_address" in updates:
+            rtp_section["bindAddress"] = updates["bind_address"]
+        if "payload_type" in updates:
+            rtp_section["payloadType"] = updates["payload_type"]
+
+        existing["rtp"] = rtp_section
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False

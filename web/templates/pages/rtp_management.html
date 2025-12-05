@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t.get('nav.rtp') }} - {{ t.get('app.title') }}{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/rtp_management.js"></script>
+{% endblock %}
+
+{% block content %}
+<div x-data="rtpManagementData()" x-init="init()">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1 class="page-title">{{ t.get('nav.rtp') }}</h1>
+        <p class="page-subtitle">{{ t.get('rtp.subtitle') }}</p>
+    </div>
+
+    <!-- RTP Stream Discovery Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('rtp.scan.title') }}</h2>
+        <div class="card">
+            <div class="btn-row">
+                {% set button_label = t.get('rtp.scan.button') %}
+                {% set alpine_click = "scanStreams" %}
+                {% set button_disabled = "scanning" %}
+                {% include 'components/action_button.html' %}
+            </div>
+
+            <!-- Scan Status -->
+            <template x-if="scanning">
+                <div class="info-text">
+                    <span class="icon">🔍</span>
+                    <span x-text="'{{ t.get('rtp.scan.scanning') }}'"></span>
+                </div>
+            </template>
+
+            <!-- Last Scan Info -->
+            <template x-if="!scanning && scanResult.scanned_at_unix_ms">
+                <div class="info-text">
+                    <span class="icon">ℹ️</span>
+                    <span>
+                        {{ t.get('rtp.scan.last_scan') }}:
+                        <span x-text="formatTimestamp(scanResult.scanned_at_unix_ms)"></span>
+                        <template x-if="scanResult.duration_ms">
+                            ({{ t.get('rtp.scan.duration') }}: <span x-text="scanResult.duration_ms"></span>ms)
+                        </template>
+                    </span>
+                </div>
+            </template>
+
+            <!-- Discovered Streams Table -->
+            <template x-if="scanResult.streams && scanResult.streams.length > 0">
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>{{ t.get('rtp.scan.table.name') }}</th>
+                                <th>{{ t.get('rtp.scan.table.host') }}</th>
+                                <th>{{ t.get('rtp.scan.table.port') }}</th>
+                                <th>{{ t.get('rtp.scan.table.status') }}</th>
+                                <th>{{ t.get('rtp.scan.table.sample_rate') }}</th>
+                                <th>{{ t.get('rtp.scan.table.channels') }}</th>
+                                <th>{{ t.get('rtp.scan.table.action') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="stream in scanResult.streams" :key="stream.session_id">
+                                <tr>
+                                    <td x-text="stream.display_name"></td>
+                                    <td x-text="stream.source_host || '-'"></td>
+                                    <td x-text="stream.port"></td>
+                                    <td x-text="stream.status"></td>
+                                    <td x-text="stream.sample_rate ? (stream.sample_rate / 1000) + 'kHz' : '-'"></td>
+                                    <td x-text="stream.channels || '-'"></td>
+                                    <td>
+                                        <template x-if="!stream.existing_session">
+                                            {% set button_label = t.get('rtp.scan.connect') %}
+                                            {% set button_type = "secondary" %}
+                                            {% set alpine_click = "connectStream(stream)" %}
+                                            {% set button_class = "btn-sm" %}
+                                            {% include 'components/action_button.html' %}
+                                        </template>
+                                        <template x-if="stream.existing_session">
+                                            <span class="status-badge status-ok">{{ t.get('rtp.scan.connected') }}</span>
+                                        </template>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+
+            <!-- No Streams Message -->
+            <template x-if="!scanning && scanResult.streams && scanResult.streams.length === 0">
+                {% set info_message = t.get('rtp.scan.no_streams') %}
+                {% include 'components/info_text.html' %}
+            </template>
+        </div>
+    </div>
+
+    <!-- Active Sessions Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('rtp.sessions.title') }}</h2>
+        <div class="card">
+            <template x-if="sessions && sessions.length > 0">
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>{{ t.get('rtp.sessions.table.id') }}</th>
+                                <th>{{ t.get('rtp.sessions.table.host') }}</th>
+                                <th>{{ t.get('rtp.sessions.table.port') }}</th>
+                                <th>{{ t.get('rtp.sessions.table.status') }}</th>
+                                <th>{{ t.get('rtp.sessions.table.packets') }}</th>
+                                <th>{{ t.get('rtp.sessions.table.action') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="session in sessions" :key="session.session_id">
+                                <tr @click="selectSession(session.session_id)"
+                                    :class="{'selected': selectedSessionId === session.session_id}"
+                                    style="cursor: pointer;">
+                                    <td x-text="session.session_id"></td>
+                                    <td x-text="session.source_host || '-'"></td>
+                                    <td x-text="session.port || '-'"></td>
+                                    <td>
+                                        <span :class="session.packets_received > 0 ? 'status-badge status-ok' : 'status-badge status-off'"
+                                              x-text="session.packets_received > 0 ? '{{ t.get('rtp.sessions.status.active') }}' : '{{ t.get('rtp.sessions.status.idle') }}'"></span>
+                                    </td>
+                                    <td x-text="session.packets_received"></td>
+                                    <td @click.stop>
+                                        {% set button_label = t.get('rtp.sessions.stop') %}
+                                        {% set button_type = "secondary" %}
+                                        {% set alpine_click = "stopSession(session.session_id)" %}
+                                        {% set button_class = "btn-sm" %}
+                                        {% include 'components/action_button.html' %}
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+
+            <template x-if="!sessions || sessions.length === 0">
+                {% set info_message = t.get('rtp.sessions.no_sessions') %}
+                {% include 'components/info_text.html' %}
+            </template>
+        </div>
+    </div>
+
+    <!-- Session Telemetry Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('rtp.telemetry.title') }}</h2>
+        <div class="card">
+            <template x-if="!selectedSessionId">
+                {% set info_message = t.get('rtp.telemetry.select') %}
+                {% include 'components/info_text.html' %}
+            </template>
+
+            <template x-if="selectedSessionId && selectedSession">
+                <div class="telemetry-grid">
+                    <div class="telemetry-item">
+                        <span class="telemetry-label">{{ t.get('rtp.telemetry.packets_received') }}:</span>
+                        <span class="telemetry-value" x-text="selectedSession.packets_received"></span>
+                    </div>
+                    <div class="telemetry-item">
+                        <span class="telemetry-label">{{ t.get('rtp.telemetry.bytes_received') }}:</span>
+                        <span class="telemetry-value" x-text="formatBytes(selectedSession.bytes_received)"></span>
+                    </div>
+                    <div class="telemetry-item">
+                        <span class="telemetry-label">{{ t.get('rtp.telemetry.late_packets') }}:</span>
+                        <span class="telemetry-value" x-text="selectedSession.late_packets"></span>
+                    </div>
+                    <div class="telemetry-item">
+                        <span class="telemetry-label">{{ t.get('rtp.telemetry.jitter') }}:</span>
+                        <span class="telemetry-value" x-text="(selectedSession.network_jitter_usec / 1000).toFixed(2) + ' ms'"></span>
+                    </div>
+                    <div class="telemetry-item">
+                        <span class="telemetry-label">{{ t.get('rtp.telemetry.sample_rate') }}:</span>
+                        <span class="telemetry-value" x-text="selectedSession.sample_rate ? (selectedSession.sample_rate / 1000) + ' kHz' : '-'"></span>
+                    </div>
+                    <div class="telemetry-item">
+                        <span class="telemetry-label">{{ t.get('rtp.telemetry.last_packet') }}:</span>
+                        <span class="telemetry-value" x-text="selectedSession.last_packet_unix_ms ? formatTimestamp(selectedSession.last_packet_unix_ms) : '-'"></span>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- RTP Configuration Section -->
+    <div class="section">
+        <h2 class="section-title">{{ t.get('rtp.config.title') }}</h2>
+        <div class="card">
+            {% set form_label = t.get('rtp.config.port') %}
+            {% set form_input_type = "text" %}
+            {% set form_input_model = "rtpConfig.port" %}
+            {% set form_input_placeholder = "46000" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('rtp.config.bind_address') %}
+            {% set form_input_type = "text" %}
+            {% set form_input_model = "rtpConfig.bind_address" %}
+            {% set form_input_placeholder = "0.0.0.0" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('rtp.config.payload_type') %}
+            {% set form_input_type = "text" %}
+            {% set form_input_model = "rtpConfig.payload_type" %}
+            {% set form_input_placeholder = "96" %}
+            {% include 'components/form_group.html' %}
+
+            <div class="btn-row">
+                {% set button_label = t.get('rtp.config.save') %}
+                {% set alpine_click = "saveRtpConfig" %}
+                {% set button_disabled = "savingConfig" %}
+                {% include 'components/action_button.html' %}
+            </div>
+
+            {% set alert_type = "warning" %}
+            {% set alert_show = "true" %}
+            {% set alert_message = t.get('rtp.config.restart_note') %}
+            {% include 'components/alert.html' %}
+        </div>
+    </div>
+</div>
+{% endblock %}

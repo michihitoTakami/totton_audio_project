@@ -1560,6 +1560,48 @@
         }
       }
     },
+    "/api/rtp/config": {
+      "put": {
+        "tags": [
+          "rtp"
+        ],
+        "summary": "Update RTP configuration",
+        "description": "Update RTP receiver configuration.\n\nNote: Configuration changes will be applied to config.json and will\nrequire a daemon restart to take effect.",
+        "operationId": "update_rtp_config_api_rtp_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RtpConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/partitioned-convolution": {
       "get": {
         "tags": [
@@ -3539,6 +3581,53 @@
         "type": "object",
         "title": "RtpAdvancedSettings",
         "description": "Advanced buffer tuning for RTP reception."
+      },
+      "RtpConfigUpdate": {
+        "properties": {
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port",
+            "description": "Listening port for RTP streams (1024-65535)"
+          },
+          "bind_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bind Address",
+            "description": "Bind address for RTP receiver (IPv4 address or '0.0.0.0')"
+          },
+          "payload_type": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 127.0,
+                "minimum": 96.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Type",
+            "description": "Dynamic payload type (96-127)"
+          }
+        },
+        "type": "object",
+        "title": "RtpConfigUpdate",
+        "description": "RTP configuration update request model."
       },
       "RtpDiscoveryResponse": {
         "properties": {

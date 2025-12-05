@@ -1015,6 +1015,30 @@ class RtpDiscoveryResponse(BaseModel):
     )
 
 
+class RtpConfigUpdate(BaseModel):
+    """RTP configuration update request model."""
+
+    port: Optional[Port] = Field(
+        default=None,
+        description="Listening port for RTP streams (1024-65535)",
+    )
+    bind_address: Optional[str] = Field(
+        default=None,
+        description="Bind address for RTP receiver (IPv4 address or '0.0.0.0')",
+    )
+    payload_type: Optional[conint(ge=96, le=127)] = Field(
+        default=None,
+        description="Dynamic payload type (96-127)",
+    )
+
+    @field_validator("bind_address")
+    @classmethod
+    def _validate_bind_address(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            return _validate_ipv4_literal(value)
+        return value
+
+
 # ============================================================================
 # Crossfeed Models
 # ============================================================================
