@@ -229,15 +229,18 @@ GPU Processing (640k-tap FIR, 8x upsample)
 
 ### Tasks
 
-#### Raspberry Pi 5 セットアップ
+#### Raspberry Pi 5 セットアップ（Universal Audio Input Hub）
+
+##### Phase 3.1: 基本構成
 - [ ] **USB Gadget Mode (UAC2)**
   - USB Type-C Device Mode設定
   - Linux ConfigFS設定スクリプト作成
-  - 対応サンプルレート設定（44.1k/48k/96k等）
+  - **ハイレゾ対応**: 16/24/32-bit, 最大768kHz
   - PCからは「高音質USBサウンドカード」として認識
 
 - [ ] **PipeWire RTP送信**
-  - UAC2入力 → PipeWire → RTP送信
+  - UAC2入力 → PipeWire → **SDP生成** → RTP送信
+  - **ハイレゾ透過**: 入力レート/ビット深度をそのままJetsonへ転送
   - 自動サンプルレート検知
   - Jetsonへのネットワーク転送
 
@@ -246,16 +249,49 @@ GPU Processing (640k-tap FIR, 8x upsample)
   - systemd による自動起動
   - ヘルスチェック機能
 
+##### Phase 3.2: ネットワークオーディオ対応
+- [ ] **Spotify Connect統合**
+  - librespot を使用
+  - 320kbps Ogg Vorbis → 44.1kHz/16bit
+  - デバイス名: "Magic Box"
+
+- [ ] **AirPlay 2対応**
+  - shairport-sync を使用
+  - Apple Lossless (ALAC) → 44.1kHz/16bit
+  - iOS/macOS からの無線再生
+
+- [ ] **PipeWire入力ソース管理**
+  - 複数入力の自動切り替え（Last Active Wins）
+  - または優先順位制御（USB > Roon > Spotify > AirPlay）
+  - Web UIでの入力ソース選択機能
+
+##### Phase 3.3: 高度なネットワークオーディオ
+- [ ] **Roon Bridge統合**
+  - Roon Ready認証（オプション）
+  - ハイレゾストリーミング対応
+  - Roonコア自動検出
+
+- [ ] **UPnP/DLNA Renderer**
+  - 家庭内NASからの再生
+  - ハイレゾファイル対応（FLAC/DSD）
+
+- [ ] **入力ソース拡張（オプション）**
+  - Bluetooth A2DP (aptX HD対応)
+  - Chromecast Audio プロトコル
+
 #### Jetson Orin Nano セットアップ
 - [ ] **Jetson移植**
   - CUDA Architecture変更 (SM 7.5 → SM 8.7)
   - CMakeLists.txt の CUDA_ARCHITECTURES 修正
   - パフォーマンス検証・チューニング
 
-- [ ] **RTP受信機能**
-  - RTP Session Manager統合
-  - サンプルレート自動検知
-  - バッファ管理
+- [x] **RTP受信機能（実装済み）** ✅
+  - RTP Session Manager統合完了
+  - **SDP自動パース**: サンプルレート/ビット深度/チャンネル数を自動認識
+  - **ハイレゾ対応**: 16/24/32-bit, 44.1k〜768kHz
+  - **動的追従**: RTPストリームのレート変更に自動追従
+  - **グリッチフリー切り替え**: Soft Mute機能によるシームレスなレート変更
+  - 実装ファイル: `src/rtp_session_manager.cpp`, `src/alsa_daemon.cpp`
 
 - [ ] **ALSA Direct Output**
   - USB DAC直接出力

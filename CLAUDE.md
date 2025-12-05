@@ -75,12 +75,15 @@ graph TD
 
 - **Input Interface (Production):**
   - RTP Session Manager: Raspberry Pi 5からのRTPストリーム受信
-  - サンプリングレート自動検知（44.1k系 / 48k系）
+  - **ハイレゾ対応**: SDP自動パース → サンプルレート/ビット深度自動認識
+  - **対応フォーマット**: 16/24/32-bit, 44.1k〜768kHz, ステレオ/マルチチャンネル
+  - **動的追従**: RTPストリームのレート変更に自動追従（グリッチフリー切り替え）
 - **Input Interface (Development):**
   - `libpipewire` APIを使用したローカルストリーム受信
 - **Convolution Core (GPU):**
   - CUDA FFT (`cuFFT`) を使用したOverlap-Save法
   - Partitioned Convolutionにより、640kタップ処理時のレイテンシを制御
+  - **マルチレート対応**: 全8入力レート対応（44.1k/88.2k/176.4k/352.8k/48k/96k/192k/384k）
   - 最大16倍アップサンプリング（44.1kHz → 705.6kHz, 48kHz → 768kHz）
 - **Buffering:** `moodycamel::ReaderWriterQueue` (Lock-free) によるスレッド間データ転送
 - **Output Interface:** ALSA (`alsa-lib`) 直接制御によるBit-perfect出力
@@ -101,14 +104,16 @@ graph TD
 - **入力デバイス**: Raspberry Pi 5 (UAC2 + RTP送信)
 - **処理デバイス**: Jetson Orin Nano Super (RTP受信 + GPU処理 + DAC出力)
 
-#### Raspberry Pi 5 (Input Bridge)
+#### Raspberry Pi 5 (Universal Audio Input Hub)
 | Item | Specification |
 |------|---------------|
 | SoC | Broadcom BCM2712 (Quad-core Cortex-A76) |
-| Role | USB UAC2デバイス、RTP送信 |
-| Input | USB Type-C (UAC2 Device Mode) ← PC接続 |
-| Output | Ethernet → Jetson へRTP送信 |
-| Deployment | Docker (PipeWire + RTP Sender) |
+| Role | ユニバーサルオーディオ入力ハブ + RTP送信 |
+| Input (Primary) | USB Type-C (UAC2 Device Mode) ← PC接続 |
+| Input (Network) | Spotify Connect / AirPlay 2 / Roon Bridge / UPnP/DLNA |
+| Output | Ethernet → Jetson へRTP送信（ハイレゾ対応） |
+| Audio Processing | PipeWire（入力ソース統合、サンプルレート変換） |
+| Deployment | Docker (PipeWire + Network Audio Services + RTP Sender) |
 
 #### Jetson Orin Nano Super (Processing Unit)
 | Item | Specification |
