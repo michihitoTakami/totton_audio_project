@@ -4,6 +4,7 @@
 #include "audio/input_stall_detector.h"
 #include "convolution_engine.h"
 #include "logging/logger.h"
+#include "soft_mute.h"
 
 #include <algorithm>
 #include <atomic>
@@ -28,6 +29,7 @@ struct StreamingCacheDependencies {
     std::mutex* streamingMutex = nullptr;
 
     ConvolutionEngine::GPUUpsampler** upsamplerPtr = nullptr;
+    SoftMute::Controller** softMute = nullptr;
 
     std::function<void()> onCrossfeedReset;
 };
@@ -40,6 +42,19 @@ class StreamingCacheManager {
         auto now = std::chrono::steady_clock::now();
         std::int64_t nowNs = AudioInput::toNanoseconds(now);
         std::int64_t previousNs = lastInputTimestampNs_.exchange(nowNs, std::memory_order_acq_rel);
+        if (previousNs <= 0) {
+            // 初回サンプルで開始時刻を記録（ギャップ判定のグレース適用のため）
+            std::int64_t expected = 0;
+            (void)firstInputTimestampNs_.compare_exchange_strong(expected, nowNs,
+                                                                 std::memory_order_acq_rel);
+            return;
+        }
+
+        std::int64_t startNs = firstInputTimestampNs_.load(std::memory_order_acquire);
+        if (startNs > 0 && (nowNs - startNs) < kInitialStallGraceNs) {
+            // 起動直後のギャップは無視してポップノイズを回避
+            return;
+        }
         if (AudioInput::shouldResetAfterStall(previousNs, nowNs)) {
             std::chrono::nanoseconds gap(nowNs - previousNs);
             flushCachesInternal(gap);
@@ -83,8 +98,22 @@ class StreamingCacheManager {
             }
         };
 
+        auto beginSoftMute = [&]() {
+            if (deps_.softMute && *deps_.softMute) {
+                (*deps_.softMute)->startFadeOut();
+            }
+        };
+
+        auto endSoftMute = [&]() {
+            if (deps_.softMute && *deps_.softMute) {
+                (*deps_.softMute)->startFadeIn();
+            }
+        };
+
         bool hasStreamingLock = deps_.streamingMutex != nullptr;
         bool hasBufferLock = deps_.bufferMutex != nullptr;
+
+        beginSoftMute();
 
         if (hasStreamingLock && hasBufferLock) {
             std::scoped_lock<std::mutex, std::mutex> lock(*deps_.streamingMutex,
@@ -104,6 +133,8 @@ class StreamingCacheManager {
             }
         }
 
+        endSoftMute();
+
         if (deps_.onCrossfeedReset) {
             deps_.onCrossfeedReset();
         }
@@ -114,6 +145,9 @@ class StreamingCacheManager {
 
     StreamingCacheDependencies deps_;
     std::atomic<std::int64_t> lastInputTimestampNs_{0};
+    std::atomic<std::int64_t> firstInputTimestampNs_{0};
+
+    static constexpr std::int64_t kInitialStallGraceNs = 1'500'000'000;  // 1.5s
 };
 
 }  // namespace streaming_cache
