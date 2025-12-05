@@ -12,6 +12,7 @@
 ```
 Phase 1: Core Engine & Middleware       [====================] 100% ✅ 完了
 Phase 2: Control Plane & Web UI         [====================] 100% ✅ 完了
+Phase 2.5: Refactoring & Stabilization  [================>   ] 85% 🔄 進行中
 Phase 3: Hardware Integration           [====>               ] 20% (準備中)
 Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 ```
@@ -230,6 +231,79 @@ GPU Processing (640k-tap FIR, 8x upsample)
 - 技術的詳細は隠蔽、詳細モードで表示可能
 - 多言語対応で国際展開準備完了
 - **5000行超のOpenAPI仕様書**自動生成済み (`docs/api/openapi.json`)
+
+---
+
+## Phase 2.5: Refactoring & Stabilization
+
+**Status:** 🔄 進行中（85%）
+
+Phase 2で急速に実装した機能の品質向上・安定化。技術的負債の解消とエッジケース対応。
+
+### 背景
+
+Phase 2で基本機能は完成したが、以下の課題が顕在化：
+- 急速な開発による技術的負債
+- 巨大化したファイル（`alsa_daemon.cpp`等）の責務不明瞭
+- エッジケースでの不安定性
+- 可読性・保守性の低下
+
+Phase 3（ハードウェア統合）に進む前に、コードベースを健全化。
+
+### Completed Tasks ✅
+
+- [x] **Web UIフレームワーク刷新**
+  - レガシーHTML → **htmx 1.9.12 + Alpine.js 3.13.10**
+  - 約半分のコードを作り直し
+  - モダンなリアクティブUI実現
+  - 実装: `web/templates/base.html`
+
+- [x] **i18n対応実装**
+  - 日本語/英語の完全対応
+  - テンプレートエンジン統合
+  - テストカバレッジ確保
+  - 実装: `web/tests/test_i18n.py`
+
+- [x] **コードリファクタリング（部分的）**
+  - 可読性向上
+  - 関数分割・モジュール化
+
+### In Progress 🔄
+
+- [ ] **alsa_daemon.cpp の責務分割**
+  - 現状: 巨大なモノリシックファイル
+  - 目標:
+    - `audio_input.cpp` - ALSA/PipeWire/RTP入力管理
+    - `audio_output.cpp` - ALSA出力管理
+    - `processing_pipeline.cpp` - GPU処理パイプライン
+    - `daemon_main.cpp` - メインループ・初期化
+  - Issue: 要作成
+
+- [ ] **HRTF/Crossfeed バグ修正**
+  - 既知のバグ: クロスフェード処理の問題
+  - エッジケースでの不安定性
+  - Issue: 既存
+
+- [ ] **エッジケーステスト強化**
+  - レート切り替え繰り返し
+  - RTP接続/切断の頻繁な繰り返し
+  - GPU高負荷時の挙動
+  - 長時間稼働テスト（メモリリーク検出）
+
+- [ ] **非通常系テスト**
+  - デバイス切断時の挙動
+  - 不正なRTP/SDP受信時の挙動
+  - CUDA/GPU エラー時の復帰
+
+### 技術的負債解消の優先順位
+
+1. **Critical**: HRTF/Crossfeedバグ修正 → Phase 3前に必須
+2. **High**: `alsa_daemon.cpp` 分割 → 保守性向上
+3. **Medium**: エッジケーステスト強化 → 安定性向上
+
+### Timeline
+
+Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコードベースを健全化。
 
 ---
 
