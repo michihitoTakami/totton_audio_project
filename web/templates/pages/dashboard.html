@@ -1,8 +1,4 @@
 {% extends "base.html" %}
-{% from 'components/status_card.html' import status_card %}
-{% from 'components/alert.html' import alert %}
-{% from 'components/info_text.html' import info_text %}
-{% from 'components/form_group.html' import form_group_input, form_group_select %}
 
 {% block title %}{{ t.get('nav.dashboard') }} - {{ t.get('app.title') }}{% endblock %}
 
@@ -17,59 +13,51 @@
     <!-- System Status Cards -->
     <div class="card-grid">
         <!-- Daemon Status Card -->
-        {{ status_card(
-            icon='⚙️',
-            title=t.get('dashboard.daemon'),
-            status_condition='status.daemon_running',
-            status_true=t.get('dashboard.status.running'),
-            status_false=t.get('dashboard.status.stopped'),
-            status_class_true='status-ok',
-            status_class_false='status-error'
-        ) }}
+        {% set status_icon = "⚙️" %}
+        {% set status_title = t.get('dashboard.daemon') %}
+        {% set status_class = "status.daemon_running ? 'status-ok' : 'status-error'" %}
+        {% set status_text = "status.daemon_running ? '{{ t.get('dashboard.status.running') }}' : '{{ t.get('dashboard.status.stopped') }}'" %}
+        {% include 'components/status_card.html' %}
 
         <!-- EQ Status Card -->
-        {{ status_card(
-            icon='🎚️',
-            title=t.get('dashboard.eq'),
-            status_condition='status.eq_active',
-            status_true=t.get('dashboard.status.on'),
-            status_false=t.get('dashboard.status.off')
-        ) }}
+        {% set status_icon = "🎚️" %}
+        {% set status_title = t.get('dashboard.eq') %}
+        {% set status_class = "status.eq_active ? 'status-ok' : 'status-off'" %}
+        {% set status_text = "status.eq_active ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% include 'components/status_card.html' %}
 
         <!-- Crossfeed Status Card -->
-        {{ status_card(
-            icon='🎧',
-            title=t.get('dashboard.crossfeed'),
-            status_condition='status.crossfeed_enabled',
-            status_true=t.get('dashboard.status.on'),
-            status_false=t.get('dashboard.status.off')
-        ) }}
+        {% set status_icon = "🎧" %}
+        {% set status_title = t.get('dashboard.crossfeed') %}
+        {% set status_class = "status.crossfeed_enabled ? 'status-ok' : 'status-off'" %}
+        {% set status_text = "status.crossfeed_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% include 'components/status_card.html' %}
 
         <!-- Low Latency Mode Card -->
-        {{ status_card(
-            icon='⚡',
-            title=t.get('dashboard.low_latency'),
-            status_condition='status.low_latency_enabled',
-            status_true=t.get('dashboard.status.on'),
-            status_false=t.get('dashboard.status.off')
-        ) }}
+        {% set status_icon = "⚡" %}
+        {% set status_title = t.get('dashboard.low_latency') %}
+        {% set status_class = "status.low_latency_enabled ? 'status-ok' : 'status-off'" %}
+        {% set status_text = "status.low_latency_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% include 'components/status_card.html' %}
     </div>
 
     <!-- Low Latency Mode -->
     <div class="section">
         <h2 class="section-title">{{ t.get('dashboard.low_latency.title') }}</h2>
         <div class="card">
-            {% set toggle_label = t.get('dashboard.low_latency.toggle') %}
-            {% set toggle_desc = t.get('dashboard.low_latency.exclusive') %}
-            {% set alpine_model = "lowLatency.enabled" %}
-            {% set alpine_click = "toggleLowLatency" %}
-            {% include 'components/toggle_switch.html' %}
-            {{ alert(
-                type='warning',
-                show_condition='lowLatency.enabled && status.crossfeed_enabled',
-                message=t.get('dashboard.low_latency.warning')
-            ) }}
-            {{ info_text(message=t.get('dashboard.low_latency.info')) }}
+            <div class="toggle-container">
+                <div class="toggle-label">
+                    <span>{{ t.get('dashboard.low_latency.toggle') }}</span>
+                    <span class="toggle-desc">{{ t.get('dashboard.low_latency.exclusive') }}</span>
+                </div>
+                <div class="toggle-switch" :class="{ 'active': lowLatency.enabled }" @click="toggleLowLatency"></div>
+            </div>
+            {% set alert_type = "warning" %}
+            {% set alert_show = "lowLatency.enabled && status.crossfeed_enabled" %}
+            {% set alert_message = t.get('dashboard.low_latency.warning') %}
+            {% include 'components/alert.html' %}
+            {% set info_message = t.get('dashboard.low_latency.info') %}
+            {% include 'components/info_text.html' %}
         </div>
     </div>
 
@@ -78,25 +66,26 @@
         <h2 class="section-title">{{ t.get('dashboard.output_mode.title') }}</h2>
         <p class="section-subtitle">{{ t.get('dashboard.output_mode.subtitle') }}</p>
         <div class="card">
-            {{ form_group_select(
-                label=t.get('dashboard.output_mode.mode_label'),
-                model='outputMode.mode',
-                options_loop='mode in outputMode.availableModes',
-                option_value='mode',
-                option_text='mode.toUpperCase()',
-                disabled=true
-            ) }}
-            {{ form_group_input(
-                label=t.get('dashboard.output_mode.device_label'),
-                model='outputMode.preferredDevice',
-                placeholder='hw:USB',
-                disabled_condition='outputMode.loading'
-            ) }}
+            {% set form_label = t.get('dashboard.output_mode.mode_label') %}
+            {% set form_input_type = "select" %}
+            {% set form_input_model = "outputMode.mode" %}
+            {% set form_input_disabled = "true" %}
+            {% set form_select_options = '<template x-for="mode in outputMode.availableModes" :key="mode"><option :value="mode" x-text="mode.toUpperCase()"></option></template>' %}
+            {% include 'components/form_group.html' %}
+            {% set form_label = t.get('dashboard.output_mode.device_label') %}
+            {% set form_input_type = "text" %}
+            {% set form_input_model = "outputMode.preferredDevice" %}
+            {% set form_input_placeholder = "hw:USB" %}
+            {% set form_input_disabled = "outputMode.loading" %}
+            {% include 'components/form_group.html' %}
             <div class="btn-row">
-                {% set button_label = t.get('dashboard.output_mode.save') %}
-                {% set alpine_click = "saveOutputMode" %}
-                {% set button_disabled = "outputMode.loading" %}
-                {% include 'components/action_button.html' %}
+                <button
+                    class="action-button btn-primary"
+                    @click="saveOutputMode"
+                    :disabled="outputMode.loading"
+                >
+                    <span class="action-label">{{ t.get('dashboard.output_mode.save') }}</span>
+                </button>
             </div>
         </div>
     </div>
@@ -105,26 +94,22 @@
     <div class="section">
         <h2 class="section-title">{{ t.get('dashboard.phase_type.title') }}</h2>
         <div class="card">
-            <div class="form-group">
-                <label for="phaseType">{{ t.get('dashboard.phase_type.label') }}</label>
-                <select id="phaseType" x-model="phaseType.selected" @change="changePhaseType">
-                    <option value="minimum">{{ t.get('dashboard.phase_type.minimum') }}</option>
-                    <option value="linear">{{ t.get('dashboard.phase_type.linear') }}</option>
-                </select>
+            {% set form_label = t.get('dashboard.phase_type.label') %}
+            {% set form_input_type = "select" %}
+            {% set form_input_id = "phaseType" %}
+            {% set form_input_model = "phaseType.selected" %}
+            {% set form_on_change = "changePhaseType" %}
+            {% set form_select_options = '<option value="minimum">{{ t.get(\'dashboard.phase_type.minimum\') }}</option><option value="linear">{{ t.get(\'dashboard.phase_type.linear\') }}</option>' %}
+            {% include 'components/form_group.html' %}
+            <div class="info-text">
+                <span class="icon">ℹ️</span>
+                <span x-show="phaseType.selected === 'minimum'">{{ t.get('dashboard.phase_type.info_minimum') }}</span>
+                <span x-show="phaseType.selected === 'linear'">{{ t.get('dashboard.phase_type.info_linear') }}</span>
             </div>
-            {{ info_text(
-                message=t.get('dashboard.phase_type.info_minimum'),
-                show_condition="phaseType.selected === 'minimum'"
-            ) }}
-            {{ info_text(
-                message=t.get('dashboard.phase_type.info_linear'),
-                show_condition="phaseType.selected === 'linear'"
-            ) }}
-            {{ alert(
-                type='warning',
-                show_condition="phaseType.selected === 'linear' && lowLatency.enabled",
-                message=t.get('dashboard.phase_type.warning')
-            ) }}
+            {% set alert_type = "warning" %}
+            {% set alert_show = "phaseType.selected === 'linear' && lowLatency.enabled" %}
+            {% set alert_message = t.get('dashboard.phase_type.warning') %}
+            {% include 'components/alert.html' %}
         </div>
     </div>
 
@@ -136,17 +121,22 @@
             {% include 'components/opra_search.html' %}
 
             <div class="btn-row">
-                {% set button_label = t.get('dashboard.eq.apply') %}
-                {% set button_icon = "✓" %}
-                {% set alpine_click = "applyEQ" %}
-                {% set button_disabled = "!opra.selected || actionInProgress" %}
-                {% include 'components/action_button.html' %}
-                {% set button_label = t.get('dashboard.eq.off') %}
-                {% set button_icon = "✗" %}
-                {% set button_type = "secondary" %}
-                {% set alpine_click = "deactivateEQ" %}
-                {% set button_disabled = "actionInProgress" %}
-                {% include 'components/action_button.html' %}
+                <button
+                    class="action-button btn-primary"
+                    @click="applyEQ"
+                    :disabled="!opra.selected || actionInProgress"
+                >
+                    <span class="action-icon">✓</span>
+                    <span class="action-label">{{ t.get('dashboard.eq.apply') }}</span>
+                </button>
+                <button
+                    class="action-button btn-secondary"
+                    @click="deactivateEQ"
+                    :disabled="actionInProgress"
+                >
+                    <span class="action-icon">✗</span>
+                    <span class="action-label">{{ t.get('dashboard.eq.off') }}</span>
+                </button>
             </div>
 
             <div class="license-note">
@@ -159,11 +149,13 @@
     <div class="section">
         <h2 class="section-title">{{ t.get('dashboard.crossfeed.title') }}</h2>
         <div class="card">
-            {% set toggle_label = t.get('dashboard.crossfeed.toggle') %}
-            {% set toggle_desc = t.get('dashboard.crossfeed.toggle_desc') %}
-            {% set alpine_model = "crossfeed.enabled" %}
-            {% set alpine_click = "toggleCrossfeed" %}
-            {% include 'components/toggle_switch.html' %}
+            <div class="toggle-container">
+                <div class="toggle-label">
+                    <span>{{ t.get('dashboard.crossfeed.toggle') }}</span>
+                    <span class="toggle-desc">{{ t.get('dashboard.crossfeed.toggle_desc') }}</span>
+                </div>
+                <div class="toggle-switch" :class="{ 'active': crossfeed.enabled }" @click="toggleCrossfeed"></div>
+            </div>
 
             <div class="form-group" style="margin-top: 16px;" x-show="crossfeed.enabled">
                 <label>{{ t.get('dashboard.crossfeed.head_size') }}</label>
@@ -206,13 +198,13 @@
                 </div>
             </div>
 
-            {{ alert(
-                type='warning',
-                show_condition='crossfeed.enabled && lowLatency.enabled',
-                message=t.get('dashboard.crossfeed.warning')
-            ) }}
+            {% set alert_type = "warning" %}
+            {% set alert_show = "crossfeed.enabled && lowLatency.enabled" %}
+            {% set alert_message = t.get('dashboard.crossfeed.warning') %}
+            {% include 'components/alert.html' %}
 
-            {{ info_text(message=t.get('dashboard.crossfeed.info')) }}
+            {% set info_message = t.get('dashboard.crossfeed.info') %}
+            {% include 'components/info_text.html' %}
 
             <div class="license-note">
                 {{ t.get('dashboard.crossfeed.license') }} <a href="https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960" target="_blank" class="license-link">{{ t.get('dashboard.crossfeed.license_link') }}</a> (CC BY 4.0)
@@ -225,11 +217,14 @@
         <h2 class="section-title">{{ t.get('dashboard.quick_actions') }}</h2>
         <div class="card">
             <div class="action-grid">
-                {% set button_label = t.get('dashboard.action.restart_daemon') %}
-                {% set button_icon = "🔄" %}
-                {% set alpine_click = "restartDaemon" %}
-                {% set button_disabled = "actionInProgress" %}
-                {% include 'components/action_button.html' %}
+                <button
+                    class="action-button"
+                    @click="restartDaemon"
+                    :disabled="actionInProgress"
+                >
+                    <span class="action-icon">🔄</span>
+                    <span class="action-label">{{ t.get('dashboard.action.restart_daemon') }}</span>
+                </button>
             </div>
         </div>
     </div>
@@ -594,6 +589,26 @@ function dashboardData() {
             } finally {
                 this.actionInProgress = false;
             }
+        },
+
+        showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 12px 20px;
+                background: ${type === 'success' ? '#00ff88' : type === 'error' ? '#ff4444' : '#00d4ff'};
+                color: #0a0e12;
+                border-radius: 8px;
+                font-weight: 600;
+                z-index: 9999;
+                animation: slideIn 0.3s ease;
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
         },
     };
 }

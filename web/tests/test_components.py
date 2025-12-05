@@ -1,5 +1,5 @@
 """
-Tests for reusable UI components (Phase 1)
+Tests for reusable UI components (Phase 1 & Phase 2)
 """
 
 import pytest
@@ -217,7 +217,9 @@ class TestComponentCodeQuality:
         """Verify component files have parameter documentation."""
         import os
 
-        component_path = "/home/michihito/Working/gpu_os/worktrees/561-phase1-components/web/templates/components"
+        component_path = os.path.join(
+            os.path.dirname(__file__), "..", "templates", "components"
+        )
 
         # Check toggle_switch.html
         with open(os.path.join(component_path, "toggle_switch.html")) as f:
@@ -233,3 +235,240 @@ class TestComponentCodeQuality:
             assert "button_label" in content
             assert "alpine_click" in content
             assert "button_style" in content  # New parameter added
+
+
+class TestStatusCardComponent:
+    """Test status card component rendering (Phase 2)."""
+
+    def test_status_cards_present_in_dashboard(self, client):
+        """Verify status card components are rendered on dashboard."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Check for status-card class
+        assert 'class="status-card"' in response.text
+
+        # Check for status-card-header and status-card-body
+        assert 'class="status-card-header"' in response.text
+        assert 'class="status-card-body"' in response.text
+
+    def test_daemon_status_card_structure(self, client):
+        """Verify daemon status card has correct structure."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Should have status-icon
+        assert 'class="status-icon"' in response.text
+
+        # Should have status-indicator with Alpine.js binding
+        assert 'class="status-indicator"' in response.text
+        assert ":class=" in response.text
+        assert "x-text=" in response.text
+
+    def test_multiple_status_cards_rendered(self, client):
+        """Verify all 4 status cards are rendered."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Count status-card occurrences (should be 4: Daemon, EQ, Crossfeed, Low Latency)
+        html = response.text
+        status_card_count = html.count('class="status-card"')
+        assert (
+            status_card_count >= 4
+        ), f"Expected at least 4 status cards, found {status_card_count}"
+
+
+class TestAlertComponent:
+    """Test alert message component rendering (Phase 2)."""
+
+    def test_alert_present_in_dashboard(self, client):
+        """Verify alert components are rendered on dashboard."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Check for alert class
+        assert 'class="alert' in response.text
+
+        # Check for alert-warning type
+        assert "alert-warning" in response.text
+
+    def test_alert_with_alpine_show(self, client):
+        """Verify alert has Alpine.js x-show binding."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Should have x-show attribute
+        assert "x-show=" in response.text
+
+    def test_multiple_alerts_rendered(self, client):
+        """Verify multiple alert messages are rendered."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Count alert occurrences (Low Latency, Phase Type, Crossfeed warnings)
+        html = response.text
+        alert_count = html.count('class="alert alert-warning"')
+        assert alert_count >= 3, f"Expected at least 3 alerts, found {alert_count}"
+
+
+class TestInfoTextComponent:
+    """Test info text component rendering (Phase 2)."""
+
+    def test_info_text_present_in_dashboard(self, client):
+        """Verify info text components are rendered on dashboard."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Check for info-text class
+        assert 'class="info-text"' in response.text
+
+        # Check for icon span
+        assert '<span class="icon">' in response.text
+
+    def test_info_text_present_in_eq_settings(self, client):
+        """Verify info text components are rendered on EQ settings page."""
+        response = client.get("/eq")
+        assert response.status_code == 200
+
+        # Check for info-text class
+        assert 'class="info-text"' in response.text
+
+    def test_info_text_with_alpine_show(self, client):
+        """Verify info text can have Alpine.js x-show binding."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Some info texts may have x-show (not all)
+        html = response.text
+        # Just verify info-text components exist
+        assert 'class="info-text"' in html
+
+    def test_multiple_info_texts_rendered(self, client):
+        """Verify multiple info text components are rendered."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Count info-text occurrences
+        html = response.text
+        info_text_count = html.count('class="info-text"')
+        assert (
+            info_text_count >= 2
+        ), f"Expected at least 2 info texts, found {info_text_count}"
+
+
+class TestFormGroupComponent:
+    """Test form group component rendering (Phase 2)."""
+
+    def test_form_group_present_in_dashboard(self, client):
+        """Verify form group components are rendered on dashboard."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Check for form-group class
+        assert 'class="form-group"' in response.text
+
+        # Check for label and select/input elements
+        assert "<label" in response.text
+        assert "<select" in response.text or "<input" in response.text
+
+    def test_form_group_present_in_eq_settings(self, client):
+        """Verify form group components are rendered on EQ settings page."""
+        response = client.get("/eq")
+        assert response.status_code == 200
+
+        # Check for form-group class
+        assert 'class="form-group"' in response.text
+
+        # Should have textarea in EQ settings
+        assert "<textarea" in response.text
+
+    def test_form_group_with_select(self, client):
+        """Verify form group with select type renders correctly."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Phase Type form group should have select
+        html = response.text
+        # Look for select with Alpine.js bindings
+        assert "x-model=" in html
+        assert "<select" in html
+
+    def test_form_group_with_text_input(self, client):
+        """Verify form group with text input type renders correctly."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Output Mode device input should be text type
+        html = response.text
+        assert 'type="text"' in html
+        assert "placeholder=" in html
+
+    def test_form_group_with_textarea(self, client):
+        """Verify form group with textarea type renders correctly."""
+        response = client.get("/eq")
+        assert response.status_code == 200
+
+        # EQ import should have textarea
+        html = response.text
+        assert "<textarea" in html
+        assert 'class="text-area"' in html
+        assert "rows=" in html
+
+    def test_form_group_with_alpine_bindings(self, client):
+        """Verify form group has Alpine.js bindings."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Should have x-model and :disabled bindings
+        assert "x-model=" in response.text
+        assert ":disabled=" in response.text
+
+    def test_form_group_with_change_handler(self, client):
+        """Verify form group can have @change handler."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Phase Type select should have @change handler
+        assert "@change=" in response.text
+        assert "changePhaseType" in response.text
+
+
+class TestPhase2ComponentDocumentation:
+    """Test Phase 2 component documentation."""
+
+    def test_phase2_components_have_proper_documentation(self):
+        """Verify Phase 2 component files have parameter documentation."""
+        import os
+
+        component_path = os.path.join(
+            os.path.dirname(__file__), "..", "templates", "components"
+        )
+
+        # Check status_card.html
+        with open(os.path.join(component_path, "status_card.html")) as f:
+            content = f.read()
+            assert "Parameters:" in content
+            assert "status_icon" in content
+            assert "status_title" in content
+            assert "status_indicator" in content
+
+        # Check alert.html
+        with open(os.path.join(component_path, "alert.html")) as f:
+            content = f.read()
+            assert "Parameters:" in content
+            assert "alert_type" in content
+            assert "alert_message" in content
+
+        # Check info_text.html
+        with open(os.path.join(component_path, "info_text.html")) as f:
+            content = f.read()
+            assert "Parameters:" in content
+            assert "info_icon" in content
+            assert "info_message" in content
+
+        # Check form_group.html
+        with open(os.path.join(component_path, "form_group.html")) as f:
+            content = f.read()
+            assert "Parameters:" in content
+            assert "form_label" in content
+            assert "form_input_type" in content

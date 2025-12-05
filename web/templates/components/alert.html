@@ -1,23 +1,10 @@
-{#
-Alert Message Component
-
-Displays an alert message with conditional rendering.
-
-Usage:
-    {% from 'components/alert.html' import alert %}
-    {{ alert(
-        type='warning',
-        show_condition='lowLatency.enabled && status.crossfeed_enabled',
-        message=t.get('dashboard.low_latency.warning')
-    ) }}
-
-Parameters:
-    - type: Alert type ('warning', 'info', 'error', 'success')
-    - show_condition: Alpine.js expression for showing alert (x-show)
-    - message: Alert message text
+{# Alert Message Component
+   Parameters:
+   - alert_type (optional): Alert type - "warning", "error", "info", "success" (default: "info")
+   - alert_show (optional): Alpine.js x-show expression (default: no x-show)
+   - alert_message (required): Alert message text or translation key
 #}
-{% macro alert(type='info', show_condition=None, message='') %}
-<div class="alert alert-{{ type }}"{% if show_condition %} x-show="{{ show_condition }}"{% endif %}>
-    {{ message }}
+{% set alert_type = alert_type | default("info") %}
+<div class="alert alert-{{ alert_type }}" {% if alert_show %}x-show="{{ alert_show }}"{% endif %}>
+    {{ alert_message }}
 </div>
-{% endmacro %}

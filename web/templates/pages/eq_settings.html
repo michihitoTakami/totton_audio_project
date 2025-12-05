@@ -1,6 +1,4 @@
 {% extends "base.html" %}
-{% from 'components/info_text.html' import info_text %}
-{% from 'components/form_group.html' import form_group_input, form_group_textarea %}
 
 {% block title %}{{ t.get('nav.eq') }} - {{ t.get('app.title') }}{% endblock %}
 
@@ -39,17 +37,20 @@
                     </div>
 
                     <div style="text-align: center; margin-top: 16px;">
-                        {% set button_label = t.get('eq.active.deactivate') %}
-                        {% set button_icon = "✗" %}
-                        {% set button_type = "secondary" %}
-                        {% set alpine_click = "deactivateEQ" %}
-                        {% set button_disabled = "actionInProgress" %}
-                        {% include 'components/action_button.html' %}
+                        <button
+                            class="action-button btn-secondary"
+                            @click="deactivateEQ"
+                            :disabled="actionInProgress"
+                        >
+                            <span class="action-icon">✗</span>
+                            <span class="action-label">{{ t.get('eq.active.deactivate') }}</span>
+                        </button>
                     </div>
                 </div>
             </template>
             <template x-if="!activeEq.active || !activeEq.name">
-                {{ info_text(message=t.get('eq.active.none')) }}
+                {% set info_message = t.get('eq.active.none') %}
+                {% include 'components/info_text.html' %}
             </template>
         </div>
     </div>
@@ -61,12 +62,15 @@
             {% set eq_page = True %}
             {% include 'components/opra_search.html' %}
 
-            {% set button_label = t.get('eq.opra.apply') %}
-            {% set button_icon = "✓" %}
-            {% set alpine_click = "applyOPRA" %}
-            {% set button_disabled = "!opra.selected || actionInProgress" %}
-            {% set button_style = "margin-top: 12px;" %}
-            {% include 'components/action_button.html' %}
+            <button
+                class="action-button btn-primary"
+                @click="applyOPRA"
+                :disabled="!opra.selected || actionInProgress"
+                style="margin-top: 12px;"
+            >
+                <span class="action-icon">✓</span>
+                <span class="action-label">{{ t.get('eq.opra.apply') }}</span>
+            </button>
 
             <div class="license-note" style="margin-top: 16px;">
                 {{ t.get('eq.opra.license') }} <a href="https://github.com/opra-project/OPRA" target="_blank" class="license-link">{{ t.get('eq.opra.license_link') }}</a> (CC BY-SA 4.0)
@@ -78,28 +82,31 @@
     <div class="section">
         <h2 class="section-title">{{ t.get('eq.import.title') }}</h2>
         <div class="card">
-            {{ form_group_input(
-                label=t.get('eq.import.name_label'),
-                id='eqName',
-                model='textImport.name',
-                placeholder=t.get('eq.import.name_placeholder')
-            ) }}
+            {% set form_label = t.get('eq.import.name_label') %}
+            {% set form_input_type = "text" %}
+            {% set form_input_id = "eqName" %}
+            {% set form_input_placeholder = t.get('eq.import.name_placeholder') %}
+            {% set form_input_model = "textImport.name" %}
+            {% include 'components/form_group.html' %}
 
-            {{ form_group_textarea(
-                label=t.get('eq.import.content_label'),
-                id='eqText',
-                model='textImport.content',
-                rows=10,
-                placeholder=t.get('eq.import.content_placeholder'),
-                margin_top='12px'
-            ) }}
+            {% set form_label = t.get('eq.import.content_label') %}
+            {% set form_input_type = "textarea" %}
+            {% set form_input_id = "eqText" %}
+            {% set form_textarea_rows = "10" %}
+            {% set form_input_placeholder = t.get('eq.import.content_placeholder') %}
+            {% set form_input_model = "textImport.content" %}
+            {% set form_style = "margin-top: 12px;" %}
+            {% include 'components/form_group.html' %}
 
             <div style="text-align: center; margin-top: 16px;">
-                {% set button_label = t.get('eq.import.import_button') %}
-                {% set button_icon = "📥" %}
-                {% set alpine_click = "importFromText" %}
-                {% set button_disabled = "!textImport.name || !textImport.content || actionInProgress" %}
-                {% include 'components/action_button.html' %}
+                <button
+                    class="action-button btn-primary"
+                    @click="importFromText"
+                    :disabled="!textImport.name || !textImport.content || actionInProgress"
+                >
+                    <span class="action-icon">📥</span>
+                    <span class="action-label">{{ t.get('eq.import.import_button') }}</span>
+                </button>
             </div>
         </div>
     </div>
@@ -124,26 +131,30 @@
                                 </div>
                             </div>
                             <div class="profile-actions">
-                                {% set button_type = "icon" %}
-                                {% set button_class = "primary" %}
-                                {% set button_icon = "✓" %}
-                                {% set alpine_click = "activateProfile(profile.name)" %}
-                                {% set button_disabled = "actionInProgress || activeEq.name === profile.name" %}
-                                {% set button_title = t.get('eq.profiles.activate') %}
-                                {% include 'components/action_button.html' %}
-                                {% set button_class = "danger" %}
-                                {% set button_icon = "✗" %}
-                                {% set alpine_click = "deleteProfile(profile.name)" %}
-                                {% set button_disabled = "actionInProgress" %}
-                                {% set button_title = t.get('eq.profiles.delete') %}
-                                {% include 'components/action_button.html' %}
+                                <button
+                                    class="btn-icon btn-primary"
+                                    @click="activateProfile(profile.name)"
+                                    :disabled="actionInProgress || activeEq.name === profile.name"
+                                    title="{{ t.get('eq.profiles.activate') }}"
+                                >
+                                    ✓
+                                </button>
+                                <button
+                                    class="btn-icon btn-danger"
+                                    @click="deleteProfile(profile.name)"
+                                    :disabled="actionInProgress"
+                                    title="{{ t.get('eq.profiles.delete') }}"
+                                >
+                                    ✗
+                                </button>
                             </div>
                         </div>
                     </template>
                 </div>
             </template>
             <template x-if="profiles.list.length === 0">
-                {{ info_text(message=t.get('eq.profiles.empty')) }}
+                {% set info_message = t.get('eq.profiles.empty') %}
+                {% include 'components/info_text.html' %}
             </template>
         </div>
     </div>
@@ -391,6 +402,26 @@ function eqSettingsData() {
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 12px 20px;
+                background: ${type === 'success' ? '#00ff88' : type === 'error' ? '#ff4444' : '#00d4ff'};
+                color: #0a0e12;
+                border-radius: 8px;
+                font-weight: 600;
+                z-index: 9999;
+                animation: slideIn 0.3s ease;
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
         },
     };
 }
