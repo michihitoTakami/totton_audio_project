@@ -1,12 +1,11 @@
 #include "audio_utils.h"
-#include "base64.h"
 #include "config_loader.h"
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
-#include "daemon/control/zmq_server.h"
+#include "daemon/control/control_plane.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/rtp/rtp_engine_coordinator.h"
@@ -165,7 +164,6 @@ static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
-static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
 static std::unique_ptr<audio_pipeline::AudioPipeline> g_audio_pipeline;
 
 // Runtime state: Input sample rate (auto-negotiated, not from config)
@@ -409,7 +407,7 @@ static void initialize_streaming_cache_manager() {
     g_streaming_cache_manager = std::make_unique<streaming_cache::StreamingCacheManager>(deps);
 }
 
-// ========== DAC Device Monitoring & ZeroMQ PUB ==========
+// ========== DAC Device Monitoring ==========
 
 static inline int64_t get_timestamp_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -417,31 +415,25 @@ static inline int64_t get_timestamp_ms() {
         .count();
 }
 
-static void send_zmq_payload(const nlohmann::json& payload) {
-    if (!g_zmq_server) {
-        return;
-    }
-    g_zmq_server->publish(payload.dump());
-}
-
-static dac::DacManager::Dependencies make_dac_dependencies() {
+static dac::DacManager::Dependencies make_dac_dependencies(
+    std::function<void(const nlohmann::json&)> eventPublisher = {}) {
     dac::DacManager::Dependencies deps;
     deps.config = &g_config;
     deps.runningFlag = &g_running;
     deps.timestampProvider = get_timestamp_ms;
-    deps.eventPublisher = send_zmq_payload;
+    deps.eventPublisher = std::move(eventPublisher);
     deps.defaultDevice = DEFAULT_ALSA_DEVICE;
     return deps;
 }
 
-static dac::DacManager g_dac_manager(make_dac_dependencies());
+static std::unique_ptr<dac::DacManager> g_dac_manager;
 
 static runtime_stats::Dependencies build_runtime_stats_dependencies() {
     runtime_stats::Dependencies deps;
     deps.config = &g_config;
     deps.upsampler = g_upsampler;
     deps.headroomCache = &g_headroom_cache;
-    deps.dacManager = &g_dac_manager;
+    deps.dacManager = g_dac_manager.get();
     deps.fallbackManager = g_fallback_manager;
     deps.fallbackActive = &g_fallback_active;
     deps.inputSampleRate = &g_input_sample_rate;
@@ -457,7 +449,9 @@ static void mark_dac_connected(
     const char* log_message = "DAC connected - input processing enabled") {
     g_output_ready.store(true, std::memory_order_release);
     LOG_INFO(log_message);
-    g_dac_manager.markActiveDevice(device, true);
+    if (g_dac_manager) {
+        g_dac_manager->markActiveDevice(device, true);
+    }
 }
 
 static void mark_dac_disconnected(
@@ -465,7 +459,9 @@ static void mark_dac_disconnected(
     const char* log_message = "DAC disconnected - stopping input processing") {
     g_output_ready.store(false, std::memory_order_release);
     LOG_INFO(log_message);
-    g_dac_manager.markActiveDevice(device, false);
+    if (g_dac_manager) {
+        g_dac_manager->markActiveDevice(device, false);
+    }
 }
 
 // ========== PID File Lock (flock-based) ==========
@@ -818,619 +814,6 @@ static void load_runtime_config() {
     float initialOutput = g_output_gain.load(std::memory_order_relaxed);
     g_limiter_gain.store(1.0f, std::memory_order_relaxed);
     g_effective_gain.store(initialOutput, std::memory_order_relaxed);
-}
-
-// ========== ZeroMQ Command Listener ==========
-
-static std::string build_ok_response(const daemon_ipc::ZmqRequest& request,
-                                     const std::string& message = "",
-                                     const nlohmann::json& data = {}) {
-    if (request.isJson) {
-        nlohmann::json resp;
-        resp["status"] = "ok";
-        if (!message.empty()) {
-            resp["message"] = message;
-        }
-        if (!data.is_null() && !data.empty()) {
-            resp["data"] = data;
-        }
-        return resp.dump();
-    }
-
-    if (!data.is_null() && !data.empty()) {
-        return "OK:" + data.dump();
-    }
-    if (!message.empty()) {
-        return "OK:" + message;
-    }
-    return "OK";
-}
-
-static std::string build_error_response(const daemon_ipc::ZmqRequest& request,
-                                        const std::string& code, const std::string& message) {
-    if (request.isJson) {
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = code;
-        resp["message"] = message;
-        return resp.dump();
-    }
-    return "ERR:" + message;
-}
-
-static std::string handle_ping(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request);
-}
-
-static std::string handle_reload(const daemon_ipc::ZmqRequest& request) {
-    g_reload_requested = true;
-    if (g_soft_mute) {
-        g_soft_mute->startFadeOut();
-    }
-    if (g_main_loop_running.load() && g_pw_loop) {
-        pw_main_loop_quit(g_pw_loop);
-    }
-    return build_ok_response(request);
-}
-
-static std::string handle_stats_command(const daemon_ipc::ZmqRequest& request) {
-    auto stats =
-        runtime_stats::collect(build_runtime_stats_dependencies(), get_max_output_buffer_frames());
-    return build_ok_response(request, "", stats);
-}
-
-static std::string handle_crossfeed_enable(const daemon_ipc::ZmqRequest& request) {
-    if (g_config.partitionedConvolution.enabled) {
-        return build_error_response(request, "CROSSFEED_DISABLED",
-                                    "Crossfeed not available in low-latency mode");
-    }
-
-    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-    if (!g_hrtf_processor) {
-        return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                    "HRTF processor not initialized");
-    }
-
-    reset_crossfeed_stream_state_locked();
-    g_hrtf_processor->setEnabled(true);
-    g_crossfeed_enabled.store(true);
-    return build_ok_response(request, "Crossfeed enabled");
-}
-
-static std::string handle_crossfeed_disable(const daemon_ipc::ZmqRequest& request) {
-    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-    g_crossfeed_enabled.store(false);
-    if (g_hrtf_processor) {
-        g_hrtf_processor->setEnabled(false);
-    }
-    reset_crossfeed_stream_state_locked();
-    return build_ok_response(request, "Crossfeed disabled");
-}
-
-static std::string build_crossfeed_status_response(const daemon_ipc::ZmqRequest& request,
-                                                   bool includeHeadSize) {
-    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-    bool enabled = g_crossfeed_enabled.load();
-    bool initialized = (g_hrtf_processor != nullptr);
-
-    nlohmann::json data;
-    data["enabled"] = enabled;
-    data["initialized"] = initialized;
-
-    if (includeHeadSize) {
-        if (g_hrtf_processor != nullptr) {
-            CrossfeedEngine::HeadSize currentSize = g_hrtf_processor->getCurrentHeadSize();
-            data["head_size"] = CrossfeedEngine::headSizeToString(currentSize);
-        } else {
-            data["head_size"] = nullptr;
-        }
-    }
-
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_crossfeed_status(const daemon_ipc::ZmqRequest& request) {
-    return build_crossfeed_status_response(request, false);
-}
-
-static std::string handle_crossfeed_get_status(const daemon_ipc::ZmqRequest& request) {
-    return build_crossfeed_status_response(request, true);
-}
-
-static bool validate_crossfeed_params(const nlohmann::json& params, std::string& rateFamily,
-                                      std::string& combinedLL, std::string& combinedLR,
-                                      std::string& combinedRL, std::string& combinedRR,
-                                      std::string& errorMessage, std::string& errorCode) {
-    rateFamily = params.value("rate_family", "");
-    combinedLL = params.value("combined_ll", "");
-    combinedLR = params.value("combined_lr", "");
-    combinedRL = params.value("combined_rl", "");
-    combinedRR = params.value("combined_rr", "");
-
-    if (rateFamily.empty() || combinedLL.empty() || combinedLR.empty() || combinedRL.empty() ||
-        combinedRR.empty()) {
-        errorCode = "IPC_INVALID_PARAMS";
-        errorMessage = "Missing required filter data";
-        return false;
-    }
-    if (rateFamily != "44k" && rateFamily != "48k") {
-        errorCode = "CROSSFEED_INVALID_RATE_FAMILY";
-        errorMessage = "Invalid rate family: " + rateFamily + " (expected 44k or 48k)";
-        return false;
-    }
-    return true;
-}
-
-static std::string handle_crossfeed_set_combined(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params")) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    bool processorReady = false;
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        processorReady = (g_hrtf_processor != nullptr);
-    }
-    if (!processorReady) {
-        return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                    "HRTF processor not initialized");
-    }
-
-    auto params = (*request.json)["params"];
-    std::string rateFamily;
-    std::string combinedLL;
-    std::string combinedLR;
-    std::string combinedRL;
-    std::string combinedRR;
-    std::string errorMessage;
-    std::string errorCode;
-
-    if (!validate_crossfeed_params(params, rateFamily, combinedLL, combinedLR, combinedRL,
-                                   combinedRR, errorMessage, errorCode)) {
-        return build_error_response(request, errorCode, errorMessage);
-    }
-
-    auto decodedLL = Base64::decode(combinedLL);
-    auto decodedLR = Base64::decode(combinedLR);
-    auto decodedRL = Base64::decode(combinedRL);
-    auto decodedRR = Base64::decode(combinedRR);
-
-    constexpr size_t CUFFT_COMPLEX_SIZE = 8;
-    constexpr size_t MAX_FILTER_BYTES = 256 * 1024;
-
-    bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedRL.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedRR.size() % CUFFT_COMPLEX_SIZE == 0);
-
-    bool sizesMatch = (decodedLL.size() == decodedLR.size()) &&
-                      (decodedLL.size() == decodedRL.size()) &&
-                      (decodedLL.size() == decodedRR.size());
-
-    bool withinLimit = (decodedLL.size() <= MAX_FILTER_BYTES);
-
-    if (!sizeValid) {
-        return build_error_response(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                    "Filter size must be multiple of 8 (cufftComplex)");
-    }
-    if (!sizesMatch) {
-        return build_error_response(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                    "All 4 channel filters must have same size");
-    }
-    if (!withinLimit) {
-        return build_error_response(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                    "Filter size exceeds maximum (256KB per channel)");
-    }
-
-    CrossfeedEngine::RateFamily family = (rateFamily == "44k")
-                                             ? CrossfeedEngine::RateFamily::RATE_44K
-                                             : CrossfeedEngine::RateFamily::RATE_48K;
-    size_t complexCount = decodedLL.size() / CUFFT_COMPLEX_SIZE;
-    const cufftComplex* filterLL = reinterpret_cast<const cufftComplex*>(decodedLL.data());
-    const cufftComplex* filterLR = reinterpret_cast<const cufftComplex*>(decodedLR.data());
-    const cufftComplex* filterRL = reinterpret_cast<const cufftComplex*>(decodedRL.data());
-    const cufftComplex* filterRR = reinterpret_cast<const cufftComplex*>(decodedRR.data());
-
-    bool applySuccess = false;
-    applySoftMuteForFilterSwitch([&]() {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return false;
-        }
-        applySuccess = g_hrtf_processor->setCombinedFilter(family, filterLL, filterLR, filterRL,
-                                                           filterRR, complexCount);
-        return applySuccess;
-    });
-
-    if (!applySuccess) {
-        size_t expectedSize = 0;
-        {
-            std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-            if (g_hrtf_processor) {
-                expectedSize = g_hrtf_processor->getFilterFftSize();
-            }
-        }
-        nlohmann::json errorData;
-        errorData["rate_family"] = rateFamily;
-        errorData["complex_count"] = complexCount;
-        errorData["expected_size"] = expectedSize;
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
-        resp["message"] = "Filter size mismatch or application failed";
-        resp["data"] = errorData;
-        return resp.dump();
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        reset_crossfeed_stream_state_locked();
-    }
-
-    nlohmann::json data;
-    data["rate_family"] = rateFamily;
-    data["complex_count"] = complexCount;
-    std::cout << "ZeroMQ: CROSSFEED_SET_COMBINED applied for " << rateFamily << " (" << complexCount
-              << " complex values)" << std::endl;
-    return build_ok_response(request, "Combined filter applied", data);
-}
-
-static std::string handle_crossfeed_generate(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params") ||
-        !(*request.json)["params"].is_object()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    bool processorReady = false;
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        processorReady = (g_hrtf_processor != nullptr);
-    }
-    if (!processorReady) {
-        return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                    "HRTF processor not initialized");
-    }
-
-    auto params = (*request.json)["params"];
-    std::string rateFamily = params.value("rate_family", "");
-    double azimuth = params.value("azimuth_deg", 30.0);
-
-    if (rateFamily != "44k" && rateFamily != "48k") {
-        return build_error_response(request, "CROSSFEED_INVALID_RATE_FAMILY",
-                                    "Invalid rate family: " + rateFamily);
-    }
-
-    HRTF::WoodworthParams modelParams;
-    if (params.contains("model") && params["model"].is_object()) {
-        auto model = params["model"];
-        modelParams.headRadiusMeters = model.value("head_radius_m", modelParams.headRadiusMeters);
-        modelParams.earSpacingMeters = model.value("ear_spacing_m", modelParams.earSpacingMeters);
-        modelParams.farEarShadowDb = model.value("far_shadow_db", modelParams.farEarShadowDb);
-        modelParams.diffuseFieldTiltDb =
-            model.value("diffuse_tilt_db", modelParams.diffuseFieldTiltDb);
-    }
-
-    CrossfeedEngine::RateFamily family = (rateFamily == "44k")
-                                             ? CrossfeedEngine::RateFamily::RATE_44K
-                                             : CrossfeedEngine::RateFamily::RATE_48K;
-    bool success = false;
-    applySoftMuteForFilterSwitch([&]() {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return false;
-        }
-        success = g_hrtf_processor->generateWoodworthProfile(family, static_cast<float>(azimuth),
-                                                             modelParams);
-        return success;
-    });
-
-    if (!success) {
-        return build_error_response(request, "CROSSFEED_WOODWORTH_FAILED",
-                                    "Failed to generate Woodworth profile");
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        reset_crossfeed_stream_state_locked();
-    }
-
-    nlohmann::json data;
-    data["rate_family"] = rateFamily;
-    data["azimuth_deg"] = azimuth;
-    data["head_radius_m"] = modelParams.headRadiusMeters;
-    data["ear_spacing_m"] = modelParams.earSpacingMeters;
-    data["far_shadow_db"] = modelParams.farEarShadowDb;
-    data["diffuse_tilt_db"] = modelParams.diffuseFieldTiltDb;
-    std::cout << "ZeroMQ: Generated Woodworth HRTF (" << rateFamily << ", az=" << azimuth << " deg)"
-              << std::endl;
-    return build_ok_response(request, "Woodworth profile generated", data);
-}
-
-static std::string handle_crossfeed_set_size(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params")) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                        "HRTF processor not initialized");
-        }
-    }
-
-    auto params = (*request.json)["params"];
-    std::string sizeStr = params.value("head_size", "");
-    if (sizeStr.empty()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing head_size parameter");
-    }
-
-    CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
-    bool switchSuccess = false;
-    applySoftMuteForFilterSwitch([&]() {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return false;
-        }
-        switchSuccess = g_hrtf_processor->switchHeadSize(targetSize);
-        return switchSuccess;
-    });
-
-    if (!switchSuccess) {
-        return build_error_response(request, "CROSSFEED_SIZE_SWITCH_FAILED",
-                                    "Failed to switch head size");
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        reset_crossfeed_stream_state_locked();
-    }
-    nlohmann::json data;
-    data["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_rtp_command(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json) {
-        return build_error_response(request, "IPC_INVALID_COMMAND",
-                                    "RTP command requires JSON payload");
-    }
-    if (!g_rtp_coordinator) {
-        return build_error_response(request, "IPC_INVALID_COMMAND",
-                                    "RTP coordinator not initialized");
-    }
-
-    std::string response;
-    if (g_rtp_coordinator->handleZeroMqCommand(request.command, *request.json, response)) {
-        return response;
-    }
-    return build_error_response(request, "IPC_INVALID_COMMAND",
-                                "Unknown JSON command: " + request.command);
-}
-
-static std::string handle_dac_list(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request, "", g_dac_manager.buildDevicesJson());
-}
-
-static std::string handle_dac_status(const daemon_ipc::ZmqRequest& request) {
-    nlohmann::json data = g_dac_manager.buildStatusJson();
-    data["output_rate"] = g_current_output_rate.load(std::memory_order_acquire);
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_dac_select(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params") ||
-        !(*request.json)["params"].contains("device")) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params.device field");
-    }
-
-    std::string targetDevice = (*request.json)["params"]["device"].get<std::string>();
-    if (!g_dac_manager.isValidDeviceName(targetDevice)) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Invalid ALSA device name");
-    }
-
-    g_dac_manager.requestDevice(targetDevice);
-
-    return build_ok_response(request, "Preferred ALSA device updated",
-                             g_dac_manager.buildDevicesJson());
-}
-
-static std::string handle_dac_rescan(const daemon_ipc::ZmqRequest& request) {
-    g_dac_manager.requestRescan();
-    return build_ok_response(request, "DAC rescan scheduled", g_dac_manager.buildDevicesJson());
-}
-
-static nlohmann::json build_output_mode_json() {
-    nlohmann::json data;
-    data["mode"] = outputModeToString(g_config.output.mode);
-
-    nlohmann::json modes = nlohmann::json::array();
-    for (const auto* mode : kSupportedOutputModes) {
-        modes.push_back(mode);
-    }
-    data["available_modes"] = modes;
-
-    nlohmann::json options;
-    options["usb"]["preferred_device"] = g_config.output.usb.preferredDevice;
-    data["options"] = options;
-    return data;
-}
-
-static std::string handle_output_mode_get(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request, "", build_output_mode_json());
-}
-
-static std::string handle_output_mode_set(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params") ||
-        !(*request.json)["params"].is_object()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params object");
-    }
-
-    const auto& params = (*request.json)["params"];
-    std::string requestedMode = outputModeToString(g_config.output.mode);
-    if (params.contains("mode") && params["mode"].is_string()) {
-        requestedMode = params["mode"].get<std::string>();
-    }
-    std::string normalizedMode = normalize_output_mode(requestedMode);
-    if (!is_supported_output_mode(normalizedMode)) {
-        return build_error_response(request, "ERR_UNSUPPORTED_MODE",
-                                    "Output mode '" + requestedMode + "' is not supported");
-    }
-
-    std::string preferredDevice = g_config.output.usb.preferredDevice;
-    if (params.contains("options") && params["options"].is_object()) {
-        const auto& options = params["options"];
-        if (options.contains("usb") && options["usb"].is_object()) {
-            const auto& usb = options["usb"];
-            if (usb.contains("preferred_device") && usb["preferred_device"].is_string()) {
-                preferredDevice = usb["preferred_device"].get<std::string>();
-            } else if (usb.contains("preferredDevice") && usb["preferredDevice"].is_string()) {
-                preferredDevice = usb["preferredDevice"].get<std::string>();
-            }
-        }
-    }
-
-    if (preferredDevice.empty()) {
-        preferredDevice = DEFAULT_ALSA_DEVICE;
-    }
-
-    if (!g_dac_manager.isValidDeviceName(preferredDevice)) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Invalid ALSA device name");
-    }
-
-    set_preferred_output_device(g_config, preferredDevice);
-    g_dac_manager.requestDevice(preferredDevice);
-
-    return build_ok_response(request, "Output mode updated", build_output_mode_json());
-}
-
-static std::string handle_phase_type_get(const daemon_ipc::ZmqRequest& request) {
-    if (!g_upsampler) {
-        return build_error_response(request, "IPC_INVALID_COMMAND", "Upsampler not initialized");
-    }
-    PhaseType pt = g_upsampler->getPhaseType();
-    std::string ptStr = (pt == PhaseType::Minimum) ? "minimum" : "linear";
-    nlohmann::json data;
-    data["phase_type"] = ptStr;
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_phase_type_set(const daemon_ipc::ZmqRequest& request) {
-    std::string phaseStr = request.payload;
-    if (phaseStr.empty()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS",
-                                    "Invalid phase type (use 'minimum' or 'linear')");
-    }
-
-    if (!g_upsampler) {
-        return build_error_response(request, "IPC_INVALID_COMMAND", "Upsampler not initialized");
-    }
-    if (phaseStr != "minimum" && phaseStr != "linear") {
-        return build_error_response(request, "IPC_INVALID_PARAMS",
-                                    "Invalid phase type (use 'minimum' or 'linear')");
-    }
-
-    PhaseType newPhase = (phaseStr == "minimum") ? PhaseType::Minimum : PhaseType::Linear;
-    PhaseType oldPhase = g_upsampler->getPhaseType();
-    bool disablePartitionForLinear =
-        (newPhase == PhaseType::Linear && g_config.partitionedConvolution.enabled);
-
-    if (oldPhase == newPhase) {
-        return build_ok_response(request, "Phase type already " + phaseStr);
-    }
-
-    bool switch_success = false;
-    applySoftMuteForFilterSwitch([&]() {
-        if (disablePartitionForLinear) {
-            std::cout << "[Partition] Linear phase selected, disabling low-latency partitioned "
-                         "convolution."
-                      << std::endl;
-            g_config.partitionedConvolution.enabled = false;
-            g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
-            if (!reinitialize_streaming_for_legacy_mode()) {
-                g_config.partitionedConvolution.enabled = true;
-                g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
-                return false;
-            }
-        }
-
-        switch_success = g_upsampler->switchPhaseType(newPhase);
-        if (switch_success) {
-            g_active_phase_type = newPhase;
-            refresh_current_headroom("phase switch");
-            if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
-                EQ::EqProfile eqProfile;
-                if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
-                    size_t filterFftSize = g_upsampler->getFilterFftSize();
-                    size_t fullFftSize = g_upsampler->getFullFftSize();
-                    double outputSampleRate =
-                        static_cast<double>(g_input_sample_rate) * g_config.upsampleRatio;
-                    auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
-                                                                    outputSampleRate, eqProfile);
-                    if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                        std::cout << "ZeroMQ: EQ re-applied with " << phaseStr << " phase"
-                                  << std::endl;
-                    } else {
-                        std::cerr << "ZeroMQ: Warning - EQ re-apply failed" << std::endl;
-                    }
-                } else {
-                    std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                              << g_config.eqProfilePath << std::endl;
-                }
-            }
-        }
-        return switch_success;
-    });
-
-    if (!switch_success) {
-        return build_error_response(request, "IPC_PROTOCOL_ERROR", "Failed to switch phase type");
-    }
-
-    return build_ok_response(request, "Phase type set to " + phaseStr);
-}
-
-static void register_zmq_handlers() {
-    g_zmq_server->registerCommand("PING", handle_ping);
-    g_zmq_server->registerCommand("RELOAD", handle_reload);
-    g_zmq_server->registerCommand("STATS", handle_stats_command);
-    g_zmq_server->registerCommand("CROSSFEED_ENABLE", handle_crossfeed_enable);
-    g_zmq_server->registerCommand("CROSSFEED_DISABLE", handle_crossfeed_disable);
-    g_zmq_server->registerCommand("CROSSFEED_STATUS", handle_crossfeed_status);
-    g_zmq_server->registerCommand("CROSSFEED_GET_STATUS", handle_crossfeed_get_status);
-    g_zmq_server->registerCommand("CROSSFEED_SET_COMBINED", handle_crossfeed_set_combined);
-    g_zmq_server->registerCommand("CROSSFEED_GENERATE_WOODWORTH", handle_crossfeed_generate);
-    g_zmq_server->registerCommand("CROSSFEED_SET_SIZE", handle_crossfeed_set_size);
-    g_zmq_server->registerCommand("DAC_LIST", handle_dac_list);
-    g_zmq_server->registerCommand("DAC_STATUS", handle_dac_status);
-    g_zmq_server->registerCommand("DAC_SELECT", handle_dac_select);
-    g_zmq_server->registerCommand("DAC_RESCAN", handle_dac_rescan);
-    g_zmq_server->registerCommand("OUTPUT_MODE_GET", handle_output_mode_get);
-    g_zmq_server->registerCommand("OUTPUT_MODE_SET", handle_output_mode_set);
-    g_zmq_server->registerCommand("PHASE_TYPE_GET", handle_phase_type_get);
-    g_zmq_server->registerCommand("PHASE_TYPE_SET", handle_phase_type_set);
-
-    const std::vector<std::string> rtpCommands = {
-        "RTP_START_SESSION",    "RTP_STOP_SESSION", "RTP_LIST_SESSIONS", "RTP_GET_SESSION",
-        "RTP_DISCOVER_STREAMS", "StartSession",     "StopSession",       "ListSessions",
-        "GetSession",           "DiscoverStreams"};
-    for (const auto& cmd : rtpCommands) {
-        g_zmq_server->registerCommand(cmd, handle_rtp_command);
-    }
-}
-
-static bool start_zmq_server() {
-    g_zmq_server = std::make_unique<daemon_ipc::ZmqCommandServer>();
-    register_zmq_handlers();
-    if (g_zmq_server->start()) {
-        return true;
-    }
-
-    g_zmq_bind_failed.store(true, std::memory_order_release);
-    g_running = false;
-    if (g_pw_loop) {
-        pw_main_loop_quit(g_pw_loop);
-    }
-    return false;
 }
 
 // PipeWire objects
@@ -1813,18 +1196,18 @@ static bool pcm_alive(snd_pcm_t* pcm_handle) {
 void alsa_output_thread() {
     elevate_realtime_priority("ALSA output");
 
-    std::string currentDevice = g_dac_manager.waitForSelection();
+    std::string currentDevice = g_dac_manager->waitForSelection();
     snd_pcm_t* pcm_handle = nullptr;
     while (g_running && !pcm_handle) {
         if (currentDevice.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = g_dac_manager.waitForSelection();
+            currentDevice = g_dac_manager->waitForSelection();
             continue;
         }
         pcm_handle = open_and_configure_pcm(currentDevice);
         if (!pcm_handle) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = g_dac_manager.waitForSelection();
+            currentDevice = g_dac_manager->waitForSelection();
         } else {
             mark_dac_connected(currentDevice);
         }
@@ -1862,7 +1245,7 @@ void alsa_output_thread() {
                 mark_dac_disconnected(currentDevice);
                 while (g_running && !pcm_handle) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
-                    currentDevice = g_dac_manager.waitForSelection();
+                    currentDevice = g_dac_manager->waitForSelection();
                     if (currentDevice.empty())
                         continue;
                     pcm_handle = open_and_configure_pcm(currentDevice);
@@ -1921,7 +1304,7 @@ void alsa_output_thread() {
             }
         }
 
-        if (auto pendingDevice = g_dac_manager.consumePendingChange()) {
+        if (auto pendingDevice = g_dac_manager->consumePendingChange()) {
             std::string nextDevice = *pendingDevice;
             if (!nextDevice.empty() && nextDevice != currentDevice) {
                 std::cout << "ALSA: Switching output to " << nextDevice << std::endl;
@@ -1935,7 +1318,7 @@ void alsa_output_thread() {
                     pcm_handle = open_and_configure_pcm(currentDevice);
                     if (!pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                        currentDevice = g_dac_manager.waitForSelection();
+                        currentDevice = g_dac_manager->waitForSelection();
                         if (currentDevice.empty())
                             break;
                     }
@@ -2013,7 +1396,7 @@ void alsa_output_thread() {
                 mark_dac_disconnected(currentDevice);
                 while (g_running && !pcm_handle) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
-                    std::string next = g_dac_manager.getSelectedDevice();
+                    std::string next = g_dac_manager->getSelectedDevice();
                     if (!next.empty()) {
                         currentDevice = next;
                     }
@@ -2564,6 +1947,7 @@ int main(int argc, char* argv[]) {
             g_fallback_active.store(false, std::memory_order_relaxed);
         }
 
+        std::unique_ptr<daemon_control::ControlPlane> controlPlane;
         Data data{};
         data.gpu_ready = true;
         struct pw_loop* loop = nullptr;
@@ -2584,13 +1968,57 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Start ZeroMQ server after g_pw_loop is set to allow RELOAD to quit the main loop
-        start_zmq_server();
+        daemon_control::ControlPlaneDependencies controlDeps{};
+        controlDeps.config = &g_config;
+        controlDeps.runningFlag = &g_running;
+        controlDeps.reloadRequested = &g_reload_requested;
+        controlDeps.zmqBindFailed = &g_zmq_bind_failed;
+        controlDeps.currentOutputRate = &g_current_output_rate;
+        controlDeps.softMute = &g_soft_mute;
+        controlDeps.activePhaseType = &g_active_phase_type;
+        controlDeps.inputSampleRate = &g_input_sample_rate;
+        controlDeps.defaultAlsaDevice = DEFAULT_ALSA_DEVICE;
+        controlDeps.quitMainLoop = []() {
+            if (g_main_loop_running.load() && g_pw_loop) {
+                pw_main_loop_quit(g_pw_loop);
+            }
+        };
+        controlDeps.buildRuntimeStats = []() { return build_runtime_stats_dependencies(); };
+        controlDeps.bufferCapacityFrames = []() { return get_max_output_buffer_frames(); };
+        controlDeps.applySoftMuteForFilterSwitch = [](std::function<bool()> fn) {
+            applySoftMuteForFilterSwitch(std::move(fn));
+        };
+        controlDeps.refreshHeadroom = [](const std::string& reason) {
+            refresh_current_headroom(reason);
+        };
+        controlDeps.reinitializeStreamingForLegacyMode = []() {
+            return reinitialize_streaming_for_legacy_mode();
+        };
+        controlDeps.setPreferredOutputDevice = [](AppConfig& cfg, const std::string& device) {
+            set_preferred_output_device(cfg, device);
+        };
+        controlDeps.dacManager = g_dac_manager.get();
+        controlDeps.rtpCoordinator = g_rtp_coordinator.get();
+        controlDeps.upsampler = &g_upsampler;
+        controlDeps.crossfeed.processor = &g_hrtf_processor;
+        controlDeps.crossfeed.enabledFlag = &g_crossfeed_enabled;
+        controlDeps.crossfeed.mutex = &g_crossfeed_mutex;
+        controlDeps.crossfeed.resetStreamingState = []() { reset_crossfeed_stream_state_locked(); };
+        controlDeps.statsFilePath = STATS_FILE_PATH;
 
-        g_dac_manager.initialize();
+        controlPlane = std::make_unique<daemon_control::ControlPlane>(std::move(controlDeps));
+        if (controlPlane && controlPlane->start() && g_dac_manager) {
+            g_dac_manager->setEventPublisher(controlPlane->eventPublisher());
+        }
+
+        if (g_dac_manager) {
+            g_dac_manager->initialize();
+        }
 
         // Start ALSA output thread
-        g_dac_manager.start();
+        if (g_dac_manager) {
+            g_dac_manager->start();
+        }
         std::cout << "Starting ALSA output thread..." << std::endl;
         std::thread alsa_thread(alsa_output_thread);
 
@@ -2717,9 +2145,8 @@ int main(int argc, char* argv[]) {
         std::cout << "  Step 5: Stopping worker threads..." << std::endl;
         g_running = false;
         g_buffer_cv.notify_all();
-        if (g_zmq_server) {
-            g_zmq_server->stop();
-            g_zmq_server.reset();
+        if (controlPlane) {
+            controlPlane->stop();
         }
         alsa_thread.join();  // ALSA thread will call snd_pcm_drain() before exit
 
@@ -2742,7 +2169,9 @@ int main(int argc, char* argv[]) {
         g_crossfeed_enabled.store(false);
         delete g_upsampler;
         g_upsampler = nullptr;
-        g_dac_manager.stop();
+        if (g_dac_manager) {
+            g_dac_manager->stop();
+        }
 
         // Step 7: Deinitialize PipeWire
         if (pipewireInitCalled) {
@@ -2750,7 +2179,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Don't reload if ZMQ bind failed - exit completely
-        if (g_zmq_bind_failed) {
+        if (g_zmq_bind_failed.load()) {
             std::cerr << "Exiting due to ZeroMQ initialization failure." << std::endl;
             exitCode = 1;
             break;
