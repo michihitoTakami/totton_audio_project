@@ -1,0 +1,93 @@
+{#
+Form Group Component
+
+Displays a form group with label and input/select/textarea.
+
+Usage:
+    {% from 'components/form_group.html' import form_group_input, form_group_select, form_group_textarea %}
+
+    Input field:
+    {{ form_group_input(
+        label=t.get('dashboard.output_mode.device_label'),
+        id='deviceInput',
+        model='outputMode.preferredDevice',
+        placeholder='hw:USB',
+        disabled_condition='outputMode.loading'
+    ) }}
+
+    Select field:
+    {{ form_group_select(
+        label=t.get('dashboard.output_mode.mode_label'),
+        id='modeSelect',
+        model='outputMode.mode',
+        options_loop='mode in outputMode.availableModes',
+        option_value='mode',
+        option_text='mode.toUpperCase()',
+        disabled=true
+    ) }}
+
+    Textarea field:
+    {{ form_group_textarea(
+        label=t.get('eq.import.content_label'),
+        id='eqText',
+        model='textImport.content',
+        rows=10,
+        placeholder=t.get('eq.import.content_placeholder')
+    ) }}
+
+Parameters:
+    - label: Label text
+    - id: HTML id attribute
+    - model: Alpine.js x-model value
+    - placeholder: Placeholder text (optional)
+    - type: Input type (default: 'text')
+    - disabled: Boolean for disabled state (optional)
+    - disabled_condition: Alpine.js expression for :disabled binding (optional)
+    - options_loop: Alpine.js x-for loop expression for select options
+    - option_value: Alpine.js :value expression for options
+    - option_text: Alpine.js x-text expression for options
+    - rows: Number of rows for textarea (default: 5)
+    - margin_top: Custom margin-top value (optional)
+    - show_condition: Alpine.js x-show expression (optional)
+#}
+{% macro form_group_input(label, id, model, placeholder='', type='text', disabled=false, disabled_condition=None, margin_top=None, show_condition=None) %}
+<div class="form-group"{% if margin_top %} style="margin-top: {{ margin_top }};"{% endif %}{% if show_condition %} x-show="{{ show_condition }}"{% endif %}>
+    <label{% if id %} for="{{ id }}"{% endif %}>{{ label }}</label>
+    <input
+        type="{{ type }}"
+        {% if id %}id="{{ id }}"{% endif %}
+        {% if model %}x-model="{{ model }}"{% endif %}
+        {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+        {% if disabled %}disabled{% elif disabled_condition %}:disabled="{{ disabled_condition }}"{% endif %}
+    >
+</div>
+{% endmacro %}
+
+{% macro form_group_select(label, id, model, options_loop, option_value, option_text, disabled=false, disabled_condition=None, margin_top=None, show_condition=None) %}
+<div class="form-group"{% if margin_top %} style="margin-top: {{ margin_top }};"{% endif %}{% if show_condition %} x-show="{{ show_condition }}"{% endif %}>
+    <label{% if id %} for="{{ id }}"{% endif %}>{{ label }}</label>
+    <select
+        {% if id %}id="{{ id }}"{% endif %}
+        {% if model %}x-model="{{ model }}"{% endif %}
+        {% if disabled %}disabled{% elif disabled_condition %}:disabled="{{ disabled_condition }}"{% endif %}
+    >
+        <template x-for="{{ options_loop }}" :key="{{ option_value }}">
+            <option :value="{{ option_value }}" x-text="{{ option_text }}"></option>
+        </template>
+    </select>
+</div>
+{% endmacro %}
+
+{% macro form_group_textarea(label, id, model, rows=5, placeholder='', disabled=false, disabled_condition=None, margin_top=None, show_condition=None) %}
+<div class="form-group"{% if margin_top %} style="margin-top: {{ margin_top }};"{% endif %}{% if show_condition %} x-show="{{ show_condition }}"{% endif %}>
+    <label{% if id %} for="{{ id }}"{% endif %}>{{ label }}</label>
+    <textarea
+        {% if id %}id="{{ id }}"{% endif %}
+        class="text-area"
+        rows="{{ rows }}"
+        {% if model %}x-model="{{ model }}"{% endif %}
+        {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+        {% if disabled %}disabled{% elif disabled_condition %}:disabled="{{ disabled_condition }}"{% endif %}
+    ></textarea>
+</div>
+{% endmacro %}
