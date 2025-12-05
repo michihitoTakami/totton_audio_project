@@ -1018,16 +1018,20 @@ class RtpDiscoveryResponse(BaseModel):
 class RtpConfigUpdate(BaseModel):
     """RTP configuration update request model."""
 
-    port: Optional[Port] = Field(
+    port: Optional[int] = Field(
         default=None,
+        ge=1024,
+        le=65535,
         description="Listening port for RTP streams (1024-65535)",
     )
     bind_address: Optional[str] = Field(
         default=None,
         description="Bind address for RTP receiver (IPv4 address or '0.0.0.0')",
     )
-    payload_type: Optional[conint(ge=96, le=127)] = Field(
+    payload_type: Optional[int] = Field(
         default=None,
+        ge=96,
+        le=127,
         description="Dynamic payload type (96-127)",
     )
 
