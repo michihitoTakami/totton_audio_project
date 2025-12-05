@@ -58,6 +58,7 @@ class DacManager {
     nlohmann::json buildStatsSummaryJson();
 
     bool isValidDeviceName(const std::string& device) const;
+    void setEventPublisher(std::function<void(const nlohmann::json&)> eventPublisher);
 
    private:
     bool isRunning() const;
