@@ -406,6 +406,7 @@ uv run python scripts/export_openapi.py --check
 3. **⚠️ PRマージ禁止:** `gh pr merge` は**絶対に**ユーザーの明示的な許可なしに実行しないこと。PRの作成までは行ってよいが、マージはユーザーがレビュー後に自分で行う。
 4. **⚠️ mainブランチ直接作業禁止:** mainブランチで直接コミット・編集しないこと。必ずworktreeでfeature/fix branchを作成して作業する。
 5. **⚠️ `--no-verify`禁止:** `git push --no-verify`や`git commit --no-verify`は**絶対に使用しないこと**。pre-commitフックやpre-pushフックで失敗した場合は、たとえ自分の変更に起因しないエラーであっても、そのエラーを修正してからプッシュすること。テストの品質維持は全員の責任。
+6. **⚠️ Skillsファイル操作もworktree必須:** `.claude/skills/`配下のファイル作成・編集時も、必ずworktreeで作業すること。mainブランチでの直接操作は厳禁。SkillsもコードであるためGit Workflowルールが適用される。
 
 ### Git Worktree
 
