@@ -584,6 +584,7 @@ bool RtpEngineCoordinator::handleZeroMqCommand(const std::string& cmdType,
             return true;
         }
         std::string startError;
+        flushStreamingCache();
         if (!manager_->startSession(sessionCfg, startError)) {
             nlohmann::json resp;
             resp["status"] = "error";
