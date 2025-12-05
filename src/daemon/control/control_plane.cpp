@@ -724,7 +724,19 @@ std::string ControlPlane::handleOutputModeSet(const daemon_ipc::ZmqRequest& requ
     }
     deps_.dacManager->requestDevice(preferredDevice);
 
-    return buildOkResponse(request, "Output mode updated", deps_.dacManager->buildDevicesJson());
+    nlohmann::json options;
+    options["usb"]["preferred_device"] = preferredDevice;
+
+    nlohmann::json modes = nlohmann::json::array();
+    modes.push_back("usb");
+
+    nlohmann::json data;
+    data["mode"] = outputModeToString(deps_.config->output.mode);
+    data["available_modes"] = modes;
+    data["options"] = options;
+    data["devices"] = deps_.dacManager->buildDevicesJson();
+
+    return buildOkResponse(request, "Output mode updated", data);
 }
 
 std::string ControlPlane::handlePhaseTypeGet(const daemon_ipc::ZmqRequest& request) {
