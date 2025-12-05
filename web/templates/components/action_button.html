@@ -1,0 +1,37 @@
+{# Action Button Component
+   Parameters:
+   - button_label (optional for icon buttons): Button label text
+   - alpine_click (required): Click handler (e.g., "applyEQ")
+   - button_type (optional): "primary" | "secondary" | "icon" (default: "primary")
+   - button_icon (optional): Icon character (required for icon-only buttons)
+   - button_disabled (optional): Alpine.js expression for disabled state (default: "false")
+   - button_title (optional): title attribute for icon buttons
+   - button_class (optional): Additional CSS classes
+   - button_style (optional): Inline style string
+#}
+{% set button_type = button_type | default("primary") %}
+{% set button_disabled = button_disabled | default("false") %}
+
+{% if button_type == "icon" %}
+<button
+    class="btn-icon btn-{{ button_class or 'primary' }}"
+    @click="{{ alpine_click }}"
+    :disabled="{{ button_disabled }}"
+    {% if button_title %}title="{{ button_title }}"{% endif %}
+    {% if button_style %}style="{{ button_style }}"{% endif %}
+>
+    {{ button_icon or button_label }}
+</button>
+{% else %}
+<button
+    class="action-button btn-{{ button_type }} {{ button_class or '' }}"
+    @click="{{ alpine_click }}"
+    :disabled="{{ button_disabled }}"
+    {% if button_style %}style="{{ button_style }}"{% endif %}
+>
+    {% if button_icon %}
+    <span class="action-icon">{{ button_icon }}</span>
+    {% endif %}
+    <span class="action-label">{{ button_label }}</span>
+</button>
+{% endif %}

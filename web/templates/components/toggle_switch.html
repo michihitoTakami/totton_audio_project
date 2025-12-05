@@ -1,0 +1,20 @@
+{# Toggle Switch Component
+   Parameters:
+   - toggle_id (optional): Unique ID for the toggle switch
+   - toggle_label (required): Main label text
+   - toggle_desc (required): Description text
+   - alpine_model (required): Alpine.js model name (e.g., "lowLatency.enabled")
+   - alpine_click (required): Click handler name (e.g., "toggleLowLatency")
+#}
+<div class="toggle-container">
+    <div class="toggle-label">
+        <span>{{ toggle_label }}</span>
+        <span class="toggle-desc">{{ toggle_desc }}</span>
+    </div>
+    <div
+        {% if toggle_id %}id="{{ toggle_id }}"{% endif %}
+        class="toggle-switch"
+        :class="{ 'active': {{ alpine_model }} }"
+        @click="{{ alpine_click }}"
+    ></div>
+</div>
