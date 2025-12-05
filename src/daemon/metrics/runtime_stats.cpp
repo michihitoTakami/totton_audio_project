@@ -1,4 +1,4 @@
-#include "daemon/runtime_stats.h"
+#include "daemon/metrics/runtime_stats.h"
 
 #include "convolution_engine.h"
 #include "daemon_constants.h"

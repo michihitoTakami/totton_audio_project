@@ -78,7 +78,7 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
   - 20以上のコマンドタイプ実装完了（LOAD_IR, SET_GAIN, SOFT_RESET, APPLY_EQ, CROSSFEED_*, RTP_*, など）
   - REQ/REP パターン、完全なJSON API
   - Control Plane ↔ Data Plane完全統合
-  - 実装: `src/zeromq_interface.cpp`, `src/daemon/zmq_server.cpp`
+  - 実装: `src/zeromq_interface.cpp`, `src/daemon/control/zmq_server.cpp`
 
 - [x] **Auto-Negotiation Logic** ✅
   - レートファミリー自動判定（44.1k系/48k系）
