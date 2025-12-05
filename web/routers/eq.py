@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, UploadFile
 
@@ -262,7 +263,7 @@ async def activate_eq_profile(name: str):
     config.eq_profile_path = str(profile_path)
     if save_config(config):
         daemon_running, reload_success, reload_error = _reload_daemon_if_running()
-        response_data = {
+        response_data: dict[str, Any] = {
             "daemon_running": daemon_running,
             "daemon_reloaded": reload_success,
         }
@@ -287,7 +288,7 @@ async def deactivate_eq():
     config.eq_profile_path = None
     if save_config(config):
         daemon_running, reload_success, reload_error = _reload_daemon_if_running()
-        response_data = {
+        response_data: dict[str, Any] = {
             "daemon_running": daemon_running,
             "daemon_reloaded": reload_success,
         }
