@@ -1,4 +1,4 @@
-#include "daemon/zmq_server.h"
+#include "daemon/control/zmq_server.h"
 
 #include <atomic>
 #include <chrono>
