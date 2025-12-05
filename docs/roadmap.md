@@ -26,14 +26,14 @@ Phase 3: Hardware Integration         [                    ] 0%
 ### Completed Tasks
 
 - [x] **GPU Convolution Algorithm**
-  - 2M-tap minimum phase FIR filter実装完了
+  - 640k-tap minimum phase FIR filter実装完了
   - ~28x realtime performance on RTX 2070S
   - Overlap-Save方式によるストリーミング処理
 
 - [x] **Filter Coefficient Generation**
-  - scipy.signalによる2Mタップフィルタ生成
-  - 197dB stopband attenuation（理論値）/ 実測175dB級（Float32最小位相）
-  - Kaiser window (β=25) - Float32 GPU実装向けに最適化
+  - scipy.signalによる640kタップフィルタ生成
+  - ~160dB stopband attenuation（24bit品質に十分）
+  - Kaiser window (β≈28) - 32bit Float実装の量子ノイズ限界に合わせた最適値
 
 - [x] **Low-Latency Partition Validation** (#355)
   - `scripts/inspect_impulse.py` / `verify_frequency_response.py` をpartition対応
@@ -101,21 +101,21 @@ Phase 3: Hardware Integration         [                    ] 0%
 
 | Rate Family | Input Rate | Upsample Ratio | Output Rate | Coefficient File |
 |-------------|------------|----------------|-------------|------------------|
-| 44.1k系 | 44,100 Hz | 16x | 705,600 Hz | `filter_44k_16x_2m_min_phase.bin` |
-| 44.1k系 | 88,200 Hz | 8x | 705,600 Hz | `filter_44k_8x_2m_min_phase.bin` |
-| 44.1k系 | 176,400 Hz | 4x | 705,600 Hz | `filter_44k_4x_2m_min_phase.bin` |
-| 44.1k系 | 352,800 Hz | 2x | 705,600 Hz | `filter_44k_2x_2m_min_phase.bin` |
-| 48k系 | 48,000 Hz | 16x | 768,000 Hz | `filter_48k_16x_2m_min_phase.bin` |
-| 48k系 | 96,000 Hz | 8x | 768,000 Hz | `filter_48k_8x_2m_min_phase.bin` |
-| 48k系 | 192,000 Hz | 4x | 768,000 Hz | `filter_48k_4x_2m_min_phase.bin` |
-| 48k系 | 384,000 Hz | 2x | 768,000 Hz | `filter_48k_2x_2m_min_phase.bin` |
+| 44.1k系 | 44,100 Hz | 16x | 705,600 Hz | `filter_44k_16x_640k_min_phase.bin` |
+| 44.1k系 | 88,200 Hz | 8x | 705,600 Hz | `filter_44k_8x_640k_min_phase.bin` |
+| 44.1k系 | 176,400 Hz | 4x | 705,600 Hz | `filter_44k_4x_640k_min_phase.bin` |
+| 44.1k系 | 352,800 Hz | 2x | 705,600 Hz | `filter_44k_2x_640k_min_phase.bin` |
+| 48k系 | 48,000 Hz | 16x | 768,000 Hz | `filter_48k_16x_640k_min_phase.bin` |
+| 48k系 | 96,000 Hz | 8x | 768,000 Hz | `filter_48k_8x_640k_min_phase.bin` |
+| 48k系 | 192,000 Hz | 4x | 768,000 Hz | `filter_48k_4x_640k_min_phase.bin` |
+| 48k系 | 384,000 Hz | 2x | 768,000 Hz | `filter_48k_2x_640k_min_phase.bin` |
 
 ### 実装状況
 
 #### 1. 係数生成 ✅
 - [x] 全8構成の最小位相フィルタ生成スクリプト
   ```bash
-  uv run python scripts/generate_minimum_phase.py --generate-all --taps 2000000
+  uv run python scripts/generate_minimum_phase.py --generate-all --taps 640000
   ```
 - [x] 全8構成の線形位相フィルタ生成スクリプト
   ```bash
@@ -148,13 +148,13 @@ Phase 3: Hardware Integration         [                    ] 0%
 Rate Detection: 48k Family (96000 % 48000 == 0)
   │
   ▼
-Load Coefficients: filter_48k_16x_2m_min_phase.bin
+Load Coefficients: filter_48k_8x_640k_min_phase.bin
   │
   ▼
 Strategy: 96k × 8 = 768k (within DAC capability)
   │
   ▼
-GPU Processing (2M-tap FIR, 8x upsample)
+GPU Processing (640k-tap FIR, 8x upsample)
   │
   ▼
 出力: 768kHz
@@ -219,38 +219,60 @@ GPU Processing (2M-tap FIR, 8x upsample)
 
 ---
 
-## Phase 3: Hardware Integration
+## Phase 3: Hardware Integration & Deployment
 
 **Status:** 📋 Planned
 
-Jetson Orin Nano Superへの移植と製品化。
+**アーキテクチャ:** I/O分離構成
+- **Raspberry Pi 5**: UAC2デバイス + RTP送信
+- **Jetson Orin Nano**: RTP受信 + GPU処理 + DAC出力
 
 ### Tasks
 
-- [ ] **Jetson Orin Nano Migration**
-  - CUDA Architecture変更 (SM 7.5 → SM 8.7)
-  - CMakeLists.txt の CUDA_ARCHITECTURES 修正
-  - NVMLオプショナル化（Jetson非対応）
-  - パス・デバイス名のハードコード除去
-  - パフォーマンス検証・チューニング
-
-- [ ] **USB Gadget Mode Setup**
-  - USB Type-C Device Mode (UAC2)
+#### Raspberry Pi 5 セットアップ
+- [ ] **USB Gadget Mode (UAC2)**
+  - USB Type-C Device Mode設定
   - Linux ConfigFS設定スクリプト作成
   - 対応サンプルレート設定（44.1k/48k/96k等）
   - PCからは「高音質USBサウンドカード」として認識
+
+- [ ] **PipeWire RTP送信**
+  - UAC2入力 → PipeWire → RTP送信
+  - 自動サンプルレート検知
+  - Jetsonへのネットワーク転送
+
+- [ ] **Docker化 (Raspberry Pi)**
+  - PipeWire + RTP Sender コンテナ
+  - systemd による自動起動
+  - ヘルスチェック機能
+
+#### Jetson Orin Nano セットアップ
+- [ ] **Jetson移植**
+  - CUDA Architecture変更 (SM 7.5 → SM 8.7)
+  - CMakeLists.txt の CUDA_ARCHITECTURES 修正
+  - パフォーマンス検証・チューニング
+
+- [ ] **RTP受信機能**
+  - RTP Session Manager統合
+  - サンプルレート自動検知
+  - バッファ管理
 
 - [ ] **ALSA Direct Output**
   - USB DAC直接出力
   - Bit-perfect転送
   - デバイス自動検出
-  - 複数DAC対応（将来）
 
+- [ ] **Docker化 (Jetson)**
+  - C++ Daemon + CUDA Runtime コンテナ
+  - Python Web UI コンテナ
+  - docker-compose による統合管理
+  - GPU パススルー設定
+
+#### 統合・監視
 - [ ] **System Integration**
-  - systemdサービスファイル作成（.service）
-  - 自動起動設定（multi-user.target）
+  - systemd によるDocker自動起動
   - ネットワーク設定（Wi-Fi/Ethernet）
-  - ホスト名設定（magicbox.local等）
+  - mDNS設定（magicbox.local）
 
 - [ ] **Performance Optimization**
   - メモリ帯域最適化（Unified Memory活用）
@@ -258,21 +280,33 @@ Jetson Orin Nano Superへの移植と製品化。
   - 熱管理（ファン制御、スロットリング回避）
   - 消費電力最適化
 
-- [ ] **Installation & Deployment**
-  - インストールスクリプト作成
-  - ファームウェアアップデート機構
+- [ ] **Deployment Automation**
+  - デプロイスクリプト作成
+  - OTA アップデート機構
   - 工場出荷時リセット機能
 
 ### Hardware Specifications
 
+#### Raspberry Pi 5 (Input Bridge)
+| Item | Specification |
+|------|---------------|
+| SoC | Broadcom BCM2712 (Quad-core Cortex-A76) |
+| Role | USB UAC2デバイス、RTP送信 |
+| Input | USB Type-C (UAC2 Device Mode) |
+| Output | Ethernet → Jetson |
+| Deployment | Docker |
+
+#### Jetson Orin Nano Super (Processing Unit)
 | Item | Specification |
 |------|---------------|
 | SoC | NVIDIA Jetson Orin Nano Super (8GB) |
 | CUDA Cores | 1024 |
+| CUDA Arch | SM 8.7 (Ampere) |
 | Storage | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
-| Input | USB Type-C (UAC2 Device Mode) |
+| Input | RTP over Ethernet |
 | Output | USB Type-A → External USB DAC |
 | Network | Wi-Fi / Ethernet |
+| Deployment | Docker (CUDA Runtime) |
 
 ---
 

@@ -48,10 +48,15 @@ graph TD
     WebUI[Web Browser] <-->|HTTP/WS| Controller[Python/FastAPI Controller]
     Controller <-->|ZeroMQ IPC| Engine[C++ Audio Engine Daemon]
 
-    subgraph Data Path
-        PC[PC Audio Source] -->|USB UAC2| PipeWire[PipeWire/ALSA Input]
-        PipeWire --> Engine
-        Engine -->|Processed Stream| DAC[External USB DAC]
+    subgraph Production Data Path
+        PC[PC Audio Source] -->|USB UAC2| RasPi[Raspberry Pi 5]
+        RasPi -->|RTP over Ethernet| RTPReceiver[RTP Session Manager]
+        RTPReceiver --> Engine
+        Engine -->|GPU Processing| DAC[External USB DAC]
+    end
+
+    subgraph Development Data Path
+        DevPC[PC Audio] -->|PipeWire| Engine
     end
 ```
 
@@ -60,7 +65,7 @@ graph TD
 
 - **Web UI:** React/VueベースのSPA。ヘッドホン選択、EQ設定、ステータス監視
 - **IR Generator:**
-  - `scipy` を使用し、oratory1990データとユーザーターゲットを合成
+  - `scipy` を使用し、OPRAデータとKB5000_7ターゲットを合成
   - 周波数特性から最小位相（Minimum Phase）IRを生成
   - **Dual Target Generation:** 係数更新時、44.1kHz系と48kHz系の2種類のIRを事前生成・保存
 - **Orchestrator:** C++エンジンへのコマンド送信（係数ロード指示、ソフトリセット等）
@@ -68,33 +73,53 @@ graph TD
 ### Data Plane (C++ Audio Engine)
 システムの心臓。低遅延・高負荷処理を担当。
 
-- **Input Interface:** `libpipewire` / `JACK` APIを使用し、入力サンプリングレート変更をイベントとして検知
-- **Resampler:** `libsoxr` (Very High Quality) を使用。入力レートに関わらず、ターゲットレート（DAC限界）へ変換
+- **Input Interface (Production):**
+  - RTP Session Manager: Raspberry Pi 5からのRTPストリーム受信
+  - サンプリングレート自動検知（44.1k系 / 48k系）
+- **Input Interface (Development):**
+  - `libpipewire` APIを使用したローカルストリーム受信
 - **Convolution Core (GPU):**
   - CUDA FFT (`cuFFT`) を使用したOverlap-Save法
   - Partitioned Convolutionにより、640kタップ処理時のレイテンシを制御
+  - 最大16倍アップサンプリング（44.1kHz → 705.6kHz, 48kHz → 768kHz）
 - **Buffering:** `moodycamel::ReaderWriterQueue` (Lock-free) によるスレッド間データ転送
 - **Output Interface:** ALSA (`alsa-lib`) 直接制御によるBit-perfect出力
 
 ## Hardware Specifications
 
-### Development Environment (PC)
+### Development Environment (PoC)
 | Item | Specification |
 |------|---------------|
-| GPU | NVIDIA RTX 2070 Super (8GB VRAM) or better |
+| GPU | NVIDIA RTX 2070 Super (8GB VRAM) |
 | CUDA Arch | SM 7.5 (Turing) |
 | OS | Linux (Ubuntu 22.04+) |
-| Audio | PipeWire |
+| Audio | PipeWire (ローカル開発・テスト用) |
 
 ### Production Environment (Magic Box)
+
+**I/O分離アーキテクチャ:**
+- **入力デバイス**: Raspberry Pi 5 (UAC2 + RTP送信)
+- **処理デバイス**: Jetson Orin Nano Super (RTP受信 + GPU処理 + DAC出力)
+
+#### Raspberry Pi 5 (Input Bridge)
+| Item | Specification |
+|------|---------------|
+| SoC | Broadcom BCM2712 (Quad-core Cortex-A76) |
+| Role | USB UAC2デバイス、RTP送信 |
+| Input | USB Type-C (UAC2 Device Mode) ← PC接続 |
+| Output | Ethernet → Jetson へRTP送信 |
+| Deployment | Docker (PipeWire + RTP Sender) |
+
+#### Jetson Orin Nano Super (Processing Unit)
 | Item | Specification |
 |------|---------------|
 | SoC | NVIDIA Jetson Orin Nano Super (8GB, 1024 CUDA Cores) |
 | CUDA Arch | SM 8.7 (Ampere) |
 | Storage | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
-| Input | USB Type-C (UAC2 Device Mode) |
+| Input | RTP over Ethernet ← Raspberry Pi 5 |
 | Output | USB Type-A → External USB DAC |
 | Network | Wi-Fi / Ethernet (Web UI access) |
+| Deployment | Docker (C++ Daemon + Python Web UI + CUDA Runtime) |
 
 ## Development Roadmap
 
@@ -114,11 +139,20 @@ graph TD
 - [ ] 最小位相IR生成アルゴリズム（scipy）の実装
 - [ ] Webフロントエンド実装
 
-### Phase 3: Hardware Integration
+### Phase 3: Hardware Integration & Deployment
 - [ ] Jetson Orin Nano への移植
-- [ ] Linux (Ubuntu) のUSB Gadget Mode設定
-- [ ] Systemdサービス化と自動起動設定
-- [ ] パフォーマンスチューニング（メモリ帯域最適化）
+  - CUDA Architecture変更 (SM 7.5 → SM 8.7)
+  - パフォーマンス検証・チューニング
+- [ ] Raspberry Pi 5 セットアップ
+  - USB Gadget Mode (UAC2) 設定
+  - PipeWire RTP送信機能
+- [ ] Docker化
+  - Jetson: C++ Daemon + Web UI + CUDA Runtime
+  - Raspberry Pi 5: PipeWire + RTP Sender
+  - docker-compose による統合管理
+- [ ] 自動起動・監視
+  - systemd によるDocker自動起動
+  - ヘルスチェック機能
 
 ## Technical Specifications
 
