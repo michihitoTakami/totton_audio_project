@@ -10,35 +10,32 @@
 ## Phase Overview
 
 ```
-Phase 1: Core Engine & Middleware     [=========>          ] 60%
-Phase 2: Control Plane & Web UI       [                    ] 0%
-Phase 3: Hardware Integration         [                    ] 0%
+Phase 1: Core Engine & Middleware     [====================] 95% (ほぼ完了)
+Phase 2: Control Plane & Web UI       [==================> ] 90% (実装完了、改善中)
+Phase 3: Hardware Integration         [====>               ] 20% (準備中)
 ```
 
 ---
 
 ## Phase 1: Core Engine & Middleware
 
-**Status:** 🔄 In Progress
+**Status:** ✅ ほぼ完了（95%）
 
-システムの心臓部であるC++ Audio Engine Daemonの完成を目指す。
+システムの心臓部であるC++ Audio Engine Daemonが完成。
 
-### Completed Tasks
+### Completed Tasks ✅
 
 - [x] **GPU Convolution Algorithm**
   - 640k-tap minimum phase FIR filter実装完了
   - ~28x realtime performance on RTX 2070S
   - Overlap-Save方式によるストリーミング処理
+  - Partitioned Convolution（低遅延モード対応）
 
 - [x] **Filter Coefficient Generation**
   - scipy.signalによる640kタップフィルタ生成
   - ~160dB stopband attenuation（24bit品質に十分）
   - Kaiser window (β≈28) - 32bit Float実装の量子ノイズ限界に合わせた最適値
-
-- [x] **Low-Latency Partition Validation** (#355)
-  - `scripts/inspect_impulse.py` / `verify_frequency_response.py` をpartition対応
-  - PipeWire/ALSAループバックとXRUN/GPU監視フローを `docs/investigations/low_latency_partition_validation.md` に記録
-  - QAチェックリストへ低遅延モードの回帰項目を追加
+  - Minimum Phase / Linear Phase 両対応
 
 - [x] **Phase Type Selection** (#165, #166, #167)
   - Minimum Phase / Linear Phase 切り替え機能
@@ -46,48 +43,48 @@ Phase 3: Hardware Integration         [                    ] 0%
   - C++/CUDA側の位相タイプ対応（遅延計算含む）
   - 設定システム（`PhaseType` enum）
 
-- [x] **Basic Daemon Implementation**
+- [x] **Multi-Rate Support** ✅ Issue #231
+  - 全8入力レート対応（44.1k/88.2k/176.4k/352.8k/48k/96k/192k/384k）
+  - 動的レート切り替え（グリッチフリー）
+  - GPU Upsamplerのマルチレート対応完了
+
+- [x] **Daemon Implementation**
   - PipeWire入力 → GPU処理 → ALSA出力
-  - Working prototype動作確認済み
+  - RTP Session Manager統合（ハイレゾ対応）
+  - SDP自動パース機能
 
-### In Progress
+- [x] **ZeroMQ Communication Layer**
+  - Control Plane ↔ Data Plane通信完了
+  - REST API経由のコマンド送信
+  - リアルタイムステータス取得
 
-- [ ] **C++ Daemon Refinement**
-  - libsoxr統合（可変レートリサンプリング）
-  - エラーハンドリング強化
-  - メモリ管理最適化
+- [x] **Safety Mechanisms**
+  - **Soft Mute**: レート切り替え時のクロスフェード実装済み
+  - **Hot-swap IR loading**: グリッチフリーな係数切り替え
+  - **Streaming Cache Reset**: RTPセッション切り替え時のキャッシュフラッシュ
 
-- [ ] **ZeroMQ Communication Layer**
-  - Control Plane ↔ Data Plane通信
-  - コマンド：係数ロード、ソフトリセット、ステータス取得
-  - IPC (Inter-Process Communication) 実装
+- [x] **Crossfeed/HRTF Engine**
+  - バイノーラル処理エンジン実装
+  - Web UIからのON/OFF制御
 
-- [ ] **Auto-Negotiation Logic**
-  - DAC Capability Scan（ALSA経由）
-  - Input Rate Detection（44.1k vs 48k系）
-  - Optimal Upsampling Rate計算
+- [x] **EQ Engine**
+  - パラメトリックEQ実装
+  - Preamp自動推奨機能
+  - テキストインポート機能
 
-- [x] **Multi-Rate Support (Critical)** ✅ Issue #231
-  - 詳細は下記「Multi-Rate Support」セクション参照
-  - 44.1k系/48k系両方の係数セット生成・管理
-  - 入力レート変更時の動的係数切り替え
+### Remaining Tasks
 
-### Pending
+- [ ] **Logging & Monitoring強化**
+  - 構造化ロギング統合（現在は基本的なログのみ）
+  - メトリクス収集の拡張
 
-- [ ] **Safety Mechanisms**
-  - Soft Mute（レート切り替え時クロスフェード）
-  - Dynamic Fallback（XRUN時の軽量モード移行）
-  - Hot-swap IR loading
+- [ ] **Dynamic Fallback**
+  - GPU負荷監視
+  - XRUN時の自動軽量モード移行
 
-- [ ] **Logging & Monitoring**
-  - 構造化ロギング導入（spdlog推奨）
-  - ファイルへのログ出力
-  - メトリクス収集（GPU負荷、バッファ状態、XRUN回数）
-
-- [ ] **Error Handling Enhancement**
-  - CUDA エラーの適切なハンドリング
-  - ALSA/PipeWire エラーからの復帰
-  - グレースフルシャットダウン
+- [ ] **Error Recovery強化**
+  - CUDA エラーからの自動復帰
+  - ALSA/PipeWireエラーハンドリング改善
 
 ---
 
@@ -168,54 +165,62 @@ GPU Processing (640k-tap FIR, 8x upsample)
 
 ## Phase 2: Control Plane & Web UI
 
-**Status:** 📋 Planned
+**Status:** ✅ 実装完了、改善中（90%）
 
 システムの頭脳であるPython/FastAPIバックエンドとWeb UIの実装。
 
-### Completed (Partial)
+### Completed Tasks ✅
 
-- [x] **Basic Web API** (web/main.py)
-  - REST API（/status, /settings, /restart等）
-  - 埋め込みHTML UI
-  - EQプロファイル管理
+- [x] **Python/FastAPI Backend**
+  - REST API実装（/status, /eq, /daemon, /opra等）
+  - OpenAPI自動生成
+  - ZeroMQ経由のEngine制御
+  - エラーハンドリング統一
+  - 詳細: `docs/api/openapi.json`
 
-### Tasks
-
-- [ ] **Python/FastAPI Backend Enhancement**
-  - REST API設計の改善
-  - WebSocket対応（リアルタイムステータス）
-  - ZeroMQ経由のEngine制御（現在はSIGHUP）
-  - 認証機能（オプション、ネットワーク公開時）
-
-- [ ] **OPRA Integration** (CC BY-SA 4.0)
+- [x] **OPRA Integration** (CC BY-SA 4.0)
   - OPRAリポジトリからのEQデータ取得
-  - ヘッドホンデータベース構築（SQLite or JSON）
+  - ヘッドホンデータベース構築
   - ブランド・モデル検索機能
-  - データ更新機能（定期同期）
-  - ⚠️ 帰属表示必須（CC BY-SA 4.0要件）
+  - CC BY-SA 4.0帰属表示対応
+  - 実装: `web/routers/opra.py`
 
-- [ ] **IR Generator**
+- [x] **EQ Engine**
+  - Parametric EQ適用（最大10バンド）
+  - テキストファイルインポート（AutoEQ形式）
+  - Preamp自動推奨機能
+  - リアルタイム適用
+  - 実装: `src/equalizer.cpp`, `web/routers/eq.py`
+
+- [x] **Web Frontend**
+  - **シンプルなJavaScriptフレームワーク**
+  - **i18n対応** (日本語/英語切り替え)
+  - **レスポンシブデザイン** (スマホ対応)
+  - ヘッドホン選択UI（ブランド・モデル検索）
+  - ステータス表示（入力レート、出力レート、動作状態）
+  - EQプロファイル管理
+  - リアルタイムエラー表示
+  - 実装: `web/static/`, `web/templates/`
+
+- [x] **Dependencies**
+  - pyzmq（ZeroMQ Python binding）
+  - aiofiles（非同期ファイルI/O）
+  - httpx（HTTP client）
+  - pydantic（データ検証）
+
+### UX Achievement ✅
+- **Ultimate Simplicity実現**: ヘッドホンを選ぶ → 適用ボタン → 完了
+- 技術的詳細は隠蔽、詳細モードで表示可能
+- 多言語対応で国際展開準備完了
+
+### Remaining Enhancements
+
+- [ ] **WebSocket対応** (リアルタイムステータス更新)
+- [ ] **認証機能** (ネットワーク公開時のセキュリティ)
+- [ ] **IR Generator** (将来機能)
   - OPRAデータ + KB5000_7ターゲット合成
   - 最小位相IR生成（scipy homomorphic processing）
   - Dual Target Generation（44.1k系/48k系）
-  - Filter 11追加: `ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5`
-  - 生成済みIRのキャッシュ管理
-
-- [ ] **Web Frontend**
-  - ヘッドホン選択UI（シンプルなリスト/検索）
-  - ステータス表示（入力レート、出力レート、GPU負荷）
-  - 設定変更（ターゲットカーブ調整は将来機能）
-  - レスポンシブデザイン（スマホ対応）
-
-- [ ] **Dependencies to Add**
-  - pyzmq（ZeroMQ Python binding）
-  - aiofiles（非同期ファイルI/O）
-  - httpx（AutoEQデータ取得）
-  - websockets（リアルタイム通信）
-
-### UX Goal
-- ヘッドホンを選ぶ → 適用ボタン → 完了
-- 技術的詳細は隠す（詳細モードで表示可能にはする）
 
 ---
 
