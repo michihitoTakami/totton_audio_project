@@ -145,46 +145,13 @@
             {% set alpine_click = "toggleCrossfeed" %}
             {% include 'components/toggle_switch.html' %}
 
-            <div class="form-group" style="margin-top: 16px;" x-show="crossfeed.enabled">
-                <label>{{ t.get('dashboard.crossfeed.head_size') }}</label>
-                <div class="head-size-group">
-                    <button
-                        type="button"
-                        class="head-size-btn"
-                        :class="{ 'active': crossfeed.headSize === 'xs' }"
-                        @click="setHeadSize('xs')"
-                        :disabled="!crossfeed.enabled"
-                    >XS</button>
-                    <button
-                        type="button"
-                        class="head-size-btn"
-                        :class="{ 'active': crossfeed.headSize === 's' }"
-                        @click="setHeadSize('s')"
-                        :disabled="!crossfeed.enabled"
-                    >S</button>
-                    <button
-                        type="button"
-                        class="head-size-btn"
-                        :class="{ 'active': crossfeed.headSize === 'm' }"
-                        @click="setHeadSize('m')"
-                        :disabled="!crossfeed.enabled"
-                    >M</button>
-                    <button
-                        type="button"
-                        class="head-size-btn"
-                        :class="{ 'active': crossfeed.headSize === 'l' }"
-                        @click="setHeadSize('l')"
-                        :disabled="!crossfeed.enabled"
-                    >L</button>
-                    <button
-                        type="button"
-                        class="head-size-btn"
-                        :class="{ 'active': crossfeed.headSize === 'xl' }"
-                        @click="setHeadSize('xl')"
-                        :disabled="!crossfeed.enabled"
-                    >XL</button>
-                </div>
-            </div>
+            {% set selector_label = t.get('dashboard.crossfeed.head_size') %}
+            {% set alpine_model = "crossfeed.headSize" %}
+            {% set alpine_click = "setHeadSize" %}
+            {% set alpine_disabled = "!crossfeed.enabled" %}
+            {% set alpine_show = "crossfeed.enabled" %}
+            {% set form_group_style = "margin-top: 16px;" %}
+            {% include 'components/size_selector.html' %}
 
             {% set alert_type = "warning" %}
             {% set alert_show = "crossfeed.enabled && lowLatency.enabled" %}
