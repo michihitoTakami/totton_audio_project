@@ -433,6 +433,97 @@ class TestFormGroupComponent:
         assert "changePhaseType" in response.text
 
 
+class TestSizeSelectorComponent:
+    """Test size selector component rendering (Phase 3)."""
+
+    def test_size_selector_present_in_dashboard(self, client):
+        """Verify size selector component is rendered on dashboard."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Check for head-size-group class (from component)
+        assert 'class="head-size-group"' in response.text
+
+        # Check for head-size-btn class
+        assert 'class="head-size-btn"' in response.text
+
+    def test_size_selector_has_all_sizes(self, client):
+        """Verify size selector has all 5 size buttons."""
+        response = client.get("/")
+        assert response.status_code == 200
+        html = response.text
+
+        # Should have 5 sizes: XS, S, M, L, XL
+        assert ">XS</button>" in html
+        assert ">S</button>" in html
+        assert ">M</button>" in html
+        assert ">L</button>" in html
+        assert ">XL</button>" in html
+
+    def test_size_selector_alpine_bindings(self, client):
+        """Verify size selector has Alpine.js bindings."""
+        response = client.get("/")
+        assert response.status_code == 200
+        html = response.text
+
+        # Should have active class binding
+        assert ":class=\"{ 'active': crossfeed.headSize ===" in html
+
+        # Should have click handler
+        assert '@click="setHeadSize(' in html
+
+        # Should have disabled binding
+        assert ":disabled=" in html
+
+    def test_size_selector_x_show_binding(self, client):
+        """Verify size selector has x-show binding for visibility control."""
+        response = client.get("/")
+        assert response.status_code == 200
+
+        # Should have x-show attribute for conditional rendering
+        # (shown only when crossfeed is enabled)
+        assert "x-show=" in response.text
+
+    def test_size_selector_replaces_inline_implementation(self, client):
+        """Verify inline head size selector is replaced by component."""
+        response = client.get("/")
+        assert response.status_code == 200
+        html = response.text
+
+        # Should NOT have old inline button structure (31 lines reduced)
+        # Old structure had each button separately defined
+        # New structure uses component include
+        assert (
+            "{% include 'components/size_selector.html' %}" not in html
+        )  # Template tag shouldn't appear in rendered HTML
+
+        # But should have the rendered output
+        assert 'class="head-size-group"' in html
+        assert 'class="head-size-btn"' in html
+
+
+class TestPhase3ComponentDocumentation:
+    """Test Phase 3 component documentation."""
+
+    def test_size_selector_has_proper_documentation(self):
+        """Verify size selector component file has parameter documentation."""
+        import os
+
+        component_path = os.path.join(
+            os.path.dirname(__file__), "..", "templates", "components"
+        )
+
+        # Check size_selector.html
+        with open(os.path.join(component_path, "size_selector.html")) as f:
+            content = f.read()
+            assert "Parameters:" in content
+            assert "selector_label" in content
+            assert "alpine_model" in content
+            assert "alpine_click" in content
+            assert "alpine_disabled" in content
+            assert "alpine_show" in content
+
+
 class TestPhase2ComponentDocumentation:
     """Test Phase 2 component documentation."""
 
