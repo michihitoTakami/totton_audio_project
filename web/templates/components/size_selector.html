@@ -6,11 +6,12 @@
    - alpine_disabled (optional): Alpine.js expression for disabled state (default: "false")
    - alpine_show (optional): Alpine.js expression for x-show directive
    - sizes (optional): Array of size values (default: ['xs', 's', 'm', 'l', 'xl'])
+   - form_group_style (optional): Inline style string for form-group div
 #}
 {% set alpine_disabled = alpine_disabled | default("false") %}
 {% set sizes = sizes | default(['xs', 's', 'm', 'l', 'xl']) %}
 
-<div class="form-group" style="margin-top: 16px;" {% if alpine_show %}x-show="{{ alpine_show }}"{% endif %}>
+<div class="form-group" {% if form_group_style %}style="{{ form_group_style }}"{% endif %} {% if alpine_show %}x-show="{{ alpine_show }}"{% endif %}>
     <label>{{ selector_label }}</label>
     <div class="head-size-group">
         {% for size in sizes %}

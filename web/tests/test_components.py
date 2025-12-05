@@ -522,6 +522,7 @@ class TestPhase3ComponentDocumentation:
             assert "alpine_click" in content
             assert "alpine_disabled" in content
             assert "alpine_show" in content
+            assert "form_group_style" in content
 
 
 class TestPhase2ComponentDocumentation:
