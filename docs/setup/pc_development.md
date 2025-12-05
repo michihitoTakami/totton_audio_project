@@ -190,7 +190,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
         ↓ monitor output
 [GPU Upsampler Input] (PipeWire stream capture)
         ↓ (リングバッファ)
-[GPU Processing] (CUDA, 44.1kHz → 705.6kHz, 2M-tap FIR)
+[GPU Processing] (CUDA, 44.1kHz → 705.6kHz, 640k-tap FIR)
         ↓ (ALSA hw:3,0 direct)
 [SMSL D400EX DAC] (705.6kHz, S32_LE)
         ↓ (アナログ出力)
