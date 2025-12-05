@@ -1969,6 +1969,15 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        if (!g_dac_manager) {
+            g_dac_manager = std::make_unique<dac::DacManager>(make_dac_dependencies());
+        }
+        if (!g_dac_manager) {
+            std::cerr << "Failed to initialize DAC manager" << std::endl;
+            exitCode = 1;
+            break;
+        }
+
         daemon_control::ControlPlaneDependencies controlDeps{};
         controlDeps.config = &g_config;
         controlDeps.runningFlag = &g_running;
