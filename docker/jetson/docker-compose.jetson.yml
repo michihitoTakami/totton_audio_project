@@ -42,8 +42,11 @@ services:
     shm_size: '256m'
 
     # Mount data directory (EQ profiles, coefficients, OPRA database)
+    # Static data (coefficients, OPRA database) is read-only for protection
+    # EQ profiles directory is writable for dynamic profile generation
     volumes:
       - ../../data:/opt/magicbox/data:ro
+      - ../../data/EQ:/opt/magicbox/data/EQ:rw
 
     # Environment (NVIDIA)
     environment:
