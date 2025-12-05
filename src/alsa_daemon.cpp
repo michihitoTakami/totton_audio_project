@@ -168,28 +168,6 @@ static std::mutex g_input_process_mutex;
 static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
 static std::unique_ptr<audio_pipeline::AudioPipeline> g_audio_pipeline;
 
-static float apply_output_limiter(float* interleaved, size_t frames) {
-    constexpr float kEpsilon = 1e-6f;
-    if (!interleaved || frames == 0) {
-        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
-        float baseGain = g_output_gain.load(std::memory_order_relaxed);
-        g_effective_gain.store(baseGain, std::memory_order_relaxed);
-        return 0.0f;
-    }
-    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
-    float limiterGain = 1.0f;
-    const float target = g_config.headroomTarget;
-    if (target > 0.0f && peak > target) {
-        limiterGain = target / (peak + kEpsilon);
-        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
-        peak = target;
-    }
-    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
-    float effective = g_output_gain.load(std::memory_order_relaxed) * limiterGain;
-    g_effective_gain.store(effective, std::memory_order_relaxed);
-    return peak;
-}
-
 // Runtime state: Input sample rate (auto-negotiated, not from config)
 // This value is detected from PipeWire stream or set to default (44100 Hz)
 // Issue #219: Changed to atomic for thread-safe multi-rate switching
@@ -1980,186 +1958,93 @@ void alsa_output_thread() {
         if (!g_running)
             break;
 
-        size_t available = g_output_buffer_left.size() - g_output_read_pos;
-        if (available >= period_size) {
-            // Step 1: Interleave L/R channels into float buffer with gain applied
-            const float gain = g_output_gain.load(std::memory_order_relaxed);
-            AudioUtils::interleaveStereoWithGain(g_output_buffer_left.data() + g_output_read_pos,
-                                                 g_output_buffer_right.data() + g_output_read_pos,
-                                                 float_buffer.data(), period_size, gain);
+        lock.unlock();
 
-            // Step 2: Apply soft mute for glitch-free shutdown/transitions
-            if (g_soft_mute) {
-                g_soft_mute->process(float_buffer.data(), period_size);
+        audio_pipeline::RenderResult renderResult;
+        if (g_audio_pipeline) {
+            renderResult = g_audio_pipeline->renderOutput(
+                static_cast<size_t>(period_size), interleaved_buffer, float_buffer, g_soft_mute);
+        } else {
+            renderResult.framesRequested = period_size;
+            renderResult.framesRendered = period_size;
+            renderResult.wroteSilence = true;
+            std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
+        }
 
-                // Reset fade duration to default after filter switch fade-in completes
-                // Check if we just completed a fade-in from filter switching
-                // (fade duration > default indicates filter switch was in progress)
-                using namespace DaemonConstants;
-                if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING &&
-                    g_soft_mute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
-                    g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
-                }
-            }
-
-            // Apply limiter and track peak after gain & soft mute
-            float postGainPeak = apply_output_limiter(float_buffer.data(), period_size);
-            runtime_stats::updatePostGainPeak(postGainPeak);
-
-            // Step 3: Clipping detection, clamping, and float→int32 conversion
-            static auto last_stats_write = std::chrono::steady_clock::now();
-            size_t current_clips = 0;
-
-            for (size_t i = 0; i < period_size; ++i) {
-                float left_sample = float_buffer[i * 2];
-                float right_sample = float_buffer[i * 2 + 1];
-
-                // Detect and count clipping (for diagnostics only)
-                if (left_sample > 1.0f || left_sample < -1.0f || right_sample > 1.0f ||
-                    right_sample < -1.0f) {
-                    current_clips++;
-                    runtime_stats::recordClip();
-                }
-
-                // Hard clipping as safety net only
-                left_sample = std::clamp(left_sample, -1.0f, 1.0f);
-                right_sample = std::clamp(right_sample, -1.0f, 1.0f);
-
-                // Float to int32 conversion
-                constexpr float INT32_MAX_FLOAT = 2147483647.0f;
-                interleaved_buffer[i * 2] =
-                    static_cast<int32_t>(std::lroundf(left_sample * INT32_MAX_FLOAT));
-                interleaved_buffer[i * 2 + 1] =
-                    static_cast<int32_t>(std::lroundf(right_sample * INT32_MAX_FLOAT));
-            }
-
-            runtime_stats::addSamples(period_size * 2);
-
-            // Report clipping infrequently to avoid log spam
-            size_t total = runtime_stats::totalSamples();
-            size_t clips = runtime_stats::clipCount();
-            if (total % (period_size * 2 * 100) == 0 && clips > 0) {
-                std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
-                          << total << " (" << (100.0 * clips / total) << "%)" << std::endl;
-            }
-
-            // Write stats file every second
+        static auto last_stats_write = std::chrono::steady_clock::now();
+        if (!renderResult.wroteSilence && renderResult.framesRendered > 0) {
             auto now = std::chrono::steady_clock::now();
             if (now - last_stats_write >= std::chrono::seconds(1)) {
                 runtime_stats::writeStatsFile(build_runtime_stats_dependencies(),
                                               get_max_output_buffer_frames(), STATS_FILE_PATH);
                 last_stats_write = now;
             }
-            g_output_read_pos += period_size;
+            size_t total = runtime_stats::totalSamples();
+            size_t clips = runtime_stats::clipCount();
+            if (total % (static_cast<size_t>(period_size) * 2 * 100) == 0 && clips > 0) {
+                std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
+                          << total << " (" << (100.0 * clips / total) << "%)" << std::endl;
+            }
+        }
 
-            size_t cleanupThreshold =
-                std::max<size_t>(static_cast<size_t>(period_size) * 4, static_cast<size_t>(1));
-            if (g_audio_pipeline) {
-                g_audio_pipeline->trimOutputBuffer(cleanupThreshold);
+        // Write to ALSA device
+        snd_pcm_sframes_t frames_written =
+            snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
+        if (frames_written < 0) {
+            // Check for XRUN (Issue #139)
+            if (frames_written == -EPIPE) {
+                // XRUN detected - notify fallback manager
+                if (g_fallback_manager) {
+                    g_fallback_manager->notifyXrun();
+                }
+                gpu_upsampler::metrics::recordXrun();
+                LOG_WARN("ALSA: XRUN detected");
             }
 
-            lock.unlock();
-
-            // Write to ALSA device
-            snd_pcm_sframes_t frames_written =
-                snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
-            if (frames_written < 0) {
-                // Check for XRUN (Issue #139)
-                if (frames_written == -EPIPE) {
-                    // XRUN detected - notify fallback manager
-                    if (g_fallback_manager) {
-                        g_fallback_manager->notifyXrun();
+            // Try standard recovery first
+            snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
+            if (rec < 0) {
+                // Device may be gone; attempt reopen
+                std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
+                          << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
+                          << std::endl;
+                snd_pcm_close(pcm_handle);
+                pcm_handle = nullptr;
+                mark_dac_disconnected(currentDevice);
+                while (g_running && !pcm_handle) {
+                    std::this_thread::sleep_for(std::chrono::seconds(5));
+                    std::string next = g_dac_manager.getSelectedDevice();
+                    if (!next.empty()) {
+                        currentDevice = next;
                     }
-                    gpu_upsampler::metrics::recordXrun();
-                    LOG_WARN("ALSA: XRUN detected");
-                }
-
-                // Try standard recovery first
-                snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
-                if (rec < 0) {
-                    // Device may be gone; attempt reopen
-                    std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
-                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
-                              << std::endl;
-                    snd_pcm_close(pcm_handle);
-                    pcm_handle = nullptr;
-                    mark_dac_disconnected(currentDevice);
-                    while (g_running && !pcm_handle) {
-                        std::this_thread::sleep_for(std::chrono::seconds(5));
-                        std::string next = g_dac_manager.getSelectedDevice();
-                        if (!next.empty()) {
-                            currentDevice = next;
-                        }
-                        if (currentDevice.empty())
-                            continue;
-                        pcm_handle = open_and_configure_pcm(currentDevice);
-                    }
-                    if (pcm_handle) {
-                        mark_dac_connected(currentDevice,
-                                           "DAC reconnected - resuming input processing");
-                        // resize buffer to new period size if needed
-                        snd_pcm_uframes_t new_period = 0;
-                        snd_pcm_hw_params_t* hw_params;
-                        snd_pcm_hw_params_alloca(&hw_params);
-                        if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
-                            snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) ==
-                                0 &&
-                            new_period != period_size) {
-                            period_size = new_period;
-                            interleaved_buffer.resize(period_size * CHANNELS);
-                            float_buffer.resize(period_size * CHANNELS);
-                        }
-                        // Drop queued buffers on successful reopen to avoid burst
-                        {
-                            std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                            g_output_buffer_left.clear();
-                            g_output_buffer_right.clear();
-                            g_output_read_pos = 0;
-                        }
-                    } else {
-                        // If still not available, continue loop to retry
+                    if (currentDevice.empty())
                         continue;
-                    }
+                    pcm_handle = open_and_configure_pcm(currentDevice);
                 }
-            }
-        } else {
-            // Not enough data → write silence to keep device fed and avoid xrun
-            lock.unlock();
-
-            // Apply soft mute even to silence (to advance fade position during shutdown)
-            if (g_soft_mute && g_soft_mute->isTransitioning()) {
-                std::fill(float_buffer.begin(), float_buffer.end(), 0.0f);
-                g_soft_mute->process(float_buffer.data(), period_size);
-            }
-
-            std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
-            snd_pcm_sframes_t frames_written =
-                snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
-            if (frames_written < 0) {
-                snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
-                if (rec < 0) {
-                    std::cerr << "ALSA: Silence write error: " << snd_strerror(frames_written)
-                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
-                              << std::endl;
-                    if (pcm_handle) {
-                        snd_pcm_close(pcm_handle);
-                        pcm_handle = nullptr;
+                if (pcm_handle) {
+                    mark_dac_connected(currentDevice,
+                                       "DAC reconnected - resuming input processing");
+                    // resize buffer to new period size if needed
+                    snd_pcm_uframes_t new_period = 0;
+                    snd_pcm_hw_params_t* hw_params;
+                    snd_pcm_hw_params_alloca(&hw_params);
+                    if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
+                        snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) == 0 &&
+                        new_period != period_size) {
+                        period_size = new_period;
+                        interleaved_buffer.resize(period_size * CHANNELS);
+                        float_buffer.resize(period_size * CHANNELS);
                     }
-                    mark_dac_disconnected(currentDevice);
-                    while (g_running && !pcm_handle) {
-                        std::this_thread::sleep_for(std::chrono::seconds(5));
-                        std::string next = g_dac_manager.getSelectedDevice();
-                        if (!next.empty()) {
-                            currentDevice = next;
-                        }
-                        if (currentDevice.empty())
-                            continue;
-                        pcm_handle = open_and_configure_pcm(currentDevice);
+                    // Drop queued buffers on successful reopen to avoid burst
+                    {
+                        std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                        g_output_buffer_left.clear();
+                        g_output_buffer_right.clear();
+                        g_output_read_pos = 0;
                     }
-                    if (pcm_handle) {
-                        mark_dac_connected(currentDevice,
-                                           "DAC reconnected - resuming input processing");
-                    }
+                } else {
+                    // If still not available, continue loop to retry
+                    continue;
                 }
             }
         }
@@ -2549,6 +2434,9 @@ int main(int argc, char* argv[]) {
             pipelineDeps.upsampler.available = true;
             pipelineDeps.upsampler.streamLeft = g_upsampler->streamLeft_;
             pipelineDeps.upsampler.streamRight = g_upsampler->streamRight_;
+            pipelineDeps.output.outputGain = &g_output_gain;
+            pipelineDeps.output.limiterGain = &g_limiter_gain;
+            pipelineDeps.output.effectiveGain = &g_effective_gain;
             pipelineDeps.upsampler.process =
                 [](const float* data, size_t frames, ConvolutionEngine::StreamFloatVector& output,
                    cudaStream_t stream, ConvolutionEngine::StreamFloatVector& streamInput,

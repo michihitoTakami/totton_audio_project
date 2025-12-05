@@ -183,6 +183,7 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/partition_runtime_utils.cpp
+    src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/rtp/rtp_engine_coordinator.cpp
     src/daemon/control/zmq_server.cpp
@@ -484,7 +485,9 @@ add_executable(cpu_tests
     tests/cpp/test_phase_alignment.cpp
     tests/cpp/test_playback_buffer_threshold.cpp
     tests/cpp/test_runtime_stats.cpp
+    tests/cpp/test_audio_pipeline.cpp
     src/daemon/rtp/rtp_engine_coordinator.cpp
+    src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/pcm/dac_manager.cpp
 )
@@ -496,6 +499,7 @@ target_link_libraries(cpu_tests
     logging
     filter_headroom
     fallback_manager
+    soft_mute
     dac_capability
 )
 target_include_directories(cpu_tests PRIVATE

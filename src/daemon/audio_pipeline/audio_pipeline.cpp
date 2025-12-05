@@ -135,6 +135,86 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     return true;
 }
 
+RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,
+                                         std::vector<float>& floatScratch,
+                                         SoftMute::Controller* softMute) {
+    RenderResult result;
+    result.framesRequested = frames;
+    if (frames == 0 || !hasBufferState() || !deps_.buffer.bufferMutex) {
+        return result;
+    }
+
+    interleavedOut.resize(frames * 2);
+    floatScratch.assign(frames * 2, 0.0f);
+
+    const float baseGain =
+        (deps_.output.outputGain) ? deps_.output.outputGain->load(std::memory_order_relaxed) : 1.0f;
+
+    bool hasAudio = false;
+    {
+        std::lock_guard<std::mutex> lock(*deps_.buffer.bufferMutex);
+        size_t readable = deps_.buffer.outputBufferLeft->size();
+        size_t readPos = *deps_.buffer.outputReadPos;
+        if (readable >= readPos + frames) {
+            hasAudio = true;
+            floatScratch.resize(frames * 2);
+            AudioUtils::interleaveStereoWithGain(deps_.buffer.outputBufferLeft->data() + readPos,
+                                                 deps_.buffer.outputBufferRight->data() + readPos,
+                                                 floatScratch.data(), frames, baseGain);
+            *deps_.buffer.outputReadPos += frames;
+            size_t cleanupFrames = std::max(frames * 4, static_cast<size_t>(1));
+            trimInternal(cleanupFrames);
+        }
+    }
+
+    if (!hasAudio) {
+        if (softMute && softMute->isTransitioning()) {
+            softMute->process(floatScratch.data(), frames);
+        }
+        std::fill(interleavedOut.begin(), interleavedOut.end(), 0);
+        result.framesRendered = frames;
+        result.wroteSilence = true;
+        return result;
+    }
+
+    if (softMute) {
+        softMute->process(floatScratch.data(), frames);
+        using namespace DaemonConstants;
+        if (softMute->getState() == SoftMute::MuteState::PLAYING &&
+            softMute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
+            softMute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
+        }
+    }
+
+    float postGainPeak = applyOutputLimiter(floatScratch.data(), frames);
+    runtime_stats::updatePostGainPeak(postGainPeak);
+
+    constexpr float kInt32MaxFloat = 2147483647.0f;
+    for (size_t i = 0; i < frames; ++i) {
+        float leftSample = floatScratch[i * 2];
+        float rightSample = floatScratch[i * 2 + 1];
+
+        if (leftSample > 1.0f || leftSample < -1.0f || rightSample > 1.0f || rightSample < -1.0f) {
+            runtime_stats::recordClip();
+        }
+
+        leftSample = std::clamp(leftSample, -1.0f, 1.0f);
+        rightSample = std::clamp(rightSample, -1.0f, 1.0f);
+
+        interleavedOut[i * 2] = static_cast<int32_t>(std::lroundf(leftSample * kInt32MaxFloat));
+        interleavedOut[i * 2 + 1] =
+            static_cast<int32_t>(std::lroundf(rightSample * kInt32MaxFloat));
+    }
+
+    if (frames > 0) {
+        runtime_stats::addSamples(frames * 2);
+    }
+
+    result.framesRendered = frames;
+    result.wroteSilence = false;
+    return result;
+}
+
 void AudioPipeline::trimOutputBuffer(size_t minFramesToRemove) {
     if (!hasBufferState() || !deps_.buffer.bufferMutex) {
         return;
@@ -209,6 +289,43 @@ float AudioPipeline::computeStereoPeak(const float* left, const float* right, si
         float r = std::fabs(right[i]);
         peak = std::max(peak, std::max(l, r));
     }
+    return peak;
+}
+
+float AudioPipeline::applyOutputLimiter(float* interleaved, size_t frames) {
+    constexpr float kEpsilon = 1e-6f;
+    if (!interleaved || frames == 0) {
+        if (deps_.output.limiterGain) {
+            deps_.output.limiterGain->store(1.0f, std::memory_order_relaxed);
+        }
+        if (deps_.output.effectiveGain) {
+            float base = (deps_.output.outputGain)
+                             ? deps_.output.outputGain->load(std::memory_order_relaxed)
+                             : 1.0f;
+            deps_.output.effectiveGain->store(base, std::memory_order_relaxed);
+        }
+        return 0.0f;
+    }
+
+    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
+    float limiterGain = 1.0f;
+    float target = deps_.config ? deps_.config->headroomTarget : 0.0f;
+    if (target > 0.0f && peak > target) {
+        limiterGain = target / (peak + kEpsilon);
+        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
+        peak = target;
+    }
+
+    if (deps_.output.limiterGain) {
+        deps_.output.limiterGain->store(limiterGain, std::memory_order_relaxed);
+    }
+    if (deps_.output.effectiveGain) {
+        float base = (deps_.output.outputGain)
+                         ? deps_.output.outputGain->load(std::memory_order_relaxed)
+                         : 1.0f;
+        deps_.output.effectiveGain->store(base * limiterGain, std::memory_order_relaxed);
+    }
+
     return peak;
 }
 

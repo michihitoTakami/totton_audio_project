@@ -8,6 +8,7 @@
 #include "daemon_constants.h"
 #include "logging/logger.h"
 #include "playback_buffer.h"
+#include "soft_mute.h"
 
 #include <cuda_runtime_api.h>
 
@@ -43,9 +44,16 @@ struct Upsampler {
     bool available = false;
 };
 
+struct OutputState {
+    std::atomic<float>* outputGain = nullptr;
+    std::atomic<float>* limiterGain = nullptr;
+    std::atomic<float>* effectiveGain = nullptr;
+};
+
 struct Dependencies {
     const AppConfig* config = nullptr;
     Upsampler upsampler;
+    OutputState output;
     std::atomic<bool>* fallbackActive = nullptr;
     std::atomic<bool>* outputReady = nullptr;
     std::atomic<bool>* crossfeedEnabled = nullptr;
@@ -72,10 +80,18 @@ struct Dependencies {
     std::mutex* inputMutex = nullptr;
 };
 
+struct RenderResult {
+    size_t framesRequested = 0;
+    size_t framesRendered = 0;
+    bool wroteSilence = false;
+};
+
 class AudioPipeline {
    public:
     explicit AudioPipeline(Dependencies deps);
     bool process(const float* inputSamples, uint32_t nFrames);
+    RenderResult renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,
+                              std::vector<float>& floatScratch, SoftMute::Controller* softMute);
     void trimOutputBuffer(size_t minFramesToRemove);
     const BufferResources& bufferResources() const;
 
@@ -86,6 +102,7 @@ class AudioPipeline {
     void logDroppingInput();
     void trimInternal(size_t minFramesToRemove);
     float computeStereoPeak(const float* left, const float* right, size_t frames) const;
+    float applyOutputLimiter(float* interleaved, size_t frames);
 
     template <typename Container>
     size_t enqueueOutputFramesLocked(const Container& left, const Container& right);
