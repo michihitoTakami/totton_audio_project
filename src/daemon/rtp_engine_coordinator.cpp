@@ -391,6 +391,12 @@ void RtpEngineCoordinator::maybeSwitchRateForRtp(uint32_t sessionRate,
     }
 }
 
+void RtpEngineCoordinator::flushStreamingCache() {
+    if (deps_.resetStreamingCache) {
+        deps_.resetStreamingCache();
+    }
+}
+
 void RtpEngineCoordinator::ensureManagerInitialized() {
     if (manager_) {
         return;
@@ -541,6 +547,7 @@ void RtpEngineCoordinator::startFromConfig() {
     } else {
         LOG_INFO("RTP session '{}' auto-started on {}:{}", sessionCfg.sessionId,
                  sessionCfg.bindAddress, sessionCfg.port);
+        flushStreamingCache();
         maybeSwitchRateForRtp(sessionCfg.sampleRate, sessionCfg.sessionId);
     }
 }
@@ -590,6 +597,7 @@ bool RtpEngineCoordinator::handleZeroMqCommand(const std::string& cmdType,
         resp["message"] = "RTP session started";
         resp["data"] = Network::sessionConfigToJson(sessionCfg);
         responseOut = resp.dump();
+        flushStreamingCache();
         maybeSwitchRateForRtp(sessionCfg.sampleRate, sessionCfg.sessionId);
         return true;
     } else if (cmdType == "RTP_STOP_SESSION" || cmdType == "StopSession") {
@@ -624,6 +632,7 @@ bool RtpEngineCoordinator::handleZeroMqCommand(const std::string& cmdType,
         resp["status"] = "ok";
         resp["message"] = "RTP session stopped";
         resp["data"]["session_id"] = sessionId;
+        flushStreamingCache();
         responseOut = resp.dump();
         return true;
     } else if (cmdType == "RTP_LIST_SESSIONS" || cmdType == "ListSessions") {

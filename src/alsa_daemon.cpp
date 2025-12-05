@@ -2887,6 +2887,11 @@ int main(int argc, char* argv[]) {
             (void)sampleRate;
             process_interleaved_block(data, static_cast<uint32_t>(frames));
         };
+        rtpDeps.resetStreamingCache = []() {
+            if (g_streaming_cache_manager) {
+                g_streaming_cache_manager->flushCaches();
+            }
+        };
         rtpDeps.ptpProvider = []() -> Network::PtpSyncState { return {}; };
         rtpDeps.telemetry = [](const Network::SessionMetrics& metrics) {
             LOG_DEBUG("RTP session {} stats: packets={} dropped={}", metrics.sessionId,

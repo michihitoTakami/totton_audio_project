@@ -42,12 +42,16 @@ class StreamingCacheManager {
         std::int64_t previousNs = lastInputTimestampNs_.exchange(nowNs, std::memory_order_acq_rel);
         if (AudioInput::shouldResetAfterStall(previousNs, nowNs)) {
             std::chrono::nanoseconds gap(nowNs - previousNs);
-            flushCache(gap);
+            flushCachesInternal(gap);
         }
     }
 
+    void flushCaches(std::chrono::nanoseconds gap = std::chrono::nanoseconds::zero()) {
+        flushCachesInternal(gap);
+    }
+
    private:
-    void flushCache(std::chrono::nanoseconds gap) {
+    void flushCachesInternal(std::chrono::nanoseconds gap) {
         auto resetPlaybackBuffers = [&]() {
             if (deps_.outputBufferLeft && deps_.outputBufferRight) {
                 deps_.outputBufferLeft->clear();
