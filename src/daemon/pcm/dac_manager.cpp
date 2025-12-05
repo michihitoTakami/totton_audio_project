@@ -39,11 +39,6 @@ DacManager::~DacManager() {
     stop();
 }
 
-void DacManager::setEventPublisher(std::function<void(const nlohmann::json&)> eventPublisher) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    deps_.eventPublisher = std::move(eventPublisher);
-}
-
 bool DacManager::isValidDeviceName(const std::string& device) const {
     if (device.empty())
         return false;
