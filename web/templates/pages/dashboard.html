@@ -65,13 +65,11 @@
     <div class="section">
         <h2 class="section-title">{{ t.get('dashboard.low_latency.title') }}</h2>
         <div class="card">
-            <div class="toggle-container">
-                <div class="toggle-label">
-                    <span>{{ t.get('dashboard.low_latency.toggle') }}</span>
-                    <span class="toggle-desc">{{ t.get('dashboard.low_latency.exclusive') }}</span>
-                </div>
-                <div class="toggle-switch" :class="{ 'active': lowLatency.enabled }" @click="toggleLowLatency"></div>
-            </div>
+            {% set toggle_label = t.get('dashboard.low_latency.toggle') %}
+            {% set toggle_desc = t.get('dashboard.low_latency.exclusive') %}
+            {% set alpine_model = "lowLatency.enabled" %}
+            {% set alpine_click = "toggleLowLatency" %}
+            {% include 'components/toggle_switch.html' %}
             <div class="alert alert-warning" x-show="lowLatency.enabled && status.crossfeed_enabled">
                 {{ t.get('dashboard.low_latency.warning') }}
             </div>
@@ -173,13 +171,11 @@
     <div class="section">
         <h2 class="section-title">{{ t.get('dashboard.crossfeed.title') }}</h2>
         <div class="card">
-            <div class="toggle-container">
-                <div class="toggle-label">
-                    <span>{{ t.get('dashboard.crossfeed.toggle') }}</span>
-                    <span class="toggle-desc">{{ t.get('dashboard.crossfeed.toggle_desc') }}</span>
-                </div>
-                <div class="toggle-switch" :class="{ 'active': crossfeed.enabled }" @click="toggleCrossfeed"></div>
-            </div>
+            {% set toggle_label = t.get('dashboard.crossfeed.toggle') %}
+            {% set toggle_desc = t.get('dashboard.crossfeed.toggle_desc') %}
+            {% set alpine_model = "crossfeed.enabled" %}
+            {% set alpine_click = "toggleCrossfeed" %}
+            {% include 'components/toggle_switch.html' %}
 
             <div class="form-group" style="margin-top: 16px;" x-show="crossfeed.enabled">
                 <label>{{ t.get('dashboard.crossfeed.head_size') }}</label>
