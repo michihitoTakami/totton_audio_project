@@ -187,6 +187,7 @@ add_executable(gpu_upsampler_alsa
     src/daemon/rtp/rtp_engine_coordinator.cpp
     src/daemon/control/zmq_server.cpp
     src/daemon/metrics/runtime_stats.cpp
+    src/daemon/shutdown_manager.cpp
 )
 
 target_include_directories(gpu_upsampler_alsa PRIVATE src)

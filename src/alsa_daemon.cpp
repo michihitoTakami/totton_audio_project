@@ -9,6 +9,7 @@
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/rtp/rtp_engine_coordinator.h"
+#include "daemon/shutdown_manager.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -31,7 +32,6 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
-#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -152,13 +152,6 @@ static ConvolutionEngine::RateFamily g_active_rate_family = ConvolutionEngine::R
 static PhaseType g_active_phase_type = PhaseType::Minimum;
 static std::atomic<float> g_limiter_gain{1.0f};
 static std::atomic<float> g_effective_gain{1.0f};
-
-// ========== Signal Handling (Async-Signal-Safe) ==========
-// These flags are set by the signal handler and polled by the main loop.
-// Using volatile sig_atomic_t ensures async-signal-safe access.
-static volatile sig_atomic_t g_signal_shutdown = 0;  // SIGTERM, SIGINT
-static volatile sig_atomic_t g_signal_reload = 0;    // SIGHUP
-static volatile sig_atomic_t g_signal_received = 0;  // Last signal number (for logging)
 
 // Global state
 static std::atomic<bool> g_running{true};
@@ -1558,85 +1551,18 @@ struct Data {
     struct pw_stream* input_stream;
     struct spa_source* signal_check_timer;  // Timer for checking signal flags
     bool gpu_ready;
+    shutdown_manager::ShutdownManager* shutdownManager;
 };
-
-// ========== Async-Signal-Safe Signal Handler ==========
-// This handler ONLY sets flags. All other processing is done in the main loop.
-// POSIX async-signal-safe: only sig_atomic_t writes are safe here.
-static void signal_handler(int sig) {
-    g_signal_received = sig;
-    if (sig == SIGHUP) {
-        g_signal_reload = 1;
-    } else {
-        g_signal_shutdown = 1;
-    }
-}
-
-// Process pending signals (called from main loop context, NOT from signal handler)
-// This function is safe to call with non-async-signal-safe code.
-// IMPORTANT: Shutdown (SIGTERM/SIGINT) takes priority over reload (SIGHUP).
-// If both signals arrive in the same cycle, shutdown wins.
-static void process_pending_signals() {
-    // Check for shutdown request FIRST (SIGTERM, SIGINT) - takes priority over reload
-    if (g_signal_shutdown) {
-        g_signal_shutdown = 0;
-        g_signal_reload = 0;  // Clear any pending reload - shutdown takes priority
-        int sig = g_signal_received;
-        std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
-
-        // Clear reload flag to ensure clean shutdown (not restart)
-        // This prevents do { ... } while (g_reload_requested) from restarting
-        g_reload_requested = false;
-
-        // Start fade-out for glitch-free shutdown
-        if (g_soft_mute) {
-            g_soft_mute->startFadeOut();
-        }
-
-        // Quit main loop to trigger shutdown sequence
-        if (g_main_loop_running.load() && g_pw_loop) {
-            pw_main_loop_quit(g_pw_loop);
-        } else {
-            g_running = false;
-        }
-        return;  // Don't process reload if shutdown was requested
-    }
-
-    // Check for reload request (SIGHUP) - only if no shutdown pending
-    if (g_signal_reload) {
-        g_signal_reload = 0;
-        int sig = g_signal_received;
-        std::cout << "\nReceived SIGHUP (signal " << sig << "), restarting for config reload..."
-                  << std::endl;
-        g_reload_requested = true;
-
-        // Start fade-out for glitch-free reload
-        if (g_soft_mute) {
-            g_soft_mute->startFadeOut();
-        }
-
-        // Quit main loop to trigger reload sequence
-        if (g_main_loop_running.load() && g_pw_loop) {
-            pw_main_loop_quit(g_pw_loop);
-        } else {
-            g_running = false;
-        }
-    }
-}
 
 // PipeWire timer callback to check for pending signals
 // Called periodically (every 100ms) from the PipeWire main loop.
 static void on_signal_check_timer(void* userdata, uint64_t expirations) {
-    (void)userdata;
     (void)expirations;
 
-    // Process any pending signals
-    process_pending_signals();
-
-#ifdef HAVE_SYSTEMD
-    // Send watchdog heartbeat to systemd
-    sd_notify(0, "WATCHDOG=1");
-#endif
+    auto* context = reinterpret_cast<Data*>(userdata);
+    if (context && context->shutdownManager) {
+        context->shutdownManager->tick(true);
+    }
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
@@ -2454,21 +2380,27 @@ int main(int argc, char* argv[]) {
     LOG_INFO("========================================");
     LOG_INFO("PID: {} (file: {})", getpid(), PID_FILE_PATH);
 
-    // Install signal handlers (SIGHUP for restart, SIGINT/SIGTERM for shutdown)
-    std::signal(SIGINT, signal_handler);
-    std::signal(SIGTERM, signal_handler);
-    std::signal(SIGHUP, signal_handler);
+    shutdown_manager::ShutdownManager::Dependencies shutdownDeps{
+        &g_soft_mute,
+        &g_running,
+        &g_reload_requested,
+        &g_main_loop_running,
+    };
+    shutdown_manager::ShutdownManager shutdownManager(shutdownDeps);
+    shutdownManager.installSignalHandlers();
+    shutdownManager.setQuitLoopCallback([]() {
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        }
+    });
 
     int exitCode = 0;
 
     do {
+        shutdownManager.reset();
         g_running = true;
         g_reload_requested = false;
         g_zmq_bind_failed.store(false);
-        // Reset signal flags for clean restart
-        g_signal_shutdown = 0;
-        g_signal_reload = 0;
-        g_signal_received = 0;
         reset_runtime_state();
 
         // Load configuration from config.json (if exists)
@@ -3002,26 +2934,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
-#ifdef HAVE_SYSTEMD
-        if (pipewireActive) {
-            sd_notify(0,
-                      "READY=1\n"
-                      "STATUS=Processing audio...\n");
-        } else {
-            sd_notify(0,
-                      "READY=1\n"
-                      "STATUS=Processing audio (RTP-only)...\n");
-        }
-        std::cout << "systemd: Notified READY=1" << std::endl;
-#endif
+        shutdownManager.notifyReady(pipewireActive);
 
         auto runRtpOnlyMainLoop = [&]() {
             while (g_running.load() && !g_reload_requested.load() && !g_zmq_bind_failed.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                process_pending_signals();
-#ifdef HAVE_SYSTEMD
-                sd_notify(0, "WATCHDOG=1");
-#endif
+                shutdownManager.tick(false);
             }
         };
 
@@ -3041,48 +2959,7 @@ int main(int argc, char* argv[]) {
             runRtpOnlyMainLoop();
         }
 
-        // ========== Shutdown Sequence ==========
-        // Order: Stop input → Fade out → Flush buffers → Close ALSA → Release resources
-        std::cout << "Shutting down..." << std::endl;
-
-#ifdef HAVE_SYSTEMD
-        // Notify systemd that we're stopping
-        sd_notify(0, "STOPPING=1\nSTATUS=Shutting down...\n");
-#endif
-
-        // Step 1: Stop signal check timer
-        if (data.signal_check_timer && loop) {
-            pw_loop_destroy_source(loop, data.signal_check_timer);
-            data.signal_check_timer = nullptr;
-        }
-
-        // Step 2: Wait for soft mute fade-out to complete (with 100ms timeout)
-        // This ensures glitch-free audio shutdown
-        if (g_soft_mute && g_soft_mute->isTransitioning()) {
-            std::cout << "  Step 2: Waiting for fade-out to complete..." << std::endl;
-            auto fade_start = std::chrono::steady_clock::now();
-            while (g_soft_mute->isTransitioning()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                if (std::chrono::steady_clock::now() - fade_start >
-                    std::chrono::milliseconds(100)) {
-                    std::cout << "  Step 2: Fade-out timeout, forcing shutdown" << std::endl;
-                    break;
-                }
-            }
-        }
-
-        // Step 3: Destroy PipeWire stream (stops audio input)
-        if (data.input_stream) {
-            std::cout << "  Step 3: Destroying PipeWire stream..." << std::endl;
-            pw_stream_destroy(data.input_stream);
-        }
-
-        // Step 4: Destroy PipeWire main loop
-        if (data.loop) {
-            std::cout << "  Step 4: Destroying PipeWire main loop..." << std::endl;
-            pw_main_loop_destroy(data.loop);
-            g_pw_loop = nullptr;
-        }
+        shutdownManager.runShutdownSequence(pipewireActive);
 
         // Step 5: Signal worker threads to stop and wait for them
         std::cout << "  Step 5: Stopping worker threads..." << std::endl;
