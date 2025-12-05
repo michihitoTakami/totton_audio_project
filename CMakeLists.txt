@@ -482,7 +482,10 @@ add_executable(cpu_tests
     tests/cpp/test_partition_plan.cpp
     tests/cpp/test_phase_alignment.cpp
     tests/cpp/test_playback_buffer_threshold.cpp
+    tests/cpp/test_runtime_stats.cpp
     src/daemon/rtp_engine_coordinator.cpp
+    src/daemon/runtime_stats.cpp
+    src/daemon/dac_manager.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
@@ -490,6 +493,9 @@ target_link_libraries(cpu_tests
     eq_support
     rtp_session
     logging
+    filter_headroom
+    fallback_manager
+    dac_capability
 )
 target_include_directories(cpu_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
