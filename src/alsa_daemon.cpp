@@ -165,6 +165,7 @@ static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
 static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
+static std::unique_ptr<audio_pipeline::AudioPipeline> g_audio_pipeline;
 
 static float apply_output_limiter(float* interleaved, size_t frames) {
     constexpr float kEpsilon = 1e-6f;
