@@ -425,11 +425,17 @@ class OpraVendor(BaseModel):
 
 
 class OpraEqProfileInfo(BaseModel):
-    """OPRA EQ profile information model."""
+    """OPRA EQ profile information model.
+
+    Note: name field doesn't exist in OPRA data, use details or id as display name
+    """
 
     id: str
-    name: str
     author: str = ""
+    details: str = ""
+
+    # Allow extra fields from OPRA data (type, parameters, product_id, etc.)
+    model_config = {"extra": "allow"}
 
 
 class OpraSearchResult(BaseModel):

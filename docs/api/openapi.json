@@ -3092,23 +3092,24 @@
             "type": "string",
             "title": "Id"
           },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
           "author": {
             "type": "string",
             "title": "Author",
             "default": ""
+          },
+          "details": {
+            "type": "string",
+            "title": "Details",
+            "default": ""
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
-          "id",
-          "name"
+          "id"
         ],
         "title": "OpraEqProfileInfo",
-        "description": "OPRA EQ profile information model."
+        "description": "OPRA EQ profile information model.\n\nNote: name field doesn't exist in OPRA data, use details or id as display name"
       },
       "OpraEqResponse": {
         "properties": {
