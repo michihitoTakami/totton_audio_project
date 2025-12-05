@@ -391,6 +391,12 @@ void RtpEngineCoordinator::maybeSwitchRateForRtp(uint32_t sessionRate,
     }
 }
 
+void RtpEngineCoordinator::flushStreamingCache() {
+    if (deps_.resetStreamingCache) {
+        deps_.resetStreamingCache();
+    }
+}
+
 void RtpEngineCoordinator::ensureManagerInitialized() {
     if (manager_) {
         return;
@@ -536,6 +542,7 @@ void RtpEngineCoordinator::startFromConfig() {
     ensureManagerInitialized();
     Network::SessionConfig sessionCfg = buildSessionConfig(deps_.config->rtp);
     std::string error;
+    flushStreamingCache();
     if (!manager_->startSession(sessionCfg, error)) {
         LOG_ERROR("Failed to auto-start RTP session {}: {}", sessionCfg.sessionId, error);
     } else {
@@ -577,6 +584,7 @@ bool RtpEngineCoordinator::handleZeroMqCommand(const std::string& cmdType,
             return true;
         }
         std::string startError;
+        flushStreamingCache();
         if (!manager_->startSession(sessionCfg, startError)) {
             nlohmann::json resp;
             resp["status"] = "error";
@@ -624,6 +632,7 @@ bool RtpEngineCoordinator::handleZeroMqCommand(const std::string& cmdType,
         resp["status"] = "ok";
         resp["message"] = "RTP session stopped";
         resp["data"]["session_id"] = sessionId;
+        flushStreamingCache();
         responseOut = resp.dump();
         return true;
     } else if (cmdType == "RTP_LIST_SESSIONS" || cmdType == "ListSessions") {

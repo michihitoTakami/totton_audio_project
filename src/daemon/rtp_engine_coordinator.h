@@ -29,6 +29,7 @@ class RtpEngineCoordinator {
         std::function<int()> getUpsampleRatio;
         std::function<int()> getInputSampleRate;
         std::function<void(const float*, size_t, uint32_t)> processInterleaved;
+        std::function<void()> resetStreamingCache;
         std::function<Network::PtpSyncState()> ptpProvider;
         std::function<void(const Network::SessionMetrics&)> telemetry;
     };
@@ -50,6 +51,7 @@ class RtpEngineCoordinator {
     uint32_t clampDiscoveryCooldown(uint32_t value) const;
     size_t clampDiscoveryStreamLimit(size_t value) const;
     std::vector<uint16_t> buildDiscoveryPorts(const AppConfig::RtpInputConfig& cfg) const;
+    void flushStreamingCache();
 
     Dependencies deps_;
     std::unique_ptr<Network::RtpSessionManager> manager_;
