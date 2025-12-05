@@ -1,0 +1,18 @@
+{# Status Card Component
+   Parameters:
+   - status_icon (required): Icon emoji/character
+   - status_title (required): Card title text
+   - status_indicator (required): Alpine.js expression for status indicator
+   - status_text (required): Text to display for status
+   - status_class (required): CSS class for status indicator ("status-ok", "status-error", "status-off")
+#}
+<div class="status-card">
+    <div class="status-card-header">
+        <span class="status-icon">{{ status_icon }}</span>
+        <h3>{{ status_title }}</h3>
+    </div>
+    <div class="status-card-body">
+        <div class="status-indicator" :class="{{ status_class }}" x-text="{{ status_text }}">
+        </div>
+    </div>
+</div>

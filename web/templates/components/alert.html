@@ -1,0 +1,10 @@
+{# Alert Message Component
+   Parameters:
+   - alert_type (optional): Alert type - "warning", "error", "info", "success" (default: "info")
+   - alert_show (optional): Alpine.js x-show expression (default: no x-show)
+   - alert_message (required): Alert message text or translation key
+#}
+{% set alert_type = alert_type | default("info") %}
+<div class="alert alert-{{ alert_type }}" {% if alert_show %}x-show="{{ alert_show }}"{% endif %}>
+    {{ alert_message }}
+</div>

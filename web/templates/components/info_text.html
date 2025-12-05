@@ -1,0 +1,10 @@
+{# Info Text Component
+   Parameters:
+   - info_icon (optional): Icon emoji/character (default: "ℹ️")
+   - info_message (required): Info message text or translation key
+   - info_show (optional): Alpine.js x-show expression (default: no x-show)
+#}
+{% set info_icon = info_icon | default("ℹ️") %}
+<div class="info-text" {% if info_show %}x-show="{{ info_show }}"{% endif %}>
+    <span class="icon">{{ info_icon }}</span>{{ info_message }}
+</div>

@@ -47,9 +47,8 @@
                 </div>
             </template>
             <template x-if="!activeEq.active || !activeEq.name">
-                <div class="info-text">
-                    <span class="icon">ℹ️</span>{{ t.get('eq.active.none') }}
-                </div>
+                {% set info_message = t.get('eq.active.none') %}
+                {% include 'components/info_text.html' %}
             </template>
         </div>
     </div>
@@ -78,27 +77,21 @@
     <div class="section">
         <h2 class="section-title">{{ t.get('eq.import.title') }}</h2>
         <div class="card">
-            <div class="form-group">
-                <label for="eqName">{{ t.get('eq.import.name_label') }}</label>
-                <input
-                    type="text"
-                    id="eqName"
-                    class="search-input"
-                    placeholder="{{ t.get('eq.import.name_placeholder') }}"
-                    x-model="textImport.name"
-                >
-            </div>
+            {% set form_label = t.get('eq.import.name_label') %}
+            {% set form_input_type = "text" %}
+            {% set form_input_id = "eqName" %}
+            {% set form_input_placeholder = t.get('eq.import.name_placeholder') %}
+            {% set form_input_model = "textImport.name" %}
+            {% include 'components/form_group.html' %}
 
-            <div class="form-group" style="margin-top: 12px;">
-                <label for="eqText">{{ t.get('eq.import.content_label') }}</label>
-                <textarea
-                    id="eqText"
-                    class="text-area"
-                    rows="10"
-                    placeholder="{{ t.get('eq.import.content_placeholder') }}"
-                    x-model="textImport.content"
-                ></textarea>
-            </div>
+            {% set form_label = t.get('eq.import.content_label') %}
+            {% set form_input_type = "textarea" %}
+            {% set form_input_id = "eqText" %}
+            {% set form_textarea_rows = "10" %}
+            {% set form_input_placeholder = t.get('eq.import.content_placeholder') %}
+            {% set form_input_model = "textImport.content" %}
+            {% set form_style = "margin-top: 12px;" %}
+            {% include 'components/form_group.html' %}
 
             <div style="text-align: center; margin-top: 16px;">
                 {% set button_label = t.get('eq.import.import_button') %}
@@ -149,9 +142,8 @@
                 </div>
             </template>
             <template x-if="profiles.list.length === 0">
-                <div class="info-text">
-                    <span class="icon">ℹ️</span>{{ t.get('eq.profiles.empty') }}
-                </div>
+                {% set info_message = t.get('eq.profiles.empty') %}
+                {% include 'components/info_text.html' %}
             </template>
         </div>
     </div>
