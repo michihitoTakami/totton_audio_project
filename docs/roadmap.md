@@ -10,9 +10,10 @@
 ## Phase Overview
 
 ```
-Phase 1: Core Engine & Middleware     [====================] 100% ✅ 完了
-Phase 2: Control Plane & Web UI       [====================] 100% ✅ 完了
-Phase 3: Hardware Integration         [====>               ] 20% (準備中)
+Phase 1: Core Engine & Middleware       [====================] 100% ✅ 完了
+Phase 2: Control Plane & Web UI         [====================] 100% ✅ 完了
+Phase 3: Hardware Integration           [====>               ] 20% (準備中)
+Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 ```
 
 ---
@@ -359,7 +360,96 @@ GPU Processing (640k-tap FIR, 8x upsample)
 
 ---
 
-## Future Enhancements (Post-Phase 3)
+## Phase 4: Commercialization & Deployment Ecosystem
+
+**Status:** 📋 Planned
+
+プロトタイプから製品化への移行。デプロイ自動化とライセンス管理。
+
+### Tasks
+
+#### 4.1: CI/CD & Container Registry
+
+- [ ] **マルチアーキテクチャDockerイメージ**
+  - GitHub Actions CI/CD構築
+  - `linux/amd64` (開発用) + `linux/arm64` (Jetson用) 同時ビルド
+  - GitHub Container Registry (ghcr.io) へのプッシュ
+  - バージョンタグ管理 (`latest`, `v1.0.0`, `sha-xxxxx`)
+
+- [ ] **プリビルドバイナリ配布**
+  - GitHub Releases経由での配布
+  - CUDA Runtime最小化
+  - ダウンロードサイズ最適化
+
+- [ ] **自動デプロイスクリプト**
+  ```bash
+  curl -fsSL https://get.magicbox.io/install.sh | sh
+  # → Docker pull → docker-compose up -d
+  ```
+
+#### 4.2: ライセンス認証システム
+
+- [ ] **ライセンスサーバ**
+  - デバイス固有ID (Jetson Serial Number)
+  - ライセンスキー発行API
+  - オンライン認証（初回起動時）
+  - オフライン猶予期間（30日）
+
+- [ ] **バイナリ保護**
+  - デーモンバイナリの暗号化
+  - ライセンス検証失敗時の機能制限
+  - 試用版モード（機能制限あり、7日間）
+
+- [ ] **ライセンス管理ダッシュボード**
+  - 販売店向けライセンス発行UI
+  - デバイス登録状況確認
+  - 使用統計・テレメトリ（オプトイン）
+
+#### 4.3: OTA (Over-The-Air) アップデート
+
+- [ ] **自動更新機能**
+  - Dockerイメージの自動pull
+  - ローリングアップデート（無音切断最小化）
+  - ロールバック機能
+
+- [ ] **更新通知**
+  - Web UI上での更新通知
+  - メールアラート（販売店向け）
+
+#### 4.4: 品質保証・テスト
+
+- [ ] **E2Eテスト自動化**
+  - ハードウェアインザループテスト
+  - オーディオ品質自動検証
+
+- [ ] **パフォーマンスベンチマーク**
+  - Jetson実機での性能計測
+  - レイテンシ・スループット計測
+
+- [ ] **長時間安定性テスト**
+  - 24時間連続動作テスト
+  - メモリリーク検出
+
+#### 4.5: ドキュメント・サポート
+
+- [ ] **ユーザーマニュアル**
+  - セットアップガイド
+  - トラブルシューティング
+
+- [ ] **販売店向けドキュメント**
+  - 初期設定手順
+  - ライセンス発行手順
+
+- [ ] **開発者向けAPI ドキュメント**
+  - OpenAPI仕様書公開
+  - SDK提供（カスタマイズ用）
+
+### Timeline
+Phase 4は製品リリース後、継続的に改善。初期バージョンは6-8週間で完成目標。
+
+---
+
+## Future Enhancements (Post-Phase 4)
 
 将来の拡張機能（優先度順）
 
