@@ -402,6 +402,7 @@ static void initialize_streaming_cache_manager() {
     deps.streamingMutex = &g_streaming_mutex;
 
     deps.upsamplerPtr = &g_upsampler;
+    deps.softMute = &g_soft_mute;
     deps.onCrossfeedReset = []() {
         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
         reset_crossfeed_stream_state_locked();
