@@ -164,25 +164,7 @@ static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
-static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
-
 static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
-
-static inline float compute_stereo_peak(const float* left, const float* right, size_t frames) {
-    if (!left || !right || frames == 0) {
-        return 0.0f;
-    }
-    float peak = 0.0f;
-    for (size_t i = 0; i < frames; ++i) {
-        float l = std::fabs(left[i]);
-        float r = std::fabs(right[i]);
-        if (l > peak)
-            peak = l;
-        if (r > peak)
-            peak = r;
-    }
-    return peak;
-}
 
 static float apply_output_limiter(float* interleaved, size_t frames) {
     constexpr float kEpsilon = 1e-6f;
@@ -336,79 +318,6 @@ static std::condition_variable g_buffer_cv;
 static std::vector<float> g_output_buffer_left;
 static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
-
-static void trim_output_buffer_locked(size_t minFramesToRemove) {
-    if (g_output_read_pos == 0) {
-        return;
-    }
-
-    size_t readable = g_output_buffer_left.size();
-    if (readable == 0) {
-        g_output_read_pos = 0;
-        return;
-    }
-
-    if (g_output_read_pos > readable) {
-        g_output_read_pos = readable;
-    }
-
-    if ((minFramesToRemove > 0 && g_output_read_pos >= minFramesToRemove) ||
-        g_output_read_pos == readable) {
-        auto eraseCount = static_cast<std::ptrdiff_t>(g_output_read_pos);
-        g_output_buffer_left.erase(g_output_buffer_left.begin(),
-                                   g_output_buffer_left.begin() + eraseCount);
-        g_output_buffer_right.erase(g_output_buffer_right.begin(),
-                                    g_output_buffer_right.begin() + eraseCount);
-        g_output_read_pos = 0;
-    }
-}
-
-template <typename Container>
-static size_t enqueue_output_frames_locked(const Container& left, const Container& right) {
-    size_t framesAvailable = std::min(left.size(), right.size());
-    if (framesAvailable == 0) {
-        return 0;
-    }
-
-    size_t capacityFrames = std::max<size_t>(1, get_max_output_buffer_frames());
-    size_t bufferSize = g_output_buffer_left.size();
-    size_t currentFrames = (bufferSize >= g_output_read_pos) ? (bufferSize - g_output_read_pos) : 0;
-    auto decision =
-        PlaybackBuffer::planCapacityEnforcement(currentFrames, framesAvailable, capacityFrames);
-
-    size_t totalDropped = decision.dropFromExisting + decision.newDataOffset;
-    if (totalDropped > 0) {
-        int outputRate = g_current_output_rate.load(std::memory_order_acquire);
-        if (outputRate <= 0) {
-            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
-        }
-        float seconds = static_cast<float>(totalDropped) / static_cast<float>(outputRate);
-        LOG_WARN(
-            "Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, "
-            "max={}]",
-            totalDropped, seconds, currentFrames, framesAvailable, capacityFrames);
-        runtime_stats::addDroppedFrames(totalDropped);
-    }
-
-    if (decision.dropFromExisting > 0) {
-        g_output_read_pos += decision.dropFromExisting;
-    }
-
-    trim_output_buffer_locked(capacityFrames);
-
-    if (decision.framesToStore == 0) {
-        return 0;
-    }
-
-    size_t startIndex = framesAvailable - decision.framesToStore;
-    auto startOffset = static_cast<std::ptrdiff_t>(startIndex);
-    auto endOffset = static_cast<std::ptrdiff_t>(framesAvailable);
-    g_output_buffer_left.insert(g_output_buffer_left.end(), left.begin() + startOffset,
-                                left.begin() + endOffset);
-    g_output_buffer_right.insert(g_output_buffer_right.end(), right.begin() + startOffset,
-                                 right.begin() + endOffset);
-    return decision.framesToStore;
-}
 
 // Streaming input accumulation buffers
 static StreamFloatVector g_stream_input_left;
@@ -1566,105 +1475,6 @@ static void on_signal_check_timer(void* userdata, uint64_t expirations) {
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
-static void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
-    if (!input_samples || n_frames == 0 || !g_upsampler) {
-        return;
-    }
-
-    if (!g_output_ready.load(std::memory_order_acquire)) {
-        static auto last_warn = std::chrono::steady_clock::now() -
-                                std::chrono::seconds(6);  // allow immediate first log
-        auto now = std::chrono::steady_clock::now();
-        if (now - last_warn > std::chrono::seconds(5)) {
-            LOG_DEBUG("Dropping input: DAC not ready");
-            last_warn = now;
-        }
-        return;
-    }
-
-    if (g_streaming_cache_manager) {
-        g_streaming_cache_manager->handleInputBlock();
-    }
-
-    std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
-
-    std::vector<float> left(n_frames);
-    std::vector<float> right(n_frames);
-    AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
-    float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
-    runtime_stats::updateInputPeak(inputPeak);
-
-    StreamFloatVector& output_left = g_upsampler_output_left;
-    StreamFloatVector& output_right = g_upsampler_output_right;
-
-    bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
-    bool left_generated = false;
-    bool right_generated = false;
-
-    if (use_fallback) {
-        size_t output_frames = static_cast<size_t>(n_frames) * g_config.upsampleRatio;
-        output_left.assign(output_frames, 0.0f);
-        output_right.assign(output_frames, 0.0f);
-        for (size_t i = 0; i < n_frames; ++i) {
-            output_left[i * g_config.upsampleRatio] = left[i];
-            output_right[i * g_config.upsampleRatio] = right[i];
-        }
-        left_generated = true;
-        right_generated = true;
-    } else {
-        left_generated = g_upsampler->processStreamBlock(
-            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
-            g_stream_accumulated_left);
-        right_generated = g_upsampler->processStreamBlock(
-            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
-            g_stream_accumulated_right);
-    }
-
-    if (!left_generated || !right_generated) {
-        return;
-    }
-
-    size_t frames_generated = std::min(output_left.size(), output_right.size());
-    if (frames_generated > 0) {
-        float upsamplerPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        runtime_stats::updateUpsamplerPeak(upsamplerPeak);
-    }
-
-    if (g_crossfeed_enabled.load()) {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-            bool cf_generated = g_hrtf_processor->processStreamBlock(
-                output_left.data(), output_right.data(), output_left.size(), g_cf_output_left,
-                g_cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
-
-            if (cf_generated) {
-                size_t cf_frames = std::min(g_cf_output_left.size(), g_cf_output_right.size());
-                if (cf_frames > 0) {
-                    float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
-                                                       g_cf_output_right.data(), cf_frames);
-                    runtime_stats::updatePostCrossfeedPeak(cfPeak);
-                }
-                std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                enqueue_output_frames_locked(g_cf_output_left, g_cf_output_right);
-                g_buffer_cv.notify_one();
-                return;
-            }
-        }
-        // Crossfeed disabled or not ready: fall through and store original upsampler output.
-    }
-
-    std::lock_guard<std::mutex> lock(g_buffer_mutex);
-    enqueue_output_frames_locked(output_left, output_right);
-    g_buffer_cv.notify_one();
-    if (frames_generated > 0) {
-        float postPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        runtime_stats::updatePostCrossfeedPeak(postPeak);
-    }
-}
-
 static void on_input_process(void* userdata) {
     Data* data = static_cast<Data*>(userdata);
 
@@ -1677,8 +1487,8 @@ static void on_input_process(void* userdata) {
     float* input_samples = static_cast<float*>(spa_buf->datas[0].data);
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
-    if (input_samples && n_frames > 0 && data->gpu_ready) {
-        process_interleaved_block(input_samples, n_frames);
+    if (input_samples && n_frames > 0 && data->gpu_ready && g_audio_pipeline) {
+        g_audio_pipeline->process(input_samples, n_frames);
     }
 
     pw_stream_queue_buffer(data->input_stream, buf);
@@ -2242,7 +2052,9 @@ void alsa_output_thread() {
 
             size_t cleanupThreshold =
                 std::max<size_t>(static_cast<size_t>(period_size) * 4, static_cast<size_t>(1));
-            trim_output_buffer_locked(cleanupThreshold);
+            if (g_audio_pipeline) {
+                g_audio_pipeline->trimOutputBuffer(cleanupThreshold);
+            }
 
             lock.unlock();
 
@@ -2729,6 +2541,54 @@ int main(int argc, char* argv[]) {
 
         std::cout << std::endl;
 
+        if (!g_audio_pipeline && g_upsampler) {
+            audio_pipeline::Dependencies pipelineDeps{};
+            pipelineDeps.config = &g_config;
+            pipelineDeps.upsampler.available = true;
+            pipelineDeps.upsampler.streamLeft = g_upsampler->streamLeft_;
+            pipelineDeps.upsampler.streamRight = g_upsampler->streamRight_;
+            pipelineDeps.upsampler.process =
+                [](const float* data, size_t frames, ConvolutionEngine::StreamFloatVector& output,
+                   cudaStream_t stream, ConvolutionEngine::StreamFloatVector& streamInput,
+                   size_t& streamAccumulated) {
+                    if (!g_upsampler) {
+                        return false;
+                    }
+                    return g_upsampler->processStreamBlock(data, frames, output, stream,
+                                                           streamInput, streamAccumulated);
+                };
+            pipelineDeps.fallbackActive = &g_fallback_active;
+            pipelineDeps.outputReady = &g_output_ready;
+            pipelineDeps.inputMutex = &g_input_process_mutex;
+            pipelineDeps.streamingCacheManager = g_streaming_cache_manager.get();
+            pipelineDeps.streamInputLeft = &g_stream_input_left;
+            pipelineDeps.streamInputRight = &g_stream_input_right;
+            pipelineDeps.streamAccumulatedLeft = &g_stream_accumulated_left;
+            pipelineDeps.streamAccumulatedRight = &g_stream_accumulated_right;
+            pipelineDeps.upsamplerOutputLeft = &g_upsampler_output_left;
+            pipelineDeps.upsamplerOutputRight = &g_upsampler_output_right;
+            pipelineDeps.cfStreamInputLeft = &g_cf_stream_input_left;
+            pipelineDeps.cfStreamInputRight = &g_cf_stream_input_right;
+            pipelineDeps.cfStreamAccumulatedLeft = &g_cf_stream_accumulated_left;
+            pipelineDeps.cfStreamAccumulatedRight = &g_cf_stream_accumulated_right;
+            pipelineDeps.cfOutputLeft = &g_cf_output_left;
+            pipelineDeps.cfOutputRight = &g_cf_output_right;
+            pipelineDeps.crossfeedEnabled = &g_crossfeed_enabled;
+            pipelineDeps.crossfeedProcessor = g_hrtf_processor;
+            pipelineDeps.crossfeedMutex = &g_crossfeed_mutex;
+            pipelineDeps.buffer.outputBufferLeft = &g_output_buffer_left;
+            pipelineDeps.buffer.outputBufferRight = &g_output_buffer_right;
+            pipelineDeps.buffer.outputReadPos = &g_output_read_pos;
+            pipelineDeps.buffer.bufferMutex = &g_buffer_mutex;
+            pipelineDeps.buffer.bufferCv = &g_buffer_cv;
+            pipelineDeps.maxOutputBufferFrames = []() { return get_max_output_buffer_frames(); };
+            pipelineDeps.currentOutputRate = []() {
+                return g_current_output_rate.load(std::memory_order_acquire);
+            };
+            g_audio_pipeline =
+                std::make_unique<audio_pipeline::AudioPipeline>(std::move(pipelineDeps));
+        }
+
         // Check for early abort before starting threads
         if (!g_running) {
             std::cout << "Startup interrupted by signal" << std::endl;
@@ -2762,7 +2622,9 @@ int main(int argc, char* argv[]) {
         rtpDeps.getInputSampleRate = []() { return g_input_sample_rate; };
         rtpDeps.processInterleaved = [](const float* data, size_t frames, uint32_t sampleRate) {
             (void)sampleRate;
-            process_interleaved_block(data, static_cast<uint32_t>(frames));
+            if (g_audio_pipeline) {
+                g_audio_pipeline->process(data, static_cast<uint32_t>(frames));
+            }
         };
         rtpDeps.resetStreamingCache = []() {
             if (g_streaming_cache_manager) {
