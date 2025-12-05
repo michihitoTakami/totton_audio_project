@@ -1,0 +1,38 @@
+{#
+Status Card Component
+
+Displays a status card with an icon, title, and status indicator.
+
+Usage:
+    {% from 'components/status_card.html' import status_card %}
+    {{ status_card(
+        icon='⚙️',
+        title=t.get('dashboard.daemon'),
+        status_condition='status.daemon_running',
+        status_true=t.get('dashboard.status.running'),
+        status_false=t.get('dashboard.status.stopped'),
+        status_class_true='status-ok',
+        status_class_false='status-error'
+    ) }}
+
+Parameters:
+    - icon: Emoji icon to display
+    - title: Card title text
+    - status_condition: Alpine.js expression for status condition
+    - status_true: Text to show when condition is true
+    - status_false: Text to show when condition is false
+    - status_class_true: CSS class when condition is true (default: 'status-ok')
+    - status_class_false: CSS class when condition is false (default: 'status-off')
+#}
+{% macro status_card(icon, title, status_condition, status_true, status_false, status_class_true='status-ok', status_class_false='status-off') %}
+<div class="status-card">
+    <div class="status-card-header">
+        <span class="status-icon">{{ icon }}</span>
+        <h3>{{ title }}</h3>
+    </div>
+    <div class="status-card-body">
+        <div class="status-indicator" :class="{{ status_condition }} ? '{{ status_class_true }}' : '{{ status_class_false }}'" x-text="{{ status_condition }} ? '{{ status_true }}' : '{{ status_false }}'">
+        </div>
+    </div>
+</div>
+{% endmacro %}
