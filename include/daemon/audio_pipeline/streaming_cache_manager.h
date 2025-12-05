@@ -67,6 +67,10 @@ class StreamingCacheManager {
 
    private:
     void flushCachesInternal(std::chrono::nanoseconds gap) {
+        // リセット後に再度グレース期間を適用するため、入力タイムスタンプを初期化
+        lastInputTimestampNs_.store(0, std::memory_order_release);
+        firstInputTimestampNs_.store(0, std::memory_order_release);
+
         auto resetPlaybackBuffers = [&]() {
             if (deps_.outputBufferLeft && deps_.outputBufferRight) {
                 deps_.outputBufferLeft->clear();
