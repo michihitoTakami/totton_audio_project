@@ -74,6 +74,17 @@ cmake --build build -j$(nproc)
 - **Naming:** `PascalCase` (types), `camelCase` (functions), `UPPER_SNAKE` (constants)
 - GPU arch: SM 7.5 (PC) or SM 8.7 (Jetson)
 
+### Web UI Component Reuse (Mandatory)
+
+以下のJinja2マクロ（またはHTMLパーツ）が `web/templates/components/` に既に存在します。
+**新しいUIを作る際は、必ずこれらをimportして再利用してください。ベタ書き禁止。**
+
+- `{% macro btn_primary(text, icon) %}` - プライマリボタン
+- `{% macro card_panel(title) %}` - カードパネル
+- `{% macro slider_input(value) %}` - スライダー入力
+
+**重複実装を避け、DRY原則を徹底すること。**
+
 ## Git Workflow
 
 **Never commit directly to main.** Use Git Worktree:

@@ -315,6 +315,25 @@ gpu_os/
 └── build/                 # Build output
 ```
 
+## Web UI Development Guidelines
+
+### Jinja2テンプレートコンポーネントの再利用（必須）
+
+以下のJinja2マクロ（またはHTMLパーツ）が `web/templates/components/` に既に存在します。
+**新しいUIを作る際は、必ずこれらをimportして再利用してください。ベタ書き禁止。**
+
+- `{% macro btn_primary(text, icon) %}` - プライマリボタン
+- `{% macro card_panel(title) %}` - カードパネル
+- `{% macro slider_input(value) %}` - スライダー入力
+
+**重複実装は保守性の低下とバグの温床となります。DRY原則を徹底すること。**
+
+例：
+```jinja2
+{% from 'components/buttons.html' import btn_primary %}
+{{ btn_primary('Apply', 'check') }}
+```
+
 ## REST API Development Guidelines
 
 ### レスポンスモデル必須
