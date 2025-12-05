@@ -1378,6 +1378,30 @@ body::before {
     background: rgba(10, 14, 18, 0.95);
 }
 
+.form-group input[type="text"] {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 4px;
+    background: rgba(10, 14, 18, 0.8);
+    color: #e0e0e0;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.3s;
+}
+
+.form-group input[type="text"]:focus {
+    border-color: #00ffff;
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
+    background: rgba(10, 14, 18, 0.95);
+}
+
+.form-group input[type="text"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* OPRA Search Results */
 .opra-results {
     border: 1px solid rgba(0, 255, 255, 0.2);
