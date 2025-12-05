@@ -1,0 +1,58 @@
+{#
+OPRA Headphone Search Component
+
+Usage:
+    {% include 'components/opra_search.html' %}
+
+Requirements:
+    - Parent component must have Alpine.js data with:
+      - opra: { searchQuery, results, selected, eqProfiles, selectedEqId, useModernTarget, searching }
+      - searchOPRA() function
+      - selectHeadphone(result) function
+      - applyOPRA() or applyEQ() function
+      - actionInProgress: boolean
+#}
+<div class="form-group">
+    <label for="opraSearch">{{ t.get('dashboard.eq.search_label') if not eq_page else t.get('eq.opra.search_label') }}</label>
+    <input
+        type="text"
+        id="opraSearch"
+        class="search-input"
+        placeholder="{{ t.get('dashboard.eq.search_placeholder') if not eq_page else t.get('eq.opra.search_placeholder') }}"
+        x-model="opra.searchQuery"
+        @input="searchOPRA"
+    >
+</div>
+
+<!-- Search Results -->
+<div class="opra-results" x-show="opra.results.length > 0" style="max-height: 300px; overflow-y: auto; margin-top: 12px;">
+    <template x-for="result in opra.results" :key="result.name">
+        <div class="opra-result-item" @click="selectHeadphone(result)">
+            <div class="opra-result-name" x-text="result.name"></div>
+            <div class="opra-result-vendor" x-text="result.vendor?.name || result.vendor"></div>
+        </div>
+    </template>
+</div>
+
+<!-- Selected Headphone -->
+<div class="opra-selected" x-show="opra.selected" style="margin-top: 16px;">
+    <div class="opra-selected-name" x-text="opra.selected?.name"></div>
+    <div class="opra-selected-vendor" x-text="opra.selected?.vendor?.name || opra.selected?.vendor"></div>
+
+    <div class="form-group" style="margin-top: 12px;" x-show="opra.eqProfiles.length > 0">
+        <label for="opraEqSelect">{{ t.get('dashboard.eq.variant') if not eq_page else t.get('eq.opra.variant') }}</label>
+        <select id="opraEqSelect" x-model="opra.selectedEqId">
+            <template x-for="eq in opra.eqProfiles" :key="eq.id">
+                <option :value="eq.id" x-text="eq.name || eq.id"></option>
+            </template>
+        </select>
+    </div>
+
+    <label class="checkbox-label" style="margin-top: 12px;">
+        <input type="checkbox" x-model="opra.useModernTarget">
+        <span>{{ t.get('dashboard.eq.modern_target') if not eq_page else t.get('eq.opra.modern_target') }}</span>
+    </label>
+    <div class="info-text" style="margin-left: 24px;">
+        {{ t.get('dashboard.eq.modern_target_desc') if not eq_page else t.get('eq.opra.modern_target_desc') }}
+    </div>
+</div>
