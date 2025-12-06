@@ -2177,6 +2177,9 @@ int main(int argc, char* argv[]) {
         delete g_hrtf_processor;
         g_hrtf_processor = nullptr;
         g_crossfeed_enabled.store(false);
+        if (g_audio_pipeline) {
+            g_audio_pipeline.reset();  // Tear down pipeline before deleting GPU upsampler
+        }
         delete g_upsampler;
         g_upsampler = nullptr;
         if (g_dac_manager) {
