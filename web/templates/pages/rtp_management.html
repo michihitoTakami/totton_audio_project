@@ -26,15 +26,14 @@
             </div>
 
             <!-- Scan Status -->
-            <template x-if="scanning">
-                <div class="info-text">
-                    <span class="icon">🔍</span>
-                    <span x-text="'{{ t.get('rtp.scan.scanning') }}'"></span>
-                </div>
-            </template>
+            <div x-show="scanning" style="display: none;">
+                {% set info_message = t.get('rtp.scan.scanning') %}
+                {% set info_icon = "🔍" %}
+                {% include 'components/info_text.html' %}
+            </div>
 
             <!-- Last Scan Info -->
-            <template x-if="!scanning && scanResult.scanned_at_unix_ms">
+            <div x-show="!scanning && scanResult.scanned_at_unix_ms" style="display: none;">
                 <div class="info-text">
                     <span class="icon">ℹ️</span>
                     <span>
@@ -45,7 +44,7 @@
                         </template>
                     </span>
                 </div>
-            </template>
+            </div>
 
             <!-- Discovered Streams Table -->
             <template x-if="scanResult.streams && scanResult.streams.length > 0">
