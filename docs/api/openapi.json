@@ -1565,8 +1565,8 @@
         "tags": [
           "rtp"
         ],
-        "summary": "Update RTP configuration",
-        "description": "Update RTP receiver configuration.\n\nNote: Configuration changes will be applied to config.json and will\nrequire a daemon restart to take effect.",
+        "summary": "Update RTP configuration defaults",
+        "description": "Update RTP receiver configuration defaults.\n\nThese settings are saved to config.json and will be used as default values\nwhen creating new RTP sessions. Existing active sessions are NOT affected.\n\nTo apply latency changes to existing sessions, stop and restart them.",
         "operationId": "update_rtp_config_api_rtp_config_put",
         "requestBody": {
           "content": {

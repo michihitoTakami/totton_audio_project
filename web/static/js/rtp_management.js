@@ -17,15 +17,12 @@ function rtpManagementData() {
         selectedSessionId: null,
         selectedSession: null,
 
-        // RTP Configuration
+        // RTP Configuration (Latency only)
         rtpConfig: {
-            port: null,
-            bind_address: null,
-            payload_type: null,
-            latency_preset: '100',  // Default: Normal (100ms)
-            target_latency_ms: 100
+            latency_preset: '50',  // Default: Normal (50ms)
+            target_latency_ms: 50
         },
-        savingConfig: false,
+        applyingConfig: false,
 
         // Polling interval
         pollingInterval: null,
@@ -35,7 +32,6 @@ function rtpManagementData() {
          */
         async init() {
             await this.loadActiveSessions();
-            await this.loadRtpConfig();
             this.startPolling();
         },
 
@@ -49,14 +45,14 @@ function rtpManagementData() {
                 if (response.ok) {
                     const data = await response.json();
                     this.scanResult = data;
-                    showToast('Scan completed', 'success');
+                    showToast(t('rtp.scan.success'), 'success');
                 } else {
                     const error = await response.json();
-                    showToast(error.detail || 'Failed to scan RTP streams', 'error');
+                    showToast(error.detail || t('rtp.scan.error'), 'error');
                 }
             } catch (error) {
                 console.error('Scan error:', error);
-                showToast('Failed to scan RTP streams', 'error');
+                showToast(t('rtp.scan.error'), 'error');
             } finally {
                 this.scanning = false;
             }
@@ -94,17 +90,17 @@ function rtpManagementData() {
                 });
 
                 if (response.ok) {
-                    showToast('Connected to stream', 'success');
+                    showToast(t('rtp.connect.success'), 'success');
                     await this.loadActiveSessions();
                     // Mark as existing session in scan results
                     stream.existing_session = true;
                 } else {
                     const error = await response.json();
-                    showToast(error.detail || 'Failed to connect to stream', 'error');
+                    showToast(error.detail || t('rtp.connect.error'), 'error');
                 }
             } catch (error) {
                 console.error('Connect error:', error);
-                showToast('Failed to connect to stream', 'error');
+                showToast(t('rtp.connect.error'), 'error');
             }
         },
 
@@ -140,7 +136,7 @@ function rtpManagementData() {
          * Stop an RTP session
          */
         async stopSession(sessionId) {
-            if (!confirm('Stop this RTP session?')) {
+            if (!confirm(t('rtp.sessions.confirm_stop'))) {
                 return;
             }
 
@@ -150,7 +146,7 @@ function rtpManagementData() {
                 });
 
                 if (response.ok) {
-                    showToast('Session stopped', 'success');
+                    showToast(t('rtp.sessions.stopped'), 'success');
                     if (this.selectedSessionId === sessionId) {
                         this.selectedSessionId = null;
                         this.selectedSession = null;
@@ -158,70 +154,79 @@ function rtpManagementData() {
                     await this.loadActiveSessions();
                 } else {
                     const error = await response.json();
-                    showToast(error.detail || 'Failed to stop session', 'error');
+                    showToast(error.detail || t('rtp.sessions.stop_error'), 'error');
                 }
             } catch (error) {
                 console.error('Stop session error:', error);
-                showToast('Failed to stop session', 'error');
+                showToast(t('rtp.sessions.stop_error'), 'error');
             }
         },
 
         /**
-         * Load RTP configuration from config.json
+         * Apply latency configuration to all active sessions
          */
-        async loadRtpConfig() {
-            // Load current config from the API (if available)
-            // For now, initialize with default values
-            this.rtpConfig = {
-                port: 46000,
-                bind_address: '0.0.0.0',
-                payload_type: 96,
-                latency_preset: '100',  // Default: Normal (100ms)
-                target_latency_ms: 100
-            };
-        },
-
-        /**
-         * Handle latency preset change
-         */
-        onLatencyPresetChange() {
-            const preset = this.rtpConfig.latency_preset;
-            if (preset !== 'custom') {
-                this.rtpConfig.target_latency_ms = parseInt(preset);
-            }
-        },
-
-        /**
-         * Save RTP configuration
-         */
-        async saveRtpConfig() {
-            this.savingConfig = true;
+        async applyLatencyConfig() {
+            this.applyingConfig = true;
             try {
-                const payload = {
-                    port: parseInt(this.rtpConfig.port),
-                    bind_address: this.rtpConfig.bind_address,
-                    payload_type: parseInt(this.rtpConfig.payload_type),
-                    target_latency_ms: parseInt(this.rtpConfig.target_latency_ms)
-                };
-
-                const response = await fetch('/api/rtp/config', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    showToast(data.message || 'Configuration saved', 'success');
-                } else {
-                    const error = await response.json();
-                    showToast(error.detail || 'Failed to save configuration', 'error');
+                // 1. Get current active sessions
+                const currentSessions = [...this.sessions];
+                if (currentSessions.length === 0) {
+                    showToast(t('rtp.config.saved_no_restart'), 'success');
+                    return;
                 }
+
+                // 2. Stop all sessions
+                for (const session of currentSessions) {
+                    try {
+                        await fetch(`/api/rtp/sessions/${session.session_id}`, {
+                            method: 'DELETE'
+                        });
+                    } catch (error) {
+                        console.error(`Failed to stop session ${session.session_id}:`, error);
+                    }
+                }
+
+                // 3. Wait a bit for sessions to stop
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                // 4. Restart sessions with new latency
+                let restartedCount = 0;
+                for (const session of currentSessions) {
+                    try {
+                        const restartPayload = {
+                            session_id: session.session_id,
+                            port: session.port,
+                            bind_address: session.bind_address || '0.0.0.0',
+                            target_latency_ms: parseInt(this.rtpConfig.target_latency_ms)
+                        };
+
+                        if (session.sample_rate) restartPayload.sample_rate = session.sample_rate;
+                        if (session.channels) restartPayload.channels = session.channels;
+                        if (session.payload_type) restartPayload.payload_type = session.payload_type;
+
+                        const restartResponse = await fetch('/api/rtp/sessions', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(restartPayload)
+                        });
+
+                        if (restartResponse.ok) {
+                            restartedCount++;
+                        }
+                    } catch (error) {
+                        console.error(`Failed to restart session ${session.session_id}:`, error);
+                    }
+                }
+
+                // 5. Reload sessions
+                await this.loadActiveSessions();
+
+                showToast(t('rtp.config.applied', {count: restartedCount, total: currentSessions.length}), 'success');
             } catch (error) {
-                console.error('Save config error:', error);
-                showToast('Failed to save configuration', 'error');
+                console.error('Apply config error:', error);
+                showToast(t('rtp.config.apply_error'), 'error');
             } finally {
-                this.savingConfig = false;
+                this.applyingConfig = false;
             }
         },
 
