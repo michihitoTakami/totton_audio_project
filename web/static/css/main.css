@@ -966,6 +966,34 @@ body::before {
     text-align: left;
 }
 
+.subsection-title {
+    font-size: 1.1em;
+    color: #aaaaaa;
+    margin-bottom: 12px;
+    margin-top: 8px;
+    font-weight: 500;
+    text-align: left;
+}
+
+/* Subsection containers */
+.subsection-container {
+    margin-top: 24px;
+}
+
+.subsection-container-large {
+    margin-top: 32px;
+}
+
+/* Clickable table row */
+.clickable-row {
+    cursor: pointer;
+}
+
+/* Button spacer */
+.btn-spacer {
+    margin: 0 8px;
+}
+
 /* Card Grid for Status Cards */
 .card-grid {
     display: grid;
@@ -1525,6 +1553,30 @@ body::before {
     gap: 12px;
     margin-top: 16px;
     justify-content: center;
+}
+
+/* Button Group */
+.btn-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.btn-group-item {
+    flex: 1;
+    min-width: 100px;
+    padding: 10px 16px;
+    font-size: 12px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.btn-group-item.active {
+    background: rgba(0, 255, 136, 0.15);
+    border-color: #00ff88;
+    color: #00ff88;
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
 }
 
 /* Head Size Group */
