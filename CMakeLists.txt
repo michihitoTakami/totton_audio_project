@@ -184,9 +184,16 @@ add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/partition_runtime_utils.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
+    src/daemon/audio_pipeline/filter_manager.cpp
+    src/daemon/audio_pipeline/rate_switcher.cpp
+    src/daemon/audio_pipeline/soft_mute_runner.cpp
+    src/daemon/control/handlers/handler_registry.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/control/control_plane.cpp
     src/daemon/rtp/rtp_engine_coordinator.cpp
+    src/daemon/input/pipewire_input.cpp
+    src/daemon/input/rtp_input_adapter.cpp
+    src/daemon/output/alsa_output.cpp
     src/daemon/control/zmq_server.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/shutdown_manager.cpp
@@ -487,10 +494,18 @@ add_executable(cpu_tests
     tests/cpp/test_playback_buffer_threshold.cpp
     tests/cpp/test_runtime_stats.cpp
     tests/cpp/test_audio_pipeline.cpp
+    tests/cpp/daemon/test_daemon_skeleton.cpp
     src/daemon/rtp/rtp_engine_coordinator.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
+    src/daemon/audio_pipeline/filter_manager.cpp
+    src/daemon/audio_pipeline/rate_switcher.cpp
+    src/daemon/audio_pipeline/soft_mute_runner.cpp
+    src/daemon/control/handlers/handler_registry.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/pcm/dac_manager.cpp
+    src/daemon/input/pipewire_input.cpp
+    src/daemon/input/rtp_input_adapter.cpp
+    src/daemon/output/alsa_output.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
