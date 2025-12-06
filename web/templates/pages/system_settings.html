@@ -97,7 +97,19 @@
         <!-- Input Mode Switch -->
         <div class="card" style="margin-bottom: 16px;">
             <h3 style="font-size: 16px; margin-bottom: 12px;">{{ t.get('system.rtp.mode') }}</h3>
-            <div style="display: flex; gap: 12px;">
+
+            <!-- Deprecated Warning for PipeWire -->
+            <div x-show="rtp.currentMode === 'pipewire'" style="background: rgba(255, 165, 0, 0.1); border: 1px solid rgba(255, 165, 0, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                <div style="display: flex; align-items: start; gap: 8px;">
+                    <span style="font-size: 20px;">⚠️</span>
+                    <div style="flex: 1;">
+                        <div style="font-weight: bold; margin-bottom: 4px;">{{ t.get('system.rtp.pipewire_deprecated_title') }}</div>
+                        <div style="font-size: 14px; opacity: 0.9;">{{ t.get('system.rtp.pipewire_deprecated_message') }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 12px; justify-content: center;">
                 <button
                     class="action-button"
                     :class="{ 'btn-primary': rtp.currentMode === 'pipewire', 'btn-secondary': rtp.currentMode !== 'pipewire' }"
@@ -263,7 +275,16 @@
         <!-- Partitioned Convolution -->
         <div class="card" style="margin-bottom: 16px;">
             <h3 style="font-size: 16px; margin-bottom: 8px;">{{ t.get('system.partitioned.title') }}</h3>
-            <p style="font-size: 14px; opacity: 0.8; margin-bottom: 12px;">{{ t.get('system.partitioned.info') }}</p>
+
+            <!-- Detailed Explanation -->
+            <div style="background: rgba(100, 150, 255, 0.1); border-left: 3px solid rgba(100, 150, 255, 0.5); padding: 12px; margin-bottom: 16px; border-radius: 4px;">
+                <div style="font-size: 14px; line-height: 1.6;">
+                    <div style="font-weight: bold; margin-bottom: 8px;">{{ t.get('system.partitioned.what_is_this') }}</div>
+                    <p style="margin-bottom: 8px;">{{ t.get('system.partitioned.explanation_1') }}</p>
+                    <p style="margin-bottom: 8px;">{{ t.get('system.partitioned.explanation_2') }}</p>
+                    <p style="margin: 0;">{{ t.get('system.partitioned.explanation_3') }}</p>
+                </div>
+            </div>
 
             <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
                 <input type="checkbox" x-model="partitioned.enabled">
@@ -272,20 +293,32 @@
 
             <div x-show="partitioned.enabled" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
                 <div class="form-group">
-                    <label>{{ t.get('system.partitioned.fast_taps') }}</label>
-                    <input type="number" x-model.number="partitioned.fastPartitionTaps" min="4096" max="131072" step="4096">
+                    <label>
+                        {{ t.get('system.partitioned.fast_taps') }}
+                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.fast_taps_hint') }}</span>
+                    </label>
+                    <input type="number" x-model.number="partitioned.fastPartitionTaps" min="4096" max="131072" step="4096" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
                 </div>
                 <div class="form-group">
-                    <label>{{ t.get('system.partitioned.min_taps') }}</label>
-                    <input type="number" x-model.number="partitioned.minPartitionTaps" min="4096" max="131072" step="4096">
+                    <label>
+                        {{ t.get('system.partitioned.min_taps') }}
+                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.min_taps_hint') }}</span>
+                    </label>
+                    <input type="number" x-model.number="partitioned.minPartitionTaps" min="4096" max="131072" step="4096" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
                 </div>
                 <div class="form-group">
-                    <label>{{ t.get('system.partitioned.max_partitions') }}</label>
-                    <input type="number" x-model.number="partitioned.maxPartitions" min="1" max="16" step="1">
+                    <label>
+                        {{ t.get('system.partitioned.max_partitions') }}
+                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.max_partitions_hint') }}</span>
+                    </label>
+                    <input type="number" x-model.number="partitioned.maxPartitions" min="1" max="16" step="1" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
                 </div>
                 <div class="form-group">
-                    <label>{{ t.get('system.partitioned.tail_multiple') }}</label>
-                    <input type="number" x-model.number="partitioned.tailFftMultiple" min="1" max="8" step="1">
+                    <label>
+                        {{ t.get('system.partitioned.tail_multiple') }}
+                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.tail_multiple_hint') }}</span>
+                    </label>
+                    <input type="number" x-model.number="partitioned.tailFftMultiple" min="1" max="8" step="1" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
                 </div>
             </div>
 
