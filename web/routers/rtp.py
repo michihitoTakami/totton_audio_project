@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Path, status
 
 from ..models import (
     ApiResponse,
+    RtpConfigUpdate,
     RtpDiscoveryResponse,
     RtpSessionCreateRequest,
     RtpSessionCreateResponse,
@@ -167,3 +168,42 @@ async def delete_session(session_id: str = SESSION_ID_PARAM) -> ApiResponse:
         message="RTP session stopped",
         data={"session_id": session_id},
     )
+
+
+@router.put(
+    "/config",
+    response_model=ApiResponse,
+    summary="Update RTP configuration defaults",
+)
+async def update_rtp_config(config: RtpConfigUpdate) -> ApiResponse:
+    """
+    Update RTP receiver configuration defaults.
+
+    These settings are saved to config.json and will be used as default values
+    when creating new RTP sessions. Existing active sessions are NOT affected.
+
+    To apply latency changes to existing sessions, stop and restart them.
+    """
+    from ..services.config import update_rtp_config as update_config_file
+
+    try:
+        # Update configuration file
+        success = update_config_file(config.model_dump(exclude_none=True))
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to update RTP configuration",
+            )
+
+        return ApiResponse(
+            success=True,
+            message="RTP configuration defaults updated. Settings will apply to new sessions.",
+            data=config.model_dump(exclude_none=True),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update RTP configuration: {str(e)}",
+        )

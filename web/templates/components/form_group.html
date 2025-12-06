@@ -1,0 +1,27 @@
+{# Form Group Component
+   Parameters:
+   - form_label (required): Label text for the input
+   - form_input_type (optional): Input type - "text", "select", "textarea" (default: "text")
+   - form_input_model (optional): Alpine.js x-model binding
+   - form_input_placeholder (optional): Placeholder text
+   - form_input_disabled (optional): Alpine.js disabled expression
+   - form_input_id (optional): Input ID attribute
+   - form_select_options (optional): For select type - Alpine.js template for options
+   - form_textarea_rows (optional): For textarea type - number of rows (default: 10)
+   - form_style (optional): Inline style string
+   - form_on_change (optional): Alpine.js @change handler
+#}
+<div class="form-group" {% if form_style %}style="{{ form_style }}"{% endif %}>
+    <label{% if form_input_id %} for="{{ form_input_id }}"{% endif %}>{{ form_label }}</label>
+    {% if form_input_type == "select" %}
+    <select{% if form_input_id %} id="{{ form_input_id }}"{% endif %}{% if form_input_model %} x-model="{{ form_input_model }}"{% endif %}{% if form_input_disabled %} :disabled="{{ form_input_disabled }}"{% endif %}{% if form_on_change %} @change="{{ form_on_change }}"{% endif %}>
+        {{ form_select_options | safe }}
+    </select>
+    {% elif form_input_type == "textarea" %}
+    <textarea{% if form_input_id %} id="{{ form_input_id }}"{% endif %} class="text-area" rows="{{ form_textarea_rows | default(10) }}"{% if form_input_placeholder %} placeholder="{{ form_input_placeholder }}"{% endif %}{% if form_input_model %} x-model="{{ form_input_model }}"{% endif %}></textarea>
+    {% else %}
+    <input
+        type="text"{% if form_input_id %} id="{{ form_input_id }}"{% endif %}{% if form_input_model %} x-model="{{ form_input_model }}"{% endif %}{% if form_input_placeholder %} placeholder="{{ form_input_placeholder }}"{% endif %}{% if form_input_disabled %} :disabled="{{ form_input_disabled }}"{% endif %}
+    >
+    {% endif %}
+</div>

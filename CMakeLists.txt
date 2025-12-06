@@ -183,9 +183,20 @@ target_compile_options(gpu_upsampler_daemon PRIVATE
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/partition_runtime_utils.cpp
-    src/daemon/dac_manager.cpp
-    src/daemon/rtp_engine_coordinator.cpp
-    src/daemon/zmq_server.cpp
+    src/daemon/audio_pipeline/audio_pipeline.cpp
+    src/daemon/audio_pipeline/filter_manager.cpp
+    src/daemon/audio_pipeline/rate_switcher.cpp
+    src/daemon/audio_pipeline/soft_mute_runner.cpp
+    src/daemon/control/handlers/handler_registry.cpp
+    src/daemon/pcm/dac_manager.cpp
+    src/daemon/control/control_plane.cpp
+    src/daemon/rtp/rtp_engine_coordinator.cpp
+    src/daemon/input/pipewire_input.cpp
+    src/daemon/input/rtp_input_adapter.cpp
+    src/daemon/output/alsa_output.cpp
+    src/daemon/control/zmq_server.cpp
+    src/daemon/metrics/runtime_stats.cpp
+    src/daemon/shutdown_manager.cpp
 )
 
 target_include_directories(gpu_upsampler_alsa PRIVATE src)
@@ -291,7 +302,7 @@ target_compile_options(zeromq_interface PRIVATE
 )
 
 add_library(rtp_session STATIC
-    src/rtp_session_manager.cpp
+    src/daemon/rtp/rtp_session_manager.cpp
 )
 target_link_libraries(rtp_session PUBLIC
     logging
@@ -481,7 +492,20 @@ add_executable(cpu_tests
     tests/cpp/test_partition_plan.cpp
     tests/cpp/test_phase_alignment.cpp
     tests/cpp/test_playback_buffer_threshold.cpp
-    src/daemon/rtp_engine_coordinator.cpp
+    tests/cpp/test_runtime_stats.cpp
+    tests/cpp/test_audio_pipeline.cpp
+    tests/cpp/daemon/test_daemon_skeleton.cpp
+    src/daemon/rtp/rtp_engine_coordinator.cpp
+    src/daemon/audio_pipeline/audio_pipeline.cpp
+    src/daemon/audio_pipeline/filter_manager.cpp
+    src/daemon/audio_pipeline/rate_switcher.cpp
+    src/daemon/audio_pipeline/soft_mute_runner.cpp
+    src/daemon/control/handlers/handler_registry.cpp
+    src/daemon/metrics/runtime_stats.cpp
+    src/daemon/pcm/dac_manager.cpp
+    src/daemon/input/pipewire_input.cpp
+    src/daemon/input/rtp_input_adapter.cpp
+    src/daemon/output/alsa_output.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
@@ -489,6 +513,10 @@ target_link_libraries(cpu_tests
     eq_support
     rtp_session
     logging
+    filter_headroom
+    fallback_manager
+    soft_mute
+    dac_capability
 )
 target_include_directories(cpu_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -535,7 +563,7 @@ gtest_discover_tests(base64_tests)
 
 add_executable(zmq_server_tests
     tests/cpp/test_zmq_server.cpp
-    src/daemon/zmq_server.cpp
+    src/daemon/control/zmq_server.cpp
 )
 target_link_libraries(zmq_server_tests
     GTest::gtest_main

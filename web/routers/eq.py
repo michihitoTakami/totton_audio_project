@@ -1,6 +1,8 @@
 """EQ profile management endpoints."""
 
+import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, UploadFile
 
@@ -14,6 +16,8 @@ from ..models import (
     EqValidationResponse,
 )
 from ..services import (
+    check_daemon_running,
+    get_daemon_client,
     is_safe_profile_name,
     load_config,
     parse_eq_profile_content,
@@ -22,7 +26,34 @@ from ..services import (
     validate_eq_profile_content,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/eq", tags=["eq"])
+
+
+def _reload_daemon_if_running() -> tuple[bool, bool, str | None]:
+    """Reload the daemon when it is running to apply EQ changes."""
+    daemon_running = check_daemon_running()
+    if not daemon_running:
+        return daemon_running, False, None
+
+    try:
+        with get_daemon_client() as client:
+            reload_success, reload_message = client.reload_config()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        message = str(exc)
+        logger.warning(
+            "[EQ] Failed to request daemon reload after profile change: %s", message
+        )
+        return daemon_running, False, message
+
+    if not reload_success:
+        logger.warning(
+            "[EQ] Daemon reload failed after profile change: %s", reload_message
+        )
+        return daemon_running, False, reload_message
+
+    return daemon_running, True, None
 
 
 def validate_profile_name(name: str) -> str:
@@ -231,10 +262,18 @@ async def activate_eq_profile(name: str):
     config.eq_profile = sanitized_name
     config.eq_profile_path = str(profile_path)
     if save_config(config):
+        daemon_running, reload_success, reload_error = _reload_daemon_if_running()
+        response_data: dict[str, Any] = {
+            "daemon_running": daemon_running,
+            "daemon_reloaded": reload_success,
+        }
+        if reload_error:
+            response_data["reload_error"] = reload_error
         return ApiResponse(
             success=True,
             message=f"Profile '{name}' activated",
-            restart_required=True,
+            data=response_data,
+            restart_required=daemon_running and not reload_success,
         )
     else:
         raise HTTPException(status_code=500, detail="Failed to save config")
@@ -248,8 +287,18 @@ async def deactivate_eq():
     config.eq_profile = None
     config.eq_profile_path = None
     if save_config(config):
+        daemon_running, reload_success, reload_error = _reload_daemon_if_running()
+        response_data: dict[str, Any] = {
+            "daemon_running": daemon_running,
+            "daemon_reloaded": reload_success,
+        }
+        if reload_error:
+            response_data["reload_error"] = reload_error
         return ApiResponse(
-            success=True, message="EQ deactivated", restart_required=True
+            success=True,
+            message="EQ deactivated",
+            data=response_data,
+            restart_required=daemon_running and not reload_success,
         )
     else:
         raise HTTPException(status_code=500, detail="Failed to save config")

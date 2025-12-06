@@ -216,12 +216,15 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             return false;
         }
 
-        registerStreamInputBuffer(streamInputBuffer, stream);
-
-        if (streamInputAccumulated + inputFrames > streamInputBuffer.size()) {
-            std::cerr << "ERROR: Stream input buffer overflow" << std::endl;
-            return false;
+        size_t required = streamInputAccumulated + inputFrames;
+        if (required > streamInputBuffer.size()) {
+            // Upstream (RTP/PipeWire) may deliver larger bursts than the preallocated buffer.
+            size_t newSize = std::max(streamInputBuffer.size() * 2, required);
+            newSize = std::max(newSize, static_cast<size_t>(streamValidInputPerBlock_) * 2);
+            streamInputBuffer.resize(newSize, 0.0f);
         }
+
+        registerStreamInputBuffer(streamInputBuffer, stream);
 
         std::copy(inputData, inputData + inputFrames,
                   streamInputBuffer.begin() + streamInputAccumulated);
@@ -442,12 +445,15 @@ bool GPUUpsampler::processPartitionedStreamBlock(
             return false;
         }
 
-        registerStreamInputBuffer(streamInputBuffer, stream);
-
-        if (streamInputAccumulated + inputFrames > streamInputBuffer.size()) {
-            std::cerr << "ERROR: Stream input buffer overflow" << std::endl;
-            return false;
+        size_t required = streamInputAccumulated + inputFrames;
+        if (required > streamInputBuffer.size()) {
+            // Upstream (RTP/PipeWire) may deliver larger bursts than the preallocated buffer.
+            size_t newSize = std::max(streamInputBuffer.size() * 2, required);
+            newSize = std::max(newSize, static_cast<size_t>(streamValidInputPerBlock_) * 2);
+            streamInputBuffer.resize(newSize, 0.0f);
         }
+
+        registerStreamInputBuffer(streamInputBuffer, stream);
 
         std::copy(inputData, inputData + inputFrames,
                   streamInputBuffer.begin() + streamInputAccumulated);

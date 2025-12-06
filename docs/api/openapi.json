@@ -1560,6 +1560,48 @@
         }
       }
     },
+    "/api/rtp/config": {
+      "put": {
+        "tags": [
+          "rtp"
+        ],
+        "summary": "Update RTP configuration defaults",
+        "description": "Update RTP receiver configuration defaults.\n\nThese settings are saved to config.json and will be used as default values\nwhen creating new RTP sessions. Existing active sessions are NOT affected.\n\nTo apply latency changes to existing sessions, stop and restart them.",
+        "operationId": "update_rtp_config_api_rtp_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RtpConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/partitioned-convolution": {
       "get": {
         "tags": [
@@ -1880,47 +1922,6 @@
         "summary": "Eq Page",
         "description": "Serve the EQ Settings page.",
         "operationId": "eq_page_eq_get",
-        "parameters": [
-          {
-            "name": "lang",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "en",
-              "title": "Lang"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/crossfeed": {
-      "get": {
-        "summary": "Crossfeed Page",
-        "description": "Serve the Crossfeed page.",
-        "operationId": "crossfeed_page_crossfeed_get",
         "parameters": [
           {
             "name": "lang",
@@ -3165,6 +3166,31 @@
         "title": "OpraEqAttribution",
         "description": "OPRA EQ attribution model."
       },
+      "OpraEqProfileInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author",
+            "default": ""
+          },
+          "details": {
+            "type": "string",
+            "title": "Details",
+            "default": ""
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "OpraEqProfileInfo",
+        "description": "OPRA EQ profile information model.\n\nNote: name field doesn't exist in OPRA data, use details or id as display name"
+      },
       "OpraEqResponse": {
         "properties": {
           "id": {
@@ -3218,8 +3244,7 @@
         "properties": {
           "results": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/OpraSearchResult"
             },
             "type": "array",
             "title": "Results"
@@ -3241,6 +3266,42 @@
         ],
         "title": "OpraSearchResponse",
         "description": "OPRA search results response model."
+      },
+      "OpraSearchResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "vendor": {
+            "$ref": "#/components/schemas/OpraVendor"
+          },
+          "eq_profiles": {
+            "items": {
+              "$ref": "#/components/schemas/OpraEqProfileInfo"
+            },
+            "type": "array",
+            "title": "Eq Profiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "vendor",
+          "eq_profiles"
+        ],
+        "title": "OpraSearchResult",
+        "description": "OPRA search result item model."
       },
       "OpraStats": {
         "properties": {
@@ -3275,6 +3336,25 @@
         ],
         "title": "OpraStats",
         "description": "OPRA database statistics response model."
+      },
+      "OpraVendor": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OpraVendor",
+        "description": "OPRA vendor information model."
       },
       "OpraVendorsResponse": {
         "properties": {
@@ -3539,6 +3619,67 @@
         "type": "object",
         "title": "RtpAdvancedSettings",
         "description": "Advanced buffer tuning for RTP reception."
+      },
+      "RtpConfigUpdate": {
+        "properties": {
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port",
+            "description": "Listening port for RTP streams (1024-65535)"
+          },
+          "bind_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bind Address",
+            "description": "Bind address for RTP receiver (IPv4 address or '0.0.0.0')"
+          },
+          "payload_type": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 127.0,
+                "minimum": 96.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Type",
+            "description": "Dynamic payload type (96-127)"
+          },
+          "target_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 10.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Latency Ms",
+            "description": "Target latency in milliseconds (10-1000ms)"
+          }
+        },
+        "type": "object",
+        "title": "RtpConfigUpdate",
+        "description": "RTP configuration update request model."
       },
       "RtpDiscoveryResponse": {
         "properties": {

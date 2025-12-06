@@ -56,26 +56,6 @@ def render_eq_settings(lang: str = "en", current_page: str = "eq") -> str:
     )
 
 
-def render_crossfeed(lang: str = "en", current_page: str = "crossfeed") -> str:
-    """
-    Render the Crossfeed page.
-
-    Args:
-        lang: Language code ("en" or "ja")
-        current_page: Current page name for sidebar highlighting
-
-    Returns:
-        Rendered HTML string
-    """
-    # TODO: Implement in Issue #412
-    template = env.get_template("base.html")
-    return template.render(
-        t=get_translations(lang),
-        current_page=current_page,
-        content="<h2>Crossfeed - Coming Soon</h2>",
-    )
-
-
 def render_rtp_management(lang: str = "en", current_page: str = "rtp") -> str:
     """
     Render the RTP Management page.
@@ -87,12 +67,10 @@ def render_rtp_management(lang: str = "en", current_page: str = "rtp") -> str:
     Returns:
         Rendered HTML string
     """
-    # TODO: Implement in Issue #413
-    template = env.get_template("base.html")
+    template = env.get_template("pages/rtp_management.html")
     return template.render(
         t=get_translations(lang),
         current_page=current_page,
-        content="<h2>RTP Management - Coming Soon</h2>",
     )
 
 

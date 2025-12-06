@@ -1,13 +1,25 @@
 #include "audio_utils.h"
-#include "base64.h"
 #include "config_loader.h"
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
-#include "daemon/dac_manager.h"
-#include "daemon/rtp_engine_coordinator.h"
-#include "daemon/streaming_cache_manager.h"
-#include "daemon/zmq_server.h"
+#include "daemon/api/dependencies.h"
+#include "daemon/api/events.h"
+#include "daemon/audio_pipeline/audio_pipeline.h"
+#include "daemon/audio_pipeline/filter_manager.h"
+#include "daemon/audio_pipeline/rate_switcher.h"
+#include "daemon/audio_pipeline/soft_mute_runner.h"
+#include "daemon/audio_pipeline/streaming_cache_manager.h"
+#include "daemon/control/control_plane.h"
+#include "daemon/control/handlers/handler_registry.h"
+#include "daemon/input/pipewire_input.h"
+#include "daemon/input/rtp_input_adapter.h"
+#include "daemon/metrics/runtime_stats.h"
+#include "daemon/output/alsa_output.h"
+#include "daemon/pcm/dac_manager.h"
+#include "daemon/rtp/rtp_engine_coordinator.h"
+#include "daemon/rtp/rtp_session_manager.h"
+#include "daemon/shutdown_manager.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -17,7 +29,6 @@
 #include "logging/metrics.h"
 #include "partition_runtime_utils.h"
 #include "playback_buffer.h"
-#include "rtp_session_manager.h"
 #include "soft_mute.h"
 
 #include <algorithm>
@@ -30,7 +41,6 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
-#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -71,6 +81,8 @@
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
+static void refresh_current_headroom(const std::string& reason);
+
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
         std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
@@ -81,6 +93,8 @@ static void enforce_phase_partition_constraints(AppConfig& config) {
 
 // Stats file path (JSON format for Web API)
 constexpr const char* STATS_FILE_PATH = "/tmp/gpu_upsampler_stats.json";
+
+static runtime_stats::Dependencies build_runtime_stats_dependencies();
 
 // Default configuration values (using common constants)
 using namespace DaemonConstants;
@@ -150,13 +164,6 @@ static PhaseType g_active_phase_type = PhaseType::Minimum;
 static std::atomic<float> g_limiter_gain{1.0f};
 static std::atomic<float> g_effective_gain{1.0f};
 
-// ========== Signal Handling (Async-Signal-Safe) ==========
-// These flags are set by the signal handler and polled by the main loop.
-// Using volatile sig_atomic_t ensures async-signal-safe access.
-static volatile sig_atomic_t g_signal_shutdown = 0;  // SIGTERM, SIGINT
-static volatile sig_atomic_t g_signal_reload = 0;    // SIGHUP
-static volatile sig_atomic_t g_signal_received = 0;  // Last signal number (for logging)
-
 // Global state
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_reload_requested{false};
@@ -168,65 +175,7 @@ static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
 static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
-static void process_interleaved_block(const float* input_samples, uint32_t n_frames);
-
-static std::unique_ptr<daemon_ipc::ZmqCommandServer> g_zmq_server;
-
-// Statistics (atomic for thread-safe access from stats writer)
-static std::atomic<size_t> g_clip_count{0};
-static std::atomic<size_t> g_total_samples{0};
-static std::atomic<size_t> g_buffer_drop_count{0};
-
-static std::atomic<float> g_peak_input_level{0.0f};
-static std::atomic<float> g_peak_upsampler_level{0.0f};
-static std::atomic<float> g_peak_post_crossfeed_level{0.0f};
-static std::atomic<float> g_peak_post_gain_level{0.0f};
-
-static inline void update_peak_level(std::atomic<float>& peak, float candidate) {
-    float absValue = std::fabs(candidate);
-    float current = peak.load(std::memory_order_relaxed);
-    while (absValue > current &&
-           !peak.compare_exchange_weak(current, absValue, std::memory_order_relaxed,
-                                       std::memory_order_relaxed)) {}
-}
-
-static inline float compute_stereo_peak(const float* left, const float* right, size_t frames) {
-    if (!left || !right || frames == 0) {
-        return 0.0f;
-    }
-    float peak = 0.0f;
-    for (size_t i = 0; i < frames; ++i) {
-        float l = std::fabs(left[i]);
-        float r = std::fabs(right[i]);
-        if (l > peak)
-            peak = l;
-        if (r > peak)
-            peak = r;
-    }
-    return peak;
-}
-
-static float apply_output_limiter(float* interleaved, size_t frames) {
-    constexpr float kEpsilon = 1e-6f;
-    if (!interleaved || frames == 0) {
-        g_limiter_gain.store(1.0f, std::memory_order_relaxed);
-        float baseGain = g_output_gain.load(std::memory_order_relaxed);
-        g_effective_gain.store(baseGain, std::memory_order_relaxed);
-        return 0.0f;
-    }
-    float peak = AudioUtils::computeInterleavedPeak(interleaved, frames);
-    float limiterGain = 1.0f;
-    const float target = g_config.headroomTarget;
-    if (target > 0.0f && peak > target) {
-        limiterGain = target / (peak + kEpsilon);
-        AudioUtils::applyInterleavedGain(interleaved, frames, limiterGain);
-        peak = target;
-    }
-    g_limiter_gain.store(limiterGain, std::memory_order_relaxed);
-    float effective = g_output_gain.load(std::memory_order_relaxed) * limiterGain;
-    g_effective_gain.store(effective, std::memory_order_relaxed);
-    return peak;
-}
+static std::unique_ptr<audio_pipeline::AudioPipeline> g_audio_pipeline;
 
 // Runtime state: Input sample rate (auto-negotiated, not from config)
 // This value is detected from PipeWire stream or set to default (44100 Hz)
@@ -359,79 +308,6 @@ static std::vector<float> g_output_buffer_left;
 static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
 
-static void trim_output_buffer_locked(size_t minFramesToRemove) {
-    if (g_output_read_pos == 0) {
-        return;
-    }
-
-    size_t readable = g_output_buffer_left.size();
-    if (readable == 0) {
-        g_output_read_pos = 0;
-        return;
-    }
-
-    if (g_output_read_pos > readable) {
-        g_output_read_pos = readable;
-    }
-
-    if ((minFramesToRemove > 0 && g_output_read_pos >= minFramesToRemove) ||
-        g_output_read_pos == readable) {
-        auto eraseCount = static_cast<std::ptrdiff_t>(g_output_read_pos);
-        g_output_buffer_left.erase(g_output_buffer_left.begin(),
-                                   g_output_buffer_left.begin() + eraseCount);
-        g_output_buffer_right.erase(g_output_buffer_right.begin(),
-                                    g_output_buffer_right.begin() + eraseCount);
-        g_output_read_pos = 0;
-    }
-}
-
-template <typename Container>
-static size_t enqueue_output_frames_locked(const Container& left, const Container& right) {
-    size_t framesAvailable = std::min(left.size(), right.size());
-    if (framesAvailable == 0) {
-        return 0;
-    }
-
-    size_t capacityFrames = std::max<size_t>(1, get_max_output_buffer_frames());
-    size_t bufferSize = g_output_buffer_left.size();
-    size_t currentFrames = (bufferSize >= g_output_read_pos) ? (bufferSize - g_output_read_pos) : 0;
-    auto decision =
-        PlaybackBuffer::planCapacityEnforcement(currentFrames, framesAvailable, capacityFrames);
-
-    size_t totalDropped = decision.dropFromExisting + decision.newDataOffset;
-    if (totalDropped > 0) {
-        int outputRate = g_current_output_rate.load(std::memory_order_acquire);
-        if (outputRate <= 0) {
-            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
-        }
-        float seconds = static_cast<float>(totalDropped) / static_cast<float>(outputRate);
-        LOG_WARN(
-            "Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, "
-            "max={}]",
-            totalDropped, seconds, currentFrames, framesAvailable, capacityFrames);
-        g_buffer_drop_count.fetch_add(totalDropped, std::memory_order_relaxed);
-    }
-
-    if (decision.dropFromExisting > 0) {
-        g_output_read_pos += decision.dropFromExisting;
-    }
-
-    trim_output_buffer_locked(capacityFrames);
-
-    if (decision.framesToStore == 0) {
-        return 0;
-    }
-
-    size_t startIndex = framesAvailable - decision.framesToStore;
-    auto startOffset = static_cast<std::ptrdiff_t>(startIndex);
-    auto endOffset = static_cast<std::ptrdiff_t>(framesAvailable);
-    g_output_buffer_left.insert(g_output_buffer_left.end(), left.begin() + startOffset,
-                                left.begin() + endOffset);
-    g_output_buffer_right.insert(g_output_buffer_right.end(), right.begin() + startOffset,
-                                 right.begin() + endOffset);
-    return decision.framesToStore;
-}
-
 // Streaming input accumulation buffers
 static StreamFloatVector g_stream_input_left;
 static StreamFloatVector g_stream_input_right;
@@ -455,6 +331,100 @@ static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
 
 static std::unique_ptr<streaming_cache::StreamingCacheManager> g_streaming_cache_manager;
+
+static std::unique_ptr<daemon_core::api::EventDispatcher> g_event_dispatcher;
+static daemon_core::api::DaemonDependencies g_daemon_dependencies{
+    .config = &g_config,
+    .running = &g_running,
+    .outputReady = &g_output_ready,
+    .crossfeedEnabled = &g_crossfeed_enabled,
+    .currentInputRate = &g_current_input_rate,
+    .currentOutputRate = &g_current_output_rate,
+    .softMute = &g_soft_mute,
+    .upsampler = &g_upsampler,
+    .audioPipeline = nullptr,
+    .rtpCoordinator = nullptr,
+    .dacManager = nullptr,
+    .streamingMutex = &g_streaming_mutex,
+    .refreshHeadroom = refresh_current_headroom,
+};
+
+static audio_pipeline::AudioPipeline* g_audio_pipeline_raw = nullptr;
+static rtp_engine::RtpEngineCoordinator* g_rtp_coordinator_raw = nullptr;
+static dac::DacManager* g_dac_manager_raw = nullptr;
+
+static std::unique_ptr<audio_pipeline::RateSwitcher> g_rate_switcher;
+static std::unique_ptr<audio_pipeline::FilterManager> g_filter_manager;
+static std::unique_ptr<audio_pipeline::SoftMuteRunner> g_soft_mute_runner;
+static std::unique_ptr<daemon_output::AlsaOutput> g_alsa_output_interface;
+static std::unique_ptr<daemon_control::handlers::HandlerRegistry> g_handler_registry;
+
+static void update_daemon_dependencies() {
+    g_daemon_dependencies.config = &g_config;
+    g_daemon_dependencies.running = &g_running;
+    g_daemon_dependencies.outputReady = &g_output_ready;
+    g_daemon_dependencies.crossfeedEnabled = &g_crossfeed_enabled;
+    g_daemon_dependencies.currentInputRate = &g_current_input_rate;
+    g_daemon_dependencies.currentOutputRate = &g_current_output_rate;
+    g_daemon_dependencies.softMute = &g_soft_mute;
+    g_daemon_dependencies.upsampler = &g_upsampler;
+    g_daemon_dependencies.audioPipeline = &g_audio_pipeline_raw;
+    g_daemon_dependencies.rtpCoordinator = &g_rtp_coordinator_raw;
+    g_daemon_dependencies.dacManager = &g_dac_manager_raw;
+    g_daemon_dependencies.streamingMutex = &g_streaming_mutex;
+    g_daemon_dependencies.refreshHeadroom = [](const std::string& reason) {
+        refresh_current_headroom(reason);
+    };
+}
+
+static void initialize_event_modules() {
+    g_event_dispatcher = std::make_unique<daemon_core::api::EventDispatcher>();
+    update_daemon_dependencies();
+
+    g_rate_switcher = std::make_unique<audio_pipeline::RateSwitcher>(
+        audio_pipeline::RateSwitcherDependencies{.dispatcher = g_event_dispatcher.get(),
+                                                 .deps = g_daemon_dependencies,
+                                                 .pendingRate = &g_pending_rate_change});
+    g_filter_manager =
+        std::make_unique<audio_pipeline::FilterManager>(audio_pipeline::FilterManagerDependencies{
+            .dispatcher = g_event_dispatcher.get(), .deps = g_daemon_dependencies});
+    g_soft_mute_runner =
+        std::make_unique<audio_pipeline::SoftMuteRunner>(audio_pipeline::SoftMuteRunnerDependencies{
+            .dispatcher = g_event_dispatcher.get(), .deps = g_daemon_dependencies});
+    g_alsa_output_interface =
+        std::make_unique<daemon_output::AlsaOutput>(daemon_output::AlsaOutputDependencies{
+            .dispatcher = g_event_dispatcher.get(), .deps = g_daemon_dependencies});
+    g_handler_registry = std::make_unique<daemon_control::handlers::HandlerRegistry>(
+        daemon_control::handlers::HandlerRegistryDependencies{.dispatcher =
+                                                                  g_event_dispatcher.get()});
+
+    g_rate_switcher->start();
+    g_filter_manager->start();
+    g_soft_mute_runner->start();
+    g_alsa_output_interface->start();
+    g_handler_registry->registerDefaults();
+}
+
+static void publish_rate_change_event(int detected_rate) {
+    if (!g_rate_switcher || !g_event_dispatcher) {
+        return;
+    }
+    daemon_core::api::RateChangeRequested event;
+    event.detectedInputRate = detected_rate;
+    event.rateFamily = ConvolutionEngine::detectRateFamily(detected_rate);
+    g_event_dispatcher->publish(event);
+}
+
+static void publish_filter_switch_event(const std::string& filterPath, PhaseType phaseType,
+                                        bool reloadHeadroom) {
+    daemon_core::api::FilterSwitchRequested event;
+    event.filterPath = filterPath;
+    event.phaseType = phaseType;
+    event.reloadHeadroom = reloadHeadroom;
+    if (g_event_dispatcher) {
+        g_event_dispatcher->publish(event);
+    }
+}
 
 static void initialize_streaming_cache_manager();
 
@@ -535,6 +505,7 @@ static void initialize_streaming_cache_manager() {
     deps.streamingMutex = &g_streaming_mutex;
 
     deps.upsamplerPtr = &g_upsampler;
+    deps.softMute = &g_soft_mute;
     deps.onCrossfeedReset = []() {
         std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
         reset_crossfeed_stream_state_locked();
@@ -542,7 +513,7 @@ static void initialize_streaming_cache_manager() {
     g_streaming_cache_manager = std::make_unique<streaming_cache::StreamingCacheManager>(deps);
 }
 
-// ========== DAC Device Monitoring & ZeroMQ PUB ==========
+// ========== DAC Device Monitoring ==========
 
 static inline int64_t get_timestamp_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -550,31 +521,43 @@ static inline int64_t get_timestamp_ms() {
         .count();
 }
 
-static void send_zmq_payload(const nlohmann::json& payload) {
-    if (!g_zmq_server) {
-        return;
-    }
-    g_zmq_server->publish(payload.dump());
-}
-
-static dac::DacManager::Dependencies make_dac_dependencies() {
+static dac::DacManager::Dependencies make_dac_dependencies(
+    std::function<void(const nlohmann::json&)> eventPublisher = {}) {
     dac::DacManager::Dependencies deps;
     deps.config = &g_config;
     deps.runningFlag = &g_running;
     deps.timestampProvider = get_timestamp_ms;
-    deps.eventPublisher = send_zmq_payload;
+    deps.eventPublisher = std::move(eventPublisher);
     deps.defaultDevice = DEFAULT_ALSA_DEVICE;
     return deps;
 }
 
-static dac::DacManager g_dac_manager(make_dac_dependencies());
+static std::unique_ptr<dac::DacManager> g_dac_manager;
+
+static runtime_stats::Dependencies build_runtime_stats_dependencies() {
+    runtime_stats::Dependencies deps;
+    deps.config = &g_config;
+    deps.upsampler = g_upsampler;
+    deps.headroomCache = &g_headroom_cache;
+    deps.dacManager = g_dac_manager.get();
+    deps.fallbackManager = g_fallback_manager;
+    deps.fallbackActive = &g_fallback_active;
+    deps.inputSampleRate = &g_input_sample_rate;
+    deps.headroomGain = &g_headroom_gain;
+    deps.outputGain = &g_output_gain;
+    deps.limiterGain = &g_limiter_gain;
+    deps.effectiveGain = &g_effective_gain;
+    return deps;
+}
 
 static void mark_dac_connected(
     const std::string& device,
     const char* log_message = "DAC connected - input processing enabled") {
     g_output_ready.store(true, std::memory_order_release);
     LOG_INFO(log_message);
-    g_dac_manager.markActiveDevice(device, true);
+    if (g_dac_manager) {
+        g_dac_manager->markActiveDevice(device, true);
+    }
 }
 
 static void mark_dac_disconnected(
@@ -582,7 +565,9 @@ static void mark_dac_disconnected(
     const char* log_message = "DAC disconnected - stopping input processing") {
     g_output_ready.store(false, std::memory_order_release);
     LOG_INFO(log_message);
-    g_dac_manager.markActiveDevice(device, false);
+    if (g_dac_manager) {
+        g_dac_manager->markActiveDevice(device, false);
+    }
 }
 
 // ========== PID File Lock (flock-based) ==========
@@ -651,120 +636,6 @@ static void release_pid_lock() {
     unlink(PID_FILE_PATH);
     // Remove the stats file on clean shutdown
     unlink(STATS_FILE_PATH);
-}
-
-// ========== Statistics File ==========
-
-// Write statistics to JSON file for Web API consumption
-static constexpr double PEAK_DBFS_FLOOR = -200.0;
-
-static double linear_to_dbfs(double value) {
-    if (value <= 0.0) {
-        return PEAK_DBFS_FLOOR;
-    }
-    return 20.0 * std::log10(static_cast<double>(value));
-}
-
-static nlohmann::json make_peak_json(float linear_value) {
-    nlohmann::json peak_json;
-    peak_json["linear"] = linear_value;
-    peak_json["dbfs"] = linear_to_dbfs(linear_value);
-    return peak_json;
-}
-
-static nlohmann::json make_fallback_stats_json() {
-    nlohmann::json fallback_json = nlohmann::json::object();
-    bool enabled = g_config.fallback.enabled;
-    fallback_json["enabled"] = enabled;
-    fallback_json["active"] = g_fallback_active.load(std::memory_order_relaxed);
-    fallback_json["gpu_utilization"] = 0.0;
-    fallback_json["monitoring_enabled"] =
-        (g_fallback_manager ? g_fallback_manager->isMonitoringEnabled() : false);
-
-    if (enabled && g_fallback_manager) {
-        fallback_json["gpu_utilization"] = g_fallback_manager->getGpuUtilization();
-        auto fbStats = g_fallback_manager->getStats();
-        fallback_json["xrun_count"] = fbStats.xrunCount;
-        fallback_json["activations"] = fbStats.fallbackActivations;
-        fallback_json["recoveries"] = fbStats.fallbackRecoveries;
-    } else {
-        fallback_json["xrun_count"] = 0;
-        fallback_json["activations"] = 0;
-        fallback_json["recoveries"] = 0;
-    }
-
-    return fallback_json;
-}
-
-static nlohmann::json collect_runtime_stats_json() {
-    size_t clips = g_clip_count.load(std::memory_order_relaxed);
-    size_t total = g_total_samples.load(std::memory_order_relaxed);
-    double clip_rate = (total > 0) ? (static_cast<double>(clips) / total) : 0.0;
-
-    int input_rate = g_input_sample_rate;
-    int upsample_ratio = g_config.upsampleRatio;
-    int output_rate = input_rate * upsample_ratio;
-
-    auto now = std::chrono::system_clock::now();
-    auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-
-    std::string phaseTypeStr = "minimum";
-    if (g_upsampler) {
-        phaseTypeStr = (g_upsampler->getPhaseType() == PhaseType::Minimum) ? "minimum" : "linear";
-    } else {
-        phaseTypeStr = (g_config.phaseType == PhaseType::Minimum) ? "minimum" : "linear";
-    }
-
-    nlohmann::json stats;
-    stats["clip_count"] = clips;
-    stats["total_samples"] = total;
-    stats["clip_rate"] = clip_rate;
-    stats["input_rate"] = input_rate;
-    stats["output_rate"] = output_rate;
-    stats["upsample_ratio"] = upsample_ratio;
-    stats["eq_enabled"] = g_config.eqEnabled;
-    stats["phase_type"] = phaseTypeStr;
-    stats["last_updated"] = epoch;
-    nlohmann::json gainJson;
-    gainJson["user"] = g_config.gain;
-    gainJson["headroom"] = g_headroom_gain.load(std::memory_order_relaxed);
-    gainJson["headroom_effective"] = g_output_gain.load(std::memory_order_relaxed);
-    gainJson["limiter"] = g_limiter_gain.load(std::memory_order_relaxed);
-    gainJson["effective"] = g_effective_gain.load(std::memory_order_relaxed);
-    gainJson["target_peak"] = g_config.headroomTarget;
-    gainJson["metadata_peak"] = g_headroom_cache.getTargetPeak();
-    stats["gain"] = gainJson;
-
-    nlohmann::json peaks;
-    peaks["input"] = make_peak_json(g_peak_input_level.load(std::memory_order_relaxed));
-    peaks["upsampler"] = make_peak_json(g_peak_upsampler_level.load(std::memory_order_relaxed));
-    peaks["post_mix"] = make_peak_json(g_peak_post_crossfeed_level.load(std::memory_order_relaxed));
-    peaks["post_gain"] = make_peak_json(g_peak_post_gain_level.load(std::memory_order_relaxed));
-    stats["peaks"] = peaks;
-
-    stats["fallback"] = make_fallback_stats_json();
-
-    stats["dac"] = g_dac_manager.buildStatsSummaryJson();
-
-    nlohmann::json bufferJson;
-    bufferJson["max_seconds"] = DaemonConstants::MAX_OUTPUT_BUFFER_SECONDS;
-    bufferJson["capacity_frames"] = get_max_output_buffer_frames();
-    bufferJson["dropped_frames"] = g_buffer_drop_count.load(std::memory_order_relaxed);
-    stats["buffer"] = bufferJson;
-
-    return stats;
-}
-
-static void write_stats_file() {
-    nlohmann::json stats = collect_runtime_stats_json();
-
-    std::string tmp_path = std::string(STATS_FILE_PATH) + ".tmp";
-    std::ofstream ofs(tmp_path);
-    if (ofs) {
-        ofs << stats.dump(2) << std::endl;
-        ofs.close();
-        std::rename(tmp_path.c_str(), STATS_FILE_PATH);
-    }
 }
 
 // ========== Configuration ==========
@@ -860,6 +731,53 @@ static void reset_runtime_state() {
     g_cf_stream_accumulated_right = 0;
     g_cf_output_buffer_left.clear();
     g_cf_output_buffer_right.clear();
+}
+
+static bool reinitialize_streaming_for_legacy_mode() {
+    if (!g_upsampler) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> streamLock(g_streaming_mutex);
+    g_upsampler->resetStreaming();
+    {
+        std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
+        g_output_buffer_left.clear();
+        g_output_buffer_right.clear();
+        g_output_read_pos = 0;
+    }
+
+    g_stream_input_left.clear();
+    g_stream_input_right.clear();
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+    g_upsampler_output_left.clear();
+    g_upsampler_output_right.clear();
+
+    // Rebuild legacy streams so the buffers match the full FFT (avoids invalid cudaMemset after
+    // disabling partitions).
+    if (!g_upsampler->initializeStreaming()) {
+        std::cerr << "[Partition] Failed to initialize legacy streaming buffers" << std::endl;
+        return false;
+    }
+
+    size_t buffer_capacity = g_upsampler->getStreamValidInputPerBlock() * 2;
+    if (buffer_capacity > 0) {
+        g_stream_input_left.resize(buffer_capacity, 0.0f);
+        g_stream_input_right.resize(buffer_capacity, 0.0f);
+    } else {
+        g_stream_input_left.clear();
+        g_stream_input_right.clear();
+    }
+    g_stream_accumulated_left = 0;
+    g_stream_accumulated_right = 0;
+
+    size_t upsampler_output_capacity =
+        g_upsampler->getStreamValidInputPerBlock() * g_upsampler->getUpsampleRatio() * 2;
+    g_upsampler_output_left.reserve(upsampler_output_capacity);
+    g_upsampler_output_right.reserve(upsampler_output_capacity);
+
+    return true;
 }
 
 static bool handle_rate_switch(int newInputRate) {
@@ -1004,609 +922,6 @@ static void load_runtime_config() {
     g_effective_gain.store(initialOutput, std::memory_order_relaxed);
 }
 
-// ========== ZeroMQ Command Listener ==========
-
-static std::string build_ok_response(const daemon_ipc::ZmqRequest& request,
-                                     const std::string& message = "",
-                                     const nlohmann::json& data = {}) {
-    if (request.isJson) {
-        nlohmann::json resp;
-        resp["status"] = "ok";
-        if (!message.empty()) {
-            resp["message"] = message;
-        }
-        if (!data.is_null() && !data.empty()) {
-            resp["data"] = data;
-        }
-        return resp.dump();
-    }
-
-    if (!data.is_null() && !data.empty()) {
-        return "OK:" + data.dump();
-    }
-    if (!message.empty()) {
-        return "OK:" + message;
-    }
-    return "OK";
-}
-
-static std::string build_error_response(const daemon_ipc::ZmqRequest& request,
-                                        const std::string& code, const std::string& message) {
-    if (request.isJson) {
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = code;
-        resp["message"] = message;
-        return resp.dump();
-    }
-    return "ERR:" + message;
-}
-
-static std::string handle_ping(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request);
-}
-
-static std::string handle_reload(const daemon_ipc::ZmqRequest& request) {
-    g_reload_requested = true;
-    if (g_soft_mute) {
-        g_soft_mute->startFadeOut();
-    }
-    if (g_main_loop_running.load() && g_pw_loop) {
-        pw_main_loop_quit(g_pw_loop);
-    }
-    return build_ok_response(request);
-}
-
-static std::string handle_stats_command(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request, "", collect_runtime_stats_json());
-}
-
-static std::string handle_crossfeed_enable(const daemon_ipc::ZmqRequest& request) {
-    if (g_config.partitionedConvolution.enabled) {
-        return build_error_response(request, "CROSSFEED_DISABLED",
-                                    "Crossfeed not available in low-latency mode");
-    }
-
-    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-    if (!g_hrtf_processor) {
-        return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                    "HRTF processor not initialized");
-    }
-
-    reset_crossfeed_stream_state_locked();
-    g_hrtf_processor->setEnabled(true);
-    g_crossfeed_enabled.store(true);
-    return build_ok_response(request, "Crossfeed enabled");
-}
-
-static std::string handle_crossfeed_disable(const daemon_ipc::ZmqRequest& request) {
-    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-    g_crossfeed_enabled.store(false);
-    if (g_hrtf_processor) {
-        g_hrtf_processor->setEnabled(false);
-    }
-    reset_crossfeed_stream_state_locked();
-    return build_ok_response(request, "Crossfeed disabled");
-}
-
-static std::string build_crossfeed_status_response(const daemon_ipc::ZmqRequest& request,
-                                                   bool includeHeadSize) {
-    std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-    bool enabled = g_crossfeed_enabled.load();
-    bool initialized = (g_hrtf_processor != nullptr);
-
-    nlohmann::json data;
-    data["enabled"] = enabled;
-    data["initialized"] = initialized;
-
-    if (includeHeadSize) {
-        if (g_hrtf_processor != nullptr) {
-            CrossfeedEngine::HeadSize currentSize = g_hrtf_processor->getCurrentHeadSize();
-            data["head_size"] = CrossfeedEngine::headSizeToString(currentSize);
-        } else {
-            data["head_size"] = nullptr;
-        }
-    }
-
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_crossfeed_status(const daemon_ipc::ZmqRequest& request) {
-    return build_crossfeed_status_response(request, false);
-}
-
-static std::string handle_crossfeed_get_status(const daemon_ipc::ZmqRequest& request) {
-    return build_crossfeed_status_response(request, true);
-}
-
-static bool validate_crossfeed_params(const nlohmann::json& params, std::string& rateFamily,
-                                      std::string& combinedLL, std::string& combinedLR,
-                                      std::string& combinedRL, std::string& combinedRR,
-                                      std::string& errorMessage, std::string& errorCode) {
-    rateFamily = params.value("rate_family", "");
-    combinedLL = params.value("combined_ll", "");
-    combinedLR = params.value("combined_lr", "");
-    combinedRL = params.value("combined_rl", "");
-    combinedRR = params.value("combined_rr", "");
-
-    if (rateFamily.empty() || combinedLL.empty() || combinedLR.empty() || combinedRL.empty() ||
-        combinedRR.empty()) {
-        errorCode = "IPC_INVALID_PARAMS";
-        errorMessage = "Missing required filter data";
-        return false;
-    }
-    if (rateFamily != "44k" && rateFamily != "48k") {
-        errorCode = "CROSSFEED_INVALID_RATE_FAMILY";
-        errorMessage = "Invalid rate family: " + rateFamily + " (expected 44k or 48k)";
-        return false;
-    }
-    return true;
-}
-
-static std::string handle_crossfeed_set_combined(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params")) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    bool processorReady = false;
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        processorReady = (g_hrtf_processor != nullptr);
-    }
-    if (!processorReady) {
-        return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                    "HRTF processor not initialized");
-    }
-
-    auto params = (*request.json)["params"];
-    std::string rateFamily;
-    std::string combinedLL;
-    std::string combinedLR;
-    std::string combinedRL;
-    std::string combinedRR;
-    std::string errorMessage;
-    std::string errorCode;
-
-    if (!validate_crossfeed_params(params, rateFamily, combinedLL, combinedLR, combinedRL,
-                                   combinedRR, errorMessage, errorCode)) {
-        return build_error_response(request, errorCode, errorMessage);
-    }
-
-    auto decodedLL = Base64::decode(combinedLL);
-    auto decodedLR = Base64::decode(combinedLR);
-    auto decodedRL = Base64::decode(combinedRL);
-    auto decodedRR = Base64::decode(combinedRR);
-
-    constexpr size_t CUFFT_COMPLEX_SIZE = 8;
-    constexpr size_t MAX_FILTER_BYTES = 256 * 1024;
-
-    bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedRL.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedRR.size() % CUFFT_COMPLEX_SIZE == 0);
-
-    bool sizesMatch = (decodedLL.size() == decodedLR.size()) &&
-                      (decodedLL.size() == decodedRL.size()) &&
-                      (decodedLL.size() == decodedRR.size());
-
-    bool withinLimit = (decodedLL.size() <= MAX_FILTER_BYTES);
-
-    if (!sizeValid) {
-        return build_error_response(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                    "Filter size must be multiple of 8 (cufftComplex)");
-    }
-    if (!sizesMatch) {
-        return build_error_response(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                    "All 4 channel filters must have same size");
-    }
-    if (!withinLimit) {
-        return build_error_response(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                    "Filter size exceeds maximum (256KB per channel)");
-    }
-
-    CrossfeedEngine::RateFamily family = (rateFamily == "44k")
-                                             ? CrossfeedEngine::RateFamily::RATE_44K
-                                             : CrossfeedEngine::RateFamily::RATE_48K;
-    size_t complexCount = decodedLL.size() / CUFFT_COMPLEX_SIZE;
-    const cufftComplex* filterLL = reinterpret_cast<const cufftComplex*>(decodedLL.data());
-    const cufftComplex* filterLR = reinterpret_cast<const cufftComplex*>(decodedLR.data());
-    const cufftComplex* filterRL = reinterpret_cast<const cufftComplex*>(decodedRL.data());
-    const cufftComplex* filterRR = reinterpret_cast<const cufftComplex*>(decodedRR.data());
-
-    bool applySuccess = false;
-    applySoftMuteForFilterSwitch([&]() {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return false;
-        }
-        applySuccess = g_hrtf_processor->setCombinedFilter(family, filterLL, filterLR, filterRL,
-                                                           filterRR, complexCount);
-        return applySuccess;
-    });
-
-    if (!applySuccess) {
-        size_t expectedSize = 0;
-        {
-            std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-            if (g_hrtf_processor) {
-                expectedSize = g_hrtf_processor->getFilterFftSize();
-            }
-        }
-        nlohmann::json errorData;
-        errorData["rate_family"] = rateFamily;
-        errorData["complex_count"] = complexCount;
-        errorData["expected_size"] = expectedSize;
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
-        resp["message"] = "Filter size mismatch or application failed";
-        resp["data"] = errorData;
-        return resp.dump();
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        reset_crossfeed_stream_state_locked();
-    }
-
-    nlohmann::json data;
-    data["rate_family"] = rateFamily;
-    data["complex_count"] = complexCount;
-    std::cout << "ZeroMQ: CROSSFEED_SET_COMBINED applied for " << rateFamily << " (" << complexCount
-              << " complex values)" << std::endl;
-    return build_ok_response(request, "Combined filter applied", data);
-}
-
-static std::string handle_crossfeed_generate(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params") ||
-        !(*request.json)["params"].is_object()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    bool processorReady = false;
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        processorReady = (g_hrtf_processor != nullptr);
-    }
-    if (!processorReady) {
-        return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                    "HRTF processor not initialized");
-    }
-
-    auto params = (*request.json)["params"];
-    std::string rateFamily = params.value("rate_family", "");
-    double azimuth = params.value("azimuth_deg", 30.0);
-
-    if (rateFamily != "44k" && rateFamily != "48k") {
-        return build_error_response(request, "CROSSFEED_INVALID_RATE_FAMILY",
-                                    "Invalid rate family: " + rateFamily);
-    }
-
-    HRTF::WoodworthParams modelParams;
-    if (params.contains("model") && params["model"].is_object()) {
-        auto model = params["model"];
-        modelParams.headRadiusMeters = model.value("head_radius_m", modelParams.headRadiusMeters);
-        modelParams.earSpacingMeters = model.value("ear_spacing_m", modelParams.earSpacingMeters);
-        modelParams.farEarShadowDb = model.value("far_shadow_db", modelParams.farEarShadowDb);
-        modelParams.diffuseFieldTiltDb =
-            model.value("diffuse_tilt_db", modelParams.diffuseFieldTiltDb);
-    }
-
-    CrossfeedEngine::RateFamily family = (rateFamily == "44k")
-                                             ? CrossfeedEngine::RateFamily::RATE_44K
-                                             : CrossfeedEngine::RateFamily::RATE_48K;
-    bool success = false;
-    applySoftMuteForFilterSwitch([&]() {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return false;
-        }
-        success = g_hrtf_processor->generateWoodworthProfile(family, static_cast<float>(azimuth),
-                                                             modelParams);
-        return success;
-    });
-
-    if (!success) {
-        return build_error_response(request, "CROSSFEED_WOODWORTH_FAILED",
-                                    "Failed to generate Woodworth profile");
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        reset_crossfeed_stream_state_locked();
-    }
-
-    nlohmann::json data;
-    data["rate_family"] = rateFamily;
-    data["azimuth_deg"] = azimuth;
-    data["head_radius_m"] = modelParams.headRadiusMeters;
-    data["ear_spacing_m"] = modelParams.earSpacingMeters;
-    data["far_shadow_db"] = modelParams.farEarShadowDb;
-    data["diffuse_tilt_db"] = modelParams.diffuseFieldTiltDb;
-    std::cout << "ZeroMQ: Generated Woodworth HRTF (" << rateFamily << ", az=" << azimuth << " deg)"
-              << std::endl;
-    return build_ok_response(request, "Woodworth profile generated", data);
-}
-
-static std::string handle_crossfeed_set_size(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params")) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return build_error_response(request, "CROSSFEED_NOT_INITIALIZED",
-                                        "HRTF processor not initialized");
-        }
-    }
-
-    auto params = (*request.json)["params"];
-    std::string sizeStr = params.value("head_size", "");
-    if (sizeStr.empty()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing head_size parameter");
-    }
-
-    CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
-    bool switchSuccess = false;
-    applySoftMuteForFilterSwitch([&]() {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (!g_hrtf_processor) {
-            return false;
-        }
-        switchSuccess = g_hrtf_processor->switchHeadSize(targetSize);
-        return switchSuccess;
-    });
-
-    if (!switchSuccess) {
-        return build_error_response(request, "CROSSFEED_SIZE_SWITCH_FAILED",
-                                    "Failed to switch head size");
-    }
-
-    {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        reset_crossfeed_stream_state_locked();
-    }
-    nlohmann::json data;
-    data["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_rtp_command(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json) {
-        return build_error_response(request, "IPC_INVALID_COMMAND",
-                                    "RTP command requires JSON payload");
-    }
-    if (!g_rtp_coordinator) {
-        return build_error_response(request, "IPC_INVALID_COMMAND",
-                                    "RTP coordinator not initialized");
-    }
-
-    std::string response;
-    if (g_rtp_coordinator->handleZeroMqCommand(request.command, *request.json, response)) {
-        return response;
-    }
-    return build_error_response(request, "IPC_INVALID_COMMAND",
-                                "Unknown JSON command: " + request.command);
-}
-
-static std::string handle_dac_list(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request, "", g_dac_manager.buildDevicesJson());
-}
-
-static std::string handle_dac_status(const daemon_ipc::ZmqRequest& request) {
-    nlohmann::json data = g_dac_manager.buildStatusJson();
-    data["output_rate"] = g_current_output_rate.load(std::memory_order_acquire);
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_dac_select(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params") ||
-        !(*request.json)["params"].contains("device")) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params.device field");
-    }
-
-    std::string targetDevice = (*request.json)["params"]["device"].get<std::string>();
-    if (!g_dac_manager.isValidDeviceName(targetDevice)) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Invalid ALSA device name");
-    }
-
-    g_dac_manager.requestDevice(targetDevice);
-
-    return build_ok_response(request, "Preferred ALSA device updated",
-                             g_dac_manager.buildDevicesJson());
-}
-
-static std::string handle_dac_rescan(const daemon_ipc::ZmqRequest& request) {
-    g_dac_manager.requestRescan();
-    return build_ok_response(request, "DAC rescan scheduled", g_dac_manager.buildDevicesJson());
-}
-
-static nlohmann::json build_output_mode_json() {
-    nlohmann::json data;
-    data["mode"] = outputModeToString(g_config.output.mode);
-
-    nlohmann::json modes = nlohmann::json::array();
-    for (const auto* mode : kSupportedOutputModes) {
-        modes.push_back(mode);
-    }
-    data["available_modes"] = modes;
-
-    nlohmann::json options;
-    options["usb"]["preferred_device"] = g_config.output.usb.preferredDevice;
-    data["options"] = options;
-    return data;
-}
-
-static std::string handle_output_mode_get(const daemon_ipc::ZmqRequest& request) {
-    return build_ok_response(request, "", build_output_mode_json());
-}
-
-static std::string handle_output_mode_set(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params") ||
-        !(*request.json)["params"].is_object()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Missing params object");
-    }
-
-    const auto& params = (*request.json)["params"];
-    std::string requestedMode = outputModeToString(g_config.output.mode);
-    if (params.contains("mode") && params["mode"].is_string()) {
-        requestedMode = params["mode"].get<std::string>();
-    }
-    std::string normalizedMode = normalize_output_mode(requestedMode);
-    if (!is_supported_output_mode(normalizedMode)) {
-        return build_error_response(request, "ERR_UNSUPPORTED_MODE",
-                                    "Output mode '" + requestedMode + "' is not supported");
-    }
-
-    std::string preferredDevice = g_config.output.usb.preferredDevice;
-    if (params.contains("options") && params["options"].is_object()) {
-        const auto& options = params["options"];
-        if (options.contains("usb") && options["usb"].is_object()) {
-            const auto& usb = options["usb"];
-            if (usb.contains("preferred_device") && usb["preferred_device"].is_string()) {
-                preferredDevice = usb["preferred_device"].get<std::string>();
-            } else if (usb.contains("preferredDevice") && usb["preferredDevice"].is_string()) {
-                preferredDevice = usb["preferredDevice"].get<std::string>();
-            }
-        }
-    }
-
-    if (preferredDevice.empty()) {
-        preferredDevice = DEFAULT_ALSA_DEVICE;
-    }
-
-    if (!g_dac_manager.isValidDeviceName(preferredDevice)) {
-        return build_error_response(request, "IPC_INVALID_PARAMS", "Invalid ALSA device name");
-    }
-
-    set_preferred_output_device(g_config, preferredDevice);
-    g_dac_manager.requestDevice(preferredDevice);
-
-    return build_ok_response(request, "Output mode updated", build_output_mode_json());
-}
-
-static std::string handle_phase_type_get(const daemon_ipc::ZmqRequest& request) {
-    if (!g_upsampler) {
-        return build_error_response(request, "IPC_INVALID_COMMAND", "Upsampler not initialized");
-    }
-    PhaseType pt = g_upsampler->getPhaseType();
-    std::string ptStr = (pt == PhaseType::Minimum) ? "minimum" : "linear";
-    nlohmann::json data;
-    data["phase_type"] = ptStr;
-    return build_ok_response(request, "", data);
-}
-
-static std::string handle_phase_type_set(const daemon_ipc::ZmqRequest& request) {
-    std::string phaseStr = request.payload;
-    if (phaseStr.empty()) {
-        return build_error_response(request, "IPC_INVALID_PARAMS",
-                                    "Invalid phase type (use 'minimum' or 'linear')");
-    }
-
-    if (!g_upsampler) {
-        return build_error_response(request, "IPC_INVALID_COMMAND", "Upsampler not initialized");
-    }
-    if (phaseStr != "minimum" && phaseStr != "linear") {
-        return build_error_response(request, "IPC_INVALID_PARAMS",
-                                    "Invalid phase type (use 'minimum' or 'linear')");
-    }
-
-    PhaseType newPhase = (phaseStr == "minimum") ? PhaseType::Minimum : PhaseType::Linear;
-    PhaseType oldPhase = g_upsampler->getPhaseType();
-
-    if (oldPhase == newPhase) {
-        return build_ok_response(request, "Phase type already " + phaseStr);
-    }
-
-    bool switch_success = false;
-    applySoftMuteForFilterSwitch([&]() {
-        switch_success = g_upsampler->switchPhaseType(newPhase);
-        if (switch_success) {
-            g_active_phase_type = newPhase;
-            refresh_current_headroom("phase switch");
-            if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
-                EQ::EqProfile eqProfile;
-                if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
-                    size_t filterFftSize = g_upsampler->getFilterFftSize();
-                    size_t fullFftSize = g_upsampler->getFullFftSize();
-                    double outputSampleRate =
-                        static_cast<double>(g_input_sample_rate) * g_config.upsampleRatio;
-                    auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
-                                                                    outputSampleRate, eqProfile);
-                    if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
-                        std::cout << "ZeroMQ: EQ re-applied with " << phaseStr << " phase"
-                                  << std::endl;
-                    } else {
-                        std::cerr << "ZeroMQ: Warning - EQ re-apply failed" << std::endl;
-                    }
-                } else {
-                    std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                              << g_config.eqProfilePath << std::endl;
-                }
-            }
-        }
-        return switch_success;
-    });
-
-    if (!switch_success) {
-        return build_error_response(request, "IPC_PROTOCOL_ERROR", "Failed to switch phase type");
-    }
-
-    if (newPhase == PhaseType::Linear && g_config.partitionedConvolution.enabled) {
-        std::cout << "[Partition] Linear phase selected, disabling low-latency partitioned "
-                     "convolution."
-                  << std::endl;
-        g_config.partitionedConvolution.enabled = false;
-        g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
-    }
-    return build_ok_response(request, "Phase type set to " + phaseStr);
-}
-
-static void register_zmq_handlers() {
-    g_zmq_server->registerCommand("PING", handle_ping);
-    g_zmq_server->registerCommand("RELOAD", handle_reload);
-    g_zmq_server->registerCommand("STATS", handle_stats_command);
-    g_zmq_server->registerCommand("CROSSFEED_ENABLE", handle_crossfeed_enable);
-    g_zmq_server->registerCommand("CROSSFEED_DISABLE", handle_crossfeed_disable);
-    g_zmq_server->registerCommand("CROSSFEED_STATUS", handle_crossfeed_status);
-    g_zmq_server->registerCommand("CROSSFEED_GET_STATUS", handle_crossfeed_get_status);
-    g_zmq_server->registerCommand("CROSSFEED_SET_COMBINED", handle_crossfeed_set_combined);
-    g_zmq_server->registerCommand("CROSSFEED_GENERATE_WOODWORTH", handle_crossfeed_generate);
-    g_zmq_server->registerCommand("CROSSFEED_SET_SIZE", handle_crossfeed_set_size);
-    g_zmq_server->registerCommand("DAC_LIST", handle_dac_list);
-    g_zmq_server->registerCommand("DAC_STATUS", handle_dac_status);
-    g_zmq_server->registerCommand("DAC_SELECT", handle_dac_select);
-    g_zmq_server->registerCommand("DAC_RESCAN", handle_dac_rescan);
-    g_zmq_server->registerCommand("OUTPUT_MODE_GET", handle_output_mode_get);
-    g_zmq_server->registerCommand("OUTPUT_MODE_SET", handle_output_mode_set);
-    g_zmq_server->registerCommand("PHASE_TYPE_GET", handle_phase_type_get);
-    g_zmq_server->registerCommand("PHASE_TYPE_SET", handle_phase_type_set);
-
-    const std::vector<std::string> rtpCommands = {
-        "RTP_START_SESSION",    "RTP_STOP_SESSION", "RTP_LIST_SESSIONS", "RTP_GET_SESSION",
-        "RTP_DISCOVER_STREAMS", "StartSession",     "StopSession",       "ListSessions",
-        "GetSession",           "DiscoverStreams"};
-    for (const auto& cmd : rtpCommands) {
-        g_zmq_server->registerCommand(cmd, handle_rtp_command);
-    }
-}
-
-static bool start_zmq_server() {
-    g_zmq_server = std::make_unique<daemon_ipc::ZmqCommandServer>();
-    register_zmq_handlers();
-    if (g_zmq_server->start()) {
-        return true;
-    }
-
-    g_zmq_bind_failed.store(true, std::memory_order_release);
-    g_running = false;
-    if (g_pw_loop) {
-        pw_main_loop_quit(g_pw_loop);
-    }
-    return false;
-}
-
 // PipeWire objects
 // PipeWire objects
 struct Data {
@@ -1614,187 +929,21 @@ struct Data {
     struct pw_stream* input_stream;
     struct spa_source* signal_check_timer;  // Timer for checking signal flags
     bool gpu_ready;
+    shutdown_manager::ShutdownManager* shutdownManager;
 };
-
-// ========== Async-Signal-Safe Signal Handler ==========
-// This handler ONLY sets flags. All other processing is done in the main loop.
-// POSIX async-signal-safe: only sig_atomic_t writes are safe here.
-static void signal_handler(int sig) {
-    g_signal_received = sig;
-    if (sig == SIGHUP) {
-        g_signal_reload = 1;
-    } else {
-        g_signal_shutdown = 1;
-    }
-}
-
-// Process pending signals (called from main loop context, NOT from signal handler)
-// This function is safe to call with non-async-signal-safe code.
-// IMPORTANT: Shutdown (SIGTERM/SIGINT) takes priority over reload (SIGHUP).
-// If both signals arrive in the same cycle, shutdown wins.
-static void process_pending_signals() {
-    // Check for shutdown request FIRST (SIGTERM, SIGINT) - takes priority over reload
-    if (g_signal_shutdown) {
-        g_signal_shutdown = 0;
-        g_signal_reload = 0;  // Clear any pending reload - shutdown takes priority
-        int sig = g_signal_received;
-        std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
-
-        // Clear reload flag to ensure clean shutdown (not restart)
-        // This prevents do { ... } while (g_reload_requested) from restarting
-        g_reload_requested = false;
-
-        // Start fade-out for glitch-free shutdown
-        if (g_soft_mute) {
-            g_soft_mute->startFadeOut();
-        }
-
-        // Quit main loop to trigger shutdown sequence
-        if (g_main_loop_running.load() && g_pw_loop) {
-            pw_main_loop_quit(g_pw_loop);
-        } else {
-            g_running = false;
-        }
-        return;  // Don't process reload if shutdown was requested
-    }
-
-    // Check for reload request (SIGHUP) - only if no shutdown pending
-    if (g_signal_reload) {
-        g_signal_reload = 0;
-        int sig = g_signal_received;
-        std::cout << "\nReceived SIGHUP (signal " << sig << "), restarting for config reload..."
-                  << std::endl;
-        g_reload_requested = true;
-
-        // Start fade-out for glitch-free reload
-        if (g_soft_mute) {
-            g_soft_mute->startFadeOut();
-        }
-
-        // Quit main loop to trigger reload sequence
-        if (g_main_loop_running.load() && g_pw_loop) {
-            pw_main_loop_quit(g_pw_loop);
-        } else {
-            g_running = false;
-        }
-    }
-}
 
 // PipeWire timer callback to check for pending signals
 // Called periodically (every 100ms) from the PipeWire main loop.
 static void on_signal_check_timer(void* userdata, uint64_t expirations) {
-    (void)userdata;
     (void)expirations;
 
-    // Process any pending signals
-    process_pending_signals();
-
-#ifdef HAVE_SYSTEMD
-    // Send watchdog heartbeat to systemd
-    sd_notify(0, "WATCHDOG=1");
-#endif
+    auto* context = reinterpret_cast<Data*>(userdata);
+    if (context && context->shutdownManager) {
+        context->shutdownManager->tick(true);
+    }
 }
 
 // Input stream process callback (44.1kHz audio from PipeWire)
-static void process_interleaved_block(const float* input_samples, uint32_t n_frames) {
-    if (!input_samples || n_frames == 0 || !g_upsampler) {
-        return;
-    }
-
-    if (!g_output_ready.load(std::memory_order_acquire)) {
-        static auto last_warn = std::chrono::steady_clock::now() -
-                                std::chrono::seconds(6);  // allow immediate first log
-        auto now = std::chrono::steady_clock::now();
-        if (now - last_warn > std::chrono::seconds(5)) {
-            LOG_DEBUG("Dropping input: DAC not ready");
-            last_warn = now;
-        }
-        return;
-    }
-
-    if (g_streaming_cache_manager) {
-        g_streaming_cache_manager->handleInputBlock();
-    }
-
-    std::lock_guard<std::mutex> inputLock(g_input_process_mutex);
-
-    std::vector<float> left(n_frames);
-    std::vector<float> right(n_frames);
-    AudioUtils::deinterleaveStereo(input_samples, left.data(), right.data(), n_frames);
-    float inputPeak = compute_stereo_peak(left.data(), right.data(), n_frames);
-    update_peak_level(g_peak_input_level, inputPeak);
-
-    StreamFloatVector& output_left = g_upsampler_output_left;
-    StreamFloatVector& output_right = g_upsampler_output_right;
-
-    bool use_fallback = g_fallback_active.load(std::memory_order_relaxed);
-    bool left_generated = false;
-    bool right_generated = false;
-
-    if (use_fallback) {
-        size_t output_frames = static_cast<size_t>(n_frames) * g_config.upsampleRatio;
-        output_left.assign(output_frames, 0.0f);
-        output_right.assign(output_frames, 0.0f);
-        for (size_t i = 0; i < n_frames; ++i) {
-            output_left[i * g_config.upsampleRatio] = left[i];
-            output_right[i * g_config.upsampleRatio] = right[i];
-        }
-        left_generated = true;
-        right_generated = true;
-    } else {
-        left_generated = g_upsampler->processStreamBlock(
-            left.data(), n_frames, output_left, g_upsampler->streamLeft_, g_stream_input_left,
-            g_stream_accumulated_left);
-        right_generated = g_upsampler->processStreamBlock(
-            right.data(), n_frames, output_right, g_upsampler->streamRight_, g_stream_input_right,
-            g_stream_accumulated_right);
-    }
-
-    if (!left_generated || !right_generated) {
-        return;
-    }
-
-    size_t frames_generated = std::min(output_left.size(), output_right.size());
-    if (frames_generated > 0) {
-        float upsamplerPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_upsampler_level, upsamplerPeak);
-    }
-
-    if (g_crossfeed_enabled.load()) {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
-        if (g_hrtf_processor && g_hrtf_processor->isEnabled()) {
-            bool cf_generated = g_hrtf_processor->processStreamBlock(
-                output_left.data(), output_right.data(), output_left.size(), g_cf_output_left,
-                g_cf_output_right, 0, g_cf_stream_input_left, g_cf_stream_input_right,
-                g_cf_stream_accumulated_left, g_cf_stream_accumulated_right);
-
-            if (cf_generated) {
-                size_t cf_frames = std::min(g_cf_output_left.size(), g_cf_output_right.size());
-                if (cf_frames > 0) {
-                    float cfPeak = compute_stereo_peak(g_cf_output_left.data(),
-                                                       g_cf_output_right.data(), cf_frames);
-                    update_peak_level(g_peak_post_crossfeed_level, cfPeak);
-                }
-                std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                enqueue_output_frames_locked(g_cf_output_left, g_cf_output_right);
-                g_buffer_cv.notify_one();
-                return;
-            }
-        }
-        // Crossfeed disabled or not ready: fall through and store original upsampler output.
-    }
-
-    std::lock_guard<std::mutex> lock(g_buffer_mutex);
-    enqueue_output_frames_locked(output_left, output_right);
-    g_buffer_cv.notify_one();
-    if (frames_generated > 0) {
-        float postPeak =
-            compute_stereo_peak(output_left.data(), output_right.data(), frames_generated);
-        update_peak_level(g_peak_post_crossfeed_level, postPeak);
-    }
-}
-
 static void on_input_process(void* userdata) {
     Data* data = static_cast<Data*>(userdata);
 
@@ -1807,8 +956,8 @@ static void on_input_process(void* userdata) {
     float* input_samples = static_cast<float*>(spa_buf->datas[0].data);
     uint32_t n_frames = spa_buf->datas[0].chunk->size / (sizeof(float) * CHANNELS);
 
-    if (input_samples && n_frames > 0 && data->gpu_ready) {
-        process_interleaved_block(input_samples, n_frames);
+    if (input_samples && n_frames > 0 && data->gpu_ready && g_audio_pipeline) {
+        g_audio_pipeline->process(input_samples, n_frames);
     }
 
     pw_stream_queue_buffer(data->input_stream, buf);
@@ -1850,9 +999,9 @@ static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* 
     if (detected_rate != current_rate && detected_rate > 0) {
         LOG_INFO("[PipeWire] Sample rate change detected: {} -> {} Hz", current_rate,
                  detected_rate);
-        // Set pending rate change for main loop to process
-        // (avoid blocking in real-time callback)
+        // Set pending rate change for main loop to process (avoid blocking in RT callback)
         g_pending_rate_change.store(detected_rate, std::memory_order_release);
+        publish_rate_change_event(detected_rate);
     }
 }
 
@@ -2153,18 +1302,18 @@ static bool pcm_alive(snd_pcm_t* pcm_handle) {
 void alsa_output_thread() {
     elevate_realtime_priority("ALSA output");
 
-    std::string currentDevice = g_dac_manager.waitForSelection();
+    std::string currentDevice = g_dac_manager->waitForSelection();
     snd_pcm_t* pcm_handle = nullptr;
     while (g_running && !pcm_handle) {
         if (currentDevice.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = g_dac_manager.waitForSelection();
+            currentDevice = g_dac_manager->waitForSelection();
             continue;
         }
         pcm_handle = open_and_configure_pcm(currentDevice);
         if (!pcm_handle) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = g_dac_manager.waitForSelection();
+            currentDevice = g_dac_manager->waitForSelection();
         } else {
             mark_dac_connected(currentDevice);
         }
@@ -2202,7 +1351,7 @@ void alsa_output_thread() {
                 mark_dac_disconnected(currentDevice);
                 while (g_running && !pcm_handle) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
-                    currentDevice = g_dac_manager.waitForSelection();
+                    currentDevice = g_dac_manager->waitForSelection();
                     if (currentDevice.empty())
                         continue;
                     pcm_handle = open_and_configure_pcm(currentDevice);
@@ -2261,7 +1410,7 @@ void alsa_output_thread() {
             }
         }
 
-        if (auto pendingDevice = g_dac_manager.consumePendingChange()) {
+        if (auto pendingDevice = g_dac_manager->consumePendingChange()) {
             std::string nextDevice = *pendingDevice;
             if (!nextDevice.empty() && nextDevice != currentDevice) {
                 std::cout << "ALSA: Switching output to " << nextDevice << std::endl;
@@ -2275,7 +1424,7 @@ void alsa_output_thread() {
                     pcm_handle = open_and_configure_pcm(currentDevice);
                     if (!pcm_handle) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                        currentDevice = g_dac_manager.waitForSelection();
+                        currentDevice = g_dac_manager->waitForSelection();
                         if (currentDevice.empty())
                             break;
                     }
@@ -2298,183 +1447,93 @@ void alsa_output_thread() {
         if (!g_running)
             break;
 
-        size_t available = g_output_buffer_left.size() - g_output_read_pos;
-        if (available >= period_size) {
-            // Step 1: Interleave L/R channels into float buffer with gain applied
-            const float gain = g_output_gain.load(std::memory_order_relaxed);
-            AudioUtils::interleaveStereoWithGain(g_output_buffer_left.data() + g_output_read_pos,
-                                                 g_output_buffer_right.data() + g_output_read_pos,
-                                                 float_buffer.data(), period_size, gain);
+        lock.unlock();
 
-            // Step 2: Apply soft mute for glitch-free shutdown/transitions
-            if (g_soft_mute) {
-                g_soft_mute->process(float_buffer.data(), period_size);
+        audio_pipeline::RenderResult renderResult;
+        if (g_audio_pipeline) {
+            renderResult = g_audio_pipeline->renderOutput(
+                static_cast<size_t>(period_size), interleaved_buffer, float_buffer, g_soft_mute);
+        } else {
+            renderResult.framesRequested = period_size;
+            renderResult.framesRendered = period_size;
+            renderResult.wroteSilence = true;
+            std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
+        }
 
-                // Reset fade duration to default after filter switch fade-in completes
-                // Check if we just completed a fade-in from filter switching
-                // (fade duration > default indicates filter switch was in progress)
-                using namespace DaemonConstants;
-                if (g_soft_mute->getState() == SoftMute::MuteState::PLAYING &&
-                    g_soft_mute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
-                    g_soft_mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
-                }
+        static auto last_stats_write = std::chrono::steady_clock::now();
+        if (!renderResult.wroteSilence && renderResult.framesRendered > 0) {
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_stats_write >= std::chrono::seconds(1)) {
+                runtime_stats::writeStatsFile(build_runtime_stats_dependencies(),
+                                              get_max_output_buffer_frames(), STATS_FILE_PATH);
+                last_stats_write = now;
             }
-
-            // Apply limiter and track peak after gain & soft mute
-            float postGainPeak = apply_output_limiter(float_buffer.data(), period_size);
-            update_peak_level(g_peak_post_gain_level, postGainPeak);
-
-            // Step 3: Clipping detection, clamping, and float→int32 conversion
-            static auto last_stats_write = std::chrono::steady_clock::now();
-            size_t current_clips = 0;
-
-            for (size_t i = 0; i < period_size; ++i) {
-                float left_sample = float_buffer[i * 2];
-                float right_sample = float_buffer[i * 2 + 1];
-
-                // Detect and count clipping (for diagnostics only)
-                if (left_sample > 1.0f || left_sample < -1.0f || right_sample > 1.0f ||
-                    right_sample < -1.0f) {
-                    current_clips++;
-                    g_clip_count.fetch_add(1, std::memory_order_relaxed);
-                }
-
-                // Hard clipping as safety net only
-                left_sample = std::clamp(left_sample, -1.0f, 1.0f);
-                right_sample = std::clamp(right_sample, -1.0f, 1.0f);
-
-                // Float to int32 conversion
-                constexpr float INT32_MAX_FLOAT = 2147483647.0f;
-                interleaved_buffer[i * 2] =
-                    static_cast<int32_t>(std::lroundf(left_sample * INT32_MAX_FLOAT));
-                interleaved_buffer[i * 2 + 1] =
-                    static_cast<int32_t>(std::lroundf(right_sample * INT32_MAX_FLOAT));
-            }
-
-            g_total_samples.fetch_add(period_size * 2, std::memory_order_relaxed);
-
-            // Report clipping infrequently to avoid log spam
-            size_t total = g_total_samples.load(std::memory_order_relaxed);
-            size_t clips = g_clip_count.load(std::memory_order_relaxed);
-            if (total % (period_size * 2 * 100) == 0 && clips > 0) {
+            size_t total = runtime_stats::totalSamples();
+            size_t clips = runtime_stats::clipCount();
+            if (total % (static_cast<size_t>(period_size) * 2 * 100) == 0 && clips > 0) {
                 std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
                           << total << " (" << (100.0 * clips / total) << "%)" << std::endl;
             }
+        }
 
-            // Write stats file every second
-            auto now = std::chrono::steady_clock::now();
-            if (now - last_stats_write >= std::chrono::seconds(1)) {
-                write_stats_file();
-                last_stats_write = now;
-            }
-            g_output_read_pos += period_size;
-
-            size_t cleanupThreshold =
-                std::max<size_t>(static_cast<size_t>(period_size) * 4, static_cast<size_t>(1));
-            trim_output_buffer_locked(cleanupThreshold);
-
-            lock.unlock();
-
-            // Write to ALSA device
-            snd_pcm_sframes_t frames_written =
-                snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
-            if (frames_written < 0) {
-                // Check for XRUN (Issue #139)
-                if (frames_written == -EPIPE) {
-                    // XRUN detected - notify fallback manager
-                    if (g_fallback_manager) {
-                        g_fallback_manager->notifyXrun();
-                    }
-                    gpu_upsampler::metrics::recordXrun();
-                    LOG_WARN("ALSA: XRUN detected");
+        // Write to ALSA device
+        snd_pcm_sframes_t frames_written =
+            snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
+        if (frames_written < 0) {
+            // Check for XRUN (Issue #139)
+            if (frames_written == -EPIPE) {
+                // XRUN detected - notify fallback manager
+                if (g_fallback_manager) {
+                    g_fallback_manager->notifyXrun();
                 }
+                gpu_upsampler::metrics::recordXrun();
+                LOG_WARN("ALSA: XRUN detected");
+            }
 
-                // Try standard recovery first
-                snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
-                if (rec < 0) {
-                    // Device may be gone; attempt reopen
-                    std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
-                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
-                              << std::endl;
-                    snd_pcm_close(pcm_handle);
-                    pcm_handle = nullptr;
-                    mark_dac_disconnected(currentDevice);
-                    while (g_running && !pcm_handle) {
-                        std::this_thread::sleep_for(std::chrono::seconds(5));
-                        std::string next = g_dac_manager.getSelectedDevice();
-                        if (!next.empty()) {
-                            currentDevice = next;
-                        }
-                        if (currentDevice.empty())
-                            continue;
-                        pcm_handle = open_and_configure_pcm(currentDevice);
+            // Try standard recovery first
+            snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
+            if (rec < 0) {
+                // Device may be gone; attempt reopen
+                std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
+                          << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
+                          << std::endl;
+                snd_pcm_close(pcm_handle);
+                pcm_handle = nullptr;
+                mark_dac_disconnected(currentDevice);
+                while (g_running && !pcm_handle) {
+                    std::this_thread::sleep_for(std::chrono::seconds(5));
+                    std::string next = g_dac_manager->getSelectedDevice();
+                    if (!next.empty()) {
+                        currentDevice = next;
                     }
-                    if (pcm_handle) {
-                        mark_dac_connected(currentDevice,
-                                           "DAC reconnected - resuming input processing");
-                        // resize buffer to new period size if needed
-                        snd_pcm_uframes_t new_period = 0;
-                        snd_pcm_hw_params_t* hw_params;
-                        snd_pcm_hw_params_alloca(&hw_params);
-                        if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
-                            snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) ==
-                                0 &&
-                            new_period != period_size) {
-                            period_size = new_period;
-                            interleaved_buffer.resize(period_size * CHANNELS);
-                            float_buffer.resize(period_size * CHANNELS);
-                        }
-                        // Drop queued buffers on successful reopen to avoid burst
-                        {
-                            std::lock_guard<std::mutex> lock(g_buffer_mutex);
-                            g_output_buffer_left.clear();
-                            g_output_buffer_right.clear();
-                            g_output_read_pos = 0;
-                        }
-                    } else {
-                        // If still not available, continue loop to retry
+                    if (currentDevice.empty())
                         continue;
-                    }
+                    pcm_handle = open_and_configure_pcm(currentDevice);
                 }
-            }
-        } else {
-            // Not enough data → write silence to keep device fed and avoid xrun
-            lock.unlock();
-
-            // Apply soft mute even to silence (to advance fade position during shutdown)
-            if (g_soft_mute && g_soft_mute->isTransitioning()) {
-                std::fill(float_buffer.begin(), float_buffer.end(), 0.0f);
-                g_soft_mute->process(float_buffer.data(), period_size);
-            }
-
-            std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
-            snd_pcm_sframes_t frames_written =
-                snd_pcm_writei(pcm_handle, interleaved_buffer.data(), period_size);
-            if (frames_written < 0) {
-                snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, frames_written, 0);
-                if (rec < 0) {
-                    std::cerr << "ALSA: Silence write error: " << snd_strerror(frames_written)
-                              << " (recover=" << snd_strerror(rec) << "), retrying reopen..."
-                              << std::endl;
-                    if (pcm_handle) {
-                        snd_pcm_close(pcm_handle);
-                        pcm_handle = nullptr;
+                if (pcm_handle) {
+                    mark_dac_connected(currentDevice,
+                                       "DAC reconnected - resuming input processing");
+                    // resize buffer to new period size if needed
+                    snd_pcm_uframes_t new_period = 0;
+                    snd_pcm_hw_params_t* hw_params;
+                    snd_pcm_hw_params_alloca(&hw_params);
+                    if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
+                        snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) == 0 &&
+                        new_period != period_size) {
+                        period_size = new_period;
+                        interleaved_buffer.resize(period_size * CHANNELS);
+                        float_buffer.resize(period_size * CHANNELS);
                     }
-                    mark_dac_disconnected(currentDevice);
-                    while (g_running && !pcm_handle) {
-                        std::this_thread::sleep_for(std::chrono::seconds(5));
-                        std::string next = g_dac_manager.getSelectedDevice();
-                        if (!next.empty()) {
-                            currentDevice = next;
-                        }
-                        if (currentDevice.empty())
-                            continue;
-                        pcm_handle = open_and_configure_pcm(currentDevice);
+                    // Drop queued buffers on successful reopen to avoid burst
+                    {
+                        std::lock_guard<std::mutex> lock(g_buffer_mutex);
+                        g_output_buffer_left.clear();
+                        g_output_buffer_right.clear();
+                        g_output_read_pos = 0;
                     }
-                    if (pcm_handle) {
-                        mark_dac_connected(currentDevice,
-                                           "DAC reconnected - resuming input processing");
-                    }
+                } else {
+                    // If still not available, continue loop to retry
+                    continue;
                 }
             }
         }
@@ -2509,21 +1568,27 @@ int main(int argc, char* argv[]) {
     LOG_INFO("========================================");
     LOG_INFO("PID: {} (file: {})", getpid(), PID_FILE_PATH);
 
-    // Install signal handlers (SIGHUP for restart, SIGINT/SIGTERM for shutdown)
-    std::signal(SIGINT, signal_handler);
-    std::signal(SIGTERM, signal_handler);
-    std::signal(SIGHUP, signal_handler);
+    shutdown_manager::ShutdownManager::Dependencies shutdownDeps{
+        &g_soft_mute,
+        &g_running,
+        &g_reload_requested,
+        &g_main_loop_running,
+    };
+    shutdown_manager::ShutdownManager shutdownManager(shutdownDeps);
+    shutdownManager.installSignalHandlers();
+    shutdownManager.setQuitLoopCallback([]() {
+        if (g_main_loop_running.load() && g_pw_loop) {
+            pw_main_loop_quit(g_pw_loop);
+        }
+    });
 
     int exitCode = 0;
 
     do {
+        shutdownManager.reset();
         g_running = true;
         g_reload_requested = false;
         g_zmq_bind_failed.store(false);
-        // Reset signal flags for clean restart
-        g_signal_shutdown = 0;
-        g_signal_reload = 0;
-        g_signal_received = 0;
         reset_runtime_state();
 
         // Load configuration from config.json (if exists)
@@ -2540,6 +1605,8 @@ int main(int argc, char* argv[]) {
             g_config.filterPath = argv[1];
             std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
         }
+
+        initialize_event_modules();
 
         // Determine PipeWire mode (config + env overrides)
         bool pipewireEnabled = g_config.pipewireEnabled;
@@ -2712,7 +1779,7 @@ int main(int argc, char* argv[]) {
         }
 
         g_active_phase_type = g_config.phaseType;
-        refresh_current_headroom("initial filter load");
+        publish_filter_switch_event(current_filter_path(), g_active_phase_type, true);
 
         std::cout << "Input sample rate: " << g_upsampler->getInputSampleRate() << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
@@ -2852,6 +1919,58 @@ int main(int argc, char* argv[]) {
 
         std::cout << std::endl;
 
+        if (!g_audio_pipeline && g_upsampler) {
+            audio_pipeline::Dependencies pipelineDeps{};
+            pipelineDeps.config = &g_config;
+            pipelineDeps.upsampler.available = true;
+            pipelineDeps.upsampler.streamLeft = g_upsampler->streamLeft_;
+            pipelineDeps.upsampler.streamRight = g_upsampler->streamRight_;
+            pipelineDeps.output.outputGain = &g_output_gain;
+            pipelineDeps.output.limiterGain = &g_limiter_gain;
+            pipelineDeps.output.effectiveGain = &g_effective_gain;
+            pipelineDeps.upsampler.process =
+                [](const float* data, size_t frames, ConvolutionEngine::StreamFloatVector& output,
+                   cudaStream_t stream, ConvolutionEngine::StreamFloatVector& streamInput,
+                   size_t& streamAccumulated) {
+                    if (!g_upsampler) {
+                        return false;
+                    }
+                    return g_upsampler->processStreamBlock(data, frames, output, stream,
+                                                           streamInput, streamAccumulated);
+                };
+            pipelineDeps.fallbackActive = &g_fallback_active;
+            pipelineDeps.outputReady = &g_output_ready;
+            pipelineDeps.inputMutex = &g_input_process_mutex;
+            pipelineDeps.streamingCacheManager = g_streaming_cache_manager.get();
+            pipelineDeps.streamInputLeft = &g_stream_input_left;
+            pipelineDeps.streamInputRight = &g_stream_input_right;
+            pipelineDeps.streamAccumulatedLeft = &g_stream_accumulated_left;
+            pipelineDeps.streamAccumulatedRight = &g_stream_accumulated_right;
+            pipelineDeps.upsamplerOutputLeft = &g_upsampler_output_left;
+            pipelineDeps.upsamplerOutputRight = &g_upsampler_output_right;
+            pipelineDeps.cfStreamInputLeft = &g_cf_stream_input_left;
+            pipelineDeps.cfStreamInputRight = &g_cf_stream_input_right;
+            pipelineDeps.cfStreamAccumulatedLeft = &g_cf_stream_accumulated_left;
+            pipelineDeps.cfStreamAccumulatedRight = &g_cf_stream_accumulated_right;
+            pipelineDeps.cfOutputLeft = &g_cf_output_left;
+            pipelineDeps.cfOutputRight = &g_cf_output_right;
+            pipelineDeps.crossfeedEnabled = &g_crossfeed_enabled;
+            pipelineDeps.crossfeedProcessor = g_hrtf_processor;
+            pipelineDeps.crossfeedMutex = &g_crossfeed_mutex;
+            pipelineDeps.buffer.outputBufferLeft = &g_output_buffer_left;
+            pipelineDeps.buffer.outputBufferRight = &g_output_buffer_right;
+            pipelineDeps.buffer.outputReadPos = &g_output_read_pos;
+            pipelineDeps.buffer.bufferMutex = &g_buffer_mutex;
+            pipelineDeps.buffer.bufferCv = &g_buffer_cv;
+            pipelineDeps.maxOutputBufferFrames = []() { return get_max_output_buffer_frames(); };
+            pipelineDeps.currentOutputRate = []() {
+                return g_current_output_rate.load(std::memory_order_acquire);
+            };
+            g_audio_pipeline =
+                std::make_unique<audio_pipeline::AudioPipeline>(std::move(pipelineDeps));
+            g_audio_pipeline_raw = g_audio_pipeline.get();
+        }
+
         // Check for early abort before starting threads
         if (!g_running) {
             std::cout << "Startup interrupted by signal" << std::endl;
@@ -2885,7 +2004,14 @@ int main(int argc, char* argv[]) {
         rtpDeps.getInputSampleRate = []() { return g_input_sample_rate; };
         rtpDeps.processInterleaved = [](const float* data, size_t frames, uint32_t sampleRate) {
             (void)sampleRate;
-            process_interleaved_block(data, static_cast<uint32_t>(frames));
+            if (g_audio_pipeline) {
+                g_audio_pipeline->process(data, static_cast<uint32_t>(frames));
+            }
+        };
+        rtpDeps.resetStreamingCache = []() {
+            if (g_streaming_cache_manager) {
+                g_streaming_cache_manager->flushCaches();
+            }
         };
         rtpDeps.ptpProvider = []() -> Network::PtpSyncState { return {}; };
         rtpDeps.telemetry = [](const Network::SessionMetrics& metrics) {
@@ -2893,6 +2019,7 @@ int main(int argc, char* argv[]) {
                       metrics.packetsReceived, metrics.packetsDropped);
         };
         g_rtp_coordinator = std::make_unique<rtp_engine::RtpEngineCoordinator>(rtpDeps);
+        g_rtp_coordinator_raw = g_rtp_coordinator.get();
 
         // Initialize fallback manager (Issue #139)
         if (g_config.fallback.enabled) {
@@ -2930,6 +2057,7 @@ int main(int argc, char* argv[]) {
             g_fallback_active.store(false, std::memory_order_relaxed);
         }
 
+        std::unique_ptr<daemon_control::ControlPlane> controlPlane;
         Data data{};
         data.gpu_ready = true;
         struct pw_loop* loop = nullptr;
@@ -2950,13 +2078,68 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Start ZeroMQ server after g_pw_loop is set to allow RELOAD to quit the main loop
-        start_zmq_server();
+        if (!g_dac_manager) {
+            g_dac_manager = std::make_unique<dac::DacManager>(make_dac_dependencies());
+        }
+        if (!g_dac_manager) {
+            std::cerr << "Failed to initialize DAC manager" << std::endl;
+            exitCode = 1;
+            break;
+        }
+        g_dac_manager_raw = g_dac_manager.get();
 
-        g_dac_manager.initialize();
+        daemon_control::ControlPlaneDependencies controlDeps{};
+        controlDeps.config = &g_config;
+        controlDeps.runningFlag = &g_running;
+        controlDeps.reloadRequested = &g_reload_requested;
+        controlDeps.zmqBindFailed = &g_zmq_bind_failed;
+        controlDeps.currentOutputRate = &g_current_output_rate;
+        controlDeps.softMute = &g_soft_mute;
+        controlDeps.activePhaseType = &g_active_phase_type;
+        controlDeps.inputSampleRate = &g_input_sample_rate;
+        controlDeps.defaultAlsaDevice = DEFAULT_ALSA_DEVICE;
+        controlDeps.dispatcher = g_event_dispatcher.get();
+        controlDeps.quitMainLoop = []() {
+            if (g_main_loop_running.load() && g_pw_loop) {
+                pw_main_loop_quit(g_pw_loop);
+            }
+        };
+        controlDeps.buildRuntimeStats = []() { return build_runtime_stats_dependencies(); };
+        controlDeps.bufferCapacityFrames = []() { return get_max_output_buffer_frames(); };
+        controlDeps.applySoftMuteForFilterSwitch = [](std::function<bool()> fn) {
+            applySoftMuteForFilterSwitch(std::move(fn));
+        };
+        controlDeps.refreshHeadroom = [](const std::string& reason) {
+            refresh_current_headroom(reason);
+        };
+        controlDeps.reinitializeStreamingForLegacyMode = []() {
+            return reinitialize_streaming_for_legacy_mode();
+        };
+        controlDeps.setPreferredOutputDevice = [](AppConfig& cfg, const std::string& device) {
+            set_preferred_output_device(cfg, device);
+        };
+        controlDeps.dacManager = g_dac_manager.get();
+        controlDeps.rtpCoordinator = g_rtp_coordinator.get();
+        controlDeps.upsampler = &g_upsampler;
+        controlDeps.crossfeed.processor = &g_hrtf_processor;
+        controlDeps.crossfeed.enabledFlag = &g_crossfeed_enabled;
+        controlDeps.crossfeed.mutex = &g_crossfeed_mutex;
+        controlDeps.crossfeed.resetStreamingState = []() { reset_crossfeed_stream_state_locked(); };
+        controlDeps.statsFilePath = STATS_FILE_PATH;
+
+        controlPlane = std::make_unique<daemon_control::ControlPlane>(std::move(controlDeps));
+        if (controlPlane && controlPlane->start() && g_dac_manager) {
+            g_dac_manager->setEventPublisher(controlPlane->eventPublisher());
+        }
+
+        if (g_dac_manager) {
+            g_dac_manager->initialize();
+        }
 
         // Start ALSA output thread
-        g_dac_manager.start();
+        if (g_dac_manager) {
+            g_dac_manager->start();
+        }
         std::cout << "Starting ALSA output thread..." << std::endl;
         std::thread alsa_thread(alsa_output_thread);
 
@@ -3052,26 +2235,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Press Ctrl+C to stop." << std::endl;
         std::cout << "========================================" << std::endl;
 
-#ifdef HAVE_SYSTEMD
-        if (pipewireActive) {
-            sd_notify(0,
-                      "READY=1\n"
-                      "STATUS=Processing audio...\n");
-        } else {
-            sd_notify(0,
-                      "READY=1\n"
-                      "STATUS=Processing audio (RTP-only)...\n");
-        }
-        std::cout << "systemd: Notified READY=1" << std::endl;
-#endif
+        shutdownManager.notifyReady(pipewireActive);
 
         auto runRtpOnlyMainLoop = [&]() {
             while (g_running.load() && !g_reload_requested.load() && !g_zmq_bind_failed.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                process_pending_signals();
-#ifdef HAVE_SYSTEMD
-                sd_notify(0, "WATCHDOG=1");
-#endif
+                shutdownManager.tick(false);
             }
         };
 
@@ -3091,56 +2260,14 @@ int main(int argc, char* argv[]) {
             runRtpOnlyMainLoop();
         }
 
-        // ========== Shutdown Sequence ==========
-        // Order: Stop input → Fade out → Flush buffers → Close ALSA → Release resources
-        std::cout << "Shutting down..." << std::endl;
-
-#ifdef HAVE_SYSTEMD
-        // Notify systemd that we're stopping
-        sd_notify(0, "STOPPING=1\nSTATUS=Shutting down...\n");
-#endif
-
-        // Step 1: Stop signal check timer
-        if (data.signal_check_timer && loop) {
-            pw_loop_destroy_source(loop, data.signal_check_timer);
-            data.signal_check_timer = nullptr;
-        }
-
-        // Step 2: Wait for soft mute fade-out to complete (with 100ms timeout)
-        // This ensures glitch-free audio shutdown
-        if (g_soft_mute && g_soft_mute->isTransitioning()) {
-            std::cout << "  Step 2: Waiting for fade-out to complete..." << std::endl;
-            auto fade_start = std::chrono::steady_clock::now();
-            while (g_soft_mute->isTransitioning()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                if (std::chrono::steady_clock::now() - fade_start >
-                    std::chrono::milliseconds(100)) {
-                    std::cout << "  Step 2: Fade-out timeout, forcing shutdown" << std::endl;
-                    break;
-                }
-            }
-        }
-
-        // Step 3: Destroy PipeWire stream (stops audio input)
-        if (data.input_stream) {
-            std::cout << "  Step 3: Destroying PipeWire stream..." << std::endl;
-            pw_stream_destroy(data.input_stream);
-        }
-
-        // Step 4: Destroy PipeWire main loop
-        if (data.loop) {
-            std::cout << "  Step 4: Destroying PipeWire main loop..." << std::endl;
-            pw_main_loop_destroy(data.loop);
-            g_pw_loop = nullptr;
-        }
+        shutdownManager.runShutdownSequence(pipewireActive);
 
         // Step 5: Signal worker threads to stop and wait for them
         std::cout << "  Step 5: Stopping worker threads..." << std::endl;
         g_running = false;
         g_buffer_cv.notify_all();
-        if (g_zmq_server) {
-            g_zmq_server->stop();
-            g_zmq_server.reset();
+        if (controlPlane) {
+            controlPlane->stop();
         }
         alsa_thread.join();  // ALSA thread will call snd_pcm_drain() before exit
 
@@ -3149,6 +2276,7 @@ int main(int argc, char* argv[]) {
         if (g_rtp_coordinator) {
             g_rtp_coordinator->shutdown();
             g_rtp_coordinator.reset();
+            g_rtp_coordinator_raw = nullptr;
         }
         if (g_fallback_manager) {
             g_fallback_manager->shutdown();
@@ -3161,9 +2289,15 @@ int main(int argc, char* argv[]) {
         delete g_hrtf_processor;
         g_hrtf_processor = nullptr;
         g_crossfeed_enabled.store(false);
+        if (g_audio_pipeline) {
+            g_audio_pipeline.reset();  // Tear down pipeline before deleting GPU upsampler
+            g_audio_pipeline_raw = nullptr;
+        }
         delete g_upsampler;
         g_upsampler = nullptr;
-        g_dac_manager.stop();
+        if (g_dac_manager) {
+            g_dac_manager->stop();
+        }
 
         // Step 7: Deinitialize PipeWire
         if (pipewireInitCalled) {
@@ -3171,7 +2305,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Don't reload if ZMQ bind failed - exit completely
-        if (g_zmq_bind_failed) {
+        if (g_zmq_bind_failed.load()) {
             std::cerr << "Exiting due to ZeroMQ initialization failure." << std::endl;
             exitCode = 1;
             break;

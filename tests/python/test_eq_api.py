@@ -16,6 +16,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -76,6 +77,12 @@ def config_path(tmp_path, monkeypatch):
     monkeypatch.setattr("web.services.config.CONFIG_PATH", config_file)
 
     return config_file
+
+
+@pytest.fixture(autouse=True)
+def disable_daemon_reload(monkeypatch):
+    """Ensure Eq router never tries to reload a real daemon during tests."""
+    monkeypatch.setattr("web.routers.eq.check_daemon_running", lambda: False)
 
 
 class TestValidateEndpoint:
@@ -377,7 +384,66 @@ class TestActivateEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["restart_required"] is True
+        assert data["restart_required"] is False
+        assert data["data"]["daemon_running"] is False
+        assert data["data"]["daemon_reloaded"] is False
+
+    def test_activate_triggers_reload_when_daemon_online(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """Activation should reload the daemon when it is running."""
+        (eq_profile_dir / "test.txt").write_text(valid_eq_content)
+
+        with patch(
+            "web.routers.eq.check_daemon_running",
+            return_value=True,
+        ) as mock_running, patch(
+            "web.routers.eq.get_daemon_client",
+        ) as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value = mock_client
+            mock_client.__exit__.return_value = False
+            mock_client.reload_config.return_value = (True, "Command executed")
+            mock_get_client.return_value = mock_client
+
+            response = client.post("/eq/activate/test")
+
+        mock_running.assert_called_once()
+        mock_get_client.assert_called_once()
+        mock_client.reload_config.assert_called_once()
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["restart_required"] is False
+        assert body["data"]["daemon_running"] is True
+        assert body["data"]["daemon_reloaded"] is True
+
+    def test_activate_restart_required_when_reload_fails(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """If the reload command fails we still flag restart_required."""
+        (eq_profile_dir / "test.txt").write_text(valid_eq_content)
+
+        with patch(
+            "web.routers.eq.check_daemon_running",
+            return_value=True,
+        ), patch(
+            "web.routers.eq.get_daemon_client",
+        ) as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value = mock_client
+            mock_client.__exit__.return_value = False
+            mock_client.reload_config.return_value = (False, "Reload failure")
+            mock_get_client.return_value = mock_client
+
+            response = client.post("/eq/activate/test")
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["restart_required"] is True
+        assert body["data"]["daemon_running"] is True
+        assert body["data"]["daemon_reloaded"] is False
+        assert body["data"]["reload_error"] == "Reload failure"
 
     def test_activate_nonexistent_profile(self, client, eq_profile_dir, config_path):
         """Should return 404 for nonexistent profile."""
@@ -396,7 +462,9 @@ class TestDeactivateEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["restart_required"] is True
+        assert data["restart_required"] is False
+        assert data["data"]["daemon_running"] is False
+        assert data["data"]["daemon_reloaded"] is False
 
 
 class TestEqConfigPersistence:
