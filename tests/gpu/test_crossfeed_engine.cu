@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "crossfeed_engine.h"
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <vector>
 #include <nlohmann/json.hpp>
@@ -122,6 +123,18 @@ TEST_F(HRTFProcessorTest, Initialize) {
 TEST_F(HRTFProcessorTest, InitializeInvalidDir) {
     HRTFProcessor processor;
     EXPECT_FALSE(processor.initialize("/nonexistent/path"));
+}
+
+// Test: Initialize succeeds when only 44k family exists
+TEST_F(HRTFProcessorTest, InitializeWithSingleRateFamily) {
+    createTestHRTFFiles();
+
+    // Remove 48k pair to simulate partial dataset
+    std::filesystem::remove(testDir_ + "/hrtf_m_48k.bin");
+    std::filesystem::remove(testDir_ + "/hrtf_m_48k.json");
+
+    HRTFProcessor processor;
+    EXPECT_TRUE(processor.initialize(testDir_, 256, HeadSize::M, RateFamily::RATE_44K));
 }
 
 // Test: Reject mismatched tap counts between rate families

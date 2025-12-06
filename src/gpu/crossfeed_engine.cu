@@ -194,6 +194,15 @@ HRTFProcessor::~HRTFProcessor() {
 
 bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
                                 HeadSize initialSize, RateFamily initialFamily) {
+    // Reset host-side state in case initialize() is retried
+    filterTaps_ = 0;
+    for (int i = 0; i < NUM_CONFIGS; ++i) {
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            h_filterCoeffs_[i][c].clear();
+        }
+        metadata_[i] = HRTFMetadata();
+    }
+
     blockSize_ = blockSize;
     currentHeadSize_ = initialSize;
     currentRateFamily_ = initialFamily;
@@ -240,6 +249,14 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
     if (tapMismatchDetected) {
         std::cerr << "Error: HRTF tap count mismatch across rate families or sizes. "
                   << "Ensure all HRTF filters share the same n_taps." << std::endl;
+        // Clear partially loaded host data to avoid inconsistent state on retry
+        filterTaps_ = 0;
+        for (int i = 0; i < NUM_CONFIGS; ++i) {
+            for (int c = 0; c < NUM_CHANNELS; ++c) {
+                h_filterCoeffs_[i][c].clear();
+            }
+            metadata_[i] = HRTFMetadata();
+        }
         return false;
     }
 
@@ -314,20 +331,14 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
             }
         }
 
-        if (expectedTaps > 0 && md.nTaps != expectedTaps) {
+        int enforcedTaps =
+            (expectedTaps > 0) ? expectedTaps : (filterTaps_ > 0 ? filterTaps_ : md.nTaps);
+        if (md.nTaps != enforcedTaps) {
             std::cerr << "Error: HRTF tap count mismatch for " << binPath << " (expected "
-                      << expectedTaps << ", got " << md.nTaps << ")" << std::endl;
+                      << enforcedTaps << ", got " << md.nTaps << ")" << std::endl;
             return false;
         }
-
-        // Set filter taps from first loaded config and enforce consistency
-        if (filterTaps_ == 0) {
-            filterTaps_ = md.nTaps;
-        } else if (filterTaps_ != md.nTaps) {
-            std::cerr << "Error: HRTF tap count mismatch: expected " << filterTaps_
-                      << ", got " << md.nTaps << std::endl;
-            return false;
-        }
+        filterTaps_ = enforcedTaps;
 
         // Get file size
         binFile.seekg(0, std::ios::end);
