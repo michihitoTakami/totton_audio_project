@@ -68,7 +68,7 @@ Magic Boxは、Raspberry Pi 5からJetson Orin NanoへのRTP転送において�
 ## SDP自動パース機能
 
 ### 実装箇所
-`src/rtp_session_manager.cpp:parseRtpmapLine()` (113-173行)
+`src/daemon/rtp/rtp_session_manager.cpp:parseRtpmapLine()` (113-173行)
 
 ### 対応フォーマット
 ```sdp
@@ -210,8 +210,8 @@ loadFilter("filter_48k_8x_640k_min_phase.bin")
 
 | ファイル | 役割 |
 |---------|------|
-| `src/rtp_session_manager.cpp` | RTP受信、SDPパース |
-| `src/rtp_session_manager.h` | SessionConfig定義 |
+| `src/daemon/rtp/rtp_session_manager.cpp` | RTP受信、SDPパース |
+| `include/daemon/rtp/rtp_session_manager.h` | SessionConfig定義 |
 | `src/alsa_daemon.cpp` | レート変更ハンドリング、GPU連携 |
 | `src/convolution_engine.cu` | GPU Upsampler（マルチレート対応） |
 | `include/convolution_engine.h` | `MULTI_RATE_CONFIGS` 定義 |

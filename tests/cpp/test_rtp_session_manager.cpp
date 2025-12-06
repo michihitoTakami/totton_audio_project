@@ -1,4 +1,4 @@
-#include "rtp_session_manager.h"
+#include "daemon/rtp/rtp_session_manager.h"
 
 #include <gtest/gtest.h>
 
@@ -35,13 +35,20 @@ TEST(RtpSessionConfigTest, ApplySdpOverrides) {
                              {"channels", 2},
                              {"bits_per_sample", 24},
                              {"sdp",
-                              "v=0\r\n"
-                              "o=- 0 0 IN IP4 127.0.0.1\r\n"
-                              "s=Test\r\n"
-                              "t=0 0\r\n"
-                              "m=audio 6000 RTP/AVP 112\r\n"
-                              "a=rtpmap:112 L24/96000/6\r\n"
-                              "a=rtpmap:111 L16/44100/2\r\n"}};
+                              "v=0
+"
+                              "o=- 0 0 IN IP4 127.0.0.1
+"
+                              "s=Test
+"
+                              "t=0 0
+"
+                              "m=audio 6000 RTP/AVP 112
+"
+                              "a=rtpmap:112 L24/96000/6
+"
+                              "a=rtpmap:111 L16/44100/2
+"}};
 
     SessionConfig config;
     std::string error;

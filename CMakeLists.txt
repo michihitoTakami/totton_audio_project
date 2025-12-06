@@ -302,7 +302,7 @@ target_compile_options(zeromq_interface PRIVATE
 )
 
 add_library(rtp_session STATIC
-    src/rtp_session_manager.cpp
+    src/daemon/rtp/rtp_session_manager.cpp
 )
 target_link_libraries(rtp_session PUBLIC
     logging

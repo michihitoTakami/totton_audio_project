@@ -1,5 +1,5 @@
-#ifndef RTP_SESSION_MANAGER_H
-#define RTP_SESSION_MANAGER_H
+#ifndef DAEMON_RTP_SESSION_MANAGER_H
+#define DAEMON_RTP_SESSION_MANAGER_H
 
 #include "error_codes.h"
 
@@ -140,4 +140,4 @@ class RtpSessionManager {
 
 }  // namespace Network
 
-#endif  // RTP_SESSION_MANAGER_H
+#endif  // DAEMON_RTP_SESSION_MANAGER_H

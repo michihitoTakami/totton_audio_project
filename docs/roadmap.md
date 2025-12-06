@@ -379,7 +379,7 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
   - **ハイレゾ対応**: 16/24/32-bit, 44.1k〜768kHz
   - **動的追従**: RTPストリームのレート変更に自動追従
   - **グリッチフリー切り替え**: Soft Mute機能によるシームレスなレート変更
-  - 実装ファイル: `src/rtp_session_manager.cpp`, `src/alsa_daemon.cpp`
+  - 実装ファイル: `src/daemon/rtp/rtp_session_manager.cpp`, `src/alsa_daemon.cpp`
 
 - [ ] **ALSA Direct Output**
   - USB DAC直接出力
