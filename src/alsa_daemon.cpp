@@ -18,6 +18,7 @@
 #include "daemon/output/alsa_output.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/rtp/rtp_engine_coordinator.h"
+#include "daemon/rtp/rtp_session_manager.h"
 #include "daemon/shutdown_manager.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
@@ -28,7 +29,6 @@
 #include "logging/metrics.h"
 #include "partition_runtime_utils.h"
 #include "playback_buffer.h"
-#include "daemon/rtp/rtp_session_manager.h"
 #include "soft_mute.h"
 
 #include <algorithm>
@@ -332,7 +332,7 @@ static std::vector<float> g_cf_output_buffer_right;
 
 static std::unique_ptr<streaming_cache::StreamingCacheManager> g_streaming_cache_manager;
 
-static daemon_core::api::EventDispatcher g_event_dispatcher;
+static std::unique_ptr<daemon_core::api::EventDispatcher> g_event_dispatcher;
 static daemon_core::api::DaemonDependencies g_daemon_dependencies{
     .config = &g_config,
     .running = &g_running,
@@ -378,24 +378,25 @@ static void update_daemon_dependencies() {
 }
 
 static void initialize_event_modules() {
-    g_event_dispatcher = daemon_core::api::EventDispatcher{};
+    g_event_dispatcher = std::make_unique<daemon_core::api::EventDispatcher>();
     update_daemon_dependencies();
 
     g_rate_switcher = std::make_unique<audio_pipeline::RateSwitcher>(
-        audio_pipeline::RateSwitcherDependencies{
-            .dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies,
-            .pendingRate = &g_pending_rate_change});
-    g_filter_manager = std::make_unique<audio_pipeline::FilterManager>(
-        audio_pipeline::FilterManagerDependencies{.dispatcher = &g_event_dispatcher,
-                                                  .deps = g_daemon_dependencies});
-    g_soft_mute_runner = std::make_unique<audio_pipeline::SoftMuteRunner>(
-        audio_pipeline::SoftMuteRunnerDependencies{.dispatcher = &g_event_dispatcher,
-                                                   .deps = g_daemon_dependencies});
-    g_alsa_output_interface = std::make_unique<daemon_output::AlsaOutput>(
-        daemon_output::AlsaOutputDependencies{.dispatcher = &g_event_dispatcher,
-                                              .deps = g_daemon_dependencies});
+        audio_pipeline::RateSwitcherDependencies{.dispatcher = g_event_dispatcher.get(),
+                                                 .deps = g_daemon_dependencies,
+                                                 .pendingRate = &g_pending_rate_change});
+    g_filter_manager =
+        std::make_unique<audio_pipeline::FilterManager>(audio_pipeline::FilterManagerDependencies{
+            .dispatcher = g_event_dispatcher.get(), .deps = g_daemon_dependencies});
+    g_soft_mute_runner =
+        std::make_unique<audio_pipeline::SoftMuteRunner>(audio_pipeline::SoftMuteRunnerDependencies{
+            .dispatcher = g_event_dispatcher.get(), .deps = g_daemon_dependencies});
+    g_alsa_output_interface =
+        std::make_unique<daemon_output::AlsaOutput>(daemon_output::AlsaOutputDependencies{
+            .dispatcher = g_event_dispatcher.get(), .deps = g_daemon_dependencies});
     g_handler_registry = std::make_unique<daemon_control::handlers::HandlerRegistry>(
-        daemon_control::handlers::HandlerRegistryDependencies{.dispatcher = &g_event_dispatcher});
+        daemon_control::handlers::HandlerRegistryDependencies{.dispatcher =
+                                                                  g_event_dispatcher.get()});
 
     g_rate_switcher->start();
     g_filter_manager->start();
@@ -405,13 +406,13 @@ static void initialize_event_modules() {
 }
 
 static void publish_rate_change_event(int detected_rate) {
-    if (!g_rate_switcher) {
+    if (!g_rate_switcher || !g_event_dispatcher) {
         return;
     }
     daemon_core::api::RateChangeRequested event;
     event.detectedInputRate = detected_rate;
     event.rateFamily = ConvolutionEngine::detectRateFamily(detected_rate);
-    g_event_dispatcher.publish(event);
+    g_event_dispatcher->publish(event);
 }
 
 static void publish_filter_switch_event(const std::string& filterPath, PhaseType phaseType,
@@ -420,7 +421,9 @@ static void publish_filter_switch_event(const std::string& filterPath, PhaseType
     event.filterPath = filterPath;
     event.phaseType = phaseType;
     event.reloadHeadroom = reloadHeadroom;
-    g_event_dispatcher.publish(event);
+    if (g_event_dispatcher) {
+        g_event_dispatcher->publish(event);
+    }
 }
 
 static void initialize_streaming_cache_manager();
@@ -2095,7 +2098,7 @@ int main(int argc, char* argv[]) {
         controlDeps.activePhaseType = &g_active_phase_type;
         controlDeps.inputSampleRate = &g_input_sample_rate;
         controlDeps.defaultAlsaDevice = DEFAULT_ALSA_DEVICE;
-        controlDeps.dispatcher = &g_event_dispatcher;
+        controlDeps.dispatcher = g_event_dispatcher.get();
         controlDeps.quitMainLoop = []() {
             if (g_main_loop_running.load() && g_pw_loop) {
                 pw_main_loop_quit(g_pw_loop);
