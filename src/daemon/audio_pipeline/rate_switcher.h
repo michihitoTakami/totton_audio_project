@@ -8,8 +8,8 @@
 namespace audio_pipeline {
 
 struct RateSwitcherDependencies {
-    daemon::api::EventDispatcher* dispatcher = nullptr;
-    daemon::api::DaemonDependencies deps;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
+    daemon_core::api::DaemonDependencies deps;
     std::atomic<int>* pendingRate = nullptr;
 };
 
@@ -18,7 +18,7 @@ class RateSwitcher {
     explicit RateSwitcher(RateSwitcherDependencies deps);
 
     void start();
-    void handle(const daemon::api::RateChangeRequested& event);
+    void handle(const daemon_core::api::RateChangeRequested& event);
 
     int lastSeenRate() const;
 
@@ -28,5 +28,3 @@ class RateSwitcher {
 };
 
 }  // namespace audio_pipeline
-
-

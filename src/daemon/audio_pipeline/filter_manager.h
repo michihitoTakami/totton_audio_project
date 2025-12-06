@@ -8,8 +8,8 @@
 namespace audio_pipeline {
 
 struct FilterManagerDependencies {
-    daemon::api::EventDispatcher* dispatcher = nullptr;
-    daemon::api::DaemonDependencies deps;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
+    daemon_core::api::DaemonDependencies deps;
 };
 
 class FilterManager {
@@ -17,7 +17,7 @@ class FilterManager {
     explicit FilterManager(FilterManagerDependencies deps);
 
     void start();
-    void handle(const daemon::api::FilterSwitchRequested& event);
+    void handle(const daemon_core::api::FilterSwitchRequested& event);
 
     std::string lastRequestedPath() const;
     PhaseType lastRequestedPhase() const;
@@ -29,5 +29,3 @@ class FilterManager {
 };
 
 }  // namespace audio_pipeline
-
-

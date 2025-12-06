@@ -10,13 +10,12 @@ SoftMuteRunner::SoftMuteRunner(SoftMuteRunnerDependencies deps) : deps_(std::mov
 
 void SoftMuteRunner::start() {
     if (deps_.dispatcher) {
-        deps_.dispatcher->subscribe([this](const daemon::api::FilterSwitchRequested& event) {
-            handle(event);
-        });
+        deps_.dispatcher->subscribe(
+            [this](const daemon_core::api::FilterSwitchRequested& event) { handle(event); });
     }
 }
 
-void SoftMuteRunner::handle(const daemon::api::FilterSwitchRequested& event) {
+void SoftMuteRunner::handle(const daemon_core::api::FilterSwitchRequested& event) {
     triggered_ = true;
     auto* controller = (deps_.deps.softMute) ? *deps_.deps.softMute : nullptr;
     if (controller) {
@@ -31,5 +30,3 @@ bool SoftMuteRunner::wasTriggered() const {
 }
 
 }  // namespace audio_pipeline
-
-

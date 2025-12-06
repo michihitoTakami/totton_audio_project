@@ -6,8 +6,8 @@
 namespace audio_pipeline {
 
 struct SoftMuteRunnerDependencies {
-    daemon::api::EventDispatcher* dispatcher = nullptr;
-    daemon::api::DaemonDependencies deps;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
+    daemon_core::api::DaemonDependencies deps;
 };
 
 class SoftMuteRunner {
@@ -15,7 +15,7 @@ class SoftMuteRunner {
     explicit SoftMuteRunner(SoftMuteRunnerDependencies deps);
 
     void start();
-    void handle(const daemon::api::FilterSwitchRequested& event);
+    void handle(const daemon_core::api::FilterSwitchRequested& event);
 
     bool wasTriggered() const;
 
@@ -25,5 +25,3 @@ class SoftMuteRunner {
 };
 
 }  // namespace audio_pipeline
-
-

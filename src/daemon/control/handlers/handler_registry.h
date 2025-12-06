@@ -7,7 +7,7 @@
 namespace daemon_control::handlers {
 
 struct HandlerRegistryDependencies {
-    daemon::api::EventDispatcher* dispatcher = nullptr;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
 };
 
 class HandlerRegistry {
@@ -23,5 +23,3 @@ class HandlerRegistry {
 };
 
 }  // namespace daemon_control::handlers
-
-

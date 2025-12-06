@@ -18,12 +18,13 @@ void PipeWireInput::stop() {
     }
 }
 
-void PipeWireInput::publishRateChange(int detectedRate, ConvolutionEngine::RateFamily family) const {
+void PipeWireInput::publishRateChange(int detectedRate,
+                                      ConvolutionEngine::RateFamily family) const {
     if (deps_.pendingRate) {
         deps_.pendingRate->store(detectedRate, std::memory_order_release);
     }
     if (deps_.dispatcher) {
-        daemon::api::RateChangeRequested event;
+        daemon_core::api::RateChangeRequested event;
         event.detectedInputRate = detectedRate;
         event.rateFamily = family;
         deps_.dispatcher->publish(event);
@@ -35,5 +36,3 @@ bool PipeWireInput::isRunning() const {
 }
 
 }  // namespace daemon_input
-
-

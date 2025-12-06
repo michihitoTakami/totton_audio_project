@@ -6,9 +6,9 @@ HandlerRegistry::HandlerRegistry(HandlerRegistryDependencies deps) : deps_(std::
 
 void HandlerRegistry::registerDefaults() {
     if (deps_.dispatcher) {
-        deps_.dispatcher->subscribe([](const daemon::api::RateChangeRequested&) {});
-        deps_.dispatcher->subscribe([](const daemon::api::DeviceChangeRequested&) {});
-        deps_.dispatcher->subscribe([](const daemon::api::FilterSwitchRequested&) {});
+        deps_.dispatcher->subscribe([](const daemon_core::api::RateChangeRequested&) {});
+        deps_.dispatcher->subscribe([](const daemon_core::api::DeviceChangeRequested&) {});
+        deps_.dispatcher->subscribe([](const daemon_core::api::FilterSwitchRequested&) {});
     }
     registered_ = 3;
 }
@@ -18,5 +18,3 @@ size_t HandlerRegistry::registeredCount() const {
 }
 
 }  // namespace daemon_control::handlers
-
-

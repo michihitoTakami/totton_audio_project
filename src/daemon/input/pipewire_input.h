@@ -7,7 +7,7 @@
 namespace daemon_input {
 
 struct PipeWireInputDependencies {
-    daemon::api::EventDispatcher* dispatcher = nullptr;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
     std::atomic<bool>* runningFlag = nullptr;
     std::atomic<int>* pendingRate = nullptr;
 };
@@ -28,5 +28,3 @@ class PipeWireInput {
 };
 
 }  // namespace daemon_input
-
-

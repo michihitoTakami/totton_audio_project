@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace daemon::api {
+namespace daemon_core::api {
 
 struct RateChangeRequested {
     int detectedInputRate = 0;
@@ -107,6 +107,4 @@ void EventDispatcher::publishImpl(const Event& event, const std::vector<Handler>
     }
 }
 
-}  // namespace daemon::api
-
-
+}  // namespace daemon_core::api

@@ -8,8 +8,8 @@
 namespace daemon_output {
 
 struct AlsaOutputDependencies {
-    daemon::api::EventDispatcher* dispatcher = nullptr;
-    daemon::api::DaemonDependencies deps;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
+    daemon_core::api::DaemonDependencies deps;
 };
 
 class AlsaOutput {
@@ -17,7 +17,7 @@ class AlsaOutput {
     explicit AlsaOutput(AlsaOutputDependencies deps);
 
     void start();
-    void handle(const daemon::api::DeviceChangeRequested& event);
+    void handle(const daemon_core::api::DeviceChangeRequested& event);
     void markReady(bool ready);
 
     std::string lastRequestedDevice() const;
@@ -30,5 +30,3 @@ class AlsaOutput {
 };
 
 }  // namespace daemon_output
-
-

@@ -15,7 +15,7 @@ void RtpInputAdapter::attachStream(const std::string& sessionId) {
 void RtpInputAdapter::requestDeviceChange(const std::string& preferredDevice) {
     lastDevice_ = preferredDevice;
     if (deps_.dispatcher) {
-        daemon::api::DeviceChangeRequested event;
+        daemon_core::api::DeviceChangeRequested event;
         event.preferredDevice = preferredDevice;
         deps_.dispatcher->publish(event);
     }
@@ -30,5 +30,3 @@ std::string RtpInputAdapter::lastRequestedDevice() const {
 }
 
 }  // namespace daemon_input
-
-

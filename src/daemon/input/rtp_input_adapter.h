@@ -7,7 +7,7 @@
 namespace daemon_input {
 
 struct RtpInputAdapterDependencies {
-    daemon::api::EventDispatcher* dispatcher = nullptr;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
 };
 
 class RtpInputAdapter {
@@ -28,5 +28,3 @@ class RtpInputAdapter {
 };
 
 }  // namespace daemon_input
-
-

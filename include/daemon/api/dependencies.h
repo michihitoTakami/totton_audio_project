@@ -24,7 +24,7 @@ class AlsaOutput;
 namespace daemon_input {
 class PipeWireInput;
 class RtpInputAdapter;
-}
+}  // namespace daemon_input
 
 namespace rtp_engine {
 class RtpEngineCoordinator;
@@ -34,7 +34,7 @@ namespace dac {
 class DacManager;
 }
 
-namespace daemon::api {
+namespace daemon_core::api {
 
 struct DaemonDependencies {
     AppConfig* config = nullptr;
@@ -57,6 +57,4 @@ struct DaemonContext {
     DaemonDependencies deps;
 };
 
-}  // namespace daemon::api
-
-
+}  // namespace daemon_core::api

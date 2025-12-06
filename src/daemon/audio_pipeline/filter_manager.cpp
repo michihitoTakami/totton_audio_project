@@ -10,13 +10,12 @@ FilterManager::FilterManager(FilterManagerDependencies deps) : deps_(std::move(d
 
 void FilterManager::start() {
     if (deps_.dispatcher) {
-        deps_.dispatcher->subscribe([this](const daemon::api::FilterSwitchRequested& event) {
-            handle(event);
-        });
+        deps_.dispatcher->subscribe(
+            [this](const daemon_core::api::FilterSwitchRequested& event) { handle(event); });
     }
 }
 
-void FilterManager::handle(const daemon::api::FilterSwitchRequested& event) {
+void FilterManager::handle(const daemon_core::api::FilterSwitchRequested& event) {
     lastPath_ = event.filterPath;
     lastPhase_ = event.phaseType;
 
@@ -37,5 +36,3 @@ PhaseType FilterManager::lastRequestedPhase() const {
 }
 
 }  // namespace audio_pipeline
-
-

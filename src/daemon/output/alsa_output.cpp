@@ -8,13 +8,12 @@ AlsaOutput::AlsaOutput(AlsaOutputDependencies deps) : deps_(std::move(deps)) {}
 
 void AlsaOutput::start() {
     if (deps_.dispatcher) {
-        deps_.dispatcher->subscribe([this](const daemon::api::DeviceChangeRequested& event) {
-            handle(event);
-        });
+        deps_.dispatcher->subscribe(
+            [this](const daemon_core::api::DeviceChangeRequested& event) { handle(event); });
     }
 }
 
-void AlsaOutput::handle(const daemon::api::DeviceChangeRequested& event) {
+void AlsaOutput::handle(const daemon_core::api::DeviceChangeRequested& event) {
     lastDevice_ = event.preferredDevice;
     if (deps_.deps.outputReady) {
         deps_.deps.outputReady->store(false, std::memory_order_release);
@@ -38,5 +37,3 @@ bool AlsaOutput::ready() const {
 }
 
 }  // namespace daemon_output
-
-

@@ -10,13 +10,12 @@ RateSwitcher::RateSwitcher(RateSwitcherDependencies deps) : deps_(std::move(deps
 
 void RateSwitcher::start() {
     if (deps_.dispatcher) {
-        deps_.dispatcher->subscribe([this](const daemon::api::RateChangeRequested& event) {
-            handle(event);
-        });
+        deps_.dispatcher->subscribe(
+            [this](const daemon_core::api::RateChangeRequested& event) { handle(event); });
     }
 }
 
-void RateSwitcher::handle(const daemon::api::RateChangeRequested& event) {
+void RateSwitcher::handle(const daemon_core::api::RateChangeRequested& event) {
     lastRate_.store(event.detectedInputRate, std::memory_order_release);
 
     if (deps_.pendingRate) {
@@ -38,5 +37,3 @@ int RateSwitcher::lastSeenRate() const {
 }
 
 }  // namespace audio_pipeline
-
-

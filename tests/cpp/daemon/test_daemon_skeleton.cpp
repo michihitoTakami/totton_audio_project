@@ -8,30 +8,29 @@
 #include "daemon/input/rtp_input_adapter.h"
 #include "daemon/output/alsa_output.h"
 
-#include <gtest/gtest.h>
-
 #include <atomic>
+#include <gtest/gtest.h>
 #include <string>
 
 namespace {
 
-daemon::api::RateChangeRequested makeRateEvent(int rate) {
-    daemon::api::RateChangeRequested event;
+daemon_core::api::RateChangeRequested makeRateEvent(int rate) {
+    daemon_core::api::RateChangeRequested event;
     event.detectedInputRate = rate;
     event.rateFamily = ConvolutionEngine::RateFamily::RATE_48K;
     return event;
 }
 
-daemon::api::FilterSwitchRequested makeFilterEvent(const std::string& path) {
-    daemon::api::FilterSwitchRequested event;
+daemon_core::api::FilterSwitchRequested makeFilterEvent(const std::string& path) {
+    daemon_core::api::FilterSwitchRequested event;
     event.filterPath = path;
     event.phaseType = PhaseType::Linear;
     event.reloadHeadroom = true;
     return event;
 }
 
-daemon::api::DeviceChangeRequested makeDeviceEvent(const std::string& device) {
-    daemon::api::DeviceChangeRequested event;
+daemon_core::api::DeviceChangeRequested makeDeviceEvent(const std::string& device) {
+    daemon_core::api::DeviceChangeRequested event;
     event.preferredDevice = device;
     event.mode = OutputMode::Usb;
     return event;
@@ -40,7 +39,7 @@ daemon::api::DeviceChangeRequested makeDeviceEvent(const std::string& device) {
 }  // namespace
 
 TEST(DaemonSkeleton, RateChangeEventUpdatesState) {
-    daemon::api::EventDispatcher dispatcher;
+    daemon_core::api::EventDispatcher dispatcher;
     std::atomic<int> pending{0};
     std::atomic<int> currentInput{0};
     std::atomic<int> currentOutput{0};
@@ -60,7 +59,7 @@ TEST(DaemonSkeleton, RateChangeEventUpdatesState) {
 }
 
 TEST(DaemonSkeleton, FilterSwitchRoutesToManagers) {
-    daemon::api::EventDispatcher dispatcher;
+    daemon_core::api::EventDispatcher dispatcher;
     bool refreshed = false;
     audio_pipeline::FilterManager manager(
         {.dispatcher = &dispatcher,
@@ -79,7 +78,7 @@ TEST(DaemonSkeleton, FilterSwitchRoutesToManagers) {
 }
 
 TEST(DaemonSkeleton, DeviceChangeRoutesToOutput) {
-    daemon::api::EventDispatcher dispatcher;
+    daemon_core::api::EventDispatcher dispatcher;
     std::atomic<bool> outputReady{true};
 
     daemon_output::AlsaOutput output(
@@ -93,20 +92,20 @@ TEST(DaemonSkeleton, DeviceChangeRoutesToOutput) {
 }
 
 TEST(DaemonSkeleton, ControlHandlersRegisterSubscriptions) {
-    daemon::api::EventDispatcher dispatcher;
+    daemon_core::api::EventDispatcher dispatcher;
     daemon_control::handlers::HandlerRegistry registry({.dispatcher = &dispatcher});
     registry.registerDefaults();
 
-    daemon::api::RateChangeRequested rateEvent = makeRateEvent(96000);
+    daemon_core::api::RateChangeRequested rateEvent = makeRateEvent(96000);
     dispatcher.publish(rateEvent);
 
     EXPECT_EQ(registry.registeredCount(), 3u);
 }
 
 TEST(DaemonSkeleton, RtpAdapterPublishesDeviceChange) {
-    daemon::api::EventDispatcher dispatcher;
+    daemon_core::api::EventDispatcher dispatcher;
     std::string lastDevice;
-    dispatcher.subscribe([&](const daemon::api::DeviceChangeRequested& event) {
+    dispatcher.subscribe([&](const daemon_core::api::DeviceChangeRequested& event) {
         lastDevice = event.preferredDevice;
     });
 
@@ -118,18 +117,17 @@ TEST(DaemonSkeleton, RtpAdapterPublishesDeviceChange) {
 }
 
 TEST(DaemonSkeleton, PipeWireInputPublishesRateChange) {
-    daemon::api::EventDispatcher dispatcher;
+    daemon_core::api::EventDispatcher dispatcher;
     std::atomic<bool> running{false};
     std::atomic<int> pending{0};
     int observedRate = 0;
 
-    dispatcher.subscribe([&](const daemon::api::RateChangeRequested& event) {
+    dispatcher.subscribe([&](const daemon_core::api::RateChangeRequested& event) {
         observedRate = event.detectedInputRate;
     });
 
-    daemon_input::PipeWireInput input({.dispatcher = &dispatcher,
-                                       .runningFlag = &running,
-                                       .pendingRate = &pending});
+    daemon_input::PipeWireInput input(
+        {.dispatcher = &dispatcher, .runningFlag = &running, .pendingRate = &pending});
     input.start();
     input.publishRateChange(44100, ConvolutionEngine::RateFamily::RATE_44K);
 
@@ -138,5 +136,3 @@ TEST(DaemonSkeleton, PipeWireInputPublishesRateChange) {
     EXPECT_EQ(pending.load(), 44100);
     EXPECT_EQ(observedRate, 44100);
 }
-
-
