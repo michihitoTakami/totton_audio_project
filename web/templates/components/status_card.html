@@ -12,7 +12,8 @@
         <h3>{{ status_title }}</h3>
     </div>
     <div class="status-card-body">
-        <div class="status-indicator" :class="{{ status_class }}" x-text="{{ status_text }}">
+        <div class="status-indicator" :class="{{ status_class }}">
+            <span x-text="{{ status_text }}"></span>
         </div>
     </div>
 </div>

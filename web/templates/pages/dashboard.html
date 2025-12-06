@@ -94,7 +94,7 @@
             {% set form_input_id = "phaseType" %}
             {% set form_input_model = "phaseType.selected" %}
             {% set form_on_change = "changePhaseType" %}
-            {% set form_select_options = '<option value="minimum">{{ t.get(\'dashboard.phase_type.minimum\') }}</option><option value="linear">{{ t.get(\'dashboard.phase_type.linear\') }}</option>' %}
+            {% set form_select_options = '<option value="minimum">' + t.get('dashboard.phase_type.minimum') + '</option><option value="linear">' + t.get('dashboard.phase_type.linear') + '</option>' %}
             {% include 'components/form_group.html' %}
             <div class="info-text">
                 <span class="icon">ℹ️</span>
