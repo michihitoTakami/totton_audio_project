@@ -4,6 +4,7 @@
 #include "base64.h"
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
+#include "daemon/api/events.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
 #include "hrtf/woodworth_model.h"
@@ -650,6 +651,13 @@ std::string ControlPlane::handleDacSelect(const daemon_ipc::ZmqRequest& request)
 
     deps_.dacManager->requestDevice(targetDevice);
 
+    if (deps_.dispatcher) {
+        daemon_core::api::DeviceChangeRequested event;
+        event.preferredDevice = targetDevice;
+        event.mode = OutputMode::Usb;
+        deps_.dispatcher->publish(event);
+    }
+
     return buildOkResponse(request, "Preferred ALSA device updated",
                            deps_.dacManager->buildDevicesJson());
 }
@@ -723,6 +731,13 @@ std::string ControlPlane::handleOutputModeSet(const daemon_ipc::ZmqRequest& requ
         deps_.setPreferredOutputDevice(*deps_.config, preferredDevice);
     }
     deps_.dacManager->requestDevice(preferredDevice);
+
+    if (deps_.dispatcher) {
+        daemon_core::api::DeviceChangeRequested event;
+        event.preferredDevice = preferredDevice;
+        event.mode = OutputMode::Usb;
+        deps_.dispatcher->publish(event);
+    }
 
     nlohmann::json options;
     options["usb"]["preferred_device"] = preferredDevice;

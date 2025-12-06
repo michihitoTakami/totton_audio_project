@@ -81,6 +81,8 @@
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
 
+static void refresh_current_headroom(const std::string& reason);
+
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
         std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
@@ -330,8 +332,8 @@ static std::vector<float> g_cf_output_buffer_right;
 
 static std::unique_ptr<streaming_cache::StreamingCacheManager> g_streaming_cache_manager;
 
-[[maybe_unused]] static daemon_core::api::EventDispatcher g_event_dispatcher;
-[[maybe_unused]] static daemon_core::api::DaemonDependencies g_daemon_dependencies{
+static daemon_core::api::EventDispatcher g_event_dispatcher;
+static daemon_core::api::DaemonDependencies g_daemon_dependencies{
     .config = &g_config,
     .running = &g_running,
     .outputReady = &g_output_ready,
@@ -344,21 +346,82 @@ static std::unique_ptr<streaming_cache::StreamingCacheManager> g_streaming_cache
     .rtpCoordinator = nullptr,
     .dacManager = nullptr,
     .streamingMutex = &g_streaming_mutex,
-    .refreshHeadroom = [](const std::string&) {},
+    .refreshHeadroom = refresh_current_headroom,
 };
 
-[[maybe_unused]] static audio_pipeline::RateSwitcher g_rate_switcher(
-    {.dispatcher = &g_event_dispatcher,
-     .deps = g_daemon_dependencies,
-     .pendingRate = &g_pending_rate_change});
-[[maybe_unused]] static audio_pipeline::FilterManager g_filter_manager(
-    {.dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies});
-[[maybe_unused]] static audio_pipeline::SoftMuteRunner g_soft_mute_runner(
-    {.dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies});
-[[maybe_unused]] static daemon_output::AlsaOutput g_alsa_output_interface(
-    {.dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies});
-[[maybe_unused]] static daemon_control::handlers::HandlerRegistry g_handler_registry(
-    {.dispatcher = &g_event_dispatcher});
+static audio_pipeline::AudioPipeline* g_audio_pipeline_raw = nullptr;
+static rtp_engine::RtpEngineCoordinator* g_rtp_coordinator_raw = nullptr;
+static dac::DacManager* g_dac_manager_raw = nullptr;
+
+static std::unique_ptr<audio_pipeline::RateSwitcher> g_rate_switcher;
+static std::unique_ptr<audio_pipeline::FilterManager> g_filter_manager;
+static std::unique_ptr<audio_pipeline::SoftMuteRunner> g_soft_mute_runner;
+static std::unique_ptr<daemon_output::AlsaOutput> g_alsa_output_interface;
+static std::unique_ptr<daemon_control::handlers::HandlerRegistry> g_handler_registry;
+
+static void update_daemon_dependencies() {
+    g_daemon_dependencies.config = &g_config;
+    g_daemon_dependencies.running = &g_running;
+    g_daemon_dependencies.outputReady = &g_output_ready;
+    g_daemon_dependencies.crossfeedEnabled = &g_crossfeed_enabled;
+    g_daemon_dependencies.currentInputRate = &g_current_input_rate;
+    g_daemon_dependencies.currentOutputRate = &g_current_output_rate;
+    g_daemon_dependencies.softMute = &g_soft_mute;
+    g_daemon_dependencies.upsampler = &g_upsampler;
+    g_daemon_dependencies.audioPipeline = &g_audio_pipeline_raw;
+    g_daemon_dependencies.rtpCoordinator = &g_rtp_coordinator_raw;
+    g_daemon_dependencies.dacManager = &g_dac_manager_raw;
+    g_daemon_dependencies.streamingMutex = &g_streaming_mutex;
+    g_daemon_dependencies.refreshHeadroom = [](const std::string& reason) {
+        refresh_current_headroom(reason);
+    };
+}
+
+static void initialize_event_modules() {
+    g_event_dispatcher = daemon_core::api::EventDispatcher{};
+    update_daemon_dependencies();
+
+    g_rate_switcher = std::make_unique<audio_pipeline::RateSwitcher>(
+        audio_pipeline::RateSwitcherDependencies{
+            .dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies,
+            .pendingRate = &g_pending_rate_change});
+    g_filter_manager = std::make_unique<audio_pipeline::FilterManager>(
+        audio_pipeline::FilterManagerDependencies{.dispatcher = &g_event_dispatcher,
+                                                  .deps = g_daemon_dependencies});
+    g_soft_mute_runner = std::make_unique<audio_pipeline::SoftMuteRunner>(
+        audio_pipeline::SoftMuteRunnerDependencies{.dispatcher = &g_event_dispatcher,
+                                                   .deps = g_daemon_dependencies});
+    g_alsa_output_interface = std::make_unique<daemon_output::AlsaOutput>(
+        daemon_output::AlsaOutputDependencies{.dispatcher = &g_event_dispatcher,
+                                              .deps = g_daemon_dependencies});
+    g_handler_registry = std::make_unique<daemon_control::handlers::HandlerRegistry>(
+        daemon_control::handlers::HandlerRegistryDependencies{.dispatcher = &g_event_dispatcher});
+
+    g_rate_switcher->start();
+    g_filter_manager->start();
+    g_soft_mute_runner->start();
+    g_alsa_output_interface->start();
+    g_handler_registry->registerDefaults();
+}
+
+static void publish_rate_change_event(int detected_rate) {
+    if (!g_rate_switcher) {
+        return;
+    }
+    daemon_core::api::RateChangeRequested event;
+    event.detectedInputRate = detected_rate;
+    event.rateFamily = ConvolutionEngine::detectRateFamily(detected_rate);
+    g_event_dispatcher.publish(event);
+}
+
+static void publish_filter_switch_event(const std::string& filterPath, PhaseType phaseType,
+                                        bool reloadHeadroom) {
+    daemon_core::api::FilterSwitchRequested event;
+    event.filterPath = filterPath;
+    event.phaseType = phaseType;
+    event.reloadHeadroom = reloadHeadroom;
+    g_event_dispatcher.publish(event);
+}
 
 static void initialize_streaming_cache_manager();
 
@@ -933,9 +996,9 @@ static void on_param_changed(void* userdata, uint32_t id, const struct spa_pod* 
     if (detected_rate != current_rate && detected_rate > 0) {
         LOG_INFO("[PipeWire] Sample rate change detected: {} -> {} Hz", current_rate,
                  detected_rate);
-        // Set pending rate change for main loop to process
-        // (avoid blocking in real-time callback)
+        // Set pending rate change for main loop to process (avoid blocking in RT callback)
         g_pending_rate_change.store(detected_rate, std::memory_order_release);
+        publish_rate_change_event(detected_rate);
     }
 }
 
@@ -1540,6 +1603,8 @@ int main(int argc, char* argv[]) {
             std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
         }
 
+        initialize_event_modules();
+
         // Determine PipeWire mode (config + env overrides)
         bool pipewireEnabled = g_config.pipewireEnabled;
         std::string pipewireOverrideReason;
@@ -1711,7 +1776,7 @@ int main(int argc, char* argv[]) {
         }
 
         g_active_phase_type = g_config.phaseType;
-        refresh_current_headroom("initial filter load");
+        publish_filter_switch_event(current_filter_path(), g_active_phase_type, true);
 
         std::cout << "Input sample rate: " << g_upsampler->getInputSampleRate() << " Hz -> "
                   << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
@@ -1900,6 +1965,7 @@ int main(int argc, char* argv[]) {
             };
             g_audio_pipeline =
                 std::make_unique<audio_pipeline::AudioPipeline>(std::move(pipelineDeps));
+            g_audio_pipeline_raw = g_audio_pipeline.get();
         }
 
         // Check for early abort before starting threads
@@ -1950,6 +2016,7 @@ int main(int argc, char* argv[]) {
                       metrics.packetsReceived, metrics.packetsDropped);
         };
         g_rtp_coordinator = std::make_unique<rtp_engine::RtpEngineCoordinator>(rtpDeps);
+        g_rtp_coordinator_raw = g_rtp_coordinator.get();
 
         // Initialize fallback manager (Issue #139)
         if (g_config.fallback.enabled) {
@@ -2016,6 +2083,7 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             break;
         }
+        g_dac_manager_raw = g_dac_manager.get();
 
         daemon_control::ControlPlaneDependencies controlDeps{};
         controlDeps.config = &g_config;
@@ -2027,6 +2095,7 @@ int main(int argc, char* argv[]) {
         controlDeps.activePhaseType = &g_active_phase_type;
         controlDeps.inputSampleRate = &g_input_sample_rate;
         controlDeps.defaultAlsaDevice = DEFAULT_ALSA_DEVICE;
+        controlDeps.dispatcher = &g_event_dispatcher;
         controlDeps.quitMainLoop = []() {
             if (g_main_loop_running.load() && g_pw_loop) {
                 pw_main_loop_quit(g_pw_loop);
@@ -2204,6 +2273,7 @@ int main(int argc, char* argv[]) {
         if (g_rtp_coordinator) {
             g_rtp_coordinator->shutdown();
             g_rtp_coordinator.reset();
+            g_rtp_coordinator_raw = nullptr;
         }
         if (g_fallback_manager) {
             g_fallback_manager->shutdown();
@@ -2218,6 +2288,7 @@ int main(int argc, char* argv[]) {
         g_crossfeed_enabled.store(false);
         if (g_audio_pipeline) {
             g_audio_pipeline.reset();  // Tear down pipeline before deleting GPU upsampler
+            g_audio_pipeline_raw = nullptr;
         }
         delete g_upsampler;
         g_upsampler = nullptr;
