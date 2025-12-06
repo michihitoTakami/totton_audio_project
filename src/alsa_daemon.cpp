@@ -3,13 +3,22 @@
 #include "convolution_engine.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
+#include "daemon/api/dependencies.h"
+#include "daemon/api/events.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
+#include "daemon/audio_pipeline/filter_manager.h"
+#include "daemon/audio_pipeline/rate_switcher.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
+#include "daemon/audio_pipeline/soft_mute_runner.h"
 #include "daemon/control/control_plane.h"
+#include "daemon/control/handlers/handler_registry.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/rtp/rtp_engine_coordinator.h"
 #include "daemon/shutdown_manager.h"
+#include "daemon/input/pipewire_input.h"
+#include "daemon/input/rtp_input_adapter.h"
+#include "daemon/output/alsa_output.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
 #include "eq_to_fir.h"
@@ -320,6 +329,35 @@ static std::vector<float> g_cf_output_buffer_left;
 static std::vector<float> g_cf_output_buffer_right;
 
 static std::unique_ptr<streaming_cache::StreamingCacheManager> g_streaming_cache_manager;
+
+[[maybe_unused]] static daemon::api::EventDispatcher g_event_dispatcher;
+[[maybe_unused]] static daemon::api::DaemonDependencies g_daemon_dependencies{
+    .config = &g_config,
+    .running = &g_running,
+    .outputReady = &g_output_ready,
+    .crossfeedEnabled = &g_crossfeed_enabled,
+    .currentInputRate = &g_current_input_rate,
+    .currentOutputRate = &g_current_output_rate,
+    .softMute = &g_soft_mute,
+    .upsampler = &g_upsampler,
+    .audioPipeline = nullptr,
+    .rtpCoordinator = nullptr,
+    .dacManager = nullptr,
+    .streamingMutex = &g_streaming_mutex,
+    .refreshHeadroom = [](const std::string&) {},
+};
+
+[[maybe_unused]] static audio_pipeline::RateSwitcher g_rate_switcher(
+    {.dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies,
+     .pendingRate = &g_pending_rate_change});
+[[maybe_unused]] static audio_pipeline::FilterManager g_filter_manager(
+    {.dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies});
+[[maybe_unused]] static audio_pipeline::SoftMuteRunner g_soft_mute_runner(
+    {.dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies});
+[[maybe_unused]] static daemon_output::AlsaOutput g_alsa_output_interface(
+    {.dispatcher = &g_event_dispatcher, .deps = g_daemon_dependencies});
+[[maybe_unused]] static daemon_control::handlers::HandlerRegistry g_handler_registry(
+    {.dispatcher = &g_event_dispatcher});
 
 static void initialize_streaming_cache_manager();
 
