@@ -28,13 +28,12 @@
                         {{ t.get('system.daemon.binary') }}: <span x-text="daemon.binaryPath"></span>
                     </div>
                 </div>
-                <button
-                    class="action-button btn-secondary"
-                    @click="restartDaemon"
-                    :disabled="actionInProgress"
-                >
-                    {{ t.get('system.daemon.restart') }}
-                </button>
+                {% include 'components/action_button.html' with
+                    button_label=t.get('system.daemon.restart'),
+                    alpine_click='restartDaemon',
+                    button_type='secondary',
+                    button_disabled='actionInProgress'
+                %}
             </div>
         </div>
     </div>
@@ -56,9 +55,10 @@
                     <span x-text="dac.runtimeState?.output_rate || 'N/A'"></span> Hz
                 </div>
             </div>
-            <div x-show="!dac.runtimeState || !dac.runtimeState.active_device" class="info-text">
-                {{ t.get('system.dac.no_devices') }}
-            </div>
+            {% include 'components/info_text.html' with
+                info_message=t.get('system.dac.no_devices'),
+                info_show='!dac.runtimeState || !dac.runtimeState.active_device'
+            %}
         </div>
 
         <!-- Available Devices -->
@@ -78,16 +78,16 @@
                                 @click="selectDac(device.id)"
                                 :disabled="actionInProgress || dac.runtimeState?.active_device === device.id"
                                 style="margin-left: 16px;"
-                            >
-                                <span x-text="dac.runtimeState?.active_device === device.id ? '{{ t.get('eq.profiles.active') }}' : '{{ t.get('system.dac.select') }}'"></span>
-                            </button>
+                                x-text="dac.runtimeState?.active_device === device.id ? '{{ t.get('eq.profiles.active') }}' : '{{ t.get('system.dac.select') }}'"
+                            ></button>
                         </div>
                     </div>
                 </template>
             </div>
-            <div x-show="dac.devices.length === 0" class="info-text">
-                {{ t.get('system.dac.no_devices') }}
-            </div>
+            {% include 'components/info_text.html' with
+                info_message=t.get('system.dac.no_devices'),
+                info_show='dac.devices.length === 0'
+            %}
         </div>
     </div>
 
@@ -142,9 +142,10 @@
                     </div>
                 </template>
             </div>
-            <div x-show="rtp.sessions.length === 0" class="info-text">
-                {{ t.get('system.rtp.no_sessions') }}
-            </div>
+            {% include 'components/info_text.html' with
+                info_message=t.get('system.rtp.no_sessions'),
+                info_show='rtp.sessions.length === 0'
+            %}
         </div>
 
         <!-- Discover Streams -->
@@ -182,9 +183,10 @@
                     </div>
                 </template>
             </div>
-            <div x-show="rtp.discoveredStreams.length === 0 && !rtp.discovering" class="info-text">
-                {{ t.get('system.rtp.no_streams') }}
-            </div>
+            {% include 'components/info_text.html' with
+                info_message=t.get('system.rtp.no_streams'),
+                info_show='rtp.discoveredStreams.length === 0 && !rtp.discovering'
+            %}
         </div>
     </div>
 
@@ -222,7 +224,7 @@
                     <div x-text="line" style="white-space: pre-wrap; word-break: break-all;"></div>
                 </template>
                 <div x-show="logs.lines.length === 0" class="info-text">
-                    {{ t.get('system.logs.no_logs') }}
+                    <span x-text="logs.errorMessage || '{{ t.get('system.logs.no_logs') }}'"></span>
                 </div>
             </div>
 
@@ -361,6 +363,7 @@ function systemSettingsData() {
             levelFilter: '',
             loading: false,
             autoRefresh: false,
+            errorMessage: '',
         },
 
         // Partitioned settings
@@ -476,6 +479,7 @@ function systemSettingsData() {
 
         async fetchLogs() {
             this.logs.loading = true;
+            this.logs.errorMessage = '';
             try {
                 const offset = this.logs.currentPage * this.logs.linesPerPage;
                 let url = `/api/system/logs?lines=${this.logs.linesPerPage}&offset=${offset}`;
@@ -483,7 +487,18 @@ function systemSettingsData() {
                     url += `&level=${this.logs.levelFilter}`;
                 }
                 const response = await fetch(url);
-                if (!response.ok) throw new Error('Failed to fetch logs');
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        const errorData = await response.json();
+                        this.logs.errorMessage = errorData.detail || '{{ t.get('system.logs.not_found') }}';
+                        this.logs.lines = [];
+                        this.logs.totalLines = 0;
+                        this.logs.filePath = '';
+                        this.logs.fileSize = 0;
+                        return;
+                    }
+                    throw new Error('Failed to fetch logs');
+                }
                 const data = await response.json();
                 this.logs.lines = data.logs || [];
                 this.logs.totalLines = data.total_lines || 0;
@@ -492,6 +507,7 @@ function systemSettingsData() {
             } catch (error) {
                 console.error('Failed to fetch logs:', error);
                 this.logs.lines = [];
+                this.logs.errorMessage = '{{ t.get('system.logs.not_found') }}';
             } finally {
                 this.logs.loading = false;
             }
