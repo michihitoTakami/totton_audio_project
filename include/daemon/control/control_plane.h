@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config_loader.h"
+#include "daemon/api/events.h"
 #include "daemon/control/zmq_server.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/pcm/dac_manager.h"
@@ -43,6 +44,7 @@ struct ControlPlaneDependencies {
     PhaseType* activePhaseType = nullptr;
     int* inputSampleRate = nullptr;
     const char* defaultAlsaDevice = nullptr;
+    daemon_core::api::EventDispatcher* dispatcher = nullptr;
 
     std::function<void()> quitMainLoop;
     std::function<runtime_stats::Dependencies()> buildRuntimeStats;
