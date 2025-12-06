@@ -27,6 +27,75 @@ function rtpManagementData() {
         // Polling interval
         pollingInterval: null,
 
+        buildSessionCreateRequest(base, overrideLatencyMs = null) {
+            const toInt = (value, fallback) => {
+                const parsed = parseInt(value, 10);
+                return Number.isFinite(parsed) ? parsed : fallback;
+            };
+
+            const payload = {
+                session_id: base.session_id,
+                endpoint: {
+                    bind_address: base.bind_address || '0.0.0.0',
+                    port: toInt(base.port, 6000),
+                },
+                format: {
+                    sample_rate: toInt(base.sample_rate, 48000),
+                    channels: toInt(base.channels, 2),
+                    bits_per_sample: toInt(base.bits_per_sample, 24),
+                    payload_type: toInt(base.payload_type, 97),
+                    big_endian: base.big_endian ?? true,
+                    signed_samples: base.signed ?? true,
+                },
+                sync: {
+                    target_latency_ms: toInt(
+                        overrideLatencyMs ?? base.target_latency_ms,
+                        toInt(this.rtpConfig.target_latency_ms, 50)
+                    ),
+                    watchdog_timeout_ms: toInt(base.watchdog_timeout_ms, 500),
+                    telemetry_interval_ms: toInt(base.telemetry_interval_ms, 1000),
+                    enable_ptp: base.enable_ptp ?? false,
+                },
+                rtcp: {
+                    enable: base.enable_rtcp ?? true,
+                },
+            };
+
+            if (base.source_host) {
+                payload.endpoint.source_host = base.source_host;
+            }
+            if (base.multicast) {
+                payload.endpoint.multicast = true;
+                if (base.multicast_group) {
+                    payload.endpoint.multicast_group = base.multicast_group;
+                }
+            }
+            if (base.interface) {
+                payload.endpoint.interface = base.interface;
+            }
+            const ttl = toInt(base.ttl, null);
+            if (ttl !== null) {
+                payload.endpoint.ttl = ttl;
+            }
+            const dscp = toInt(base.dscp, null);
+            if (dscp !== null) {
+                payload.endpoint.dscp = dscp;
+            }
+            const rtcpPort = toInt(base.rtcp_port, null);
+            if (rtcpPort !== null) {
+                payload.rtcp.port = rtcpPort;
+            }
+            if (payload.sync.enable_ptp && base.ptp_interface) {
+                payload.sync.ptp_interface = base.ptp_interface;
+            }
+            const ptpDomain = toInt(base.ptp_domain, null);
+            if (payload.sync.enable_ptp && ptpDomain !== null) {
+                payload.sync.ptp_domain = ptpDomain;
+            }
+
+            return payload;
+        },
+
         /**
          * Initialize the page
          */
@@ -63,25 +132,31 @@ function rtpManagementData() {
          */
         async connectStream(stream) {
             try {
-                const payload = {
-                    session_id: stream.session_id,
-                    port: stream.port,
-                    bind_address: stream.bind_address || '0.0.0.0'
-                };
-
-                if (stream.sample_rate) {
-                    payload.sample_rate = stream.sample_rate;
-                }
-                if (stream.channels) {
-                    payload.channels = stream.channels;
-                }
-                if (stream.payload_type) {
-                    payload.payload_type = stream.payload_type;
-                }
-                if (stream.multicast) {
-                    payload.multicast = true;
-                    payload.multicast_group = stream.multicast_group;
-                }
+                const payload = this.buildSessionCreateRequest(
+                    {
+                        session_id: stream.session_id,
+                        bind_address: stream.bind_address || '0.0.0.0',
+                        port: stream.port,
+                        source_host: stream.source_host,
+                        multicast: stream.multicast,
+                        multicast_group: stream.multicast_group,
+                        interface: stream.interface,
+                        ttl: stream.ttl,
+                        dscp: stream.dscp,
+                        sample_rate: stream.sample_rate,
+                        channels: stream.channels,
+                        bits_per_sample: stream.bits_per_sample,
+                        payload_type: stream.payload_type,
+                        big_endian: stream.big_endian,
+                        signed: stream.signed,
+                        enable_rtcp: stream.enable_rtcp,
+                        rtcp_port: stream.rtcp_port,
+                        enable_ptp: stream.enable_ptp,
+                        ptp_interface: stream.ptp_interface,
+                        ptp_domain: stream.ptp_domain,
+                    },
+                    stream.target_latency_ms ?? this.rtpConfig.target_latency_ms
+                );
 
                 const response = await fetch('/api/rtp/sessions', {
                     method: 'POST',
@@ -191,18 +266,13 @@ function rtpManagementData() {
 
                 // 4. Restart sessions with new latency
                 let restartedCount = 0;
+                const failedSessions = [];
                 for (const session of currentSessions) {
                     try {
-                        const restartPayload = {
-                            session_id: session.session_id,
-                            port: session.port,
-                            bind_address: session.bind_address || '0.0.0.0',
-                            target_latency_ms: parseInt(this.rtpConfig.target_latency_ms)
-                        };
-
-                        if (session.sample_rate) restartPayload.sample_rate = session.sample_rate;
-                        if (session.channels) restartPayload.channels = session.channels;
-                        if (session.payload_type) restartPayload.payload_type = session.payload_type;
+                        const restartPayload = this.buildSessionCreateRequest(
+                            session,
+                            this.rtpConfig.target_latency_ms
+                        );
 
                         const restartResponse = await fetch('/api/rtp/sessions', {
                             method: 'POST',
@@ -212,16 +282,25 @@ function rtpManagementData() {
 
                         if (restartResponse.ok) {
                             restartedCount++;
+                        } else {
+                            failedSessions.push(session.session_id);
+                            const error = await restartResponse.json().catch(() => ({}));
+                            console.error(`Failed to restart session ${session.session_id}:`, error);
                         }
                     } catch (error) {
                         console.error(`Failed to restart session ${session.session_id}:`, error);
+                        failedSessions.push(session.session_id);
                     }
                 }
 
                 // 5. Reload sessions
                 await this.loadActiveSessions();
 
-                showToast(t('rtp.config.applied', {count: restartedCount, total: currentSessions.length}), 'success');
+                if (failedSessions.length === 0) {
+                    showToast(t('rtp.config.applied', {count: restartedCount, total: currentSessions.length}), 'success');
+                } else {
+                    showToast(t('rtp.config.apply_error'), 'error');
+                }
             } catch (error) {
                 console.error('Apply config error:', error);
                 showToast(t('rtp.config.apply_error'), 'error');
