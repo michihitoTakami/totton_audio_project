@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config_loader.h"
-#include "rtp_session_manager.h"
+#include "daemon/rtp/rtp_session_manager.h"
 
 #include <atomic>
 #include <chrono>

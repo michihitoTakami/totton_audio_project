@@ -28,7 +28,7 @@
 #include "logging/metrics.h"
 #include "partition_runtime_utils.h"
 #include "playback_buffer.h"
-#include "rtp_session_manager.h"
+#include "daemon/rtp/rtp_session_manager.h"
 #include "soft_mute.h"
 
 #include <algorithm>
