@@ -30,7 +30,6 @@ from .templates import get_admin_html, get_rtp_sessions_html
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
-    render_crossfeed,
     render_rtp_management,
     render_system,
 )
@@ -166,12 +165,6 @@ async def dashboard_page(lang: str = "en"):
 async def eq_page(lang: str = "en"):
     """Serve the EQ Settings page."""
     return render_eq_settings(lang=lang)
-
-
-@app.get("/crossfeed", response_class=HTMLResponse)
-async def crossfeed_page(lang: str = "en"):
-    """Serve the Crossfeed page."""
-    return render_crossfeed(lang=lang)
 
 
 @app.get("/rtp", response_class=HTMLResponse)
