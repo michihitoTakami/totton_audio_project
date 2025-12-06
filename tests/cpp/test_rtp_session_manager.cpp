@@ -34,21 +34,14 @@ TEST(RtpSessionConfigTest, ApplySdpOverrides) {
                              {"sample_rate", 48000},
                              {"channels", 2},
                              {"bits_per_sample", 24},
-                             {"sdp",
-                              "v=0
-"
-                              "o=- 0 0 IN IP4 127.0.0.1
-"
-                              "s=Test
-"
-                              "t=0 0
-"
-                              "m=audio 6000 RTP/AVP 112
-"
-                              "a=rtpmap:112 L24/96000/6
-"
-                              "a=rtpmap:111 L16/44100/2
-"}};
+                             {"sdp", R"(v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=Test
+t=0 0
+m=audio 6000 RTP/AVP 112
+a=rtpmap:112 L24/96000/6
+a=rtpmap:111 L16/44100/2
+)"}};
 
     SessionConfig config;
     std::string error;
