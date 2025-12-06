@@ -28,12 +28,13 @@
                         {{ t.get('system.daemon.binary') }}: <span x-text="daemon.binaryPath"></span>
                     </div>
                 </div>
-                {% include 'components/action_button.html' with
-                    button_label=t.get('system.daemon.restart'),
-                    alpine_click='restartDaemon',
-                    button_type='secondary',
-                    button_disabled='actionInProgress'
-                %}
+                <button
+                    class="action-button btn-secondary"
+                    @click="restartDaemon"
+                    :disabled="actionInProgress"
+                >
+                    {{ t.get('system.daemon.restart') }}
+                </button>
             </div>
         </div>
     </div>
@@ -55,10 +56,9 @@
                     <span x-text="dac.runtimeState?.output_rate || 'N/A'"></span> Hz
                 </div>
             </div>
-            {% include 'components/info_text.html' with
-                info_message=t.get('system.dac.no_devices'),
-                info_show='!dac.runtimeState || !dac.runtimeState.active_device'
-            %}
+            <div x-show="!dac.runtimeState || !dac.runtimeState.active_device" class="info-text">
+                <span class="icon">ℹ️</span>{{ t.get('system.dac.no_devices') }}
+            </div>
         </div>
 
         <!-- Available Devices -->
@@ -84,10 +84,9 @@
                     </div>
                 </template>
             </div>
-            {% include 'components/info_text.html' with
-                info_message=t.get('system.dac.no_devices'),
-                info_show='dac.devices.length === 0'
-            %}
+            <div x-show="dac.devices.length === 0" class="info-text">
+                <span class="icon">ℹ️</span>{{ t.get('system.dac.no_devices') }}
+            </div>
         </div>
     </div>
 
@@ -142,10 +141,9 @@
                     </div>
                 </template>
             </div>
-            {% include 'components/info_text.html' with
-                info_message=t.get('system.rtp.no_sessions'),
-                info_show='rtp.sessions.length === 0'
-            %}
+            <div x-show="rtp.sessions.length === 0" class="info-text">
+                <span class="icon">ℹ️</span>{{ t.get('system.rtp.no_sessions') }}
+            </div>
         </div>
 
         <!-- Discover Streams -->
@@ -183,10 +181,9 @@
                     </div>
                 </template>
             </div>
-            {% include 'components/info_text.html' with
-                info_message=t.get('system.rtp.no_streams'),
-                info_show='rtp.discoveredStreams.length === 0 && !rtp.discovering'
-            %}
+            <div x-show="rtp.discoveredStreams.length === 0 && !rtp.discovering" class="info-text">
+                <span class="icon">ℹ️</span>{{ t.get('system.rtp.no_streams') }}
+            </div>
         </div>
     </div>
 
