@@ -291,44 +291,76 @@
                 {{ t.get('system.partitioned.enable') }}
             </label>
 
-            <div x-show="partitioned.enabled" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
-                <div class="form-group">
-                    <label>
-                        {{ t.get('system.partitioned.fast_taps') }}
-                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.fast_taps_hint') }}</span>
-                    </label>
-                    <input type="number" x-model.number="partitioned.fastPartitionTaps" min="4096" max="131072" step="4096" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
+            <div x-show="partitioned.enabled">
+                <!-- Parameters Grid -->
+                <div style="display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 16px;">
+                    <!-- Fast Partition Taps -->
+                    <div class="form-group">
+                        <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+                            <span>
+                                {{ t.get('system.partitioned.fast_taps') }}
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', fast_min=4096, fast_max=131072, fast_default=32768) }}</span>
+                            </span>
+                        </label>
+                        <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.fast_taps_desc') }}</div>
+                        <input type="number" x-model.number="partitioned.fastPartitionTaps" min="4096" max="131072" step="4096" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px; width: 100%;">
+                    </div>
+
+                    <!-- Min Partition Taps -->
+                    <div class="form-group">
+                        <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+                            <span>
+                                {{ t.get('system.partitioned.min_taps') }}
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', min_min=4096, min_max=131072, min_default=32768) }}</span>
+                            </span>
+                        </label>
+                        <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.min_taps_desc') }}</div>
+                        <input type="number" x-model.number="partitioned.minPartitionTaps" min="4096" max="131072" step="4096" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px; width: 100%;">
+                    </div>
+
+                    <!-- Max Partitions -->
+                    <div class="form-group">
+                        <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+                            <span>
+                                {{ t.get('system.partitioned.max_partitions') }}
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', max_min=1, max_max=16, max_default=4) }}</span>
+                            </span>
+                        </label>
+                        <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.max_partitions_desc') }}</div>
+                        <input type="number" x-model.number="partitioned.maxPartitions" min="1" max="16" step="1" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px; width: 100%;">
+                    </div>
+
+                    <!-- Tail FFT Multiple -->
+                    <div class="form-group">
+                        <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+                            <span>
+                                {{ t.get('system.partitioned.tail_multiple') }}
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', tail_min=1, tail_max=8, tail_default=2) }}</span>
+                            </span>
+                        </label>
+                        <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.tail_multiple_desc') }}</div>
+                        <input type="number" x-model.number="partitioned.tailFftMultiple" min="1" max="8" step="1" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px; width: 100%;">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>
-                        {{ t.get('system.partitioned.min_taps') }}
-                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.min_taps_hint') }}</span>
-                    </label>
-                    <input type="number" x-model.number="partitioned.minPartitionTaps" min="4096" max="131072" step="4096" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
-                </div>
-                <div class="form-group">
-                    <label>
-                        {{ t.get('system.partitioned.max_partitions') }}
-                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.max_partitions_hint') }}</span>
-                    </label>
-                    <input type="number" x-model.number="partitioned.maxPartitions" min="1" max="16" step="1" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
-                </div>
-                <div class="form-group">
-                    <label>
-                        {{ t.get('system.partitioned.tail_multiple') }}
-                        <span style="font-size: 12px; opacity: 0.6; font-weight: normal;">{{ t.get('system.partitioned.tail_multiple_hint') }}</span>
-                    </label>
-                    <input type="number" x-model.number="partitioned.tailFftMultiple" min="1" max="8" step="1" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 4px;">
+
+                <!-- Action Buttons -->
+                <div style="display: flex; gap: 12px;">
+                    <button
+                        class="action-button btn-primary"
+                        @click="savePartitionedSettings"
+                        :disabled="partitioned.loading || actionInProgress"
+                    >
+                        {{ t.get('system.partitioned.save') }}
+                    </button>
+                    <button
+                        class="action-button btn-secondary"
+                        @click="resetPartitionedToDefaults"
+                        :disabled="partitioned.loading || actionInProgress"
+                    >
+                        {{ t.get('system.partitioned.reset_defaults') }}
+                    </button>
                 </div>
             </div>
-
-            <button
-                class="action-button btn-primary"
-                @click="savePartitionedSettings"
-                :disabled="partitioned.loading || actionInProgress"
-            >
-                {{ t.get('system.partitioned.save') }}
-            </button>
         </div>
 
         <!-- Read-Only Config Display -->
@@ -707,6 +739,16 @@ function systemSettingsData() {
                 this.partitioned.loading = false;
                 this.actionInProgress = false;
             }
+        },
+
+        resetPartitionedToDefaults() {
+            if (!confirm('Reset to default values?')) return;
+            // Default values
+            this.partitioned.fastPartitionTaps = 32768;
+            this.partitioned.minPartitionTaps = 32768;
+            this.partitioned.maxPartitions = 4;
+            this.partitioned.tailFftMultiple = 2;
+            alert('Reset to default values. Click "Save Settings" to apply.');
         },
 
         previousPage() {
