@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -193,6 +194,15 @@ HRTFProcessor::~HRTFProcessor() {
 
 bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
                                 HeadSize initialSize, RateFamily initialFamily) {
+    // Reset host-side state in case initialize() is retried
+    filterTaps_ = 0;
+    for (int i = 0; i < NUM_CONFIGS; ++i) {
+        for (int c = 0; c < NUM_CHANNELS; ++c) {
+            h_filterCoeffs_[i][c].clear();
+        }
+        metadata_[i] = HRTFMetadata();
+    }
+
     blockSize_ = blockSize;
     currentHeadSize_ = initialSize;
     currentRateFamily_ = initialFamily;
@@ -203,6 +213,8 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
 
     // Load all HRTF configurations (4 sizes * 2 rate families)
     bool anyLoaded = false;
+    bool tapMismatchDetected = false;
+    int expectedTapCount = -1;
     for (int sizeIdx = 0; sizeIdx < static_cast<int>(HeadSize::COUNT); ++sizeIdx) {
         for (int familyIdx = 0; familyIdx < 2; ++familyIdx) {
             HeadSize size = static_cast<HeadSize>(sizeIdx);
@@ -214,15 +226,37 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
             std::string binPath = hrtfDir + "/hrtf_" + sizeStr + "_" + familyStr + ".bin";
             std::string jsonPath = hrtfDir + "/hrtf_" + sizeStr + "_" + familyStr + ".json";
 
-            if (loadHRTFCoefficients(binPath, jsonPath, size, family)) {
+            if (!std::filesystem::exists(binPath) || !std::filesystem::exists(jsonPath)) {
+                continue;  // Missing configuration is tolerated; skip silently
+            }
+
+            if (loadHRTFCoefficients(binPath, jsonPath, size, family, expectedTapCount)) {
                 anyLoaded = true;
+                if (expectedTapCount < 0) {
+                    expectedTapCount = filterTaps_;
+                }
                 std::cout << "  Loaded: " << sizeStr << "/" << familyStr << std::endl;
+            } else {
+                tapMismatchDetected = true;
             }
         }
     }
 
     if (!anyLoaded) {
         std::cerr << "Error: No HRTF files loaded from " << hrtfDir << std::endl;
+        return false;
+    }
+    if (tapMismatchDetected) {
+        std::cerr << "Error: HRTF tap count mismatch across rate families or sizes. "
+                  << "Ensure all HRTF filters share the same n_taps." << std::endl;
+        // Clear partially loaded host data to avoid inconsistent state on retry
+        filterTaps_ = 0;
+        for (int i = 0; i < NUM_CONFIGS; ++i) {
+            for (int c = 0; c < NUM_CHANNELS; ++c) {
+                h_filterCoeffs_[i][c].clear();
+            }
+            metadata_[i] = HRTFMetadata();
+        }
         return false;
     }
 
@@ -253,7 +287,7 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
 
 bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
                                           const std::string& jsonPath,
-                                          HeadSize size, RateFamily family) {
+                                          HeadSize size, RateFamily family, int expectedTaps) {
     // Check if files exist
     std::ifstream binFile(binPath, std::ios::binary);
     std::ifstream jsonFile(jsonPath);
@@ -297,13 +331,14 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
             }
         }
 
-        // Set filter taps from first loaded config
-        if (filterTaps_ == 0) {
-            filterTaps_ = md.nTaps;
-        } else if (filterTaps_ != md.nTaps) {
-            std::cerr << "Warning: HRTF tap count mismatch: expected " << filterTaps_
-                      << ", got " << md.nTaps << std::endl;
+        int enforcedTaps =
+            (expectedTaps > 0) ? expectedTaps : (filterTaps_ > 0 ? filterTaps_ : md.nTaps);
+        if (md.nTaps != enforcedTaps) {
+            std::cerr << "Error: HRTF tap count mismatch for " << binPath << " (expected "
+                      << enforcedTaps << ", got " << md.nTaps << ")" << std::endl;
+            return false;
         }
+        filterTaps_ = enforcedTaps;
 
         // Get file size
         binFile.seekg(0, std::ios::end);
@@ -464,10 +499,18 @@ bool HRTFProcessor::setupGPUResources() {
             for (int c = 0; c < NUM_CHANNELS; ++c) {
                 checkCudaError(cudaMemset(d_filterPadded, 0, fftSize_ * sizeof(float)),
                                "cudaMemset filter padded");
+                size_t copyTaps =
+                    std::min(static_cast<size_t>(filterTaps_), h_filterCoeffs_[configIdx][c].size());
                 checkCudaError(
                     cudaMemcpy(d_filterPadded, h_filterCoeffs_[configIdx][c].data(),
-                               filterTaps_ * sizeof(float), cudaMemcpyHostToDevice),
+                               copyTaps * sizeof(float), cudaMemcpyHostToDevice),
                     "cudaMemcpy filter to padded");
+                if (copyTaps < static_cast<size_t>(filterTaps_)) {
+                    size_t remaining = static_cast<size_t>(filterTaps_) - copyTaps;
+                    checkCudaError(
+                        cudaMemset(d_filterPadded + copyTaps, 0, remaining * sizeof(float)),
+                        "cudaMemset filter padding");
+                }
                 checkCufftError(
                     cufftExecR2C(fftPlanForward_, d_filterPadded, d_filterFFT_[configIdx][c]),
                     "cufftExecR2C filter");

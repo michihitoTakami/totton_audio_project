@@ -243,8 +243,10 @@ class HRTFProcessor {
 
    private:
     // Load HRTF coefficients from binary file
+    // expectedTaps: when >0, strictly enforce identical tap counts across all
+    // rate families/head sizes to prevent buffer overruns during GPU setup.
     bool loadHRTFCoefficients(const std::string& binPath, const std::string& jsonPath,
-                              HeadSize size, RateFamily family);
+                              HeadSize size, RateFamily family, int expectedTaps = -1);
 
     // Setup GPU resources
     bool setupGPUResources();

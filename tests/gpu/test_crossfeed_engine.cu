@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "crossfeed_engine.h"
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <vector>
 #include <nlohmann/json.hpp>
@@ -24,32 +25,47 @@ class HRTFProcessorTest : public ::testing::Test {
 
     // Create synthetic HRTF filter coefficients for testing
     // Simple impulse response that approximates crossfeed
-    void createTestHRTFFiles(int taps = 256) {
+    void createTestHRTFFiles(int taps44k = 256, int taps48k = -1) {
+        if (taps48k < 0) {
+            taps48k = taps44k;
+        }
         // Create 4 channels: LL, LR, RL, RR
         // LL/RR: Strong (ipsilateral) - direct path
         // LR/RL: Weaker (contralateral) - cross path with delay
-        std::vector<float> ll(taps, 0.0f);
-        std::vector<float> lr(taps, 0.0f);
-        std::vector<float> rl(taps, 0.0f);
-        std::vector<float> rr(taps, 0.0f);
+        std::vector<float> ll;
+        std::vector<float> lr;
+        std::vector<float> rl;
+        std::vector<float> rr;
 
         // LL: Direct path impulse at t=0
-        ll[0] = 1.0f;
+        // (sized per rate family below)
 
         // LR: Contralateral with ITD delay (~20 samples at 705.6kHz ~ 28us)
         // and ILD attenuation (0.5)
         int itdSamples = 20;
-        lr[itdSamples] = 0.5f;
+        // (sized per rate family below)
 
         // RL: Same as LR (symmetric head)
-        rl[itdSamples] = 0.5f;
+        // (sized per rate family below)
 
         // RR: Same as LL
-        rr[0] = 1.0f;
+        // (sized per rate family below)
 
         // Write binary file (4 channels interleaved)
         for (const char* size : {"m"}) {
             for (const char* family : {"44k", "48k"}) {
+                int taps = (strcmp(family, "44k") == 0) ? taps44k : taps48k;
+
+                ll.assign(taps, 0.0f);
+                lr.assign(taps, 0.0f);
+                rl.assign(taps, 0.0f);
+                rr.assign(taps, 0.0f);
+
+                ll[0] = 1.0f;
+                int itdSamples = std::min(taps - 1, 20);
+                lr[itdSamples] = 0.5f;
+                rl[itdSamples] = 0.5f;
+                rr[0] = 1.0f;
                 std::string binPath = testDir_ + "/hrtf_" + size + "_" + family + ".bin";
                 std::ofstream binFile(binPath, std::ios::binary);
                 binFile.write(reinterpret_cast<const char*>(ll.data()), taps * sizeof(float));
@@ -107,6 +123,27 @@ TEST_F(HRTFProcessorTest, Initialize) {
 TEST_F(HRTFProcessorTest, InitializeInvalidDir) {
     HRTFProcessor processor;
     EXPECT_FALSE(processor.initialize("/nonexistent/path"));
+}
+
+// Test: Initialize succeeds when only 44k family exists
+TEST_F(HRTFProcessorTest, InitializeWithSingleRateFamily) {
+    createTestHRTFFiles();
+
+    // Remove 48k pair to simulate partial dataset
+    std::filesystem::remove(testDir_ + "/hrtf_m_48k.bin");
+    std::filesystem::remove(testDir_ + "/hrtf_m_48k.json");
+
+    HRTFProcessor processor;
+    EXPECT_TRUE(processor.initialize(testDir_, 256, HeadSize::M, RateFamily::RATE_44K));
+}
+
+// Test: Reject mismatched tap counts between rate families
+TEST_F(HRTFProcessorTest, RejectsMismatchedTapCountsAcrossRates) {
+    // 44k uses 256 taps, 48k uses 128 taps -> should be rejected
+    createTestHRTFFiles(256, 128);
+
+    HRTFProcessor processor;
+    EXPECT_FALSE(processor.initialize(testDir_, 256, HeadSize::M, RateFamily::RATE_44K));
 }
 
 // Test: Enable/disable crossfeed
