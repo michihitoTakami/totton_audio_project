@@ -3623,6 +3623,20 @@
             ],
             "title": "Payload Type",
             "description": "Dynamic payload type (96-127)"
+          },
+          "target_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 10.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Latency Ms",
+            "description": "Target latency in milliseconds (10-1000ms)"
           }
         },
         "type": "object",

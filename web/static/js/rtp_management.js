@@ -21,7 +21,9 @@ function rtpManagementData() {
         rtpConfig: {
             port: null,
             bind_address: null,
-            payload_type: null
+            payload_type: null,
+            latency_preset: '100',  // Default: Normal (100ms)
+            target_latency_ms: 100
         },
         savingConfig: false,
 
@@ -173,8 +175,20 @@ function rtpManagementData() {
             this.rtpConfig = {
                 port: 46000,
                 bind_address: '0.0.0.0',
-                payload_type: 96
+                payload_type: 96,
+                latency_preset: '100',  // Default: Normal (100ms)
+                target_latency_ms: 100
             };
+        },
+
+        /**
+         * Handle latency preset change
+         */
+        onLatencyPresetChange() {
+            const preset = this.rtpConfig.latency_preset;
+            if (preset !== 'custom') {
+                this.rtpConfig.target_latency_ms = parseInt(preset);
+            }
         },
 
         /**
@@ -186,7 +200,8 @@ function rtpManagementData() {
                 const payload = {
                     port: parseInt(this.rtpConfig.port),
                     bind_address: this.rtpConfig.bind_address,
-                    payload_type: parseInt(this.rtpConfig.payload_type)
+                    payload_type: parseInt(this.rtpConfig.payload_type),
+                    target_latency_ms: parseInt(this.rtpConfig.target_latency_ms)
                 };
 
                 const response = await fetch('/api/rtp/config', {

@@ -210,6 +210,21 @@
             {% set form_input_placeholder = "96" %}
             {% include 'components/form_group.html' %}
 
+            {% set form_label = t.get('rtp.config.latency') %}
+            {% set form_input_type = "select" %}
+            {% set form_input_model = "rtpConfig.latency_preset" %}
+            {% set form_on_change = "onLatencyPresetChange" %}
+            {% set form_select_options = '<option value="200">{{ t.get(\'rtp.config.latency.stable\') }}</option><option value="100">{{ t.get(\'rtp.config.latency.normal\') }}</option><option value="50">{{ t.get(\'rtp.config.latency.realtime\') }}</option><option value="custom">{{ t.get(\'rtp.config.latency.custom\') }}</option>' %}
+            {% include 'components/form_group.html' %}
+
+            <div x-show="rtpConfig.latency_preset === 'custom'" style="display: none;">
+                {% set form_label = t.get('rtp.config.latency') + " (ms)" %}
+                {% set form_input_type = "text" %}
+                {% set form_input_model = "rtpConfig.target_latency_ms" %}
+                {% set form_input_placeholder = "100" %}
+                {% include 'components/form_group.html' %}
+            </div>
+
             <div class="btn-row">
                 {% set button_label = t.get('rtp.config.save') %}
                 {% set alpine_click = "saveRtpConfig" %}

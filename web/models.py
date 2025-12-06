@@ -1034,6 +1034,12 @@ class RtpConfigUpdate(BaseModel):
         le=127,
         description="Dynamic payload type (96-127)",
     )
+    target_latency_ms: Optional[int] = Field(
+        default=None,
+        ge=10,
+        le=1000,
+        description="Target latency in milliseconds (10-1000ms)",
+    )
 
     @field_validator("bind_address")
     @classmethod

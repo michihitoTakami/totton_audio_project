@@ -345,7 +345,8 @@ def update_rtp_config(updates: dict[str, Any]) -> bool:
     """Update RTP configuration in config.json.
 
     Args:
-        updates: Dictionary containing RTP config updates (port, bind_address, payload_type)
+        updates: Dictionary containing RTP config updates
+                (port, bind_address, payload_type, target_latency_ms)
 
     Returns:
         True if successful, False otherwise
@@ -363,6 +364,8 @@ def update_rtp_config(updates: dict[str, Any]) -> bool:
             rtp_section["bindAddress"] = updates["bind_address"]
         if "payload_type" in updates:
             rtp_section["payloadType"] = updates["payload_type"]
+        if "target_latency_ms" in updates:
+            rtp_section["targetLatencyMs"] = updates["target_latency_ms"]
 
         existing["rtp"] = rtp_section
         with open(CONFIG_PATH, "w") as f:
