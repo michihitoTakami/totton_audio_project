@@ -108,7 +108,9 @@ bool PcmStreamHandler::handleClient(int fd) const {
         }
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                std::cerr << "[PcmStreamHandler] recv timeout" << std::endl;
+                std::cerr << "[PcmStreamHandler] recv timeout; keep waiting" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
             } else {
                 std::perror("recv");
             }

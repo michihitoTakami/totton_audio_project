@@ -1,6 +1,7 @@
 #include "alsa_playback.h"
 
 #include <iostream>
+#include <memory>
 #include <utility>
 
 namespace {
@@ -31,80 +32,77 @@ AlsaPlayback::~AlsaPlayback() {
     close();
 }
 
+struct HwParamsDeleter {
+    void operator()(snd_pcm_hw_params_t *p) const {
+        if (p) {
+            snd_pcm_hw_params_free(p);
+        }
+    }
+};
+
 bool AlsaPlayback::configureHardware(uint32_t sampleRate, uint16_t channels,
                                      snd_pcm_format_t format) {
-    snd_pcm_hw_params_t *params = nullptr;
-    snd_pcm_hw_params_malloc(&params);
+    std::unique_ptr<snd_pcm_hw_params_t, HwParamsDeleter> params;
+    snd_pcm_hw_params_t *raw = nullptr;
+    snd_pcm_hw_params_malloc(&raw);
+    params.reset(raw);
     if (!params) {
         std::cerr << "[AlsaPlayback] failed to alloc hw_params" << std::endl;
         return false;
     }
 
-    auto cleanup = [params]() { snd_pcm_hw_params_free(params); };
-
-    if (snd_pcm_hw_params_any(handle_, params) < 0) {
+    if (snd_pcm_hw_params_any(handle_, params.get()) < 0) {
         std::cerr << "[AlsaPlayback] snd_pcm_hw_params_any failed" << std::endl;
-        cleanup();
         return false;
     }
 
-    if (snd_pcm_hw_params_set_access(handle_, params, SND_PCM_ACCESS_RW_INTERLEAVED) < 0) {
+    if (snd_pcm_hw_params_set_access(handle_, params.get(), SND_PCM_ACCESS_RW_INTERLEAVED) < 0) {
         std::cerr << "[AlsaPlayback] failed to set access" << std::endl;
-        cleanup();
         return false;
     }
 
-    if (snd_pcm_hw_params_set_format(handle_, params, format) < 0) {
+    if (snd_pcm_hw_params_set_format(handle_, params.get(), format) < 0) {
         std::cerr << "[AlsaPlayback] failed to set format" << std::endl;
-        cleanup();
         return false;
     }
 
-    if (snd_pcm_hw_params_set_channels(handle_, params, channels) < 0) {
+    if (snd_pcm_hw_params_set_channels(handle_, params.get(), channels) < 0) {
         std::cerr << "[AlsaPlayback] failed to set channels=" << channels << std::endl;
-        cleanup();
         return false;
     }
 
     unsigned int rate = sampleRate;
-    if (snd_pcm_hw_params_set_rate_near(handle_, params, &rate, nullptr) < 0) {
+    if (snd_pcm_hw_params_set_rate_near(handle_, params.get(), &rate, nullptr) < 0) {
         std::cerr << "[AlsaPlayback] failed to set rate=" << sampleRate << std::endl;
-        cleanup();
         return false;
     }
     if (rate != sampleRate) {
         std::cerr << "[AlsaPlayback] rate mismatch (requested " << sampleRate << ", got " << rate
                   << ")" << std::endl;
-        cleanup();
         return false;
     }
 
     snd_pcm_uframes_t period = DEFAULT_PERIOD_FRAMES;
-    if (snd_pcm_hw_params_set_period_size_near(handle_, params, &period, nullptr) < 0) {
+    if (snd_pcm_hw_params_set_period_size_near(handle_, params.get(), &period, nullptr) < 0) {
         std::cerr << "[AlsaPlayback] failed to set period size" << std::endl;
-        cleanup();
         return false;
     }
 
     snd_pcm_uframes_t buffer = DEFAULT_BUFFER_FRAMES;
-    if (snd_pcm_hw_params_set_buffer_size_near(handle_, params, &buffer) < 0) {
+    if (snd_pcm_hw_params_set_buffer_size_near(handle_, params.get(), &buffer) < 0) {
         std::cerr << "[AlsaPlayback] failed to set buffer size" << std::endl;
-        cleanup();
         return false;
     }
 
-    if (snd_pcm_hw_params(handle_, params) < 0) {
+    if (snd_pcm_hw_params(handle_, params.get()) < 0) {
         std::cerr << "[AlsaPlayback] snd_pcm_hw_params apply failed" << std::endl;
-        cleanup();
         return false;
     }
 
-    snd_pcm_hw_params_get_period_size(params, &period, nullptr);
-    snd_pcm_hw_params_get_buffer_size(params, &buffer);
+    snd_pcm_hw_params_get_period_size(params.get(), &period, nullptr);
+    snd_pcm_hw_params_get_buffer_size(params.get(), &buffer);
     periodSize_ = period;
     bufferSize_ = buffer;
-
-    cleanup();
     return true;
 }
 
