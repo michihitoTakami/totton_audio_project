@@ -1,5 +1,6 @@
 add_library(rpi_pcm_bridge
     AlsaCapture.cpp
+    Options.cpp
     TcpClient.cpp
 )
 
@@ -34,4 +35,3 @@ target_compile_options(rpi_pcm_bridge_app
 )
 
 set_target_properties(rpi_pcm_bridge_app PROPERTIES OUTPUT_NAME "rpi_pcm_bridge")
-
