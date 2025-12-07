@@ -1,8 +1,11 @@
 #include "tcp_server.h"
 
+#include "logging.h"
+
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -44,7 +47,7 @@ bool TcpServer::start() {
     std::string portStr = std::to_string(port_);
     int gai = getaddrinfo(nullptr, portStr.c_str(), &hints, &res);
     if (gai != 0) {
-        std::cerr << "[TcpServer] getaddrinfo failed: " << gai_strerror(gai) << std::endl;
+        logError(std::string("[TcpServer] getaddrinfo failed: ") + gai_strerror(gai));
         return false;
     }
 
@@ -78,19 +81,24 @@ bool TcpServer::start() {
     freeaddrinfo(res);
 
     if (listenFd_ < 0) {
-        std::cerr << "[TcpServer] bind failed for port " << port_ << std::endl;
+        logError("[TcpServer] bind failed for port " + std::to_string(port_));
         return false;
     }
 
+    int flags = fcntl(listenFd_, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(listenFd_, F_SETFL, flags | O_NONBLOCK);
+    }
+
     if (::listen(listenFd_, 1) < 0) {
-        std::perror("listen");
+        logError(std::string("listen: ") + std::strerror(errno));
         ::close(listenFd_);
         listenFd_ = -1;
         return false;
     }
 
     listening_ = true;
-    std::cout << "[TcpServer] listening on port " << port() << std::endl;
+    logInfo("[TcpServer] listening on port " + std::to_string(port()));
     return true;
 }
 
@@ -103,13 +111,15 @@ int TcpServer::acceptClient() {
     socklen_t addrlen = sizeof(addr);
     int fd = ::accept(listenFd_, reinterpret_cast<struct sockaddr *>(&addr), &addrlen);
     if (fd < 0) {
-        std::perror("accept");
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return -1;
+        }
+        logError(std::string("accept: ") + std::strerror(errno));
         return -1;
     }
 
     if (clientFd_ >= 0) {
-        std::cout << "[TcpServer] rejecting extra connection; already handling a client"
-                  << std::endl;
+        logWarn("[TcpServer] rejecting extra connection; already handling a client");
         ::close(fd);
         return -2;
     }
@@ -119,11 +129,11 @@ int TcpServer::acceptClient() {
     tv.tv_sec = 5;
     tv.tv_usec = 0;
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        std::perror("setsockopt(SO_RCVTIMEO)");
+        logWarn(std::string("setsockopt(SO_RCVTIMEO): ") + std::strerror(errno));
     }
 
     clientFd_ = fd;
-    std::cout << "[TcpServer] client accepted" << std::endl;
+    logInfo("[TcpServer] client accepted");
     return fd;
 }
 
@@ -131,7 +141,7 @@ void TcpServer::closeClient() {
     if (clientFd_ >= 0) {
         ::close(clientFd_);
         clientFd_ = -1;
-        std::cout << "[TcpServer] client connection closed" << std::endl;
+        logInfo("[TcpServer] client connection closed");
     }
 }
 
@@ -142,6 +152,6 @@ void TcpServer::stop() {
         listenFd_ = -1;
         listening_ = false;
         boundPort_ = 0;
-        std::cout << "[TcpServer] stop listening" << std::endl;
+        logInfo("[TcpServer] stop listening");
     }
 }

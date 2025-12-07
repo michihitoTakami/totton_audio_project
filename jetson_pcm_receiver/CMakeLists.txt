@@ -35,6 +35,7 @@ if(NOT HAVE_SYS_SOCKET_H OR NOT HAVE_NETDB_H OR NOT HAVE_GETADDRINFO OR NOT HAVE
 endif()
 
 add_library(jetson_pcm_receiver_lib
+    src/logging.cpp
     src/tcp_server.cpp
     src/alsa_playback.cpp
     src/pcm_stream_handler.cpp
