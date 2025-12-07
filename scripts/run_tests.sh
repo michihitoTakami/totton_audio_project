@@ -17,6 +17,10 @@ CMAKE_BIN=${CMAKE_BIN:-cmake}
 if ! "$CMAKE_BIN" --version >/dev/null 2>&1 && [ -x /usr/bin/cmake ]; then
     CMAKE_BIN=/usr/bin/cmake
 fi
+CTEST_BIN=${CTEST_BIN:-ctest}
+if ! "$CTEST_BIN" --version >/dev/null 2>&1 && [ -x /usr/bin/ctest ]; then
+    CTEST_BIN=/usr/bin/ctest
+fi
 
 # Get changed files compared to origin/main
 # For pre-push, we compare against what we're pushing to
@@ -35,6 +39,7 @@ echo ""
 RUN_PYTHON=false
 RUN_CPP=false
 RUN_GPU=false
+RUN_RPI=false
 
 # Analyze changed files
 for file in $CHANGED_FILES; do
@@ -48,6 +53,9 @@ for file in $CHANGED_FILES; do
             ;;
         tests/gpu/*|data/coefficients/*)
             RUN_GPU=true
+            ;;
+        raspberry_pi/*)
+            RUN_RPI=true
             ;;
         CMakeLists.txt)
             RUN_CPP=true
@@ -137,8 +145,22 @@ if $RUN_GPU; then
     echo ""
 fi
 
+# Raspberry Pi capture app tests
+if $RUN_RPI; then
+    echo -e "${YELLOW}=== Running Raspberry Pi capture tests ===${NC}"
+    "$CMAKE_BIN" -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | tail -20
+    "$CMAKE_BIN" --build raspberry_pi/build --target rpi_capture_tests -j8 2>&1 | tail -20
+    if "$CTEST_BIN" --test-dir raspberry_pi/build --output-on-failure; then
+        echo -e "${GREEN}Raspberry Pi capture tests passed!${NC}"
+    else
+        echo -e "${RED}Raspberry Pi capture tests failed!${NC}"
+        TESTS_PASSED=false
+    fi
+    echo ""
+fi
+
 # Summary
-if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU; then
+if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU && ! $RUN_RPI; then
     echo -e "${GREEN}=== No tests required (docs/config only changes) ===${NC}"
     exit 0
 fi
