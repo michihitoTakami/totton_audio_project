@@ -218,6 +218,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     };
 
     bool ok = true;
+    bool takeoverPending = false;
     int consecutiveTimeouts = 0;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
         if (connectionMode != ConnectionMode::Single) {
@@ -225,6 +226,7 @@ bool PcmStreamHandler::handleClient(int fd) {
             if (res.takeoverPending || server_.hasPendingClient()) {
                 logWarn("[PcmStreamHandler] takeover requested; switching client");
                 ok = false;
+                takeoverPending = true;
                 break;
             }
             if (res.rejected) {
@@ -282,7 +284,7 @@ bool PcmStreamHandler::handleClient(int fd) {
         status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
         status_->setStreaming(false);
     }
-    if (!stopFlag_.load(std::memory_order_relaxed)) {
+    if (!stopFlag_.load(std::memory_order_relaxed) && !takeoverPending) {
         std::this_thread::sleep_for(std::chrono::milliseconds(acceptCooldownMs));
     }
     return ok;
