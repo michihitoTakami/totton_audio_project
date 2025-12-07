@@ -299,7 +299,7 @@
                         <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
                             <span>
                                 {{ t.get('system.partitioned.fast_taps') }}
-                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', fast_min=4096, fast_max=131072, fast_default=32768) }}</span>
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">(Min: 4096, Max: 131072, Default: 32768)</span>
                             </span>
                         </label>
                         <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.fast_taps_desc') }}</div>
@@ -311,7 +311,7 @@
                         <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
                             <span>
                                 {{ t.get('system.partitioned.min_taps') }}
-                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', min_min=4096, min_max=131072, min_default=32768) }}</span>
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">(Min: 4096, Max: 131072, Default: 32768)</span>
                             </span>
                         </label>
                         <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.min_taps_desc') }}</div>
@@ -323,7 +323,7 @@
                         <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
                             <span>
                                 {{ t.get('system.partitioned.max_partitions') }}
-                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', max_min=1, max_max=16, max_default=4) }}</span>
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">(Min: 1, Max: 16, Default: 4)</span>
                             </span>
                         </label>
                         <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.max_partitions_desc') }}</div>
@@ -335,7 +335,7 @@
                         <label style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
                             <span>
                                 {{ t.get('system.partitioned.tail_multiple') }}
-                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">{{ t.get('system.partitioned.range', tail_min=1, tail_max=8, tail_default=2) }}</span>
+                                <span style="font-size: 11px; opacity: 0.5; font-weight: normal; margin-left: 4px;">(Min: 1, Max: 8, Default: 2)</span>
                             </span>
                         </label>
                         <div style="font-size: 13px; opacity: 0.7; margin-bottom: 8px; line-height: 1.4;">{{ t.get('system.partitioned.tail_multiple_desc') }}</div>
