@@ -1,10 +1,11 @@
 #include "TcpClient.h"
 
+#include "logging.h"
+
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <iostream>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -39,13 +40,14 @@ bool TcpClient::ensureConnected() {
         return true;
     }
 
-    for (int attempt = 0; attempt < maxRetries_; ++attempt) {
+    while (true) {
         if (connectOnce()) {
+            backoff_ = backoffMin_;
             return true;
         }
         std::this_thread::sleep_for(backoff_);
+        backoff_ = std::min(backoff_ * 2, backoffMax_);
     }
-    return false;
 }
 
 bool TcpClient::connectOnce() {
@@ -55,7 +57,7 @@ bool TcpClient::connectOnce() {
 
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        std::clog << "[TcpClient] socket() failed: " << std::strerror(errno) << '\n';
+        logError(std::string("[TcpClient] socket() failed: ") + std::strerror(errno));
         return false;
     }
 
@@ -65,13 +67,13 @@ bool TcpClient::connectOnce() {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port_);
     if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) != 1) {
-        std::clog << "[TcpClient] inet_pton failed for host " << host_ << '\n';
+        logError("[TcpClient] inet_pton failed for host " + host_);
         ::close(fd);
         return false;
     }
 
     if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-        std::clog << "[TcpClient] connect failed: " << std::strerror(errno) << '\n';
+        logError(std::string("[TcpClient] connect failed: ") + std::strerror(errno));
         ::close(fd);
         return false;
     }
@@ -79,12 +81,12 @@ bool TcpClient::connectOnce() {
     sock_ = fd;
 
     if (!sendAll(headerBytes_.data(), headerBytes_.size())) {
-        std::clog << "[TcpClient] failed to send header after connect" << '\n';
+        logError("[TcpClient] failed to send header after connect");
         closeSocket();
         return false;
     }
 
-    std::clog << "[TcpClient] connected to " << host_ << ":" << port_ << " and sent header" << '\n';
+    logInfo("[TcpClient] connected to " + host_ + ":" + std::to_string(port_) + " and sent header");
     return true;
 }
 
@@ -110,7 +112,7 @@ bool TcpClient::sendPcmChunk(const std::vector<std::uint8_t> &payload) {
         return true;
     }
 
-    std::clog << "[TcpClient] send failed, reconnecting..." << '\n';
+    logWarn("[TcpClient] send failed, reconnecting...");
     closeSocket();
 
     std::this_thread::sleep_for(backoff_);
@@ -138,7 +140,7 @@ bool TcpClient::sendAll(const std::uint8_t *data, std::size_t size) {
         if (sent < 0 && errno == EINTR) {
             continue;
         }
-        std::clog << "[TcpClient] send error: " << std::strerror(errno) << '\n';
+        logError(std::string("[TcpClient] send error: ") + std::strerror(errno));
         return false;
     }
     return true;
@@ -153,7 +155,7 @@ void TcpClient::closeSocket() {
         ::shutdown(sock_, SHUT_RDWR);
         ::close(sock_);
         sock_ = -1;
-        std::clog << "[TcpClient] socket closed" << '\n';
+        logInfo("[TcpClient] socket closed");
     }
 }
 

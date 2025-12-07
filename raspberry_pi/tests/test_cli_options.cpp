@@ -42,8 +42,8 @@ TEST(ParseOptions, ReturnsDefaultsWhenNoArgs) {
     EXPECT_EQ(parsed.options->rate, 48000u);
     EXPECT_EQ(parsed.options->format, AlsaCapture::SampleFormat::S16_LE);
     EXPECT_EQ(parsed.options->frames, static_cast<snd_pcm_uframes_t>(4096));
-    EXPECT_EQ(parsed.options->logLevel, "info");
-    EXPECT_EQ(parsed.options->iterations, 3);
+    EXPECT_EQ(parsed.options->logLevel, LogLevel::Info);
+    EXPECT_EQ(parsed.options->iterations, -1);
 }
 
 TEST(ParseOptions, ParsesProvidedArguments) {
@@ -62,7 +62,7 @@ TEST(ParseOptions, ParsesProvidedArguments) {
     EXPECT_EQ(parsed.options->rate, 96000u);
     EXPECT_EQ(parsed.options->format, AlsaCapture::SampleFormat::S24_3LE);
     EXPECT_EQ(parsed.options->frames, static_cast<snd_pcm_uframes_t>(2048));
-    EXPECT_EQ(parsed.options->logLevel, "debug");
+    EXPECT_EQ(parsed.options->logLevel, LogLevel::Debug);
     EXPECT_EQ(parsed.options->iterations, 5);
 }
 

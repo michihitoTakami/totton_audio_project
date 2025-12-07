@@ -1,12 +1,15 @@
 #include "AlsaCapture.h"
 
+#include "logging.h"
+
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 
 namespace {
 
-void logError(const std::string &prefix, int err) {
-    std::clog << prefix << ": " << snd_strerror(err) << std::endl;
+void logAlsaError(const std::string &prefix, int err) {
+    logError(prefix + ": " + snd_strerror(err));
 }
 
 }  // namespace
@@ -24,14 +27,14 @@ bool AlsaCapture::open(const Config &config) {
     frameBytes_ = bytesPerFrame(config_);
 
     auto fail = [&](const std::string &message, int err) {
-        logError(message, err);
+        logAlsaError(message, err);
         close();
         return false;
     };
 
     int rc = snd_pcm_open(&handle_, config_.deviceName.c_str(), SND_PCM_STREAM_CAPTURE, 0);
     if (rc < 0) {
-        logError("[AlsaCapture] snd_pcm_open failed", rc);
+        logAlsaError("[AlsaCapture] snd_pcm_open failed", rc);
         handle_ = nullptr;
         return false;
     }
@@ -62,8 +65,8 @@ bool AlsaCapture::open(const Config &config) {
         return fail("[AlsaCapture] set_rate_near failed", rc);
     }
     if (rate != config_.sampleRate) {
-        std::clog << "[AlsaCapture] Requested rate " << config_.sampleRate
-                  << " differs from configured rate " << rate << " (continuing)" << std::endl;
+        logWarn("[AlsaCapture] Requested rate " + std::to_string(config_.sampleRate) +
+                " differs from configured rate " + std::to_string(rate) + " (continuing)");
         config_.sampleRate = rate;
     }
 
@@ -78,26 +81,26 @@ bool AlsaCapture::open(const Config &config) {
         return fail("[AlsaCapture] apply hw_params failed", rc);
     }
 
-    std::clog << "[AlsaCapture] opened device=" << config_.deviceName
-              << " rate=" << config_.sampleRate << " ch=" << config_.channels
-              << " fmt=" << snd_pcm_format_name(alsaFormat) << " period_frames=" << period
-              << std::endl;
+    logInfo("[AlsaCapture] opened device=" + config_.deviceName + " rate=" +
+            std::to_string(config_.sampleRate) + " ch=" + std::to_string(config_.channels) +
+            " fmt=" + std::string(snd_pcm_format_name(alsaFormat)) +
+            " period_frames=" + std::to_string(period));
     return true;
 }
 
 bool AlsaCapture::start() {
     if (!handle_) {
-        std::clog << "[AlsaCapture] start requested without open" << std::endl;
+        logWarn("[AlsaCapture] start requested without open");
         return false;
     }
     int rc = snd_pcm_prepare(handle_);
     if (rc < 0) {
-        logError("[AlsaCapture] snd_pcm_prepare failed", rc);
+        logAlsaError("[AlsaCapture] snd_pcm_prepare failed", rc);
         return false;
     }
     rc = snd_pcm_start(handle_);
     if (rc < 0) {
-        logError("[AlsaCapture] snd_pcm_start failed", rc);
+        logAlsaError("[AlsaCapture] snd_pcm_start failed", rc);
         return false;
     }
     return true;
@@ -105,7 +108,7 @@ bool AlsaCapture::start() {
 
 int AlsaCapture::read(std::vector<std::uint8_t> &buffer) {
     if (!handle_) {
-        std::clog << "[AlsaCapture] read called before open" << std::endl;
+        logWarn("[AlsaCapture] read called before open");
         return -1;
     }
 
@@ -116,16 +119,16 @@ int AlsaCapture::read(std::vector<std::uint8_t> &buffer) {
 
     const snd_pcm_sframes_t frames = snd_pcm_readi(handle_, buffer.data(), config_.periodFrames);
     if (frames == -EPIPE) {
-        std::clog << "[AlsaCapture] XRUN detected, recovering..." << std::endl;
+        logWarn("[AlsaCapture] XRUN detected, recovering...");
         int rc = snd_pcm_prepare(handle_);
         if (rc < 0) {
-            logError("[AlsaCapture] snd_pcm_prepare failed after XRUN", rc);
+            logAlsaError("[AlsaCapture] snd_pcm_prepare failed after XRUN", rc);
             return -1;
         }
         return -EPIPE;
     }
     if (frames < 0) {
-        logError("[AlsaCapture] snd_pcm_readi failed", static_cast<int>(frames));
+        logAlsaError("[AlsaCapture] snd_pcm_readi failed", static_cast<int>(frames));
         return static_cast<int>(frames);
     }
     return static_cast<int>(frames * frameBytes_);
@@ -135,7 +138,7 @@ void AlsaCapture::stop() {
     if (handle_) {
         snd_pcm_drop(handle_);
         snd_pcm_drain(handle_);
-        std::clog << "[AlsaCapture] stopped" << std::endl;
+        logInfo("[AlsaCapture] stopped");
     }
 }
 
@@ -143,12 +146,60 @@ void AlsaCapture::close() {
     if (handle_) {
         snd_pcm_close(handle_);
         handle_ = nullptr;
-        std::clog << "[AlsaCapture] closed" << std::endl;
+        logInfo("[AlsaCapture] closed");
     }
 }
 
 bool AlsaCapture::isOpen() const {
     return handle_ != nullptr;
+}
+
+std::optional<unsigned int> AlsaCapture::currentSampleRate() const {
+    if (!handle_) {
+        return std::nullopt;
+    }
+    snd_pcm_hw_params_t *params = nullptr;
+    snd_pcm_hw_params_alloca(&params);
+    if (snd_pcm_hw_params_current(handle_, params) < 0) {
+        return std::nullopt;
+    }
+    unsigned int rate = 0;
+    if (snd_pcm_hw_params_get_rate(params, &rate, nullptr) < 0) {
+        return std::nullopt;
+    }
+    return rate;
+}
+
+std::optional<unsigned int> AlsaCapture::currentChannels() const {
+    if (!handle_) {
+        return std::nullopt;
+    }
+    snd_pcm_hw_params_t *params = nullptr;
+    snd_pcm_hw_params_alloca(&params);
+    if (snd_pcm_hw_params_current(handle_, params) < 0) {
+        return std::nullopt;
+    }
+    unsigned int channels = 0;
+    if (snd_pcm_hw_params_get_channels(params, &channels) < 0) {
+        return std::nullopt;
+    }
+    return channels;
+}
+
+std::optional<AlsaCapture::SampleFormat> AlsaCapture::currentFormat() const {
+    if (!handle_) {
+        return std::nullopt;
+    }
+    snd_pcm_hw_params_t *params = nullptr;
+    snd_pcm_hw_params_alloca(&params);
+    if (snd_pcm_hw_params_current(handle_, params) < 0) {
+        return std::nullopt;
+    }
+    snd_pcm_format_t fmt = SND_PCM_FORMAT_UNKNOWN;
+    if (snd_pcm_hw_params_get_format(params, &fmt) < 0) {
+        return std::nullopt;
+    }
+    return fromAlsaFormat(fmt);
 }
 
 snd_pcm_format_t AlsaCapture::toAlsaFormat(SampleFormat format) {
@@ -161,6 +212,19 @@ snd_pcm_format_t AlsaCapture::toAlsaFormat(SampleFormat format) {
         return SND_PCM_FORMAT_S32_LE;
     }
     return SND_PCM_FORMAT_UNKNOWN;
+}
+
+std::optional<AlsaCapture::SampleFormat> AlsaCapture::fromAlsaFormat(snd_pcm_format_t format) {
+    switch (format) {
+    case SND_PCM_FORMAT_S16_LE:
+        return SampleFormat::S16_LE;
+    case SND_PCM_FORMAT_S24_3LE:
+        return SampleFormat::S24_3LE;
+    case SND_PCM_FORMAT_S32_LE:
+        return SampleFormat::S32_LE;
+    default:
+        return std::nullopt;
+    }
 }
 
 std::size_t AlsaCapture::bytesPerFrame(const Config &config) {
