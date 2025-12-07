@@ -12,6 +12,10 @@ class TcpServer;
 struct PcmStreamConfig {
     std::size_t ringBufferFrames{0};  // 0で無効
     std::size_t watermarkFrames{0};   // 0なら自動設定
+    int recvTimeoutMs{250};
+    int recvTimeoutSleepMs{50};
+    int acceptCooldownMs{250};
+    int maxConsecutiveTimeouts{3};
 };
 
 // PCM ストリームの受信と再生を橋渡しする雛形。
