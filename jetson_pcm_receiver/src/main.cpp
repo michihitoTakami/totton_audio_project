@@ -1,10 +1,10 @@
-#include <cstdlib>
-#include <iostream>
-#include <string>
-
 #include "alsa_playback.h"
 #include "pcm_stream_handler.h"
 #include "tcp_server.h"
+
+#include <cstdlib>
+#include <iostream>
+#include <string>
 
 namespace {
 
@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
         return showHelp ? 0 : 1;
     }
 
-    std::cout << "[jetson-pcm-receiver] 雛形ビルド - 実装は未着手です" << std::endl;
+    std::cout << "[jetson-pcm-receiver] start" << std::endl;
     std::cout << "  - port:   " << options.port << std::endl;
     std::cout << "  - device: " << options.device << std::endl;
 
@@ -64,11 +64,13 @@ int main(int argc, char **argv) {
     AlsaPlayback playback(options.device);
     PcmStreamHandler handler(playback, server);
 
-    server.start();
+    if (!server.start()) {
+        std::cerr << "[jetson-pcm-receiver] failed to start TCP server" << std::endl;
+        return 1;
+    }
     handler.run();
     server.stop();
 
     std::cout << "[jetson-pcm-receiver] 終了" << std::endl;
     return 0;
 }
-
