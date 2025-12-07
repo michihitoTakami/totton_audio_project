@@ -23,7 +23,9 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 ```bash
 ./jetson_pcm_receiver/build/jetson_pcm_receiver \
   --port 46001 \
-  --device hw:Loopback,0,0 \
+  --device loopback \          # hw:Loopback,0,0 のエイリアス
+  # --device alsa:hw:USB,0,0   # 物理デバイス例
+  # --device null              # テスト用nullシンク
   --log-level info \        # error / warn / info / debug
   --ring-buffer-frames 8192 # 0で無効（デフォルト 8192）
   --ring-buffer-watermark 0 # 0で自動(75%)
@@ -35,6 +37,8 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 - 受信ヘッダが `PCMA` / version 1 かつ 44.1kHz or 48kHz の {1,2,4,8,16} 倍、2ch、フォーマットが `S16_LE(1)` / `S24_3LE(2)` / `S32_LE(4)` の場合に再生します。
 - フォーマットやレートが未対応の場合はエラーログを出して接続を閉じます。
 - XRUN (`-EPIPE`) が発生した場合は `snd_pcm_prepare()` で復旧を試み、結果をログします。
+- 出力デバイスは `loopback`（デフォルト）/ `null` / `alsa:<pcm名>` / 生の ALSA 名を指定可能。
+- 指定デバイスが存在しない・フォーマット非対応の場合は起動時/接続時に詳細なエラーをログし、従来の Loopback 指定はそのまま動作します。
 - ジッタ吸収リングバッファ（デフォルト有効）。溢れた場合は古いフレームをドロップし、ウォーターマーク到達・ドロップ数をログします。
 - SIGINT/SIGTERM で停止要求を検出し、接続待受ループを抜けて終了します。
 - 多クライアント制御オプション:

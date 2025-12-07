@@ -133,6 +133,44 @@ bool AlsaPlayback::configureHardware(uint32_t sampleRate, uint16_t channels,
     return true;
 }
 
+bool AlsaPlayback::validateCapabilities(uint32_t sampleRate, uint16_t channels,
+                                        snd_pcm_format_t format) {
+    std::unique_ptr<snd_pcm_hw_params_t, HwParamsDeleter> params;
+    snd_pcm_hw_params_t *raw = nullptr;
+    snd_pcm_hw_params_malloc(&raw);
+    params.reset(raw);
+    if (!params) {
+        logError("[AlsaPlayback] failed to alloc hw_params for validation");
+        return false;
+    }
+
+    if (snd_pcm_hw_params_any(handle_, params.get()) < 0) {
+        logError("[AlsaPlayback] snd_pcm_hw_params_any failed during validation");
+        return false;
+    }
+
+    if (snd_pcm_hw_params_test_access(handle_, params.get(), SND_PCM_ACCESS_RW_INTERLEAVED) < 0) {
+        logError("[AlsaPlayback] device does not support interleaved access");
+        return false;
+    }
+    if (snd_pcm_hw_params_test_format(handle_, params.get(), format) < 0) {
+        logError("[AlsaPlayback] device does not support format " + formatName(format));
+        return false;
+    }
+    if (snd_pcm_hw_params_test_channels(handle_, params.get(), channels) < 0) {
+        logError("[AlsaPlayback] device does not support channels=" + std::to_string(channels));
+        return false;
+    }
+    if (snd_pcm_hw_params_test_rate(handle_, params.get(), sampleRate, 0) < 0) {
+        logError("[AlsaPlayback] device does not support rate=" + std::to_string(sampleRate));
+        return false;
+    }
+
+    logInfo("[AlsaPlayback] capability check OK (rate=" + std::to_string(sampleRate) +
+            ", channels=" + std::to_string(channels) + ", format=" + formatName(format) + ")");
+    return true;
+}
+
 bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format) {
     if (!isSupportedRate(sampleRate) || channels != 2) {
         logError("[AlsaPlayback] unsupported params (rate=" + std::to_string(sampleRate) +
@@ -156,6 +194,11 @@ bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format)
     if (rc < 0) {
         logError("[AlsaPlayback] failed to open device " + device_ + ": " + snd_strerror(rc));
         handle_ = nullptr;
+        return false;
+    }
+
+    if (!validateCapabilities(sampleRate, channels, pcmFormat)) {
+        close();
         return false;
     }
 

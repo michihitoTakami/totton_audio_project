@@ -12,6 +12,11 @@ TEST(AlsaPlayback, RejectsUnsupportedParams) {
     EXPECT_FALSE(playback.open(48000, 1, 1));  // channels mismatch
 }
 
+TEST(AlsaPlayback, RejectsMissingDevice) {
+    AlsaPlayback playback("hw:NonexistentDeviceForTest");
+    EXPECT_FALSE(playback.open(48000, 2, 1));
+}
+
 TEST(AlsaPlayback, OpenWriteCloseWithNullDevice) {
     AlsaPlayback playback("null");
     if (!playback.open(48000, 2, 1)) {

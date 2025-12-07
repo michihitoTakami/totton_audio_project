@@ -36,5 +36,6 @@ class AlsaPlayback {
     StatusTracker *statusTracker_{nullptr};
 
     bool configureHardware(uint32_t sampleRate, uint16_t channels, snd_pcm_format_t format);
+    bool validateCapabilities(uint32_t sampleRate, uint16_t channels, snd_pcm_format_t format);
     bool recoverFromXrun();
 };
