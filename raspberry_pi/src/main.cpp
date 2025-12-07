@@ -33,6 +33,34 @@ std::uint16_t toPcmFormatCode(AlsaCapture::SampleFormat format) {
     return 0;
 }
 
+std::optional<std::string> selectCaptureDevice(const std::string &requested) {
+    if (requested != "auto") {
+        return requested;
+    }
+
+    void **hints = nullptr;
+    if (snd_device_name_hint(-1, "pcm", &hints) != 0 || hints == nullptr) {
+        return std::nullopt;
+    }
+
+    std::optional<std::string> found;
+    for (void **hint = hints; *hint != nullptr; ++hint) {
+        const char *name = snd_device_name_get_hint(*hint, "NAME");
+        const char *ioid = snd_device_name_get_hint(*hint, "IOID");
+        if (!name) {
+            continue;
+        }
+        // Prefer input-capable devices.
+        if (ioid && std::string{ioid} != "Input") {
+            continue;
+        }
+        found = std::string{name};
+        break;
+    }
+    snd_device_name_free_hint(hints);
+    return found;
+}
+
 bool openCaptureWithRetry(AlsaCapture &capture, AlsaCapture::Config &cfg) {
     std::chrono::milliseconds backoff{1000};
     const std::chrono::milliseconds backoffMax{8000};
@@ -74,8 +102,15 @@ int main(int argc, char **argv) {
     }
     const Options opt = *parsed.options;
 
+    std::string resolvedDevice = opt.device;
+    if (auto dev = selectCaptureDevice(opt.device)) {
+        resolvedDevice = *dev;
+    } else {
+        logWarn("[rpi_pcm_bridge] auto device selection failed, using requested: " + opt.device);
+    }
+
     setLogLevel(opt.logLevel);
-    logInfo("[rpi_pcm_bridge] start device=" + opt.device + " host=" + opt.host +
+    logInfo("[rpi_pcm_bridge] start device=" + resolvedDevice + " host=" + opt.host +
             " port=" + std::to_string(opt.port) + " rate=" + std::to_string(opt.rate) + " format=" +
             std::to_string(static_cast<int>(opt.format)) + " frames=" + std::to_string(opt.frames));
 
@@ -88,7 +123,7 @@ int main(int argc, char **argv) {
 
     AlsaCapture capture;
     AlsaCapture::Config cfg;
-    cfg.deviceName = opt.device;
+    cfg.deviceName = resolvedDevice;
     cfg.sampleRate = opt.rate;
     cfg.channels = 2;
     cfg.format = opt.format;
