@@ -36,3 +36,20 @@ cmake --build raspberry_pi/build
 
 現状はスタブ実装のため、ヘルプとプレースホルダーのログのみを出力します。
 
+## ALSA キャプチャ簡易テスト
+
+実機のALSAデバイスを指定して数周期分を読み取ります（TCP送信は未実装）。
+
+```bash
+./raspberry_pi/build/rpi_pcm_bridge \
+  --device hw:0,0 \
+  --rate 48000 \
+  --format S16_LE \
+  --frames 4096 \
+  --iterations 3
+```
+
+- 対応フォーマット: `S16_LE`, `S24_3LE`, `S32_LE`
+- XRUN発生時は `snd_pcm_prepare()` でリカバリし、ログへ出力します。
+- 未対応フォーマットを指定すると即エラー終了します。
+
