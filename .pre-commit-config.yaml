@@ -67,7 +67,7 @@ repos:
     hooks:
       - id: prepare-raspberry-pi-build
         name: Prepare raspberry_pi compile_commands
-        entry: bash -c 'cmake -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release'
+        entry: bash -c '"${CMAKE_BIN:-/usr/bin/cmake}" -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release'
         language: system
         files: ^raspberry_pi/.*\.(c|cpp|h|hpp|cu|cuh)$
         pass_filenames: false

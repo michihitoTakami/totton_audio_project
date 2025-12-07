@@ -1,7 +1,23 @@
 #include "Options.h"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
+
+namespace {
+
+bool isSupportedRate(unsigned int rate) {
+    static constexpr std::array<unsigned int, 10> kSupported = {
+        44100, 88200, 176400, 352800, 705600, 48000, 96000, 192000, 384000, 768000};
+    for (const auto v : kSupported) {
+        if (rate == v) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
 
 std::optional<AlsaCapture::SampleFormat> parseFormat(std::string_view value) {
     if (value == "S16_LE") {
@@ -36,6 +52,10 @@ std::optional<Options> parseOptions(int argc, char **argv, std::string_view prog
             opt.device = argv[++i];
         } else if (arg == "--rate" && i + 1 < argc) {
             opt.rate = static_cast<unsigned int>(std::strtoul(argv[++i], nullptr, 10));
+            if (!isSupportedRate(opt.rate)) {
+                std::cerr << "Unsupported rate. Use 44.1/48k and 2/4/8/16x multiples." << std::endl;
+                return std::nullopt;
+            }
         } else if (arg == "--format" && i + 1 < argc) {
             auto fmt = parseFormat(argv[++i]);
             if (!fmt) {
