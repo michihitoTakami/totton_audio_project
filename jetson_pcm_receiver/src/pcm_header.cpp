@@ -48,4 +48,3 @@ HeaderValidationResult validateHeader(const PcmHeader &header) {
 
     return {true, ""};
 }
-
