@@ -36,6 +36,30 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 
 ## ALSA Loopback への疎通確認（簡易）
 
+### ヘッダのみ送って受理/拒否を確認
+PCM ペイロードなしでヘッダ検証だけ確認できます。
+
+```bash
+# 正常ヘッダ（48000Hz, 2ch, S16_LE=1）を送る例
+python - <<'PY'
+import socket, struct
+hdr = struct.pack("<4sIIHH", b"PCMA", 1, 48000, 2, 1)
+s = socket.create_connection(("127.0.0.1", 46001))
+s.sendall(hdr)
+s.close()
+PY
+
+# 不正ヘッダ（magic違い）で拒否を確認する例
+python - <<'PY'
+import socket, struct
+hdr = struct.pack("<4sIIHH", b"XXXX", 1, 48000, 2, 1)
+s = socket.create_connection(("127.0.0.1", 46001))
+s.sendall(hdr)
+s.close()
+PY
+```
+
+### ループバックで無音1秒を流す
 1. ループバックをロード（必要な場合）
    `sudo modprobe snd-aloop`
 2. 受信側を起動

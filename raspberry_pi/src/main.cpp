@@ -1,46 +1,64 @@
 #include "AlsaCapture.h"
+#include "Options.h"
 #include "TcpClient.h"
 
+#include <alsa/asoundlib.h>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
-namespace {
+int main(int argc, char **argv) {
+    const std::string_view programName =
+        (argc > 0 && argv[0] != nullptr) ? std::string_view{argv[0]} : "rpi_pcm_bridge";
 
-void printHelp(std::string_view programName)
-{
-    std::cout << "Usage: " << programName << " [--help]" << std::endl
-              << std::endl
-              << "Prototype PCM bridge entrypoint for Raspberry Pi." << std::endl
-              << "Functionality is not implemented yet; this binary currently"
-              << " serves as a build test placeholder." << std::endl;
-}
-
-} // namespace
-
-int main(int argc, char **argv)
-{
-    const std::string_view programName = (argc > 0 && argv[0] != nullptr)
-        ? std::string_view{argv[0]}
-        : "rpi_pcm_bridge";
-
-    for(int i = 1; i < argc; ++i) {
-        const std::string_view arg{argv[i]};
-        if(arg == "-h" || arg == "--help") {
-            printHelp(programName);
-            return EXIT_SUCCESS;
-        }
+    auto parsed = parseOptions(argc, argv, programName);
+    if (parsed.showHelp) {
+        return EXIT_SUCCESS;
     }
-
-    std::cout << "[rpi_pcm_bridge] Prototype build - functionality not"
-              << " implemented yet." << std::endl;
+    if (parsed.hasError) {
+        std::cerr << parsed.errorMessage << std::endl;
+        return EXIT_FAILURE;
+    }
+    const Options opt = *parsed.options;
 
     AlsaCapture capture;
-    TcpClient client;
+    AlsaCapture::Config cfg;
+    cfg.deviceName = opt.device;
+    cfg.sampleRate = opt.rate;
+    cfg.channels = 2;
+    cfg.format = opt.format;
+    cfg.periodFrames = opt.frames;
 
-    std::clog << "[rpi_pcm_bridge] Created AlsaCapture and TcpClient stubs."
-              << std::endl;
+    if (!capture.open(cfg)) {
+        std::cerr << "[rpi_pcm_bridge] Failed to open device" << std::endl;
+        return EXIT_FAILURE;
+    }
+    if (!capture.start()) {
+        std::cerr << "[rpi_pcm_bridge] Failed to start capture" << std::endl;
+        return EXIT_FAILURE;
+    }
 
-    return EXIT_SUCCESS;
+    std::vector<std::uint8_t> buffer;
+    bool success = true;
+    for (int i = 0; i < opt.iterations; ++i) {
+        int bytes = capture.read(buffer);
+        if (bytes == -EPIPE) {
+            std::clog << "[rpi_pcm_bridge] XRUN recovered, continuing" << std::endl;
+            continue;
+        }
+        if (bytes < 0) {
+            std::clog << "[rpi_pcm_bridge] Read failed: " << bytes << std::endl;
+            success = false;
+            break;
+        }
+        std::clog << "[rpi_pcm_bridge] Read " << bytes << " bytes" << std::endl;
+    }
+
+    capture.stop();
+    capture.close();
+
+    return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }
-

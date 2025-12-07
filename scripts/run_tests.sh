@@ -40,6 +40,7 @@ echo ""
 RUN_PYTHON=false
 RUN_CPP=false
 RUN_GPU=false
+RUN_RPI=false
 RUN_JETSON_PCM=false
 
 # Analyze changed files
@@ -55,12 +56,15 @@ for file in $CHANGED_FILES; do
         tests/gpu/*|data/coefficients/*)
             RUN_GPU=true
             ;;
-        CMakeLists.txt)
-            RUN_CPP=true
-            RUN_GPU=true
+        raspberry_pi/*)
+            RUN_RPI=true
             ;;
         jetson_pcm_receiver/*)
             RUN_JETSON_PCM=true
+            ;;
+        CMakeLists.txt)
+            RUN_CPP=true
+            RUN_GPU=true
             ;;
     esac
 done
@@ -146,6 +150,20 @@ if $RUN_GPU; then
     echo ""
 fi
 
+# Raspberry Pi capture app tests
+if $RUN_RPI; then
+    echo -e "${YELLOW}=== Running Raspberry Pi capture tests ===${NC}"
+    "$CMAKE_BIN" -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | tail -20
+    "$CMAKE_BIN" --build raspberry_pi/build --target rpi_capture_tests -j8 2>&1 | tail -20
+    if "$CTEST_BIN" --test-dir raspberry_pi/build --output-on-failure; then
+        echo -e "${GREEN}Raspberry Pi capture tests passed!${NC}"
+    else
+        echo -e "${RED}Raspberry Pi capture tests failed!${NC}"
+        TESTS_PASSED=false
+    fi
+    echo ""
+fi
+
 # Run jetson_pcm_receiver tests (standalone CMake project)
 if $RUN_JETSON_PCM; then
     echo -e "${YELLOW}=== Running jetson_pcm_receiver tests ===${NC}"
@@ -162,7 +180,7 @@ if $RUN_JETSON_PCM; then
 fi
 
 # Summary
-if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU; then
+if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU && ! $RUN_RPI && ! $RUN_JETSON_PCM; then
     echo -e "${GREEN}=== No tests required (docs/config only changes) ===${NC}"
     exit 0
 fi
