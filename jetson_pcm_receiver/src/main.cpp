@@ -1,6 +1,7 @@
 #include "alsa_playback.h"
 #include "connection_mode.h"
 #include "logging.h"
+#include "output_device.h"
 #include "pcm_stream_handler.h"
 #include "status_tracker.h"
 #include "tcp_server.h"
@@ -25,9 +26,14 @@ void handleSignal(int) {
     }
 }
 
+OutputDeviceSpec defaultDevice() {
+    auto parsed = parseOutputDevice("loopback");
+    return parsed.ok ? parsed.spec : OutputDeviceSpec{};
+}
+
 struct AppOptions {
     int port = 46001;
-    std::string device = "hw:Loopback,0,0";
+    OutputDeviceSpec device = defaultDevice();
     LogLevel logLevel = LogLevel::Info;
     std::size_t ringBufferFrames = 8192;  // 0で無効
     std::size_t watermarkFrames = 0;      // 0で自動 (75%)
@@ -48,7 +54,8 @@ void printHelp(const char *exeName) {
     std::cout << "Usage: " << exeName << " [options]\n\n";
     std::cout << "Options:\n";
     std::cout << "  -p, --port <number>     TCP listen port (default: 46001)\n";
-    std::cout << "  -d, --device <name>     ALSA playback device (default: hw:Loopback,0,0)\n";
+    std::cout << "  -d, --device <name>     Output device alias/ALSA name (default: loopback)\n";
+    std::cout << "                          Accepted: loopback | null | alsa:<pcm> | <raw pcm>\n";
     std::cout << "  -l, --log-level <lvl>   error/warn/info/debug (default: info)\n";
     std::cout << "  --ring-buffer-frames N  enable jitter buffer with N frames (default: 8192)\n";
     std::cout
@@ -83,7 +90,14 @@ bool parseArgs(int argc, char **argv, AppOptions &options, bool &showHelp) {
             continue;
         }
         if ((arg == "-d" || arg == "--device") && i + 1 < argc) {
-            options.device = argv[++i];
+            const std::string deviceArg = argv[++i];
+            auto parsed = parseOutputDevice(deviceArg);
+            if (!parsed.ok) {
+                std::cerr << "デバイス指定エラー: " << parsed.error << std::endl;
+                printHelp(argv[0]);
+                return false;
+            }
+            options.device = parsed.spec;
             continue;
         }
         if ((arg == "-l" || arg == "--log-level") && i + 1 < argc) {
@@ -189,7 +203,7 @@ int main(int argc, char **argv) {
 
     logInfo("[jetson-pcm-receiver] start");
     logInfo("  - port:   " + std::to_string(options.port));
-    logInfo("  - device: " + options.device);
+    logInfo("  - device: " + options.device.describe());
     if (options.ringBufferFrames == 0) {
         logInfo("  - ring buffer: disabled");
     } else {
@@ -231,7 +245,7 @@ int main(int argc, char **argv) {
     serverOptions.priorityClients = options.priorityClients;
     serverOptions.backlog = 8;
     TcpServer server(options.port, serverOptions);
-    AlsaPlayback playback(options.device);
+    AlsaPlayback playback(options.device.alsaName);
     playback.setStatusTracker(&status);
     std::mutex configMutex;
     PcmStreamConfig cfg;

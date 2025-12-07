@@ -43,6 +43,7 @@ add_library(jetson_pcm_receiver_lib
     src/pcm_header.cpp
     src/status_tracker.cpp
     src/zmq_status_server.cpp
+    src/output_device.cpp
     ../src/daemon/control/zmq_server.cpp
 )
 
@@ -118,6 +119,7 @@ add_executable(jetson_pcm_receiver_tests
     tests/test_pcm_stream_handler.cpp
     tests/test_alsa_playback.cpp
     tests/test_zmq_status_server.cpp
+    tests/test_output_device.cpp
 )
 
 target_link_libraries(jetson_pcm_receiver_tests
