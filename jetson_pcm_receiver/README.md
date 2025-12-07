@@ -24,6 +24,7 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 ./jetson_pcm_receiver/build/jetson_pcm_receiver \
   --port 46001 \
   --device loopback \          # hw:Loopback,0,0 のエイリアス
+  # --device loopback-playback # loopback alias (同上)
   # --device alsa:hw:USB,0,0   # 物理デバイス例
   # --device null              # テスト用nullシンク
   --log-level info \        # error / warn / info / debug

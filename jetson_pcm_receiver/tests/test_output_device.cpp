@@ -10,6 +10,14 @@ TEST(OutputDevice, ParsesLoopbackAlias) {
     EXPECT_EQ(res.spec.userValue, "loopback");
 }
 
+TEST(OutputDevice, ParsesLoopbackPlaybackAlias) {
+    auto res = parseOutputDevice("loopback-playback");
+    ASSERT_TRUE(res.ok);
+    EXPECT_EQ(res.spec.type, OutputDeviceType::Loopback);
+    EXPECT_EQ(res.spec.alsaName, "hw:Loopback,0,0");
+    EXPECT_EQ(res.spec.userValue, "loopback-playback");
+}
+
 TEST(OutputDevice, ParsesAlsaPrefix) {
     auto res = parseOutputDevice("alsa:hw:1,0,0");
     ASSERT_TRUE(res.ok);

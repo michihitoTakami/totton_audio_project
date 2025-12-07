@@ -192,7 +192,8 @@ bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format)
 
     int rc = snd_pcm_open(&handle_, device_.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
     if (rc < 0) {
-        logError("[AlsaPlayback] failed to open device " + device_ + ": " + snd_strerror(rc));
+        logError("[AlsaPlayback] failed to open device " + device_ + ": " + snd_strerror(rc) +
+                 " (check available devices with `aplay -L`)");
         handle_ = nullptr;
         return false;
     }
