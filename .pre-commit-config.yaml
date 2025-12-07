@@ -25,7 +25,7 @@ repos:
       - id: clang-tidy
         args: [-p=build]
         files: \.(c|cpp)$
-        exclude: ^build/
+        exclude: ^build/|^raspberry_pi/
         stages: [pre-push]
 
   # General file checks
@@ -65,6 +65,22 @@ repos:
   # Uses system Python to access project dependencies
   - repo: local
     hooks:
+      - id: prepare-raspberry-pi-build
+        name: Prepare raspberry_pi compile_commands
+        entry: bash -c 'cmake -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release'
+        language: system
+        files: ^raspberry_pi/.*\.(c|cpp|h|hpp|cu|cuh)$
+        pass_filenames: false
+        stages: [pre-push]
+      - id: clang-tidy-raspberry-pi
+        name: clang-tidy (raspberry_pi)
+        entry: clang-tidy
+        language: system
+        types_or: [c, c++]
+        files: ^raspberry_pi/.*\.(c|cpp|h|hpp|cu|cuh)$
+        args: [-p=raspberry_pi/build]
+        stages: [pre-push]
+        pass_filenames: true
       - id: mypy
         name: mypy type checker
         entry: uv run mypy
