@@ -22,10 +22,18 @@ int main(int argc, char **argv) {
         return EXIT_SUCCESS;
     }
     if (parsed.hasError) {
-        std::cerr << parsed.errorMessage << std::endl;
+        std::cerr << parsed.errorMessage << '\n';
+        return EXIT_FAILURE;
+    }
+    if (!parsed.options) {
         return EXIT_FAILURE;
     }
     const Options opt = *parsed.options;
+
+    std::clog << "[rpi_pcm_bridge] start device=" << opt.device << " host=" << opt.host
+              << " port=" << opt.port << " rate=" << opt.rate
+              << " format=" << static_cast<int>(opt.format) << " frames=" << opt.frames
+              << " log_level=" << opt.logLevel << '\n';
 
     AlsaCapture capture;
     AlsaCapture::Config cfg;
@@ -35,15 +43,12 @@ int main(int argc, char **argv) {
     cfg.format = opt.format;
     cfg.periodFrames = opt.frames;
 
-    std::clog << "[rpi_pcm_bridge] target host=" << opt.host << " port=" << opt.port
-              << " log_level=" << toString(opt.logLevel) << std::endl;
-
     if (!capture.open(cfg)) {
-        std::cerr << "[rpi_pcm_bridge] Failed to open device" << std::endl;
+        std::cerr << "[rpi_pcm_bridge] Failed to open device" << '\n';
         return EXIT_FAILURE;
     }
     if (!capture.start()) {
-        std::cerr << "[rpi_pcm_bridge] Failed to start capture" << std::endl;
+        std::cerr << "[rpi_pcm_bridge] Failed to start capture" << '\n';
         return EXIT_FAILURE;
     }
 
@@ -52,15 +57,15 @@ int main(int argc, char **argv) {
     for (int i = 0; i < opt.iterations; ++i) {
         int bytes = capture.read(buffer);
         if (bytes == -EPIPE) {
-            std::clog << "[rpi_pcm_bridge] XRUN recovered, continuing" << std::endl;
+            std::clog << "[rpi_pcm_bridge] XRUN recovered, continuing" << '\n';
             continue;
         }
         if (bytes < 0) {
-            std::clog << "[rpi_pcm_bridge] Read failed: " << bytes << std::endl;
+            std::clog << "[rpi_pcm_bridge] Read failed: " << bytes << '\n';
             success = false;
             break;
         }
-        std::clog << "[rpi_pcm_bridge] Read " << bytes << " bytes" << std::endl;
+        std::clog << "[rpi_pcm_bridge] Read " << bytes << " bytes" << '\n';
     }
 
     capture.stop();
