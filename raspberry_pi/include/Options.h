@@ -3,6 +3,7 @@
 #include "AlsaCapture.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -15,7 +16,7 @@ struct Options {
     AlsaCapture::SampleFormat format{AlsaCapture::SampleFormat::S16_LE};
     snd_pcm_uframes_t frames{4096};
     std::string logLevel{"info"};
-    int iterations{3};  // テスト用。後で削除予定。
+    int iterations{-1};  // 負の値は無限ループで送信を続ける。
 };
 
 struct ParseOptionsResult {
@@ -27,6 +28,8 @@ struct ParseOptionsResult {
 };
 
 std::optional<AlsaCapture::SampleFormat> parseFormat(std::string_view value);
-ParseOptionsResult parseOptions(int argc, char **argv, std::string_view programName);
+ParseOptionsResult parseOptions(
+    int argc, char **argv, std::string_view programName,
+    const std::function<const char *(const char *)> &getenvFn = ::getenv);
 void printHelp(std::string_view programName);
 void printVersion(std::string_view programName);
