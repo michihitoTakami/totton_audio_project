@@ -30,6 +30,7 @@ add_executable(jetson_pcm_receiver
     src/tcp_server.cpp
     src/alsa_playback.cpp
     src/pcm_stream_handler.cpp
+    src/pcm_header.cpp
 )
 
 target_include_directories(jetson_pcm_receiver PRIVATE

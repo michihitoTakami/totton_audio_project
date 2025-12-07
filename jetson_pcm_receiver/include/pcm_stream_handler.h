@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pcm_header.h"
+
 class AlsaPlayback;
 class TcpServer;
 
@@ -11,6 +13,9 @@ public:
     void run();
 
 private:
+    bool receiveHeader(int fd, PcmHeader &header) const;
+    bool handleClient(int fd) const;
+
     AlsaPlayback &playback_;
     TcpServer &server_;
 };
