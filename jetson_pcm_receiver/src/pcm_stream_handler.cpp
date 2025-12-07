@@ -62,6 +62,10 @@ bool PcmStreamHandler::handleClient(int fd) const {
     return true;
 }
 
+bool PcmStreamHandler::handleClientForTest(int fd) const {
+    return handleClient(fd);
+}
+
 void PcmStreamHandler::run() {
     if (!server_.listening() && !server_.start()) {
         std::cerr << "[PcmStreamHandler] failed to start TcpServer" << std::endl;
@@ -84,4 +88,3 @@ void PcmStreamHandler::run() {
         server_.closeClient();
     }
 }
-

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -12,7 +13,9 @@
 
 TcpServer::TcpServer(int port) : port_(port) {}
 
-TcpServer::~TcpServer() { stop(); }
+TcpServer::~TcpServer() {
+    stop();
+}
 
 bool TcpServer::setCommonSocketOptions(int fd) {
     int enable = 1;
@@ -58,6 +61,15 @@ bool TcpServer::start() {
         }
         if (::bind(fd, p->ai_addr, p->ai_addrlen) == 0) {
             listenFd_ = fd;
+            struct sockaddr_storage local {};
+            socklen_t len = sizeof(local);
+            if (::getsockname(fd, reinterpret_cast<sockaddr *>(&local), &len) == 0) {
+                if (local.ss_family == AF_INET) {
+                    boundPort_ = ntohs(reinterpret_cast<sockaddr_in *>(&local)->sin_port);
+                } else if (local.ss_family == AF_INET6) {
+                    boundPort_ = ntohs(reinterpret_cast<sockaddr_in6 *>(&local)->sin6_port);
+                }
+            }
             break;
         }
         ::close(fd);
@@ -78,7 +90,7 @@ bool TcpServer::start() {
     }
 
     listening_ = true;
-    std::cout << "[TcpServer] listening on port " << port_ << std::endl;
+    std::cout << "[TcpServer] listening on port " << port() << std::endl;
     return true;
 }
 
@@ -96,7 +108,8 @@ int TcpServer::acceptClient() {
     }
 
     if (clientFd_ >= 0) {
-        std::cout << "[TcpServer] rejecting extra connection; already handling a client" << std::endl;
+        std::cout << "[TcpServer] rejecting extra connection; already handling a client"
+                  << std::endl;
         ::close(fd);
         return -2;
     }
@@ -128,7 +141,7 @@ void TcpServer::stop() {
         ::close(listenFd_);
         listenFd_ = -1;
         listening_ = false;
+        boundPort_ = 0;
         std::cout << "[TcpServer] stop listening" << std::endl;
     }
 }
-
