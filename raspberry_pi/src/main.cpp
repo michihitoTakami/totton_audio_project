@@ -18,6 +18,9 @@ int main(int argc, char **argv) {
     if (parsed.showHelp) {
         return EXIT_SUCCESS;
     }
+    if (parsed.showVersion) {
+        return EXIT_SUCCESS;
+    }
     if (parsed.hasError) {
         std::cerr << parsed.errorMessage << std::endl;
         return EXIT_FAILURE;
