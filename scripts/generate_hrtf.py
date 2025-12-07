@@ -3,7 +3,7 @@
 HRTF FIR Filter Generation (Phase-Preserving)
 
 SOFAファイルから±30°（正三角形配置）のHRIRを抽出し、
-2M-tap FIRフィルタを生成する。
+位相を保持したままFIRフィルタを生成する。
 
 クロスフィード用途では位相情報（ITD/ILD）が空間定位に必須のため、
 元のHRIRの位相をそのまま保持する。
@@ -12,7 +12,7 @@ SOFAファイルから±30°（正三角形配置）のHRIRを抽出し、
 - ±30°, elevation 0° のHRIR抽出
 - 4チャンネル構成: LL, LR, RL, RR
 - 705.6kHz / 768kHz へリサンプリング
-- 2M-tapへゼロパディング（位相保持）
+- デフォルトで16k-tapへゼロパディング（必要に応じて --taps で変更）
 
 Data Source: HUTUBS - Head-related Transfer Function Database
     https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960
@@ -52,7 +52,16 @@ except ImportError:
 
 
 # デフォルト定数
-N_TAPS = 640_000  # 640k taps (optimized for Float32)
+# 以前は 640k-tap を採用していたが、有効IRは数千サンプルで済むため
+# デフォルトを 16k に短縮し、必要に応じて --taps で上書きする。
+N_TAPS = 16_384
+# 高域荒れ対策: 有効成分より十分小さいエネルギーで打ち切る
+TRIM_THRESHOLD_DB = -80.0
+TRIM_PADDING = 512  # 打ち切り位置からの余白
+# 追加の高域緩和（全チャネル共通、緩やかなロールオフ）
+GLOBAL_HF_CUTOFF_HZ = 20_000.0
+GLOBAL_HF_MIN_GAIN_DB = -9.0
+GLOBAL_HF_SLOPE = 6.0
 # Note: HUTUBS uses 0-360° azimuth convention, so -30° is represented as 330°
 TARGET_AZIMUTH_LEFT = 330.0  # 左スピーカー方位角 (-30° in HUTUBS coordinate)
 TARGET_AZIMUTH_RIGHT = 30.0  # 右スピーカー方位角
@@ -140,7 +149,11 @@ def apply_exponential_tail_taper(
 
 
 def apply_high_frequency_tilt(
-    hrir: np.ndarray, sample_rate: int, cutoff_hz: float, min_gain_db: float, slope: float
+    hrir: np.ndarray,
+    sample_rate: int,
+    cutoff_hz: float,
+    min_gain_db: float,
+    slope: float,
 ) -> np.ndarray:
     """
     高域にかける緩やかな減衰カーブ（contralateral向け）。
@@ -157,6 +170,34 @@ def apply_high_frequency_tilt(
     spectrum = np.fft.rfft(hrir)
     shaped = np.fft.irfft(spectrum * tilt, n=len(hrir))
     return shaped.astype(hrir.dtype)
+
+
+def trim_hrir(hrir: np.ndarray, threshold_db: float, pad: int) -> np.ndarray:
+    """
+    エネルギーしきい値に基づいてHRIR末尾を打ち切り、余白を付ける。
+
+    Args:
+        hrir: 入力HRIR
+        threshold_db: ピーク比しきい値[dB]（例: -80dB）
+        pad: 打ち切り点からの余白サンプル数
+
+    Returns:
+        トリム後のHRIR
+    """
+    if hrir.size == 0:
+        return hrir
+
+    peak = float(np.max(np.abs(hrir)))
+    if peak <= 0.0:
+        return hrir
+
+    threshold = peak * 10.0 ** (threshold_db / 20.0)
+    non_zero = np.nonzero(np.abs(hrir) >= threshold)[0]
+    if non_zero.size == 0:
+        return hrir[:1]
+
+    end = int(min(len(hrir), non_zero[-1] + pad + 1))
+    return hrir[:end]
 
 
 def angular_distance(az1: float, az2: float) -> float:
@@ -328,6 +369,11 @@ def generate_hrtf_filters(
     size: str,
     rate_key: str,
     n_taps: int = N_TAPS,
+    trim_threshold_db: float = TRIM_THRESHOLD_DB,
+    trim_padding: int = TRIM_PADDING,
+    global_hf_cutoff_hz: float = GLOBAL_HF_CUTOFF_HZ,
+    global_hf_min_gain_db: float = GLOBAL_HF_MIN_GAIN_DB,
+    global_hf_slope: float = GLOBAL_HF_SLOPE,
 ) -> dict:
     """
     HRTFフィルタを生成して保存。
@@ -358,6 +404,7 @@ def generate_hrtf_filters(
     # 各チャンネルを処理（第1パス: リサンプリング・パディング）
     channels = {}
     dc_gains = {}
+    effective_lengths = {}
     for name, hrir in [
         ("ll", hrtf.ll),
         ("lr", hrtf.lr),
@@ -379,7 +426,10 @@ def generate_hrtf_filters(
             )
         else:
             shaped = apply_exponential_tail_taper(
-                shaped, output_rate, CONTRALATERAL_TAIL_START_MS, CONTRALATERAL_TAIL_DECAY_MS
+                shaped,
+                output_rate,
+                CONTRALATERAL_TAIL_START_MS,
+                CONTRALATERAL_TAIL_DECAY_MS,
             )
             shaped = apply_high_frequency_tilt(
                 shaped,
@@ -394,9 +444,32 @@ def generate_hrtf_filters(
                 f" HF tilt cutoff {CONTRALATERAL_HF_CUTOFF_HZ:.0f} Hz"
             )
 
+        trimmed = trim_hrir(shaped, trim_threshold_db, trim_padding)
+        if len(trimmed) != len(shaped):
+            print(
+                f"  Trimmed tail: {len(shaped)} -> {len(trimmed)} samples "
+                f"(threshold {trim_threshold_db} dB, pad {trim_padding})"
+            )
+
+        if global_hf_cutoff_hz > 0.0 and global_hf_slope > 0.0:
+            trimmed = apply_high_frequency_tilt(
+                trimmed,
+                output_rate,
+                global_hf_cutoff_hz,
+                global_hf_min_gain_db,
+                global_hf_slope,
+            )
+            print(
+                "  Global HF tilt: "
+                f"cutoff {global_hf_cutoff_hz:.0f} Hz, min {global_hf_min_gain_db} dB, "
+                f"slope {global_hf_slope:.1f}"
+            )
+
+        effective_lengths[name] = len(trimmed)
+
         # ゼロパディングでターゲット長に拡張（位相保持）
-        fir = pad_hrir_to_length(shaped, n_taps)
-        print(f"  FIR length: {len(fir)} taps")
+        fir = pad_hrir_to_length(trimmed, n_taps)
+        print(f"  FIR length: {len(fir)} taps (effective {len(trimmed)})")
 
         dc_gains[name] = np.sum(fir)
         print(f"  DC gain (raw): {dc_gains[name]:.6f}")
@@ -463,6 +536,8 @@ def generate_hrtf_filters(
         f"\nSaved binary: {bin_path} ({bin_path.stat().st_size / 1024 / 1024:.1f} MB)"
     )
 
+    max_effective = max(effective_lengths.values()) if effective_lengths else n_taps
+
     # メタデータ
     metadata = {
         "description": f"HRTF FIR filter for head size {size} (phase-preserving)",
@@ -493,6 +568,13 @@ def generate_hrtf_filters(
             "contralateral_highfreq_min_gain_db": CONTRALATERAL_HF_MIN_GAIN_DB,
             "contralateral_highfreq_slope": CONTRALATERAL_HF_SLOPE,
             "ear_dc_headroom_db": DC_HEADROOM_DB,
+            "trim_threshold_db": trim_threshold_db,
+            "trim_padding": trim_padding,
+            "global_highfreq_cutoff_hz": global_hf_cutoff_hz,
+            "global_highfreq_min_gain_db": global_hf_min_gain_db,
+            "global_highfreq_slope": global_hf_slope,
+            "tap_target": n_taps,
+            "tap_effective": max_effective,
         },
     }
 
@@ -548,6 +630,36 @@ Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin
         help=f"Number of filter taps (default: {N_TAPS})",
     )
     parser.add_argument(
+        "--trim-threshold-db",
+        type=float,
+        default=TRIM_THRESHOLD_DB,
+        help="Tail trim threshold relative to peak (dB, default: -80)",
+    )
+    parser.add_argument(
+        "--trim-padding",
+        type=int,
+        default=TRIM_PADDING,
+        help="Samples to keep after trim point (default: 512)",
+    )
+    parser.add_argument(
+        "--global-hf-cutoff",
+        type=float,
+        default=GLOBAL_HF_CUTOFF_HZ,
+        help="Global high-frequency tilt cutoff in Hz (0 to disable)",
+    )
+    parser.add_argument(
+        "--global-hf-min-gain-db",
+        type=float,
+        default=GLOBAL_HF_MIN_GAIN_DB,
+        help="Minimum gain at high frequency for global tilt (dB)",
+    )
+    parser.add_argument(
+        "--global-hf-slope",
+        type=float,
+        default=GLOBAL_HF_SLOPE,
+        help="Slope for global HF tilt (higher = steeper)",
+    )
+    parser.add_argument(
         "--sofa-dir",
         type=Path,
         default=DEFAULT_SOFA_DIR,
@@ -581,7 +693,11 @@ Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin
     print(f"Output directory: {args.output_dir}")
     print(f"Sizes: {sizes}")
     print(f"Rates: {rates}")
-    print(f"Taps: {args.taps:,}")
+    print(
+        f"Taps: {args.taps:,} "
+        f"(trim @{args.trim_threshold_db} dB, pad {args.trim_padding}, "
+        f"global HF {args.global_hf_cutoff} Hz)"
+    )
 
     # SOFAディレクトリチェック
     if not args.sofa_dir.exists():
@@ -611,6 +727,11 @@ Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin
                     size=size,
                     rate_key=rate,
                     n_taps=args.taps,
+                    trim_threshold_db=args.trim_threshold_db,
+                    trim_padding=args.trim_padding,
+                    global_hf_cutoff_hz=args.global_hf_cutoff,
+                    global_hf_min_gain_db=args.global_hf_min_gain_db,
+                    global_hf_slope=args.global_hf_slope,
                 )
                 generated.append(f"{size}_{rate}")
             except Exception as e:

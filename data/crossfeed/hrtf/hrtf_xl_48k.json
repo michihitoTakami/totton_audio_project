@@ -4,7 +4,7 @@
   "subject_id": "pp53",
   "sample_rate": 768000,
   "rate_family": "48k",
-  "n_taps": 640000,
+  "n_taps": 16384,
   "n_channels": 4,
   "channel_order": [
     "LL",
@@ -16,7 +16,7 @@
   "normalization": "ild_preserving",
   "max_dc_gain": 1.0,
   "ear_dc_gain": {
-    "left": 0.9147005902031692,
+    "left": 0.914700590203169,
     "right": 0.9440608762859234
   },
   "source_azimuth_left": -30.0,
@@ -25,7 +25,7 @@
   "license": "CC BY 4.0",
   "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
   "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
-  "generated_at": "2025-11-28T00:34:02.389467",
+  "generated_at": "2025-12-08T03:57:40.994649",
   "storage_format": "channel_major_v1",
   "shaping": {
     "ipsilateral_direct_blend": 0.45,
@@ -34,6 +34,13 @@
     "contralateral_highfreq_cutoff_hz": 5200.0,
     "contralateral_highfreq_min_gain_db": -12.0,
     "contralateral_highfreq_slope": 2.4,
-    "ear_dc_headroom_db": 0.5
+    "ear_dc_headroom_db": 0.5,
+    "trim_threshold_db": -80.0,
+    "trim_padding": 512,
+    "global_highfreq_cutoff_hz": 20000.0,
+    "global_highfreq_min_gain_db": -9.0,
+    "global_highfreq_slope": 6.0,
+    "tap_target": 16384,
+    "tap_effective": 4459
   }
 }
