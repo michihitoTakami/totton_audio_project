@@ -17,6 +17,7 @@ CMAKE_BIN=${CMAKE_BIN:-cmake}
 if ! "$CMAKE_BIN" --version >/dev/null 2>&1 && [ -x /usr/bin/cmake ]; then
     CMAKE_BIN=/usr/bin/cmake
 fi
+
 CTEST_BIN=${CTEST_BIN:-ctest}
 if ! "$CTEST_BIN" --version >/dev/null 2>&1 && [ -x /usr/bin/ctest ]; then
     CTEST_BIN=/usr/bin/ctest
@@ -40,6 +41,7 @@ RUN_PYTHON=false
 RUN_CPP=false
 RUN_GPU=false
 RUN_RPI=false
+RUN_JETSON_PCM=false
 
 # Analyze changed files
 for file in $CHANGED_FILES; do
@@ -56,6 +58,9 @@ for file in $CHANGED_FILES; do
             ;;
         raspberry_pi/*)
             RUN_RPI=true
+            ;;
+        jetson_pcm_receiver/*)
+            RUN_JETSON_PCM=true
             ;;
         CMakeLists.txt)
             RUN_CPP=true
@@ -159,8 +164,23 @@ if $RUN_RPI; then
     echo ""
 fi
 
+# Run jetson_pcm_receiver tests (standalone CMake project)
+if $RUN_JETSON_PCM; then
+    echo -e "${YELLOW}=== Running jetson_pcm_receiver tests ===${NC}"
+    JETSON_BUILD_DIR="jetson_pcm_receiver/build"
+    "$CMAKE_BIN" -S jetson_pcm_receiver -B "$JETSON_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
+    "$CMAKE_BIN" --build "$JETSON_BUILD_DIR" --target jetson_pcm_receiver_tests -j8 2>&1 | tail -20
+    if "$CTEST_BIN" --test-dir "$JETSON_BUILD_DIR" --output-on-failure; then
+        echo -e "${GREEN}jetson_pcm_receiver tests passed!${NC}"
+    else
+        echo -e "${RED}jetson_pcm_receiver tests failed!${NC}"
+        TESTS_PASSED=false
+    fi
+    echo ""
+fi
+
 # Summary
-if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU && ! $RUN_RPI; then
+if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU && ! $RUN_RPI && ! $RUN_JETSON_PCM; then
     echo -e "${GREEN}=== No tests required (docs/config only changes) ===${NC}"
     exit 0
 fi

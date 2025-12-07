@@ -34,12 +34,13 @@ TEST(ParseOptions, ReturnsDefaultsWhenNoArgs) {
     auto argv = makeArgv(args);
     auto parsed = parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge");
 
-    ASSERT_TRUE(parsed.has_value());
-    EXPECT_EQ(parsed->device, "hw:0,0");
-    EXPECT_EQ(parsed->rate, 48000u);
-    EXPECT_EQ(parsed->format, AlsaCapture::SampleFormat::S16_LE);
-    EXPECT_EQ(parsed->frames, static_cast<snd_pcm_uframes_t>(4096));
-    EXPECT_EQ(parsed->iterations, 3);
+    ASSERT_FALSE(parsed.hasError);
+    ASSERT_TRUE(parsed.options.has_value());
+    EXPECT_EQ(parsed.options->device, "hw:0,0");
+    EXPECT_EQ(parsed.options->rate, 48000u);
+    EXPECT_EQ(parsed.options->format, AlsaCapture::SampleFormat::S16_LE);
+    EXPECT_EQ(parsed.options->frames, static_cast<snd_pcm_uframes_t>(4096));
+    EXPECT_EQ(parsed.options->iterations, 3);
 }
 
 TEST(ParseOptions, ParsesProvidedArguments) {
@@ -49,12 +50,13 @@ TEST(ParseOptions, ParsesProvidedArguments) {
     auto argv = makeArgv(args);
     auto parsed = parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge");
 
-    ASSERT_TRUE(parsed.has_value());
-    EXPECT_EQ(parsed->device, "hw:2,0");
-    EXPECT_EQ(parsed->rate, 96000u);
-    EXPECT_EQ(parsed->format, AlsaCapture::SampleFormat::S24_3LE);
-    EXPECT_EQ(parsed->frames, static_cast<snd_pcm_uframes_t>(2048));
-    EXPECT_EQ(parsed->iterations, 5);
+    ASSERT_FALSE(parsed.hasError);
+    ASSERT_TRUE(parsed.options.has_value());
+    EXPECT_EQ(parsed.options->device, "hw:2,0");
+    EXPECT_EQ(parsed.options->rate, 96000u);
+    EXPECT_EQ(parsed.options->format, AlsaCapture::SampleFormat::S24_3LE);
+    EXPECT_EQ(parsed.options->frames, static_cast<snd_pcm_uframes_t>(2048));
+    EXPECT_EQ(parsed.options->iterations, 5);
 }
 
 TEST(ParseOptions, AcceptsSupportedRates) {
@@ -73,7 +75,8 @@ TEST(ParseOptions, RejectsInvalidFormat) {
     auto argv = makeArgv(args);
     auto parsed = parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge");
 
-    EXPECT_FALSE(parsed.has_value());
+    EXPECT_TRUE(parsed.hasError);
+    EXPECT_FALSE(parsed.options.has_value());
 }
 
 TEST(ParseOptions, RejectsUnknownFlag) {
@@ -81,7 +84,8 @@ TEST(ParseOptions, RejectsUnknownFlag) {
     auto argv = makeArgv(args);
     auto parsed = parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge");
 
-    EXPECT_FALSE(parsed.has_value());
+    EXPECT_TRUE(parsed.hasError);
+    EXPECT_FALSE(parsed.options.has_value());
 }
 
 TEST(ParseOptions, RejectsUnsupportedRate) {

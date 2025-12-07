@@ -32,3 +32,26 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 - `include/` : `TcpServer` / `AlsaPlayback` / `PcmStreamHandler` のヘッダ
 - `CMakeLists.txt` : ALSA・pthread・BSD ソケット検出を行う単体プロジェクト
 
+## ヘッダ検証の簡易テスト例
+
+ヘッダのみ送信して受理/拒否のログを確認できます（PCMデータは未処理）。
+
+```bash
+# 正常ヘッダ（48000Hz, 2ch, S16_LE=1）を送る例
+python - <<'PY'
+import socket, struct
+hdr = struct.pack("<4sIIHH", b"PCMA", 1, 48000, 2, 1)
+s = socket.create_connection(("127.0.0.1", 46001))
+s.sendall(hdr)
+s.close()
+PY
+
+# 不正ヘッダ（magic違い）で拒否を確認する例
+python - <<'PY'
+import socket, struct
+hdr = struct.pack("<4sIIHH", b"XXXX", 1, 48000, 2, 1)
+s = socket.create_connection(("127.0.0.1", 46001))
+s.sendall(hdr)
+s.close()
+PY
+```
