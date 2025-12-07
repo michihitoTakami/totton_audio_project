@@ -103,6 +103,8 @@ int main(int argc, char **argv) {
     header.channels = static_cast<std::uint16_t>(cfg.channels);
     header.format = toPcmFormatCode(cfg.format);
     unsigned int lastSampleRate = header.sampleRate;
+    unsigned int lastChannels = cfg.channels;
+    AlsaCapture::SampleFormat lastFormat = cfg.format;
 
     TcpClient client;
     if (!client.configure(opt.host, opt.port, header)) {
@@ -152,18 +154,52 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if (auto currentRate = capture.currentSampleRate()) {
+        auto currentRate = capture.currentSampleRate();
+        auto currentCh = capture.currentChannels();
+        auto currentFmt = capture.currentFormat();
+        if (currentRate && currentCh && currentFmt) {
+            bool needRestart = false;
             if (*currentRate != lastSampleRate) {
-                lastSampleRate = *currentRate;
-                header.sampleRate = *currentRate;
-                logInfo("[rpi_pcm_bridge] Sample rate change detected -> " +
-                        std::to_string(*currentRate) + " Hz. Re-sending header.");
+                needRestart = true;
+            }
+            if (*currentCh != lastChannels) {
+                needRestart = true;
+            }
+            if (*currentFmt != lastFormat) {
+                needRestart = true;
+            }
+            if (needRestart) {
+                logInfo("[rpi_pcm_bridge] Device params changed -> rate=" +
+                        std::to_string(currentRate.value()) +
+                        " ch=" + std::to_string(currentCh.value()) +
+                        " fmt=" + std::to_string(static_cast<int>(currentFmt.value())) +
+                        ". Re-opening capture and resending header.");
+                capture.stop();
+                capture.close();
                 client.disconnect();
-                if (!client.configure(opt.host, opt.port, header)) {
-                    logError("[rpi_pcm_bridge] Reconnect after rate change failed");
+
+                cfg.sampleRate = currentRate.value();
+                cfg.channels = currentCh.value();
+                cfg.format = currentFmt.value();
+                cfg.periodFrames = opt.frames;
+
+                if (!openCaptureWithRetry(capture, cfg)) {
                     success = false;
                     break;
                 }
+                header.sampleRate = cfg.sampleRate;
+                header.channels = static_cast<std::uint16_t>(cfg.channels);
+                header.format = toPcmFormatCode(cfg.format);
+                lastSampleRate = cfg.sampleRate;
+                lastChannels = cfg.channels;
+                lastFormat = cfg.format;
+
+                if (!client.configure(opt.host, opt.port, header)) {
+                    logError("[rpi_pcm_bridge] Reconnect after device param change failed");
+                    success = false;
+                    break;
+                }
+                continue;
             }
         }
 

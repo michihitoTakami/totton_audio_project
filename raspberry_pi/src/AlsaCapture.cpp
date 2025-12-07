@@ -170,6 +170,38 @@ std::optional<unsigned int> AlsaCapture::currentSampleRate() const {
     return rate;
 }
 
+std::optional<unsigned int> AlsaCapture::currentChannels() const {
+    if (!handle_) {
+        return std::nullopt;
+    }
+    snd_pcm_hw_params_t *params = nullptr;
+    snd_pcm_hw_params_alloca(&params);
+    if (snd_pcm_hw_params_current(handle_, params) < 0) {
+        return std::nullopt;
+    }
+    unsigned int channels = 0;
+    if (snd_pcm_hw_params_get_channels(params, &channels) < 0) {
+        return std::nullopt;
+    }
+    return channels;
+}
+
+std::optional<AlsaCapture::SampleFormat> AlsaCapture::currentFormat() const {
+    if (!handle_) {
+        return std::nullopt;
+    }
+    snd_pcm_hw_params_t *params = nullptr;
+    snd_pcm_hw_params_alloca(&params);
+    if (snd_pcm_hw_params_current(handle_, params) < 0) {
+        return std::nullopt;
+    }
+    snd_pcm_format_t fmt = SND_PCM_FORMAT_UNKNOWN;
+    if (snd_pcm_hw_params_get_format(params, &fmt) < 0) {
+        return std::nullopt;
+    }
+    return fromAlsaFormat(fmt);
+}
+
 snd_pcm_format_t AlsaCapture::toAlsaFormat(SampleFormat format) {
     switch (format) {
     case SampleFormat::S16_LE:
@@ -180,6 +212,19 @@ snd_pcm_format_t AlsaCapture::toAlsaFormat(SampleFormat format) {
         return SND_PCM_FORMAT_S32_LE;
     }
     return SND_PCM_FORMAT_UNKNOWN;
+}
+
+std::optional<AlsaCapture::SampleFormat> AlsaCapture::fromAlsaFormat(snd_pcm_format_t format) {
+    switch (format) {
+    case SND_PCM_FORMAT_S16_LE:
+        return SampleFormat::S16_LE;
+    case SND_PCM_FORMAT_S24_3LE:
+        return SampleFormat::S24_3LE;
+    case SND_PCM_FORMAT_S32_LE:
+        return SampleFormat::S32_LE;
+    default:
+        return std::nullopt;
+    }
 }
 
 std::size_t AlsaCapture::bytesPerFrame(const Config &config) {

@@ -31,5 +31,5 @@ class TcpClient {
     bool headerReady_{false};
     std::chrono::milliseconds backoff_{1000};
     const std::chrono::milliseconds backoffMin_{1000};
-    const std::chrono::milliseconds backoffMax_{8000};
+    const std::chrono::milliseconds backoffMax_{4000};
 };
