@@ -88,6 +88,7 @@ bool PcmStreamHandler::handleClient(int fd) {
         configSnapshot.acceptCooldownMs > 0 ? configSnapshot.acceptCooldownMs : 250;
     const int maxConsecutiveTimeouts =
         configSnapshot.maxConsecutiveTimeouts > 0 ? configSnapshot.maxConsecutiveTimeouts : 3;
+    const ConnectionMode connectionMode = configSnapshot.connectionMode;
 
     if (recvTimeoutMs > 0) {
         struct timeval tv {};
@@ -217,8 +218,22 @@ bool PcmStreamHandler::handleClient(int fd) {
     };
 
     bool ok = true;
+    bool takeoverPending = false;
     int consecutiveTimeouts = 0;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
+        if (connectionMode != ConnectionMode::Single) {
+            auto res = server_.acceptClient();
+            if (res.takeoverPending || server_.hasPendingClient()) {
+                logWarn("[PcmStreamHandler] takeover requested; switching client");
+                ok = false;
+                takeoverPending = true;
+                break;
+            }
+            if (res.rejected) {
+                logWarn("[PcmStreamHandler] additional client rejected while streaming");
+            }
+        }
+
         ssize_t n = ::recv(fd, recvBuf.data(), recvBuf.size(), 0);
         if (n == 0) {
             logInfo("[PcmStreamHandler] client closed connection");
@@ -269,7 +284,7 @@ bool PcmStreamHandler::handleClient(int fd) {
         status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
         status_->setStreaming(false);
     }
-    if (!stopFlag_.load(std::memory_order_relaxed)) {
+    if (!stopFlag_.load(std::memory_order_relaxed) && !takeoverPending) {
         std::this_thread::sleep_for(std::chrono::milliseconds(acceptCooldownMs));
     }
     return ok;
@@ -290,23 +305,28 @@ void PcmStreamHandler::run() {
 
     logInfo("[PcmStreamHandler] waiting for clients on port " + std::to_string(server_.port()));
     while (!stopFlag_.load(std::memory_order_relaxed)) {
-        int fd = server_.acceptClient();
-        if (fd < 0) {
-            if (fd == -2) {
-                // 既にクライアントを保持している場合の拒否
+        if (!server_.hasActiveClient()) {
+            auto res = server_.acceptClient();
+            if (!res.accepted) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            continue;
         }
 
         if (status_) {
             status_->setClientConnected(true);
         }
-        handleClient(fd);
+        handleClient(server_.clientFd());
         server_.closeClient();
         if (status_) {
             status_->setClientConnected(false);
+        }
+        if (server_.hasPendingClient()) {
+            server_.promotePendingClient();
+            if (status_) {
+                status_->setClientConnected(true);
+            }
+            continue;
         }
     }
     logInfo("[PcmStreamHandler] stop requested; exit accept loop");

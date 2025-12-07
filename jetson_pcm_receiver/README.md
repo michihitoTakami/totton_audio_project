@@ -37,6 +37,13 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 - XRUN (`-EPIPE`) が発生した場合は `snd_pcm_prepare()` で復旧を試み、結果をログします。
 - ジッタ吸収リングバッファ（デフォルト有効）。溢れた場合は古いフレームをドロップし、ウォーターマーク到達・ドロップ数をログします。
 - SIGINT/SIGTERM で停止要求を検出し、接続待受ループを抜けて終了します。
+- 多クライアント制御オプション:
+  - `--connection-mode single|takeover|priority`（デフォルト: `single`）
+    - `single`: 従来通り同時1接続。新規は拒否。
+    - `takeover`: 新規接続をペンディングし、現行を切断して切替。
+    - `priority`: 優先リストに含まれるクライアントのみ既存を奪取可能。
+  - `--priority-client <IP>`（複数指定可 / カンマ区切り可）
+    - `priority` モード時に奪取を許可する送信元 IP（数値表記一致のみ）
 
 ## ZeroMQ ステータス/制御 API
 
@@ -56,6 +63,7 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
   - `last_header` (sample_rate, channels, format, version) 最後に受理したヘッダ
   - `ring_buffer_frames`, `watermark_frames`, `buffered_frames`, `max_buffered_frames`, `dropped_frames`
   - `xrun_count` (XRUN 検出回数)
+  - `connection_mode`, `priority_clients`
 
 ## ディレクトリ構成
 

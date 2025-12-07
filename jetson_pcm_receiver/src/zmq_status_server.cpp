@@ -1,5 +1,6 @@
 #include "zmq_status_server.h"
 
+#include "connection_mode.h"
 #include "logging.h"
 
 #include <chrono>
@@ -208,7 +209,7 @@ std::string ZmqStatusServer::handleRestart(const daemon_ipc::ZmqRequest& request
     return okResponse(request, data);
 }
 
-nlohmann::json ZmqStatusServer::buildStatusJson() const {
+nlohmann::json ZmqStatusServer::buildStatusJson() {
     auto snap = status_.snapshot();
     nlohmann::json data;
     data["listening"] = snap.listening;
@@ -221,6 +222,11 @@ nlohmann::json ZmqStatusServer::buildStatusJson() const {
     data["buffered_frames"] = snap.ring.bufferedFrames;
     data["max_buffered_frames"] = snap.ring.maxBufferedFrames;
     data["dropped_frames"] = snap.ring.droppedFrames;
+    {
+        std::lock_guard<std::mutex> lock(configMutex_);
+        data["connection_mode"] = toString(config_.connectionMode);
+        data["priority_clients"] = config_.priorityClients;
+    }
     if (snap.header.present) {
         nlohmann::json hdr;
         hdr["sample_rate"] = snap.header.header.sample_rate;

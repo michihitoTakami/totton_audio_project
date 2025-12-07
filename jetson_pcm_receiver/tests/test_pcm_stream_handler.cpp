@@ -2,11 +2,14 @@
 #include "pcm_stream_handler.h"
 #include "tcp_server.h"
 
+#include <arpa/inet.h>
 #include <atomic>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -85,6 +88,22 @@ PcmHeader makeValidHeader() {
     h.channels = 2;
     h.format = 1;
     return h;
+}
+
+int connectLoopback(uint16_t port) {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 }  // namespace
@@ -286,4 +305,56 @@ TEST(PcmStreamHandler, DisconnectsOnPartialHeader) {
     EXPECT_FALSE(playback.closeCalled);
 
     ::close(fds[1]);
+}
+
+TEST(PcmStreamHandler, TakeoverInterruptsCurrentClient) {
+    FakeAlsaPlayback playback;
+    TcpServerOptions opts;
+    opts.connectionMode = ConnectionMode::Takeover;
+    opts.backlog = 4;
+    TcpServer server(0, opts);
+    ASSERT_TRUE(server.start());
+
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    cfg.connectionMode = ConnectionMode::Takeover;
+    cfg.maxConsecutiveTimeouts = 10;
+    PcmStreamHandler handler(playback, server, stop, cfg);
+
+    int client1 = connectLoopback(server.boundPort());
+    ASSERT_GE(client1, 0);
+    auto firstAccept = server.acceptClient();
+    ASSERT_TRUE(firstAccept.accepted);
+
+    auto header = makeValidHeader();
+    ASSERT_EQ(::send(client1, &header, sizeof(header), 0), sizeof(header));
+    std::vector<std::uint8_t> pcm(32, 0);
+    ASSERT_EQ(::send(client1, pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+
+    std::thread handlerThread(
+        [&]() { EXPECT_FALSE(handler.handleClientForTest(server.clientFd())); });
+
+    int client2 = connectLoopback(server.boundPort());
+    ASSERT_GE(client2, 0);
+    auto secondAccept = server.acceptClient();
+    EXPECT_TRUE(secondAccept.takeoverPending);
+    ASSERT_TRUE(server.hasPendingClient());
+
+    auto header2 = makeValidHeader();
+    ASSERT_EQ(::send(client2, &header2, sizeof(header2), 0), sizeof(header2));
+    ASSERT_EQ(::send(client2, pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+    ::close(client2);  // new client finishes sending
+
+    handlerThread.join();
+    EXPECT_TRUE(server.hasPendingClient());
+    server.promotePendingClient();
+
+    std::thread handlerThread2(
+        [&]() { EXPECT_TRUE(handler.handleClientForTest(server.clientFd())); });
+    handlerThread2.join();
+
+    server.closeClient();
+    server.stop();
+    ::close(client1);
+    ::close(client2);
 }
