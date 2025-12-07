@@ -17,8 +17,8 @@
 #include <vector>
 
 PcmStreamHandler::PcmStreamHandler(AlsaPlayback &playback, TcpServer &server,
-                                   std::atomic_bool &stopFlag)
-    : playback_(playback), server_(server), stopFlag_(stopFlag) {}
+                                   std::atomic_bool &stopFlag, PcmStreamConfig config)
+    : playback_(playback), server_(server), stopFlag_(stopFlag), config_(config) {}
 
 namespace {
 
@@ -99,8 +99,64 @@ bool PcmStreamHandler::handleClient(int fd) const {
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
 
     std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
+
+    const bool useRing = config_.ringBufferFrames > 0;
+    const std::size_t capacityBytes = config_.ringBufferFrames * bytesPerFrame;
+    std::size_t watermarkFrames =
+        config_.watermarkFrames > 0 ? config_.watermarkFrames : config_.ringBufferFrames * 3 / 4;
+    std::vector<std::uint8_t> ringBuf;
+    if (useRing) {
+        ringBuf.reserve(capacityBytes);
+        logInfo("[PcmStreamHandler] ring buffer enabled: frames=" +
+                std::to_string(config_.ringBufferFrames) +
+                " watermark=" + std::to_string(watermarkFrames));
+    }
+
     std::vector<std::uint8_t> staging;
     staging.reserve(RECV_CHUNK_BYTES * 2);
+
+    std::size_t maxBufferedFrames = 0;
+    std::size_t droppedFrames = 0;
+    bool watermarkLogged = false;
+
+    auto enqueueData = [&](const std::uint8_t *data, std::size_t bytes) {
+        if (!useRing) {
+            staging.insert(staging.end(), data, data + bytes);
+            return;
+        }
+        ringBuf.insert(ringBuf.end(), data, data + bytes);
+        if (ringBuf.size() > capacityBytes) {
+            const std::size_t overBytes = ringBuf.size() - capacityBytes;
+            const std::size_t overFrames = overBytes / bytesPerFrame;
+            droppedFrames += overFrames;
+            ringBuf.erase(ringBuf.begin(), ringBuf.begin() + static_cast<long>(overBytes));
+            logWarn("[PcmStreamHandler] ring buffer overflow; dropped frames=" +
+                    std::to_string(overFrames));
+        }
+        const std::size_t bufferedFrames = ringBuf.size() / bytesPerFrame;
+        if (bufferedFrames > maxBufferedFrames) {
+            maxBufferedFrames = bufferedFrames;
+        }
+        if (!watermarkLogged && bufferedFrames >= watermarkFrames) {
+            logWarn("[PcmStreamHandler] ring buffer watermark reached: " +
+                    std::to_string(bufferedFrames) + " frames");
+            watermarkLogged = true;
+        }
+    };
+
+    auto tryWrite = [&](std::vector<std::uint8_t> &buf) -> bool {
+        const std::size_t framesAvailable = buf.size() / bytesPerFrame;
+        if (framesAvailable == 0) {
+            return true;
+        }
+        if (!playback_.write(buf.data(), framesAvailable)) {
+            logError("[PcmStreamHandler] ALSA write failed");
+            return false;
+        }
+        const std::size_t bytesUsed = framesAvailable * bytesPerFrame;
+        buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(bytesUsed));
+        return true;
+    };
 
     bool ok = true;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
@@ -121,22 +177,27 @@ bool PcmStreamHandler::handleClient(int fd) const {
             break;
         }
 
-        staging.insert(staging.end(), recvBuf.begin(), recvBuf.begin() + n);
-        const std::size_t framesAvailable = staging.size() / bytesPerFrame;
-        const std::size_t bytesAvailable = framesAvailable * bytesPerFrame;
+        enqueueData(recvBuf.data(), static_cast<std::size_t>(n));
 
-        if (framesAvailable > 0) {
-            if (!playback_.write(staging.data(), framesAvailable)) {
-                logError("[PcmStreamHandler] ALSA write failed");
+        if (useRing) {
+            if (!tryWrite(ringBuf)) {
                 ok = false;
                 break;
             }
-            staging.erase(staging.begin(),
-                          staging.begin() + static_cast<std::ptrdiff_t>(bytesAvailable));
+        } else {
+            if (!tryWrite(staging)) {
+                ok = false;
+                break;
+            }
         }
     }
 
     playback_.close();
+    if (useRing) {
+        logInfo("[PcmStreamHandler] ring stats: max_buffered_frames=" +
+                std::to_string(maxBufferedFrames) +
+                " dropped_frames=" + std::to_string(droppedFrames));
+    }
     return ok;
 }
 

@@ -40,6 +40,7 @@ if(BUILD_TESTING)
     add_executable(rpi_capture_tests
         tests/test_cli_options.cpp
         tests/test_alsa_capture.cpp
+        tests/test_tcp_client.cpp
     )
 
     target_link_libraries(rpi_capture_tests
