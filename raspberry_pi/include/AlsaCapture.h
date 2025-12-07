@@ -1,13 +1,12 @@
 #pragma once
 
 #include <alsa/asoundlib.h>
-
 #include <cstdint>
 #include <string>
 #include <vector>
 
 class AlsaCapture {
-public:
+   public:
     enum class SampleFormat {
         S16_LE,
         S24_3LE,
@@ -36,12 +35,12 @@ public:
 
     bool isOpen() const;
 
-private:
-    snd_pcm_format_t toAlsaFormat(SampleFormat format) const;
-    std::size_t bytesPerFrame() const;
+    // Exposed for unit tests and CLI validation
+    static snd_pcm_format_t toAlsaFormat(SampleFormat format);
+    static std::size_t bytesPerFrame(const Config &config);
 
+   private:
     Config config_{};
     snd_pcm_t *handle_{nullptr};
     std::size_t frameBytes_{0};
 };
-

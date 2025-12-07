@@ -91,10 +91,13 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         runtime_stats::updateUpsamplerPeak(upsamplerPeak);
     }
 
-    if (deps_.crossfeedEnabled && deps_.crossfeedEnabled->load(std::memory_order_relaxed) &&
-        deps_.crossfeedProcessor && deps_.crossfeedMutex && deps_.cfOutputLeft &&
-        deps_.cfOutputRight && deps_.cfStreamInputLeft && deps_.cfStreamInputRight &&
-        deps_.cfStreamAccumulatedLeft && deps_.cfStreamAccumulatedRight) {
+    const bool crossfeedActive =
+        deps_.crossfeedEnabled && deps_.crossfeedEnabled->load(std::memory_order_relaxed);
+
+    if (crossfeedActive && deps_.crossfeedProcessor && deps_.crossfeedMutex &&
+        deps_.cfOutputLeft && deps_.cfOutputRight && deps_.cfStreamInputLeft &&
+        deps_.cfStreamInputRight && deps_.cfStreamAccumulatedLeft &&
+        deps_.cfStreamAccumulatedRight) {
         std::lock_guard<std::mutex> cfLock(*deps_.crossfeedMutex);
         bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
             outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,
@@ -116,6 +119,12 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
             }
             return true;
         }
+
+        // クロスフィード有効時はストリーミングバッファへ蓄積だけ行い、
+        // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
+        // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
+        // クラッシュするのを防ぐ。
+        return true;
     }
 
     if (deps_.buffer.bufferMutex) {
