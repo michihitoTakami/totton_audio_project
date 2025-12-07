@@ -92,7 +92,8 @@ TEST(PcmStreamHandler, AcceptsValidHeaderAndWritesFrames) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
     std::atomic_bool stop{false};
-    PcmStreamHandler handler(playback, server, stop);
+    PcmStreamConfig cfg{};
+    PcmStreamHandler handler(playback, server, stop, cfg);
 
     int fds[2]{-1, -1};
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
@@ -115,11 +116,40 @@ TEST(PcmStreamHandler, AcceptsValidHeaderAndWritesFrames) {
     ::close(fds[1]);
 }
 
+TEST(PcmStreamHandler, RingBufferDropsOldFramesWhenOverflow) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    cfg.ringBufferFrames = 4;  // very small buffer
+    cfg.watermarkFrames = 3;
+    PcmStreamHandler handler(playback, server, stop, cfg);
+
+    int fds[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    auto header = makeValidHeader();
+    ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
+
+    // 8 frames (should drop 4 when buffer is 4 frames)
+    std::vector<std::uint8_t> pcm(32, 0);  // S16_LE stereo -> 4 bytes/frame
+    ASSERT_EQ(::send(fds[0], pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+    ::close(fds[0]);
+
+    EXPECT_TRUE(handler.handleClientForTest(fds[1]));
+    EXPECT_TRUE(playback.openCalled);
+    EXPECT_TRUE(playback.writeCalled);
+    EXPECT_EQ(playback.totalFramesWritten, 4u);  // only capacity frames survive
+
+    ::close(fds[1]);
+}
+
 TEST(PcmStreamHandler, AcceptsS24AndHighRate) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
     std::atomic_bool stop{false};
-    PcmStreamHandler handler(playback, server, stop);
+    PcmStreamConfig cfg{};
+    PcmStreamHandler handler(playback, server, stop, cfg);
 
     int fds[2]{-1, -1};
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
@@ -146,7 +176,8 @@ TEST(PcmStreamHandler, RejectsUnsupportedRate) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
     std::atomic_bool stop{false};
-    PcmStreamHandler handler(playback, server, stop);
+    PcmStreamConfig cfg{};
+    PcmStreamHandler handler(playback, server, stop, cfg);
 
     int fds[2]{-1, -1};
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
@@ -168,7 +199,8 @@ TEST(PcmStreamHandler, RejectsWhenPlaybackOpenFailsForFormat) {
     playback.shouldFailOpen = true;  // force open failure after validation passes
     TcpServer server(0);
     std::atomic_bool stop{false};
-    PcmStreamHandler handler(playback, server, stop);
+    PcmStreamConfig cfg{};
+    PcmStreamHandler handler(playback, server, stop, cfg);
 
     int fds[2]{-1, -1};
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
@@ -189,7 +221,8 @@ TEST(PcmStreamHandler, RejectsInvalidHeader) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
     std::atomic_bool stop{false};
-    PcmStreamHandler handler(playback, server, stop);
+    PcmStreamConfig cfg{};
+    PcmStreamHandler handler(playback, server, stop, cfg);
 
     int fds[2]{-1, -1};
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
@@ -210,7 +243,8 @@ TEST(PcmStreamHandler, DisconnectsOnPartialHeader) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
     std::atomic_bool stop{false};
-    PcmStreamHandler handler(playback, server, stop);
+    PcmStreamConfig cfg{};
+    PcmStreamHandler handler(playback, server, stop, cfg);
 
     int fds[2]{-1, -1};
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
