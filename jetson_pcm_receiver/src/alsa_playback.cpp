@@ -1,6 +1,7 @@
 #include "alsa_playback.h"
 
 #include "logging.h"
+#include "status_tracker.h"
 
 #include <iostream>
 #include <memory>
@@ -195,6 +196,9 @@ bool AlsaPlayback::write(const void *data, std::size_t frames) {
     snd_pcm_sframes_t written = snd_pcm_writei(handle_, data, frames);
     if (written == -EPIPE) {
         logWarn("[AlsaPlayback] XRUN detected (EPIPE)");
+        if (statusTracker_) {
+            statusTracker_->incrementXrun();
+        }
         if (!recoverFromXrun()) {
             return false;
         }

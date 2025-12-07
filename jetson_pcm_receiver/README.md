@@ -6,7 +6,7 @@ Jetson 向けの PCM over TCP 受信ブリッジです。Raspberry Pi 側の送�
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential cmake pkg-config libasound2-dev
+sudo apt-get install -y build-essential cmake pkg-config libasound2-dev libzmq3-dev
 ```
 
 ## ビルド方法
@@ -27,6 +27,9 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
   --log-level info \        # error / warn / info / debug
   --ring-buffer-frames 8192 # 0で無効（デフォルト 8192）
   --ring-buffer-watermark 0 # 0で自動(75%)
+  --zmq-endpoint ipc:///tmp/jetson_pcm_receiver.sock \
+  --zmq-token "" \
+  --zmq-pub-interval 1000
 ```
 
 - 受信ヘッダが `PCMA` / version 1 かつ 44.1kHz or 48kHz の {1,2,4,8,16} 倍、2ch、フォーマットが `S16_LE(1)` / `S24_3LE(2)` / `S32_LE(4)` の場合に再生します。
@@ -34,6 +37,25 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 - XRUN (`-EPIPE`) が発生した場合は `snd_pcm_prepare()` で復旧を試み、結果をログします。
 - ジッタ吸収リングバッファ（デフォルト有効）。溢れた場合は古いフレームをドロップし、ウォーターマーク到達・ドロップ数をログします。
 - SIGINT/SIGTERM で停止要求を検出し、接続待受ループを抜けて終了します。
+
+## ZeroMQ ステータス/制御 API
+
+- デフォルト: REP `ipc:///tmp/jetson_pcm_receiver.sock` / PUB `ipc:///tmp/jetson_pcm_receiver.sock.pub`
+- 無効化: `--disable-zmq`（デフォルトは有効）。ローカル IPC 以外を使う場合は `--zmq-token` を必ず設定してください。
+- PUB 間隔: `--zmq-pub-interval <ms>`（0 で無効）
+- リクエスト例（REQ/REP、token は任意・設定時は必須）
+  - ステータス取得:
+    - 送信: `{"cmd":"STATUS","token":"<token>"}`
+    - 応答: `{"status":"ok","data":{"listening":true,"bound_port":46001,"client_connected":false,"streaming":false,"ring_buffer_frames":8192,"watermark_frames":6144,"buffered_frames":0,"max_buffered_frames":0,"dropped_frames":0,"xrun_count":0,"last_header":null,"rep_endpoint":"...","pub_endpoint":"..."}}`
+  - キャッシュ/レイテンシ変更: `{"cmd":"SET_CACHE","token":"<token>","params":{"ring_buffer_frames":16384,"watermark_frames":0}}`
+    - `ring_buffer_frames=0` でリングバッファ無効、`watermark_frames=0` で自動 75%
+  - 再起動要求: `{"cmd":"RESTART","token":"<token>"}`
+- PUB でのステータス通知: `{"event":"status", ...上記 data と同等のフィールド...}` を周期送信
+- 取得できる主なフィールド:
+  - `listening` / `bound_port` / `client_connected` / `streaming`
+  - `last_header` (sample_rate, channels, format, version) 最後に受理したヘッダ
+  - `ring_buffer_frames`, `watermark_frames`, `buffered_frames`, `max_buffered_frames`, `dropped_frames`
+  - `xrun_count` (XRUN 検出回数)
 
 ## ディレクトリ構成
 
