@@ -4,11 +4,13 @@
 
 #include <alsa/asoundlib.h>
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -29,6 +31,25 @@ std::uint16_t toPcmFormatCode(AlsaCapture::SampleFormat format) {
         return 4;
     }
     return 0;
+}
+
+bool openCaptureWithRetry(AlsaCapture &capture, AlsaCapture::Config &cfg) {
+    std::chrono::milliseconds backoff{1000};
+    const std::chrono::milliseconds backoffMax{8000};
+    while (!gStopRequested.load()) {
+        if (capture.open(cfg) && capture.start()) {
+            if (auto currentRate = capture.currentSampleRate()) {
+                cfg.sampleRate = *currentRate;
+            }
+            return true;
+        }
+        logWarn("[rpi_pcm_bridge] Failed to open/start ALSA device, retrying in " +
+                std::to_string(backoff.count()) + " ms");
+        capture.close();
+        std::this_thread::sleep_for(backoff);
+        backoff = std::min(backoff * 2, backoffMax);
+    }
+    return false;
 }
 
 }  // namespace
@@ -73,13 +94,7 @@ int main(int argc, char **argv) {
     cfg.format = opt.format;
     cfg.periodFrames = opt.frames;
 
-    if (!capture.open(cfg)) {
-        logError("[rpi_pcm_bridge] Failed to open device");
-        return EXIT_FAILURE;
-    }
-    if (!capture.start()) {
-        logError("[rpi_pcm_bridge] Failed to start capture");
-        capture.close();
+    if (!openCaptureWithRetry(capture, cfg)) {
         return EXIT_FAILURE;
     }
 
@@ -107,9 +122,24 @@ int main(int argc, char **argv) {
             continue;
         }
         if (bytes < 0) {
-            logError("[rpi_pcm_bridge] Read failed: " + std::to_string(bytes));
-            success = false;
-            break;
+            logWarn("[rpi_pcm_bridge] Read failed: " + std::to_string(bytes) +
+                    ". Reopening ALSA device and resending header.");
+            capture.stop();
+            capture.close();
+            client.disconnect();
+
+            if (!openCaptureWithRetry(capture, cfg)) {
+                success = false;
+                break;
+            }
+            header.sampleRate = cfg.sampleRate;
+            lastSampleRate = header.sampleRate;
+            if (!client.configure(opt.host, opt.port, header)) {
+                logError("[rpi_pcm_bridge] Reconnect after capture reopen failed");
+                success = false;
+                break;
+            }
+            continue;
         }
         if (bytes == 0) {
             continue;
