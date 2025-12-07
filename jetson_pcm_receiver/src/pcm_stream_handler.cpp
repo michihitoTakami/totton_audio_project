@@ -5,6 +5,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -12,9 +13,29 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 PcmStreamHandler::PcmStreamHandler(AlsaPlayback &playback, TcpServer &server)
     : playback_(playback), server_(server) {}
+
+namespace {
+
+std::size_t bytesPerSample(uint16_t format) {
+    switch (format) {
+    case 1:
+        return 2;  // S16_LE
+    case 2:
+        return 3;  // S24_3LE
+    case 3:
+        return 4;  // S24_LE (packed in 32bit)
+    case 4:
+        return 4;  // S32_LE
+    default:
+        return 0;
+    }
+}
+
+}  // namespace
 
 bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
     std::size_t bytesNeeded = sizeof(PcmHeader);
@@ -58,8 +79,60 @@ bool PcmStreamHandler::handleClient(int fd) const {
     std::cout << "  - channels: " << header.channels << std::endl;
     std::cout << "  - format:   " << header.format << std::endl;
     std::cout << "  - device:   " << playback_.device() << " (ALSA)" << std::endl;
-    std::cout << "[PcmStreamHandler] PCMデータ処理は未実装のため接続を閉じます" << std::endl;
-    return true;
+
+    const std::size_t sampleBytes = bytesPerSample(header.format);
+    if (sampleBytes == 0) {
+        std::cerr << "[PcmStreamHandler] unsupported format code: " << header.format << std::endl;
+        return false;
+    }
+
+    if (!playback_.open(header.sample_rate, header.channels, header.format)) {
+        std::cerr << "[PcmStreamHandler] failed to open ALSA playback for received header"
+                  << std::endl;
+        return false;
+    }
+
+    const std::size_t bytesPerFrame = sampleBytes * header.channels;
+    constexpr std::size_t RECV_CHUNK_BYTES = 4096;
+
+    std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
+    std::vector<std::uint8_t> staging;
+    staging.reserve(RECV_CHUNK_BYTES * 2);
+
+    bool ok = true;
+    while (true) {
+        ssize_t n = ::recv(fd, recvBuf.data(), recvBuf.size(), 0);
+        if (n == 0) {
+            std::cout << "[PcmStreamHandler] client closed connection" << std::endl;
+            break;
+        }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                std::cerr << "[PcmStreamHandler] recv timeout" << std::endl;
+            } else {
+                std::perror("recv");
+            }
+            ok = false;
+            break;
+        }
+
+        staging.insert(staging.end(), recvBuf.begin(), recvBuf.begin() + n);
+        const std::size_t framesAvailable = staging.size() / bytesPerFrame;
+        const std::size_t bytesAvailable = framesAvailable * bytesPerFrame;
+
+        if (framesAvailable > 0) {
+            if (!playback_.write(staging.data(), framesAvailable)) {
+                std::cerr << "[PcmStreamHandler] ALSA write failed" << std::endl;
+                ok = false;
+                break;
+            }
+            staging.erase(staging.begin(),
+                          staging.begin() + static_cast<std::ptrdiff_t>(bytesAvailable));
+        }
+    }
+
+    playback_.close();
+    return ok;
 }
 
 bool PcmStreamHandler::handleClientForTest(int fd) const {
