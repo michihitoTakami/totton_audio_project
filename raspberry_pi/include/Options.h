@@ -14,14 +14,8 @@ struct Options {
     unsigned int rate{48000};
     AlsaCapture::SampleFormat format{AlsaCapture::SampleFormat::S16_LE};
     snd_pcm_uframes_t frames{4096};
-    int iterations{3};
-    enum class LogLevel {
-        Trace,
-        Debug,
-        Info,
-        Warn,
-        Error,
-    } logLevel{LogLevel::Info};
+    std::string logLevel{"info"};
+    int iterations{3};  // テスト用。後で削除予定。
 };
 
 struct ParseOptionsResult {
@@ -35,7 +29,4 @@ struct ParseOptionsResult {
 std::optional<AlsaCapture::SampleFormat> parseFormat(std::string_view value);
 ParseOptionsResult parseOptions(int argc, char **argv, std::string_view programName);
 void printHelp(std::string_view programName);
-void printVersion();
-std::string_view toString(Options::LogLevel level);
-std::optional<Options::LogLevel> parseLogLevel(std::string_view value);
-constexpr std::string_view kAppVersion = "0.1.0";
+void printVersion(std::string_view programName);

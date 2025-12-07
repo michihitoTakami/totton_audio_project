@@ -43,7 +43,10 @@ class DummyTcpServer {
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = 0;
-        ::bind(listenFd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+        int rc = ::bind(listenFd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+        if (rc != 0) {
+            throw std::runtime_error("bind failed");
+        }
         ::listen(listenFd_, 4);
 
         sockaddr_in bound{};

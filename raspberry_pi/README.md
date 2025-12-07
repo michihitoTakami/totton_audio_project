@@ -28,31 +28,29 @@ cmake --build raspberry_pi/build
 生成物:
 - バイナリ: `raspberry_pi/build/rpi_pcm_bridge`
 
-## 実行
+## 実行例
+
+ヘルプ・バージョン表示:
 
 ```bash
 ./raspberry_pi/build/rpi_pcm_bridge --help
+./raspberry_pi/build/rpi_pcm_bridge --version
 ```
 
-現状はスタブ実装のため、ヘルプとプレースホルダーのログのみを出力します。
-
-## ALSA キャプチャ簡易テスト
-
-実機のALSAデバイスを指定して数周期分を読み取ります（TCP送信は未実装）。
+TCP送信先とキャプチャ設定を指定する例:
 
 ```bash
 ./raspberry_pi/build/rpi_pcm_bridge \
   --device hw:0,0 \
-  --host 192.168.55.1 \
+  --host 192.168.1.50 \
   --port 46001 \
-  --rate 48000 \
-  --format S16_LE \
-  --log-level info \
+  --rate 96000 \
+  --format S24_3LE \
   --frames 4096 \
-  --iterations 3
+  --log-level info
 ```
 
 - 対応フォーマット: `S16_LE`, `S24_3LE`, `S32_LE`
-- 対応レート: 44.1/48kHz の 2/4/8/16 倍 (最大 705.6kHz / 768kHz)
+- 対応レート: `44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000`
+- ポート範囲外や未対応フォーマット/レート指定時は起動時にエラー終了します。
 - XRUN発生時は `snd_pcm_prepare()` でリカバリし、ログへ出力します。
-- 未対応フォーマット・レートを指定すると即エラー終了します。

@@ -55,7 +55,7 @@ bool TcpClient::connectOnce() {
 
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        std::clog << "[TcpClient] socket() failed: " << std::strerror(errno) << std::endl;
+        std::clog << "[TcpClient] socket() failed: " << std::strerror(errno) << '\n';
         return false;
     }
 
@@ -65,13 +65,13 @@ bool TcpClient::connectOnce() {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port_);
     if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) != 1) {
-        std::clog << "[TcpClient] inet_pton failed for host " << host_ << std::endl;
+        std::clog << "[TcpClient] inet_pton failed for host " << host_ << '\n';
         ::close(fd);
         return false;
     }
 
     if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-        std::clog << "[TcpClient] connect failed: " << std::strerror(errno) << std::endl;
+        std::clog << "[TcpClient] connect failed: " << std::strerror(errno) << '\n';
         ::close(fd);
         return false;
     }
@@ -79,13 +79,12 @@ bool TcpClient::connectOnce() {
     sock_ = fd;
 
     if (!sendAll(headerBytes_.data(), headerBytes_.size())) {
-        std::clog << "[TcpClient] failed to send header after connect" << std::endl;
+        std::clog << "[TcpClient] failed to send header after connect" << '\n';
         closeSocket();
         return false;
     }
 
-    std::clog << "[TcpClient] connected to " << host_ << ":" << port_ << " and sent header"
-              << std::endl;
+    std::clog << "[TcpClient] connected to " << host_ << ":" << port_ << " and sent header" << '\n';
     return true;
 }
 
@@ -111,7 +110,7 @@ bool TcpClient::sendPcmChunk(const std::vector<std::uint8_t> &payload) {
         return true;
     }
 
-    std::clog << "[TcpClient] send failed, reconnecting..." << std::endl;
+    std::clog << "[TcpClient] send failed, reconnecting..." << '\n';
     closeSocket();
 
     std::this_thread::sleep_for(backoff_);
@@ -139,7 +138,7 @@ bool TcpClient::sendAll(const std::uint8_t *data, std::size_t size) {
         if (sent < 0 && errno == EINTR) {
             continue;
         }
-        std::clog << "[TcpClient] send error: " << std::strerror(errno) << std::endl;
+        std::clog << "[TcpClient] send error: " << std::strerror(errno) << '\n';
         return false;
     }
     return true;
@@ -154,7 +153,7 @@ void TcpClient::closeSocket() {
         ::shutdown(sock_, SHUT_RDWR);
         ::close(sock_);
         sock_ = -1;
-        std::clog << "[TcpClient] socket closed" << std::endl;
+        std::clog << "[TcpClient] socket closed" << '\n';
     }
 }
 
@@ -177,7 +176,7 @@ void TcpClient::applySocketOptions(int fd) {
 
     timeval tv{};
     tv.tv_sec = kDefaultTimeoutMs / 1000;
-    tv.tv_usec = (kDefaultTimeoutMs % 1000) * 1000;
+    tv.tv_usec = static_cast<__suseconds_t>((kDefaultTimeoutMs % 1000) * 1000);
     ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
