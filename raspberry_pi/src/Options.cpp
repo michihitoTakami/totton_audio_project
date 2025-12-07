@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdlib>
 #include <iostream>
+#include <string_view>
 
 namespace {
 
@@ -40,7 +41,7 @@ void printHelp(std::string_view programName) {
     std::cout << "Usage: " << programName << " [--device hw:0,0] [--host 127.0.0.1] [--port 46001]"
               << " [--rate 48000] [--format S16_LE|S24_3LE|S32_LE]"
               << " [--frames 4096] [--log-level info]"
-              << " [--iterations 3] [--help] [--version]" << std::endl
+              << " [--iterations -1] [--help] [--version]" << std::endl
               << std::endl
               << "PCM bridge CLI options:" << std::endl
               << "  -d, --device     ALSA device name (e.g., hw:0,0)" << std::endl
@@ -52,7 +53,8 @@ void printHelp(std::string_view programName) {
               << "  -f, --format     Sample format: S16_LE | S24_3LE | S32_LE" << std::endl
               << "  --frames         ALSA period frames (capture chunk size)" << std::endl
               << "  --log-level      Log level: debug | info | warn | error" << std::endl
-              << "  --iterations     (Test only) loop count before exit" << std::endl
+              << "  --iterations     (Test only) loop count before exit (<=0 to run until signal)"
+              << std::endl
               << "  -h, --help       Show this help and exit" << std::endl
               << "  -V, --version    Show version and exit" << std::endl;
 }
@@ -111,7 +113,7 @@ ParseOptionsResult parseOptions(int argc, char **argv, std::string_view programN
                 result.errorMessage = "Unsupported log level. Use one of: debug|info|warn|error";
                 return result;
             }
-            opt.logLevel = lvl;
+            opt.logLevel = parseLogLevel(std::string{lvl});
         } else {
             result.hasError = true;
             result.errorMessage = std::string("Unknown argument: ") + std::string(arg);

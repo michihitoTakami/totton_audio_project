@@ -3,12 +3,35 @@
 #include "TcpClient.h"
 
 #include <alsa/asoundlib.h>
+#include <atomic>
+#include <csignal>
 #include <cstdlib>
-#include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace {
+
+std::atomic<bool> gStopRequested{false};
+
+void handleSignal(int /*signum*/) {
+    gStopRequested.store(true);
+}
+
+std::uint16_t toPcmFormatCode(AlsaCapture::SampleFormat format) {
+    switch (format) {
+    case AlsaCapture::SampleFormat::S16_LE:
+        return 1;
+    case AlsaCapture::SampleFormat::S24_3LE:
+        return 2;
+    case AlsaCapture::SampleFormat::S32_LE:
+        return 4;
+    }
+    return 0;
+}
+
+}  // namespace
 
 int main(int argc, char **argv) {
     const std::string_view programName =
@@ -22,7 +45,7 @@ int main(int argc, char **argv) {
         return EXIT_SUCCESS;
     }
     if (parsed.hasError) {
-        std::cerr << parsed.errorMessage << '\n';
+        logError(parsed.errorMessage);
         return EXIT_FAILURE;
     }
     if (!parsed.options) {
@@ -30,10 +53,17 @@ int main(int argc, char **argv) {
     }
     const Options opt = *parsed.options;
 
-    std::clog << "[rpi_pcm_bridge] start device=" << opt.device << " host=" << opt.host
-              << " port=" << opt.port << " rate=" << opt.rate
-              << " format=" << static_cast<int>(opt.format) << " frames=" << opt.frames
-              << " log_level=" << opt.logLevel << '\n';
+    setLogLevel(opt.logLevel);
+    logInfo("[rpi_pcm_bridge] start device=" + opt.device + " host=" + opt.host +
+            " port=" + std::to_string(opt.port) + " rate=" + std::to_string(opt.rate) + " format=" +
+            std::to_string(static_cast<int>(opt.format)) + " frames=" + std::to_string(opt.frames));
+
+    struct sigaction sa {};
+    sa.sa_handler = handleSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
 
     AlsaCapture capture;
     AlsaCapture::Config cfg;
@@ -44,32 +74,66 @@ int main(int argc, char **argv) {
     cfg.periodFrames = opt.frames;
 
     if (!capture.open(cfg)) {
-        std::cerr << "[rpi_pcm_bridge] Failed to open device" << '\n';
+        logError("[rpi_pcm_bridge] Failed to open device");
         return EXIT_FAILURE;
     }
     if (!capture.start()) {
-        std::cerr << "[rpi_pcm_bridge] Failed to start capture" << '\n';
+        logError("[rpi_pcm_bridge] Failed to start capture");
+        capture.close();
+        return EXIT_FAILURE;
+    }
+
+    PcmHeader header;
+    header.sampleRate = cfg.sampleRate;
+    header.channels = static_cast<std::uint16_t>(cfg.channels);
+    header.format = toPcmFormatCode(cfg.format);
+
+    TcpClient client;
+    if (!client.configure(opt.host, opt.port, header)) {
+        logError("[rpi_pcm_bridge] Failed to connect TCP client");
+        capture.stop();
+        capture.close();
         return EXIT_FAILURE;
     }
 
     std::vector<std::uint8_t> buffer;
     bool success = true;
-    for (int i = 0; i < opt.iterations; ++i) {
+    int iteration = 0;
+    while (!gStopRequested.load()) {
         int bytes = capture.read(buffer);
         if (bytes == -EPIPE) {
-            std::clog << "[rpi_pcm_bridge] XRUN recovered, continuing" << '\n';
+            logWarn("[rpi_pcm_bridge] XRUN recovered, continuing");
             continue;
         }
         if (bytes < 0) {
-            std::clog << "[rpi_pcm_bridge] Read failed: " << bytes << '\n';
+            logError("[rpi_pcm_bridge] Read failed: " + std::to_string(bytes));
             success = false;
             break;
         }
-        std::clog << "[rpi_pcm_bridge] Read " << bytes << " bytes" << '\n';
+        if (bytes == 0) {
+            continue;
+        }
+
+        buffer.resize(static_cast<std::size_t>(bytes));
+        if (!client.sendPcmChunk(buffer)) {
+            logError("[rpi_pcm_bridge] Failed to send PCM chunk");
+            success = false;
+            break;
+        }
+
+        if (opt.iterations > 0 && ++iteration >= opt.iterations) {
+            logInfo("[rpi_pcm_bridge] Iteration limit reached, stopping");
+            break;
+        }
+    }
+
+    if (gStopRequested.load()) {
+        logInfo("[rpi_pcm_bridge] Signal received, shutting down");
     }
 
     capture.stop();
     capture.close();
+    client.disconnect();
 
     return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }

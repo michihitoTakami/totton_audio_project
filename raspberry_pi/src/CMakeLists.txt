@@ -2,6 +2,7 @@ add_library(rpi_pcm_bridge
     AlsaCapture.cpp
     Options.cpp
     TcpClient.cpp
+    logging.cpp
 )
 
 target_include_directories(rpi_pcm_bridge

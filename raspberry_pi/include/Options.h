@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AlsaCapture.h"
+#include "logging.h"
 
 #include <cstdint>
 #include <optional>
@@ -14,8 +15,8 @@ struct Options {
     unsigned int rate{48000};
     AlsaCapture::SampleFormat format{AlsaCapture::SampleFormat::S16_LE};
     snd_pcm_uframes_t frames{4096};
-    std::string logLevel{"info"};
-    int iterations{3};  // テスト用。後で削除予定。
+    LogLevel logLevel{LogLevel::Info};
+    int iterations{-1};  // <0 の場合は無限ループ
 };
 
 struct ParseOptionsResult {
