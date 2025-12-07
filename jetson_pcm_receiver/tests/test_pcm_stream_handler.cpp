@@ -245,6 +245,10 @@ TEST(PcmStreamHandler, DisconnectsAfterRepeatedTimeouts) {
     TcpServer server(0);
     std::atomic_bool stop{false};
     PcmStreamConfig cfg{};
+    cfg.recvTimeoutMs = 5;
+    cfg.recvTimeoutSleepMs = 1;
+    cfg.acceptCooldownMs = 1;
+    cfg.maxConsecutiveTimeouts = 3;
     PcmStreamHandler handler(playback, server, stop, cfg);
 
     int fds[2]{-1, -1};
@@ -252,11 +256,6 @@ TEST(PcmStreamHandler, DisconnectsAfterRepeatedTimeouts) {
 
     auto header = makeValidHeader();
     ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
-
-    struct timeval tv {};
-    tv.tv_sec = 0;
-    tv.tv_usec = 5000;  // 5 ms to force quick EAGAIN
-    ASSERT_EQ(setsockopt(fds[1], SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)), 0);
 
     EXPECT_FALSE(handler.handleClientForTest(fds[1]));
     EXPECT_TRUE(playback.openCalled);
