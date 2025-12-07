@@ -106,6 +106,8 @@ git push -u origin feature/#123-feature
 gh pr create --title "#123 機能の説明" --body "..."
 ```
 
+**必須:** ワークツリーを作成する前に必ず `git fetch origin main` を実行し、最新の`origin/main`を取り込んでから作業を開始すること。過去のmainで作業を始めるとコンフリクト発生率が高くなる。
+
 ## Testing
 
 - Validate with sample WAVs in `test_data/`
