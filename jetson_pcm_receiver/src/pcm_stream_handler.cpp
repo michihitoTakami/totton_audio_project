@@ -17,8 +17,14 @@
 #include <vector>
 
 PcmStreamHandler::PcmStreamHandler(AlsaPlayback &playback, TcpServer &server,
-                                   std::atomic_bool &stopFlag, PcmStreamConfig config)
-    : playback_(playback), server_(server), stopFlag_(stopFlag), config_(config) {}
+                                   std::atomic_bool &stopFlag, PcmStreamConfig &config,
+                                   std::mutex *configMutex, StatusTracker *status)
+    : playback_(playback),
+      server_(server),
+      stopFlag_(stopFlag),
+      config_(config),
+      configMutex_(configMutex),
+      status_(status) {}
 
 namespace {
 
@@ -65,7 +71,15 @@ bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
     return true;
 }
 
-bool PcmStreamHandler::handleClient(int fd) const {
+bool PcmStreamHandler::handleClient(int fd) {
+    PcmStreamConfig configSnapshot;
+    if (configMutex_) {
+        std::lock_guard<std::mutex> lock(*configMutex_);
+        configSnapshot = config_;
+    } else {
+        configSnapshot = config_;
+    }
+
     PcmHeader header{};
     if (!receiveHeader(fd, header)) {
         logInfo("[PcmStreamHandler] disconnecting client (header recv failure)");
@@ -90,6 +104,10 @@ bool PcmStreamHandler::handleClient(int fd) const {
         return false;
     }
 
+    if (status_) {
+        status_->setHeader(header);
+    }
+
     if (!playback_.open(header.sample_rate, header.channels, header.format)) {
         logError("[PcmStreamHandler] failed to open ALSA playback for received header");
         return false;
@@ -100,15 +118,19 @@ bool PcmStreamHandler::handleClient(int fd) const {
 
     std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
 
-    const bool useRing = config_.ringBufferFrames > 0;
-    const std::size_t capacityBytes = config_.ringBufferFrames * bytesPerFrame;
-    std::size_t watermarkFrames =
-        config_.watermarkFrames > 0 ? config_.watermarkFrames : config_.ringBufferFrames * 3 / 4;
+    const bool useRing = configSnapshot.ringBufferFrames > 0;
+    const std::size_t capacityBytes = configSnapshot.ringBufferFrames * bytesPerFrame;
+    std::size_t watermarkFrames = configSnapshot.watermarkFrames > 0
+                                      ? configSnapshot.watermarkFrames
+                                      : configSnapshot.ringBufferFrames * 3 / 4;
+    if (!useRing) {
+        watermarkFrames = 0;
+    }
     std::vector<std::uint8_t> ringBuf;
     if (useRing) {
         ringBuf.reserve(capacityBytes);
         logInfo("[PcmStreamHandler] ring buffer enabled: frames=" +
-                std::to_string(config_.ringBufferFrames) +
+                std::to_string(configSnapshot.ringBufferFrames) +
                 " watermark=" + std::to_string(watermarkFrames));
     }
 
@@ -119,9 +141,19 @@ bool PcmStreamHandler::handleClient(int fd) const {
     std::size_t droppedFrames = 0;
     bool watermarkLogged = false;
 
+    if (status_) {
+        status_->updateRingConfig(configSnapshot.ringBufferFrames, watermarkFrames);
+        status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
+        status_->setStreaming(true);
+    }
+
     auto enqueueData = [&](const std::uint8_t *data, std::size_t bytes) {
         if (!useRing) {
             staging.insert(staging.end(), data, data + bytes);
+            if (status_) {
+                status_->updateRingBuffer(staging.size() / bytesPerFrame, maxBufferedFrames,
+                                          droppedFrames);
+            }
             return;
         }
         ringBuf.insert(ringBuf.end(), data, data + bytes);
@@ -142,6 +174,10 @@ bool PcmStreamHandler::handleClient(int fd) const {
                     std::to_string(bufferedFrames) + " frames");
             watermarkLogged = true;
         }
+        if (status_) {
+            status_->updateRingBuffer(ringBuf.size() / bytesPerFrame, maxBufferedFrames,
+                                      droppedFrames);
+        }
     };
 
     auto tryWrite = [&](std::vector<std::uint8_t> &buf) -> bool {
@@ -155,6 +191,9 @@ bool PcmStreamHandler::handleClient(int fd) const {
         }
         const std::size_t bytesUsed = framesAvailable * bytesPerFrame;
         buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(bytesUsed));
+        if (status_) {
+            status_->updateRingBuffer(buf.size() / bytesPerFrame, maxBufferedFrames, droppedFrames);
+        }
         return true;
     };
 
@@ -198,10 +237,14 @@ bool PcmStreamHandler::handleClient(int fd) const {
                 std::to_string(maxBufferedFrames) +
                 " dropped_frames=" + std::to_string(droppedFrames));
     }
+    if (status_) {
+        status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
+        status_->setStreaming(false);
+    }
     return ok;
 }
 
-bool PcmStreamHandler::handleClientForTest(int fd) const {
+bool PcmStreamHandler::handleClientForTest(int fd) {
     return handleClient(fd);
 }
 
@@ -209,6 +252,9 @@ void PcmStreamHandler::run() {
     if (!server_.listening() && !server_.start()) {
         logError("[PcmStreamHandler] failed to start TcpServer");
         return;
+    }
+    if (status_) {
+        status_->setListening(server_.port());
     }
 
     logInfo("[PcmStreamHandler] waiting for clients on port " + std::to_string(server_.port()));
@@ -223,8 +269,19 @@ void PcmStreamHandler::run() {
             continue;
         }
 
+        if (status_) {
+            status_->setClientConnected(true);
+        }
         handleClient(fd);
         server_.closeClient();
+        if (status_) {
+            status_->setClientConnected(false);
+        }
     }
     logInfo("[PcmStreamHandler] stop requested; exit accept loop");
+    if (status_) {
+        status_->clearListening();
+        status_->setStreaming(false);
+        status_->setClientConnected(false);
+    }
 }

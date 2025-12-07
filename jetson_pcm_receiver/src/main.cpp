@@ -1,13 +1,16 @@
 #include "alsa_playback.h"
 #include "logging.h"
 #include "pcm_stream_handler.h"
+#include "status_tracker.h"
 #include "tcp_server.h"
+#include "zmq_status_server.h"
 
 #include <atomic>
 #include <csignal>
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
+#include <mutex>
 #include <string>
 
 namespace {
@@ -26,6 +29,10 @@ struct AppOptions {
     LogLevel logLevel = LogLevel::Info;
     std::size_t ringBufferFrames = 8192;  // 0で無効
     std::size_t watermarkFrames = 0;      // 0で自動 (75%)
+    bool enableZmq = true;
+    std::string zmqEndpoint = "ipc:///tmp/jetson_pcm_receiver.sock";
+    std::string zmqToken;
+    int zmqPublishIntervalMs = 1000;
 };
 
 void printHelp(const char *exeName) {
@@ -39,6 +46,13 @@ void printHelp(const char *exeName) {
     std::cout
         << "  --ring-buffer-watermark N  watermark frames for warning (default: 75% of buffer)\n";
     std::cout << "  --no-ring-buffer        disable jitter buffer\n";
+    std::cout << "  --disable-zmq           disable ZeroMQ status/control API\n";
+    std::cout << "  --enable-zmq            explicitly enable ZeroMQ API (default: on)\n";
+    std::cout << "  --zmq-endpoint <uri>    ZeroMQ REP endpoint (default: "
+                 "ipc:///tmp/jetson_pcm_receiver.sock)\n";
+    std::cout << "  --zmq-token <token>     shared token for ZeroMQ commands\n";
+    std::cout
+        << "  --zmq-pub-interval <ms> status publish interval for PUB socket (default: 1000)\n";
     std::cout << "  -h, --help              Show this help\n";
     std::cout << std::endl;
 }
@@ -75,6 +89,26 @@ bool parseArgs(int argc, char **argv, AppOptions &options, bool &showHelp) {
         }
         if (arg == "--no-ring-buffer") {
             options.ringBufferFrames = 0;
+            continue;
+        }
+        if (arg == "--disable-zmq") {
+            options.enableZmq = false;
+            continue;
+        }
+        if (arg == "--enable-zmq") {
+            options.enableZmq = true;
+            continue;
+        }
+        if (arg == "--zmq-endpoint" && i + 1 < argc) {
+            options.zmqEndpoint = argv[++i];
+            continue;
+        }
+        if (arg == "--zmq-token" && i + 1 < argc) {
+            options.zmqToken = argv[++i];
+            continue;
+        }
+        if ((arg == "--zmq-pub-interval" || arg == "--zmq-pub-interval-ms") && i + 1 < argc) {
+            options.zmqPublishIntervalMs = std::atoi(argv[++i]);
             continue;
         }
 
@@ -117,20 +151,53 @@ int main(int argc, char **argv) {
             logInfo("  - watermark:   " + std::to_string(options.watermarkFrames) + " frames");
         }
     }
+    if (options.enableZmq) {
+        logInfo("  - ZeroMQ REP: " + options.zmqEndpoint);
+        logInfo("  - ZeroMQ PUB: derived from REP (.pub suffix or +1 port)");
+        if (!options.zmqToken.empty()) {
+            logInfo("  - ZeroMQ token: <configured>");
+        }
+    } else {
+        logInfo("  - ZeroMQ API: disabled");
+    }
+
+    StatusTracker status;
+    status.updateRingConfig(options.ringBufferFrames, options.watermarkFrames);
 
     TcpServer server(options.port);
     AlsaPlayback playback(options.device);
+    playback.setStatusTracker(&status);
+    std::mutex configMutex;
     PcmStreamConfig cfg;
     cfg.ringBufferFrames = options.ringBufferFrames;
     cfg.watermarkFrames = options.watermarkFrames;
-    PcmStreamHandler handler(playback, server, stopRequested, cfg);
+    PcmStreamHandler handler(playback, server, stopRequested, cfg, &configMutex, &status);
+
+    ZmqStatusServer zmqServer(status, cfg, configMutex, stopRequested);
+    if (options.enableZmq) {
+        ZmqStatusServer::Options zmqOpts;
+        zmqOpts.enabled = true;
+        zmqOpts.endpoint = options.zmqEndpoint;
+        zmqOpts.token = options.zmqToken;
+        zmqOpts.publishIntervalMs = options.zmqPublishIntervalMs;
+        if (!zmqServer.start(zmqOpts)) {
+            logError("[jetson-pcm-receiver] failed to start ZeroMQ server");
+            return 1;
+        }
+        if (zmqServer.running()) {
+            logInfo("  - ZeroMQ REP bound to: " + zmqServer.endpoint());
+            logInfo("  - ZeroMQ PUB bound to: " + zmqServer.pubEndpoint());
+        }
+    }
 
     if (!server.start()) {
         logError("[jetson-pcm-receiver] failed to start TCP server");
+        zmqServer.stop();
         return 1;
     }
     handler.run();
     server.stop();
+    zmqServer.stop();
 
     if (stopRequested.load(std::memory_order_relaxed)) {
         logInfo("[jetson-pcm-receiver] terminated by signal");

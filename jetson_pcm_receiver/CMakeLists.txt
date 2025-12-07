@@ -12,6 +12,7 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 
 pkg_check_modules(ALSA REQUIRED alsa)
+pkg_check_modules(ZMQ REQUIRED libzmq)
 
 include(CheckIncludeFileCXX)
 include(CheckCXXSymbolExists)
@@ -40,6 +41,9 @@ add_library(jetson_pcm_receiver_lib
     src/alsa_playback.cpp
     src/pcm_stream_handler.cpp
     src/pcm_header.cpp
+    src/status_tracker.cpp
+    src/zmq_status_server.cpp
+    ../src/daemon/control/zmq_server.cpp
 )
 
 add_executable(jetson_pcm_receiver
@@ -49,13 +53,19 @@ add_executable(jetson_pcm_receiver
 target_include_directories(jetson_pcm_receiver_lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
         ${ALSA_INCLUDE_DIRS}
+        ${ZMQ_INCLUDE_DIRS}
 )
 
 target_link_libraries(jetson_pcm_receiver_lib
     PUBLIC
         ${ALSA_LIBRARIES}
         Threads::Threads
+        ${ZMQ_LIBRARIES}
+        cppzmq
+        nlohmann_json::nlohmann_json
 )
 
 target_link_libraries(jetson_pcm_receiver PRIVATE jetson_pcm_receiver_lib)
@@ -83,18 +93,31 @@ message(STATUS "ALSA libraries: ${ALSA_LIBRARIES}")
 enable_testing()
 
 FetchContent_Declare(
+    cppzmq
+    GIT_REPOSITORY https://github.com/zeromq/cppzmq.git
+    GIT_TAG v4.10.0
+)
+
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+
+FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG v1.14.0
 )
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
+FetchContent_MakeAvailable(googletest cppzmq nlohmann_json)
 
 add_executable(jetson_pcm_receiver_tests
     tests/test_pcm_header.cpp
     tests/test_tcp_server.cpp
     tests/test_pcm_stream_handler.cpp
     tests/test_alsa_playback.cpp
+    tests/test_zmq_status_server.cpp
 )
 
 target_link_libraries(jetson_pcm_receiver_tests
@@ -105,6 +128,8 @@ target_link_libraries(jetson_pcm_receiver_tests
 
 target_include_directories(jetson_pcm_receiver_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
 add_test(NAME jetson_pcm_receiver_tests COMMAND jetson_pcm_receiver_tests)
