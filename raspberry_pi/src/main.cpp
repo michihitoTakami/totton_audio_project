@@ -15,10 +15,14 @@ int main(int argc, char **argv) {
         (argc > 0 && argv[0] != nullptr) ? std::string_view{argv[0]} : "rpi_pcm_bridge";
 
     auto parsed = parseOptions(argc, argv, programName);
-    if (!parsed) {
+    if (parsed.showHelp) {
         return EXIT_SUCCESS;
     }
-    const Options opt = *parsed;
+    if (parsed.hasError) {
+        std::cerr << parsed.errorMessage << std::endl;
+        return EXIT_FAILURE;
+    }
+    const Options opt = *parsed.options;
 
     AlsaCapture capture;
     AlsaCapture::Config cfg;
@@ -38,6 +42,7 @@ int main(int argc, char **argv) {
     }
 
     std::vector<std::uint8_t> buffer;
+    bool success = true;
     for (int i = 0; i < opt.iterations; ++i) {
         int bytes = capture.read(buffer);
         if (bytes == -EPIPE) {
@@ -46,6 +51,7 @@ int main(int argc, char **argv) {
         }
         if (bytes < 0) {
             std::clog << "[rpi_pcm_bridge] Read failed: " << bytes << std::endl;
+            success = false;
             break;
         }
         std::clog << "[rpi_pcm_bridge] Read " << bytes << " bytes" << std::endl;
@@ -54,5 +60,5 @@ int main(int argc, char **argv) {
     capture.stop();
     capture.close();
 
-    return EXIT_SUCCESS;
+    return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }

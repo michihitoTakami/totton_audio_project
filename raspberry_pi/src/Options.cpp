@@ -25,13 +25,15 @@ void printHelp(std::string_view programName) {
               << "Opens the given ALSA device, reads a few periods, and exits." << std::endl;
 }
 
-std::optional<Options> parseOptions(int argc, char **argv, std::string_view programName) {
+ParseOptionsResult parseOptions(int argc, char **argv, std::string_view programName) {
     Options opt{};
+    ParseOptionsResult result{};
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg{argv[i]};
         if (arg == "-h" || arg == "--help") {
             printHelp(programName);
-            return std::nullopt;
+            result.showHelp = true;
+            return result;
         } else if (arg == "--device" && i + 1 < argc) {
             opt.device = argv[++i];
         } else if (arg == "--rate" && i + 1 < argc) {
@@ -39,9 +41,9 @@ std::optional<Options> parseOptions(int argc, char **argv, std::string_view prog
         } else if (arg == "--format" && i + 1 < argc) {
             auto fmt = parseFormat(argv[++i]);
             if (!fmt) {
-                std::cerr << "Unsupported format. Use one of: "
-                          << "S16_LE | S24_3LE | S32_LE" << std::endl;
-                return std::nullopt;
+                result.hasError = true;
+                result.errorMessage = "Unsupported format. Use one of: S16_LE | S24_3LE | S32_LE";
+                return result;
             }
             opt.format = *fmt;
         } else if (arg == "--frames" && i + 1 < argc) {
@@ -49,9 +51,11 @@ std::optional<Options> parseOptions(int argc, char **argv, std::string_view prog
         } else if (arg == "--iterations" && i + 1 < argc) {
             opt.iterations = std::atoi(argv[++i]);
         } else {
-            std::cerr << "Unknown argument: " << arg << std::endl;
-            return std::nullopt;
+            result.hasError = true;
+            result.errorMessage = std::string("Unknown argument: ") + std::string(arg);
+            return result;
         }
     }
-    return opt;
+    result.options = opt;
+    return result;
 }

@@ -23,6 +23,12 @@ bool AlsaCapture::open(const Config &config) {
     config_ = config;
     frameBytes_ = bytesPerFrame(config_);
 
+    auto fail = [&](const std::string &message, int err) {
+        logError(message, err);
+        close();
+        return false;
+    };
+
     int rc = snd_pcm_open(&handle_, config_.deviceName.c_str(), SND_PCM_STREAM_CAPTURE, 0);
     if (rc < 0) {
         logError("[AlsaCapture] snd_pcm_open failed", rc);
@@ -36,41 +42,40 @@ bool AlsaCapture::open(const Config &config) {
 
     rc = snd_pcm_hw_params_set_access(handle_, hwParams, SND_PCM_ACCESS_RW_INTERLEAVED);
     if (rc < 0) {
-        logError("[AlsaCapture] set_access failed", rc);
-        return false;
+        return fail("[AlsaCapture] set_access failed", rc);
     }
 
     const snd_pcm_format_t alsaFormat = toAlsaFormat(config_.format);
     rc = snd_pcm_hw_params_set_format(handle_, hwParams, alsaFormat);
     if (rc < 0) {
-        logError("[AlsaCapture] set_format failed", rc);
-        return false;
+        return fail("[AlsaCapture] set_format failed", rc);
     }
 
     rc = snd_pcm_hw_params_set_channels(handle_, hwParams, config_.channels);
     if (rc < 0) {
-        logError("[AlsaCapture] set_channels failed", rc);
-        return false;
+        return fail("[AlsaCapture] set_channels failed", rc);
     }
 
     unsigned int rate = config_.sampleRate;
     rc = snd_pcm_hw_params_set_rate_near(handle_, hwParams, &rate, nullptr);
-    if (rc < 0 || rate != config_.sampleRate) {
-        logError("[AlsaCapture] set_rate_near failed or mismatched rate", rc);
-        return false;
+    if (rc < 0) {
+        return fail("[AlsaCapture] set_rate_near failed", rc);
+    }
+    if (rate != config_.sampleRate) {
+        std::clog << "[AlsaCapture] Requested rate " << config_.sampleRate
+                  << " differs from configured rate " << rate << " (continuing)" << std::endl;
+        config_.sampleRate = rate;
     }
 
     snd_pcm_uframes_t period = config_.periodFrames;
     rc = snd_pcm_hw_params_set_period_size_near(handle_, hwParams, &period, nullptr);
     if (rc < 0) {
-        logError("[AlsaCapture] set_period_size failed", rc);
-        return false;
+        return fail("[AlsaCapture] set_period_size failed", rc);
     }
 
     rc = snd_pcm_hw_params(handle_, hwParams);
     if (rc < 0) {
-        logError("[AlsaCapture] apply hw_params failed", rc);
-        return false;
+        return fail("[AlsaCapture] apply hw_params failed", rc);
     }
 
     std::clog << "[AlsaCapture] opened device=" << config_.deviceName

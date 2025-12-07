@@ -14,6 +14,13 @@ struct Options {
     int iterations{3};
 };
 
+struct ParseOptionsResult {
+    std::optional<Options> options;
+    bool showHelp{false};
+    bool hasError{false};
+    std::string errorMessage;
+};
+
 std::optional<AlsaCapture::SampleFormat> parseFormat(std::string_view value);
-std::optional<Options> parseOptions(int argc, char **argv, std::string_view programName);
+ParseOptionsResult parseOptions(int argc, char **argv, std::string_view programName);
 void printHelp(std::string_view programName);
