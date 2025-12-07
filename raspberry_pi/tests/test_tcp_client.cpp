@@ -14,7 +14,7 @@
 
 namespace {
 
-bool recvExact(int fd, std::vector<std::uint8_t> &out, std::size_t size, int timeoutMs = 2000) {
+bool recvExact(int fd, std::vector<std::uint8_t> &out, std::size_t size, int timeoutMs = 4000) {
     out.resize(size);
     std::size_t offset = 0;
     while (offset < size) {
@@ -36,8 +36,11 @@ bool recvExact(int fd, std::vector<std::uint8_t> &out, std::size_t size, int tim
 
 class DummyTcpServer {
    public:
-    DummyTcpServer(std::vector<std::size_t> payloadSizes, bool closeAfterFirst)
-        : payloadSizes_(std::move(payloadSizes)), closeAfterFirst_(closeAfterFirst) {
+    DummyTcpServer(std::vector<std::size_t> payloadSizes, bool closeAfterFirst,
+                   std::vector<std::chrono::milliseconds> acceptDelays = {})
+        : payloadSizes_(std::move(payloadSizes)),
+          closeAfterFirst_(closeAfterFirst),
+          acceptDelays_(std::move(acceptDelays)) {
         listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -83,6 +86,9 @@ class DummyTcpServer {
    private:
     void serve() {
         for (std::size_t i = 0; i < payloadSizes_.size(); ++i) {
+            if (i < acceptDelays_.size() && acceptDelays_[i].count() > 0) {
+                std::this_thread::sleep_for(acceptDelays_[i]);
+            }
             pollfd pfd{};
             pfd.fd = listenFd_;
             pfd.events = POLLIN;
@@ -126,6 +132,7 @@ class DummyTcpServer {
     std::uint16_t port_{0};
     std::vector<std::size_t> payloadSizes_;
     bool closeAfterFirst_{false};
+    std::vector<std::chrono::milliseconds> acceptDelays_;
     std::vector<std::string> headers_;
     std::vector<std::vector<std::uint8_t>> payloads_;
     bool hadError_{false};
@@ -182,6 +189,37 @@ TEST(TcpClientTest, ReconnectsAndResendsHeader) {
     EXPECT_EQ(server.headers()[0], headerToString(header));
     EXPECT_EQ(server.headers()[1], headerToString(header));
 
+    ASSERT_EQ(server.payloads().size(), 2u);
+    EXPECT_EQ(server.payloads()[0], firstPayload);
+    EXPECT_EQ(server.payloads()[1], secondPayload);
+}
+
+TEST(TcpClientTest, ReconnectsAfterServerDowntimeWithHeaderResent) {
+    PcmHeader header;
+    header.sampleRate = 48000;
+    header.channels = 2;
+    header.format = 1;
+
+    const std::vector<std::uint8_t> firstPayload(64, 0x33);
+    const std::vector<std::uint8_t> secondPayload(64, 0x44);
+
+    // Delay second accept so the client must retry with backoff and resend header.
+    DummyTcpServer server({firstPayload.size(), secondPayload.size()}, true,
+                          {std::chrono::milliseconds{0}, std::chrono::milliseconds{1000}});
+
+    TcpClient client;
+    ASSERT_TRUE(client.configure("127.0.0.1", server.port(), header));
+    ASSERT_TRUE(client.sendPcmChunk(firstPayload));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));  // allow server to close
+    ASSERT_TRUE(client.sendPcmChunk(secondPayload));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));  // allow server to finish
+
+    ASSERT_FALSE(server.hadError());
+    ASSERT_EQ(server.headers().size(), 2u);
+    EXPECT_EQ(server.headers()[0], headerToString(header));
+    EXPECT_EQ(server.headers()[1], headerToString(header));
     ASSERT_EQ(server.payloads().size(), 2u);
     EXPECT_EQ(server.payloads()[0], firstPayload);
     EXPECT_EQ(server.payloads()[1], secondPayload);
