@@ -50,6 +50,15 @@ struct AppConfig {
     // PipeWire input (disable for Docker/RTP-only mode)
     bool pipewireEnabled = true;  // Set to false for RTP-only mode (Docker)
 
+    struct LoopbackInputConfig {
+        bool enabled = false;
+        std::string device = "hw:Loopback,1,0";
+        uint32_t sampleRate = 44100;  // 0 = auto/detected (if available)
+        uint8_t channels = 2;
+        std::string format = "S16_LE";  // Supported: S16_LE, S24_3LE, S32_LE
+        uint32_t periodFrames = 1024;
+    } loopback;
+
     // EQ settings
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)

@@ -153,6 +153,43 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("pipewireEnabled"))
             outConfig.pipewireEnabled = j["pipewireEnabled"].get<bool>();
 
+        if (j.contains("loopback") && j["loopback"].is_object()) {
+            auto lb = j["loopback"];
+            try {
+                if (lb.contains("enabled") && lb["enabled"].is_boolean())
+                    outConfig.loopback.enabled = lb["enabled"].get<bool>();
+                if (lb.contains("device") && lb["device"].is_string())
+                    outConfig.loopback.device = lb["device"].get<std::string>();
+                if (lb.contains("sampleRate") && lb["sampleRate"].is_number_integer())
+                    outConfig.loopback.sampleRate = lb["sampleRate"].get<uint32_t>();
+                if (lb.contains("channels") && lb["channels"].is_number_integer())
+                    outConfig.loopback.channels = static_cast<uint8_t>(lb["channels"].get<int>());
+                if (lb.contains("format") && lb["format"].is_string())
+                    outConfig.loopback.format = lb["format"].get<std::string>();
+                if (lb.contains("periodFrames") && lb["periodFrames"].is_number_integer())
+                    outConfig.loopback.periodFrames =
+                        static_cast<uint32_t>(lb["periodFrames"].get<int>());
+            } catch (const std::exception& e) {
+                if (verbose) {
+                    std::cerr << "Config: Invalid loopback settings, using defaults: " << e.what()
+                              << std::endl;
+                }
+                outConfig.loopback = AppConfig::LoopbackInputConfig{};
+            }
+
+            if (outConfig.loopback.sampleRate == 0) {
+                outConfig.loopback.sampleRate = 44100;
+            }
+            if (outConfig.loopback.channels == 0) {
+                outConfig.loopback.channels = 2;
+            }
+            outConfig.loopback.channels =
+                static_cast<uint8_t>(std::clamp<int>(outConfig.loopback.channels, 1, 8));
+            if (outConfig.loopback.periodFrames == 0) {
+                outConfig.loopback.periodFrames = 1024;
+            }
+        }
+
         // Partitioned convolution settings (Issue #351)
         if (j.contains("partitionedConvolution") && j["partitionedConvolution"].is_object()) {
             auto pc = j["partitionedConvolution"];
