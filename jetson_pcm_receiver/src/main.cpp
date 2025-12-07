@@ -23,11 +23,12 @@ void printHelp(const char *exeName) {
     std::cout << std::endl;
 }
 
-bool parseArgs(int argc, char **argv, AppOptions &options) {
+bool parseArgs(int argc, char **argv, AppOptions &options, bool &showHelp) {
     for (int i = 1; i < argc; ++i) {
         std::string arg(argv[i]);
         if (arg == "-h" || arg == "--help") {
             printHelp(argv[0]);
+            showHelp = true;
             return false;
         }
         if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
@@ -50,8 +51,9 @@ bool parseArgs(int argc, char **argv, AppOptions &options) {
 
 int main(int argc, char **argv) {
     AppOptions options;
-    if (!parseArgs(argc, argv, options)) {
-        return 1;
+    bool showHelp = false;
+    if (!parseArgs(argc, argv, options, showHelp)) {
+        return showHelp ? 0 : 1;
     }
 
     std::cout << "[jetson-pcm-receiver] 雛形ビルド - 実装は未着手です" << std::endl;
