@@ -1,4 +1,5 @@
 #include "alsa_playback.h"
+#include "connection_mode.h"
 #include "logging.h"
 #include "pcm_stream_handler.h"
 #include "status_tracker.h"
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -37,6 +39,8 @@ struct AppOptions {
     int recvTimeoutSleepMs = 50;
     int acceptCooldownMs = 250;
     int maxConsecutiveTimeouts = 3;
+    ConnectionMode connectionMode = ConnectionMode::Single;
+    std::vector<std::string> priorityClients;
 };
 
 void printHelp(const char *exeName) {
@@ -53,6 +57,8 @@ void printHelp(const char *exeName) {
     std::cout << "  --recv-timeout-ms N     per-recv timeout before EAGAIN (default: 250)\n";
     std::cout << "  --recv-timeout-sleep-ms N  sleep between recv timeouts (default: 50)\n";
     std::cout << "  --accept-cooldown-ms N  cooldown before re-accept (default: 250)\n";
+    std::cout << "  --connection-mode MODE  single|takeover|priority (default: single)\n";
+    std::cout << "  --priority-client ADDR  priority client IP (repeatable)\n";
     std::cout << "  --disable-zmq           disable ZeroMQ status/control API\n";
     std::cout << "  --enable-zmq            explicitly enable ZeroMQ API (default: on)\n";
     std::cout << "  --zmq-endpoint <uri>    ZeroMQ REP endpoint (default: "
@@ -108,6 +114,28 @@ bool parseArgs(int argc, char **argv, AppOptions &options, bool &showHelp) {
         }
         if (arg == "--accept-cooldown-ms" && i + 1 < argc) {
             options.acceptCooldownMs = std::atoi(argv[++i]);
+            continue;
+        }
+        if (arg == "--connection-mode" && i + 1 < argc) {
+            options.connectionMode = parseConnectionMode(argv[++i]);
+            continue;
+        }
+        if (arg == "--priority-client" && i + 1 < argc) {
+            std::string value = argv[++i];
+            std::string current;
+            for (char c : value) {
+                if (c == ',') {
+                    if (!current.empty()) {
+                        options.priorityClients.push_back(current);
+                        current.clear();
+                    }
+                } else {
+                    current.push_back(c);
+                }
+            }
+            if (!current.empty()) {
+                options.priorityClients.push_back(current);
+            }
             continue;
         }
         if (arg == "--disable-zmq") {
@@ -183,11 +211,26 @@ int main(int argc, char **argv) {
     logInfo("  - recv timeout sleep: " + std::to_string(options.recvTimeoutSleepMs) + " ms");
     logInfo("  - accept cooldown: " + std::to_string(options.acceptCooldownMs) + " ms");
     logInfo("  - max consecutive timeouts: " + std::to_string(options.maxConsecutiveTimeouts));
+    logInfo("  - connection mode: " + toString(options.connectionMode));
+    if (!options.priorityClients.empty()) {
+        std::string joined;
+        for (std::size_t idx = 0; idx < options.priorityClients.size(); ++idx) {
+            if (idx > 0) {
+                joined += ", ";
+            }
+            joined += options.priorityClients[idx];
+        }
+        logInfo("  - priority clients: " + joined);
+    }
 
     StatusTracker status;
     status.updateRingConfig(options.ringBufferFrames, options.watermarkFrames);
 
-    TcpServer server(options.port);
+    TcpServerOptions serverOptions;
+    serverOptions.connectionMode = options.connectionMode;
+    serverOptions.priorityClients = options.priorityClients;
+    serverOptions.backlog = 8;
+    TcpServer server(options.port, serverOptions);
     AlsaPlayback playback(options.device);
     playback.setStatusTracker(&status);
     std::mutex configMutex;
@@ -198,6 +241,8 @@ int main(int argc, char **argv) {
     cfg.recvTimeoutSleepMs = options.recvTimeoutSleepMs;
     cfg.acceptCooldownMs = options.acceptCooldownMs;
     cfg.maxConsecutiveTimeouts = options.maxConsecutiveTimeouts;
+    cfg.connectionMode = options.connectionMode;
+    cfg.priorityClients = options.priorityClients;
     PcmStreamHandler handler(playback, server, stopRequested, cfg, &configMutex, &status);
 
     ZmqStatusServer zmqServer(status, cfg, configMutex, stopRequested);

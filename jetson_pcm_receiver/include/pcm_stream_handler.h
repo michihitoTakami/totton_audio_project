@@ -1,10 +1,13 @@
 #pragma once
 
+#include "connection_mode.h"
 #include "pcm_header.h"
 #include "status_tracker.h"
 
 #include <atomic>
 #include <mutex>
+#include <string>
+#include <vector>
 
 class AlsaPlayback;
 class TcpServer;
@@ -16,6 +19,8 @@ struct PcmStreamConfig {
     int recvTimeoutSleepMs{50};
     int acceptCooldownMs{250};
     int maxConsecutiveTimeouts{3};
+    ConnectionMode connectionMode{ConnectionMode::Single};
+    std::vector<std::string> priorityClients;
 };
 
 // PCM ストリームの受信と再生を橋渡しする雛形。

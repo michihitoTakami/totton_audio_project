@@ -44,7 +44,7 @@ class ZmqStatusServer {
     std::string handleSetCache(const daemon_ipc::ZmqRequest& request);
     std::string handleRestart(const daemon_ipc::ZmqRequest& request);
     std::string handlePing(const daemon_ipc::ZmqRequest& request);
-    nlohmann::json buildStatusJson() const;
+    nlohmann::json buildStatusJson();
     void startPublisher();
     void stopPublisher();
     void publisherLoop();

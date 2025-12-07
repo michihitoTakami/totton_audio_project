@@ -14,10 +14,15 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-TcpServer::TcpServer(int port) : port_(port) {}
+TcpServer::TcpServer(int port, TcpServerOptions options)
+    : port_(port), options_(std::move(options)) {}
 
 TcpServer::~TcpServer() {
     stop();
+    if (pendingFd_ >= 0) {
+        ::close(pendingFd_);
+        pendingFd_ = -1;
+    }
 }
 
 bool TcpServer::setCommonSocketOptions(int fd) {
@@ -31,6 +36,38 @@ bool TcpServer::setCommonSocketOptions(int fd) {
         // keepaliveが無効でも致命的ではないので続行
     }
     return true;
+}
+
+bool TcpServer::isPriorityAddress(const struct sockaddr_storage &addr, socklen_t len) const {
+    if (options_.priorityClients.empty()) {
+        return false;
+    }
+
+    char host[NI_MAXHOST] = {0};
+    char service[NI_MAXSERV] = {0};
+    if (getnameinfo(reinterpret_cast<const struct sockaddr *>(&addr), len, host, sizeof(host),
+                    service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+        return false;
+    }
+    const std::string addressOnly(host);
+    for (const auto &priority : options_.priorityClients) {
+        if (priority == addressOnly) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string TcpServer::addressString(const struct sockaddr_storage &addr, socklen_t len) const {
+    char host[NI_MAXHOST] = {0};
+    char service[NI_MAXSERV] = {0};
+    if (getnameinfo(reinterpret_cast<const struct sockaddr *>(&addr), len, host, sizeof(host),
+                    service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+        return "<unknown>";
+    }
+    std::string hostStr(host);
+    std::string serviceStr(service);
+    return hostStr + ":" + serviceStr;
 }
 
 bool TcpServer::start() {
@@ -90,7 +127,8 @@ bool TcpServer::start() {
         fcntl(listenFd_, F_SETFL, flags | O_NONBLOCK);
     }
 
-    if (::listen(listenFd_, 1) < 0) {
+    const int backlog = options_.backlog > 0 ? options_.backlog : 4;
+    if (::listen(listenFd_, backlog) < 0) {
         logError(std::string("listen: ") + std::strerror(errno));
         ::close(listenFd_);
         listenFd_ = -1;
@@ -98,13 +136,15 @@ bool TcpServer::start() {
     }
 
     listening_ = true;
-    logInfo("[TcpServer] listening on port " + std::to_string(port()));
+    logInfo("[TcpServer] listening on port " + std::to_string(port()) + " (mode=" +
+            toString(options_.connectionMode) + ", backlog=" + std::to_string(backlog) + ")");
     return true;
 }
 
-int TcpServer::acceptClient() {
+AcceptResult TcpServer::acceptClient() {
+    AcceptResult result;
     if (!listening_ || listenFd_ < 0) {
-        return -1;
+        return result;
     }
 
     struct sockaddr_storage addr {};
@@ -112,16 +152,10 @@ int TcpServer::acceptClient() {
     int fd = ::accept(listenFd_, reinterpret_cast<struct sockaddr *>(&addr), &addrlen);
     if (fd < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return -1;
+            return result;
         }
         logError(std::string("accept: ") + std::strerror(errno));
-        return -1;
-    }
-
-    if (clientFd_ >= 0) {
-        logWarn("[TcpServer] rejecting extra connection; already handling a client");
-        ::close(fd);
-        return -2;
+        return result;
     }
 
     setCommonSocketOptions(fd);
@@ -132,21 +166,116 @@ int TcpServer::acceptClient() {
         logWarn(std::string("setsockopt(SO_RCVTIMEO): ") + std::strerror(errno));
     }
 
-    clientFd_ = fd;
-    logInfo("[TcpServer] client accepted");
-    return fd;
+    const bool isPriority = isPriorityAddress(addr, addrlen);
+    const std::string addrStr = addressString(addr, addrlen);
+    result.address = addrStr;
+    result.isPriority = isPriority;
+
+    if (clientFd_ < 0) {
+        clientFd_ = fd;
+        clientAddress_ = addrStr;
+        clientIsPriority_ = isPriority;
+        result.fd = fd;
+        result.accepted = true;
+        logInfo("[TcpServer] client accepted from " + addrStr + (isPriority ? " (priority)" : ""));
+        return result;
+    }
+
+    switch (options_.connectionMode) {
+    case ConnectionMode::Single:
+        logWarn("[TcpServer] rejecting extra connection from " + addrStr +
+                " (mode=single, active=" + clientAddress_ + ")");
+        ::close(fd);
+        result.rejected = true;
+        return result;
+    case ConnectionMode::Takeover:
+        logWarn("[TcpServer] takeover requested by " + addrStr + "; scheduling handover");
+        if (pendingFd_ >= 0) {
+            ::close(pendingFd_);
+        }
+        pendingFd_ = fd;
+        pendingAddress_ = addrStr;
+        pendingIsPriority_ = isPriority;
+        result.takeoverPending = true;
+        return result;
+    case ConnectionMode::Priority:
+        if (isPriority && !clientIsPriority_) {
+            logInfo("[TcpServer] priority client " + addrStr +
+                    " will take over non-priority client " + clientAddress_);
+            if (pendingFd_ >= 0) {
+                ::close(pendingFd_);
+            }
+            pendingFd_ = fd;
+            pendingAddress_ = addrStr;
+            pendingIsPriority_ = isPriority;
+            result.takeoverPending = true;
+            return result;
+        }
+        if (!isPriority && clientIsPriority_) {
+            logWarn("[TcpServer] rejecting non-priority client " + addrStr +
+                    " while priority session active");
+            ::close(fd);
+            result.rejected = true;
+            return result;
+        }
+        if (isPriority && clientIsPriority_) {
+            logWarn("[TcpServer] priority client " + addrStr +
+                    " requested takeover; scheduling handover");
+            if (pendingFd_ >= 0) {
+                ::close(pendingFd_);
+            }
+            pendingFd_ = fd;
+            pendingAddress_ = addrStr;
+            pendingIsPriority_ = isPriority;
+            result.takeoverPending = true;
+            return result;
+        }
+        logWarn("[TcpServer] rejecting extra non-priority client " + addrStr +
+                " (active=" + clientAddress_ + ")");
+        ::close(fd);
+        result.rejected = true;
+        return result;
+    }
+
+    ::close(fd);
+    return result;
 }
 
 void TcpServer::closeClient() {
     if (clientFd_ >= 0) {
         ::close(clientFd_);
         clientFd_ = -1;
+        clientAddress_.clear();
+        clientIsPriority_ = false;
         logInfo("[TcpServer] client connection closed");
     }
 }
 
+int TcpServer::promotePendingClient() {
+    if (pendingFd_ < 0) {
+        return -1;
+    }
+    closeClient();
+    clientFd_ = pendingFd_;
+    clientAddress_ = pendingAddress_;
+    clientIsPriority_ = pendingIsPriority_;
+    pendingFd_ = -1;
+    pendingAddress_.clear();
+    pendingIsPriority_ = false;
+    logInfo("[TcpServer] switched to pending client " + clientAddress_ +
+            (clientIsPriority_ ? " (priority)" : ""));
+    return clientFd_;
+}
+
 void TcpServer::stop() {
     closeClient();
+    if (pendingFd_ >= 0) {
+        ::close(pendingFd_);
+        pendingFd_ = -1;
+        pendingAddress_.clear();
+        pendingIsPriority_ = false;
+        logInfo("[TcpServer] pending client connection closed");
+    }
     if (listenFd_ >= 0) {
         ::close(listenFd_);
         listenFd_ = -1;
