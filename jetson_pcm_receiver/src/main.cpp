@@ -26,6 +26,7 @@ struct AppOptions {
     LogLevel logLevel = LogLevel::Info;
     std::size_t ringBufferFrames = 8192;  // 0で無効
     std::size_t watermarkFrames = 0;      // 0で自動 (75%)
+    int statusPort = 0;                   // 0で無効
 };
 
 void printHelp(const char *exeName) {
@@ -39,6 +40,7 @@ void printHelp(const char *exeName) {
     std::cout
         << "  --ring-buffer-watermark N  watermark frames for warning (default: 75% of buffer)\n";
     std::cout << "  --no-ring-buffer        disable jitter buffer\n";
+    std::cout << "  --status-port N         enable HTTP status on 127.0.0.1:N (default: off)\n";
     std::cout << "  -h, --help              Show this help\n";
     std::cout << std::endl;
 }
@@ -75,6 +77,10 @@ bool parseArgs(int argc, char **argv, AppOptions &options, bool &showHelp) {
         }
         if (arg == "--no-ring-buffer") {
             options.ringBufferFrames = 0;
+            continue;
+        }
+        if (arg == "--status-port" && i + 1 < argc) {
+            options.statusPort = std::atoi(argv[++i]);
             continue;
         }
 
@@ -117,6 +123,11 @@ int main(int argc, char **argv) {
             logInfo("  - watermark:   " + std::to_string(options.watermarkFrames) + " frames");
         }
     }
+    if (options.statusPort > 0) {
+        logInfo("  - status: HTTP on 127.0.0.1:" + std::to_string(options.statusPort));
+    } else {
+        logInfo("  - status: disabled");
+    }
 
     TcpServer server(options.port);
     AlsaPlayback playback(options.device);
@@ -124,6 +135,11 @@ int main(int argc, char **argv) {
     cfg.ringBufferFrames = options.ringBufferFrames;
     cfg.watermarkFrames = options.watermarkFrames;
     PcmStreamHandler handler(playback, server, stopRequested, cfg);
+    StatusServer statusServer(options.statusPort, stopRequested);
+    if (options.statusPort > 0) {
+        handler.setStatusServer(&statusServer);
+        statusServer.start();
+    }
 
     if (!server.start()) {
         logError("[jetson-pcm-receiver] failed to start TCP server");
@@ -131,6 +147,7 @@ int main(int argc, char **argv) {
     }
     handler.run();
     server.stop();
+    statusServer.stop();
 
     if (stopRequested.load(std::memory_order_relaxed)) {
         logInfo("[jetson-pcm-receiver] terminated by signal");

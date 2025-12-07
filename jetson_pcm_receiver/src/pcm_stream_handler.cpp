@@ -2,6 +2,7 @@
 
 #include "alsa_playback.h"
 #include "logging.h"
+#include "status_server.h"
 #include "tcp_server.h"
 
 #include <cerrno>
@@ -19,6 +20,24 @@
 PcmStreamHandler::PcmStreamHandler(AlsaPlayback &playback, TcpServer &server,
                                    std::atomic_bool &stopFlag, PcmStreamConfig config)
     : playback_(playback), server_(server), stopFlag_(stopFlag), config_(config) {}
+
+void PcmStreamHandler::setStatusServer(StatusServer *server) {
+    statusServer_ = server;
+}
+
+PcmStatusSnapshot PcmStreamHandler::snapshot() const {
+    PcmStatusSnapshot snap;
+    snap.connected = connected_.load(std::memory_order_relaxed);
+    snap.lastHeaderSummary = lastHeaderSummary_;
+    snap.xrunCount = playback_.xrunCount();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        snap.bufferedFrames = bufferedFrames_;
+        snap.maxBufferedFrames = maxBufferedFrames_;
+        snap.droppedFrames = droppedFrames_;
+    }
+    return snap;
+}
 
 namespace {
 
@@ -65,7 +84,7 @@ bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
     return true;
 }
 
-bool PcmStreamHandler::handleClient(int fd) const {
+bool PcmStreamHandler::handleClient(int fd) {
     PcmHeader header{};
     if (!receiveHeader(fd, header)) {
         logInfo("[PcmStreamHandler] disconnecting client (header recv failure)");
@@ -94,6 +113,17 @@ bool PcmStreamHandler::handleClient(int fd) const {
         logError("[PcmStreamHandler] failed to open ALSA playback for received header");
         return false;
     }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        lastHeaderSummary_ = "rate=" + std::to_string(header.sample_rate) +
+                             ",ch=" + std::to_string(header.channels) +
+                             ",fmt=" + std::to_string(header.format);
+        bufferedFrames_ = 0;
+        maxBufferedFrames_ = 0;
+        droppedFrames_ = 0;
+    }
+    connected_.store(true, std::memory_order_relaxed);
 
     const std::size_t bytesPerFrame = sampleBytes * header.channels;
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
@@ -184,11 +214,19 @@ bool PcmStreamHandler::handleClient(int fd) const {
                 ok = false;
                 break;
             }
+            const std::size_t bufferedFrames = ringBuf.size() / bytesPerFrame;
+            std::lock_guard<std::mutex> lock(mutex_);
+            bufferedFrames_ = bufferedFrames;
+            maxBufferedFrames_ = std::max(maxBufferedFrames_, maxBufferedFrames);
+            droppedFrames_ = droppedFrames;
         } else {
             if (!tryWrite(staging)) {
                 ok = false;
                 break;
             }
+            std::lock_guard<std::mutex> lock(mutex_);
+            bufferedFrames_ = staging.size() / bytesPerFrame;
+            maxBufferedFrames_ = std::max(maxBufferedFrames_, bufferedFrames_);
         }
     }
 
@@ -198,10 +236,14 @@ bool PcmStreamHandler::handleClient(int fd) const {
                 std::to_string(maxBufferedFrames) +
                 " dropped_frames=" + std::to_string(droppedFrames));
     }
+    connected_.store(false, std::memory_order_relaxed);
+    if (statusServer_) {
+        statusServer_->setSnapshot(snapshot());
+    }
     return ok;
 }
 
-bool PcmStreamHandler::handleClientForTest(int fd) const {
+bool PcmStreamHandler::handleClientForTest(int fd) {
     return handleClient(fd);
 }
 

@@ -36,6 +36,7 @@ endif()
 
 add_library(jetson_pcm_receiver_lib
     src/logging.cpp
+    src/status_server.cpp
     src/tcp_server.cpp
     src/alsa_playback.cpp
     src/pcm_stream_handler.cpp

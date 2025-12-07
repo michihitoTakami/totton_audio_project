@@ -1,6 +1,7 @@
 #pragma once
 
 #include <alsa/asoundlib.h>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -15,6 +16,9 @@ class AlsaPlayback {
     virtual bool open(uint32_t sampleRate, uint16_t channels, uint16_t format);
     virtual bool write(const void *data, std::size_t frames);
     virtual void close();
+    std::size_t xrunCount() const {
+        return xrunCount_.load(std::memory_order_relaxed);
+    }
 
     const std::string &device() const {
         return device_;
@@ -28,6 +32,7 @@ class AlsaPlayback {
     uint16_t channels_{0};
     snd_pcm_uframes_t periodSize_{0};
     snd_pcm_uframes_t bufferSize_{0};
+    std::atomic_size_t xrunCount_{0};
 
     bool configureHardware(uint32_t sampleRate, uint16_t channels, snd_pcm_format_t format);
     bool recoverFromXrun();

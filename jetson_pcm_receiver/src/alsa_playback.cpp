@@ -180,6 +180,7 @@ bool AlsaPlayback::recoverFromXrun() {
         return false;
     }
     logWarn("[AlsaPlayback] XRUN recovered with snd_pcm_prepare()");
+    xrunCount_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
