@@ -42,7 +42,7 @@ bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
     std::size_t offset = 0;
     auto *raw = reinterpret_cast<std::uint8_t *>(&header);
 
-    while (offset < bytesNeeded) {
+    while (offset < bytesNeeded && !stopFlag_.load(std::memory_order_relaxed)) {
         ssize_t n = ::recv(fd, raw + offset, bytesNeeded - offset, 0);
         if (n == 0) {
             logWarn("[PcmStreamHandler] client closed before header complete");
@@ -57,6 +57,10 @@ bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
             return false;
         }
         offset += static_cast<std::size_t>(n);
+    }
+    if (stopFlag_.load(std::memory_order_relaxed)) {
+        logWarn("[PcmStreamHandler] stop requested during header receive");
+        return false;
     }
     return true;
 }

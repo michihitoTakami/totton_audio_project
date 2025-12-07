@@ -26,6 +26,19 @@ snd_pcm_format_t toPcmFormat(uint16_t format) {
     }
 }
 
+std::string formatName(snd_pcm_format_t fmt) {
+    switch (fmt) {
+    case SND_PCM_FORMAT_S16_LE:
+        return "S16_LE";
+    case SND_PCM_FORMAT_S24_3LE:
+        return "S24_3LE";
+    case SND_PCM_FORMAT_S32_LE:
+        return "S32_LE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 bool isSupportedRate(uint32_t rate) {
     for (auto base : BASE_RATES) {
         for (auto mul : MULTIPLIERS) {
@@ -155,10 +168,8 @@ bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format)
     pcmFormat_ = pcmFormat;
 
     logInfo("[AlsaPlayback] opened " + device_ + " rate=" + std::to_string(sampleRate_) +
-            " channels=" + std::to_string(channels_) +
-            " format=S16_LE"
-            " period=" +
-            std::to_string(periodSize_) + " buffer=" + std::to_string(bufferSize_));
+            " channels=" + std::to_string(channels_) + " format=" + formatName(pcmFormat_) +
+            " period=" + std::to_string(periodSize_) + " buffer=" + std::to_string(bufferSize_));
     return true;
 }
 
