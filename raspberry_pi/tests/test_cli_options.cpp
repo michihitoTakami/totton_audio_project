@@ -56,7 +56,7 @@ TEST(ParseOptions, ReturnsDefaultsWhenNoArgs) {
     EXPECT_EQ(parsed.options->rate, 48000u);
     EXPECT_EQ(parsed.options->format, AlsaCapture::SampleFormat::S16_LE);
     EXPECT_EQ(parsed.options->frames, static_cast<snd_pcm_uframes_t>(4096));
-    EXPECT_EQ(parsed.options->logLevel, "info");
+    EXPECT_EQ(parsed.options->logLevel, LogLevel::Info);
     EXPECT_EQ(parsed.options->iterations, -1);
 }
 
@@ -76,7 +76,7 @@ TEST(ParseOptions, ParsesProvidedArguments) {
     EXPECT_EQ(parsed.options->rate, 96000u);
     EXPECT_EQ(parsed.options->format, AlsaCapture::SampleFormat::S24_3LE);
     EXPECT_EQ(parsed.options->frames, static_cast<snd_pcm_uframes_t>(2048));
-    EXPECT_EQ(parsed.options->logLevel, "debug");
+    EXPECT_EQ(parsed.options->logLevel, LogLevel::Debug);
     EXPECT_EQ(parsed.options->iterations, 5);
 }
 
@@ -163,7 +163,7 @@ TEST(ParseOptions, AppliesEnvironmentOverrides) {
     EXPECT_EQ(parsed.options->rate, 192000u);
     EXPECT_EQ(parsed.options->format, AlsaCapture::SampleFormat::S32_LE);
     EXPECT_EQ(parsed.options->frames, static_cast<snd_pcm_uframes_t>(1024));
-    EXPECT_EQ(parsed.options->logLevel, "debug");
+    EXPECT_EQ(parsed.options->logLevel, LogLevel::Debug);
     EXPECT_EQ(parsed.options->iterations, 5);
 }
 
@@ -177,4 +177,18 @@ TEST(ParseOptions, RejectsInvalidEnvironmentRate) {
 
     EXPECT_TRUE(parsed.hasError);
     EXPECT_FALSE(parsed.options.has_value());
+}
+
+TEST(ParseOptions, CliOverridesEnvironment) {
+    std::vector<std::string> args = {"rpi_pcm_bridge", "--log-level", "info", "--port", "55000"};
+    auto argv = makeArgv(args);
+
+    EnvMap env = {{"PCM_BRIDGE_LOG_LEVEL", "debug"}, {"PCM_BRIDGE_PORT", "47001"}};
+    auto parsed =
+        parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge", makeGetEnv(env));
+
+    ASSERT_FALSE(parsed.hasError);
+    ASSERT_TRUE(parsed.options.has_value());
+    EXPECT_EQ(parsed.options->logLevel, LogLevel::Info);  // CLI wins
+    EXPECT_EQ(parsed.options->port, 55000);               // CLI wins
 }

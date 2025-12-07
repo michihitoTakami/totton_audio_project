@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -78,6 +79,24 @@ bool PcmStreamHandler::handleClient(int fd) {
         configSnapshot = config_;
     } else {
         configSnapshot = config_;
+    }
+
+    const int recvTimeoutMs = configSnapshot.recvTimeoutMs > 0 ? configSnapshot.recvTimeoutMs : 250;
+    const int recvTimeoutSleepMs =
+        configSnapshot.recvTimeoutSleepMs > 0 ? configSnapshot.recvTimeoutSleepMs : 50;
+    const int acceptCooldownMs =
+        configSnapshot.acceptCooldownMs > 0 ? configSnapshot.acceptCooldownMs : 250;
+    const int maxConsecutiveTimeouts =
+        configSnapshot.maxConsecutiveTimeouts > 0 ? configSnapshot.maxConsecutiveTimeouts : 3;
+
+    if (recvTimeoutMs > 0) {
+        struct timeval tv {};
+        tv.tv_sec = recvTimeoutMs / 1000;
+        tv.tv_usec = (recvTimeoutMs % 1000) * 1000;
+        if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+            logWarn(std::string("[PcmStreamHandler] setsockopt(SO_RCVTIMEO) failed: ") +
+                    std::strerror(errno));
+        }
     }
 
     PcmHeader header{};
@@ -198,6 +217,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     };
 
     bool ok = true;
+    int consecutiveTimeouts = 0;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
         ssize_t n = ::recv(fd, recvBuf.data(), recvBuf.size(), 0);
         if (n == 0) {
@@ -206,8 +226,15 @@ bool PcmStreamHandler::handleClient(int fd) {
         }
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                ++consecutiveTimeouts;
+                if (consecutiveTimeouts >= maxConsecutiveTimeouts) {
+                    logWarn(
+                        "[PcmStreamHandler] recv timeout repeated; disconnecting with cooldown");
+                    ok = false;
+                    break;
+                }
                 logWarn("[PcmStreamHandler] recv timeout; keep waiting");
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(std::chrono::milliseconds(recvTimeoutSleepMs));
                 continue;
             } else {
                 std::perror("recv");
@@ -216,6 +243,7 @@ bool PcmStreamHandler::handleClient(int fd) {
             break;
         }
 
+        consecutiveTimeouts = 0;
         enqueueData(recvBuf.data(), static_cast<std::size_t>(n));
 
         if (useRing) {
@@ -240,6 +268,9 @@ bool PcmStreamHandler::handleClient(int fd) {
     if (status_) {
         status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
         status_->setStreaming(false);
+    }
+    if (!stopFlag_.load(std::memory_order_relaxed)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(acceptCooldownMs));
     }
     return ok;
 }

@@ -33,6 +33,10 @@ struct AppOptions {
     std::string zmqEndpoint = "ipc:///tmp/jetson_pcm_receiver.sock";
     std::string zmqToken;
     int zmqPublishIntervalMs = 1000;
+    int recvTimeoutMs = 250;
+    int recvTimeoutSleepMs = 50;
+    int acceptCooldownMs = 250;
+    int maxConsecutiveTimeouts = 3;
 };
 
 void printHelp(const char *exeName) {
@@ -46,6 +50,9 @@ void printHelp(const char *exeName) {
     std::cout
         << "  --ring-buffer-watermark N  watermark frames for warning (default: 75% of buffer)\n";
     std::cout << "  --no-ring-buffer        disable jitter buffer\n";
+    std::cout << "  --recv-timeout-ms N     per-recv timeout before EAGAIN (default: 250)\n";
+    std::cout << "  --recv-timeout-sleep-ms N  sleep between recv timeouts (default: 50)\n";
+    std::cout << "  --accept-cooldown-ms N  cooldown before re-accept (default: 250)\n";
     std::cout << "  --disable-zmq           disable ZeroMQ status/control API\n";
     std::cout << "  --enable-zmq            explicitly enable ZeroMQ API (default: on)\n";
     std::cout << "  --zmq-endpoint <uri>    ZeroMQ REP endpoint (default: "
@@ -89,6 +96,18 @@ bool parseArgs(int argc, char **argv, AppOptions &options, bool &showHelp) {
         }
         if (arg == "--no-ring-buffer") {
             options.ringBufferFrames = 0;
+            continue;
+        }
+        if (arg == "--recv-timeout-ms" && i + 1 < argc) {
+            options.recvTimeoutMs = std::atoi(argv[++i]);
+            continue;
+        }
+        if (arg == "--recv-timeout-sleep-ms" && i + 1 < argc) {
+            options.recvTimeoutSleepMs = std::atoi(argv[++i]);
+            continue;
+        }
+        if (arg == "--accept-cooldown-ms" && i + 1 < argc) {
+            options.acceptCooldownMs = std::atoi(argv[++i]);
             continue;
         }
         if (arg == "--disable-zmq") {
@@ -160,6 +179,10 @@ int main(int argc, char **argv) {
     } else {
         logInfo("  - ZeroMQ API: disabled");
     }
+    logInfo("  - recv timeout: " + std::to_string(options.recvTimeoutMs) + " ms");
+    logInfo("  - recv timeout sleep: " + std::to_string(options.recvTimeoutSleepMs) + " ms");
+    logInfo("  - accept cooldown: " + std::to_string(options.acceptCooldownMs) + " ms");
+    logInfo("  - max consecutive timeouts: " + std::to_string(options.maxConsecutiveTimeouts));
 
     StatusTracker status;
     status.updateRingConfig(options.ringBufferFrames, options.watermarkFrames);
@@ -171,6 +194,10 @@ int main(int argc, char **argv) {
     PcmStreamConfig cfg;
     cfg.ringBufferFrames = options.ringBufferFrames;
     cfg.watermarkFrames = options.watermarkFrames;
+    cfg.recvTimeoutMs = options.recvTimeoutMs;
+    cfg.recvTimeoutSleepMs = options.recvTimeoutSleepMs;
+    cfg.acceptCooldownMs = options.acceptCooldownMs;
+    cfg.maxConsecutiveTimeouts = options.maxConsecutiveTimeouts;
     PcmStreamHandler handler(playback, server, stopRequested, cfg, &configMutex, &status);
 
     ZmqStatusServer zmqServer(status, cfg, configMutex, stopRequested);

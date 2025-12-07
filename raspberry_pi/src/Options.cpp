@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -47,6 +48,12 @@ std::optional<unsigned int> parseRateValue(std::string_view value) {
         return std::nullopt;
     }
     return rate;
+}
+
+bool isValidLogLevel(std::string_view value) {
+    const std::string lower = toLower(value);
+    return lower == "debug" || lower == "d" || lower == "info" || lower == "i" || lower == "warn" ||
+           lower == "warning" || lower == "w" || lower == "error" || lower == "err" || lower == "e";
 }
 
 bool applyEnvOverrides(Options &opt, ParseOptionsResult &result,
@@ -96,11 +103,10 @@ bool applyEnvOverrides(Options &opt, ParseOptionsResult &result,
         opt.frames = static_cast<snd_pcm_uframes_t>(parsed);
     }
     if (const char *logLevel = getenvFn("PCM_BRIDGE_LOG_LEVEL")) {
-        auto lvl = toLower(logLevel);
-        if (lvl != "debug" && lvl != "info" && lvl != "warn" && lvl != "error") {
+        if (!isValidLogLevel(logLevel)) {
             return fail("Unsupported PCM_BRIDGE_LOG_LEVEL. Use one of: debug|info|warn|error");
         }
-        opt.logLevel = lvl;
+        opt.logLevel = parseLogLevel(logLevel);
     }
     if (const char *iterations = getenvFn("PCM_BRIDGE_ITERATIONS")) {
         const std::string buffer{iterations};
@@ -159,6 +165,11 @@ ParseOptionsResult parseOptions(int argc, char **argv, std::string_view programN
                                 const std::function<const char *(const char *)> &getenvFn) {
     Options opt{};
     ParseOptionsResult result{};
+
+    if (!applyEnvOverrides(opt, result, getenvFn)) {
+        return result;
+    }
+
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg{argv[i]};
         if (arg == "-h" || arg == "--help") {
@@ -205,21 +216,19 @@ ParseOptionsResult parseOptions(int argc, char **argv, std::string_view programN
             opt.iterations = std::atoi(argv[++i]);
         } else if (arg == "--log-level" && i + 1 < argc) {
             auto lvl = toLower(argv[++i]);
-            if (lvl != "debug" && lvl != "info" && lvl != "warn" && lvl != "error") {
+            if (!isValidLogLevel(lvl)) {
                 result.hasError = true;
                 result.errorMessage = "Unsupported log level. Use one of: debug|info|warn|error";
                 return result;
             }
-            opt.logLevel = lvl;
+            opt.logLevel = parseLogLevel(lvl);
         } else {
             result.hasError = true;
             result.errorMessage = std::string("Unknown argument: ") + std::string(arg);
             return result;
         }
     }
-    if (!applyEnvOverrides(opt, result, getenvFn)) {
-        return result;
-    }
+
     result.options = opt;
     return result;
 }
