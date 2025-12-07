@@ -248,12 +248,12 @@ function dashboardData() {
                 const response = await fetch('/status');
                 if (!response.ok) throw new Error('Status fetch failed');
                 const data = await response.json();
-                this.status = {
-                    daemon_running: data.daemon_running || false,
-                    eq_active: data.eq_active || false,
-                    crossfeed_enabled: data.settings?.crossfeed_enabled || false,
-                    low_latency_enabled: data.settings?.low_latency_enabled || false,
-                };
+                this.status.daemon_running = data.daemon_running || false;
+                this.status.eq_active = data.eq_active || false;
+                this.status.crossfeed_enabled = data.settings?.crossfeed_enabled || false;
+                if (typeof data.settings?.low_latency_enabled === 'boolean') {
+                    this.status.low_latency_enabled = data.settings.low_latency_enabled;
+                }
             } catch (error) {
                 console.error('Failed to fetch status:', error);
             }
@@ -264,7 +264,8 @@ function dashboardData() {
                 const response = await fetch('/partitioned-convolution');
                 if (!response.ok) throw new Error('Failed to fetch low latency status');
                 const data = await response.json();
-                this.lowLatency.enabled = data.enabled || false;
+                this.lowLatency.enabled = data.enabled ?? false;
+                this.status.low_latency_enabled = this.lowLatency.enabled;
             } catch (error) {
                 console.error('Failed to fetch low latency status:', error);
             }
@@ -357,7 +358,9 @@ function dashboardData() {
 
                 const result = await response.json();
                 // ApiResponse format: { success, message, data: { partitioned_convolution: {...} } }
-                this.lowLatency.enabled = result.data?.partitioned_convolution?.enabled ?? newState;
+                this.lowLatency.enabled =
+                    result.data?.partitioned_convolution?.enabled ?? newState;
+                this.status.low_latency_enabled = this.lowLatency.enabled;
                 this.showToast(result.message || '低遅延モードを切り替えました', 'success');
 
                 // Refresh status
