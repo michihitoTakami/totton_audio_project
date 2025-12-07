@@ -1,5 +1,7 @@
 #include "alsa_playback.h"
 
+#include "logging.h"
+
 #include <iostream>
 #include <memory>
 #include <utility>
@@ -21,6 +23,19 @@ snd_pcm_format_t toPcmFormat(uint16_t format) {
         return SND_PCM_FORMAT_S32_LE;
     default:
         return SND_PCM_FORMAT_UNKNOWN;
+    }
+}
+
+std::string formatName(snd_pcm_format_t fmt) {
+    switch (fmt) {
+    case SND_PCM_FORMAT_S16_LE:
+        return "S16_LE";
+    case SND_PCM_FORMAT_S24_3LE:
+        return "S24_3LE";
+    case SND_PCM_FORMAT_S32_LE:
+        return "S32_LE";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -58,55 +73,55 @@ bool AlsaPlayback::configureHardware(uint32_t sampleRate, uint16_t channels,
     snd_pcm_hw_params_malloc(&raw);
     params.reset(raw);
     if (!params) {
-        std::cerr << "[AlsaPlayback] failed to alloc hw_params" << std::endl;
+        logError("[AlsaPlayback] failed to alloc hw_params");
         return false;
     }
 
     if (snd_pcm_hw_params_any(handle_, params.get()) < 0) {
-        std::cerr << "[AlsaPlayback] snd_pcm_hw_params_any failed" << std::endl;
+        logError("[AlsaPlayback] snd_pcm_hw_params_any failed");
         return false;
     }
 
     if (snd_pcm_hw_params_set_access(handle_, params.get(), SND_PCM_ACCESS_RW_INTERLEAVED) < 0) {
-        std::cerr << "[AlsaPlayback] failed to set access" << std::endl;
+        logError("[AlsaPlayback] failed to set access");
         return false;
     }
 
     if (snd_pcm_hw_params_set_format(handle_, params.get(), format) < 0) {
-        std::cerr << "[AlsaPlayback] failed to set format" << std::endl;
+        logError("[AlsaPlayback] failed to set format");
         return false;
     }
 
     if (snd_pcm_hw_params_set_channels(handle_, params.get(), channels) < 0) {
-        std::cerr << "[AlsaPlayback] failed to set channels=" << channels << std::endl;
+        logError("[AlsaPlayback] failed to set channels=" + std::to_string(channels));
         return false;
     }
 
     unsigned int rate = sampleRate;
     if (snd_pcm_hw_params_set_rate_near(handle_, params.get(), &rate, nullptr) < 0) {
-        std::cerr << "[AlsaPlayback] failed to set rate=" << sampleRate << std::endl;
+        logError("[AlsaPlayback] failed to set rate=" + std::to_string(sampleRate));
         return false;
     }
     if (rate != sampleRate) {
-        std::cerr << "[AlsaPlayback] rate mismatch (requested " << sampleRate << ", got " << rate
-                  << ")" << std::endl;
+        logError("[AlsaPlayback] rate mismatch (requested " + std::to_string(sampleRate) +
+                 ", got " + std::to_string(rate) + ")");
         return false;
     }
 
     snd_pcm_uframes_t period = DEFAULT_PERIOD_FRAMES;
     if (snd_pcm_hw_params_set_period_size_near(handle_, params.get(), &period, nullptr) < 0) {
-        std::cerr << "[AlsaPlayback] failed to set period size" << std::endl;
+        logError("[AlsaPlayback] failed to set period size");
         return false;
     }
 
     snd_pcm_uframes_t buffer = DEFAULT_BUFFER_FRAMES;
     if (snd_pcm_hw_params_set_buffer_size_near(handle_, params.get(), &buffer) < 0) {
-        std::cerr << "[AlsaPlayback] failed to set buffer size" << std::endl;
+        logError("[AlsaPlayback] failed to set buffer size");
         return false;
     }
 
     if (snd_pcm_hw_params(handle_, params.get()) < 0) {
-        std::cerr << "[AlsaPlayback] snd_pcm_hw_params apply failed" << std::endl;
+        logError("[AlsaPlayback] snd_pcm_hw_params apply failed");
         return false;
     }
 
@@ -119,16 +134,16 @@ bool AlsaPlayback::configureHardware(uint32_t sampleRate, uint16_t channels,
 
 bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format) {
     if (!isSupportedRate(sampleRate) || channels != 2) {
-        std::cerr << "[AlsaPlayback] unsupported params (rate=" << sampleRate
-                  << ", channels=" << channels
-                  << "). Supported rates: 44.1k/48k * {1,2,4,8,16}, channels=2" << std::endl;
+        logError("[AlsaPlayback] unsupported params (rate=" + std::to_string(sampleRate) +
+                 ", channels=" + std::to_string(channels) +
+                 "). Supported rates: 44.1k/48k * {1,2,4,8,16}, channels=2");
         return false;
     }
 
     snd_pcm_format_t pcmFormat = toPcmFormat(format);
     if (pcmFormat == SND_PCM_FORMAT_UNKNOWN) {
-        std::cerr << "[AlsaPlayback] unsupported format=" << format
-                  << " (supported: 1=S16_LE, 2=S24_3LE, 4=S32_LE)" << std::endl;
+        logError("[AlsaPlayback] unsupported format=" + std::to_string(format) +
+                 " (supported: 1=S16_LE, 2=S24_3LE, 4=S32_LE)");
         return false;
     }
 
@@ -138,8 +153,7 @@ bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format)
 
     int rc = snd_pcm_open(&handle_, device_.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
     if (rc < 0) {
-        std::cerr << "[AlsaPlayback] failed to open device " << device_ << ": " << snd_strerror(rc)
-                  << std::endl;
+        logError("[AlsaPlayback] failed to open device " + device_ + ": " + snd_strerror(rc));
         handle_ = nullptr;
         return false;
     }
@@ -153,25 +167,25 @@ bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format)
     channels_ = channels;
     pcmFormat_ = pcmFormat;
 
-    std::cout << "[AlsaPlayback] opened " << device_ << " rate=" << sampleRate_
-              << " channels=" << channels_ << " format=S16_LE"
-              << " period=" << periodSize_ << " buffer=" << bufferSize_ << std::endl;
+    logInfo("[AlsaPlayback] opened " + device_ + " rate=" + std::to_string(sampleRate_) +
+            " channels=" + std::to_string(channels_) + " format=" + formatName(pcmFormat_) +
+            " period=" + std::to_string(periodSize_) + " buffer=" + std::to_string(bufferSize_));
     return true;
 }
 
 bool AlsaPlayback::recoverFromXrun() {
     int rc = snd_pcm_prepare(handle_);
     if (rc < 0) {
-        std::cerr << "[AlsaPlayback] XRUN recover failed: " << snd_strerror(rc) << std::endl;
+        logError(std::string("[AlsaPlayback] XRUN recover failed: ") + snd_strerror(rc));
         return false;
     }
-    std::cerr << "[AlsaPlayback] XRUN recovered with snd_pcm_prepare()" << std::endl;
+    logWarn("[AlsaPlayback] XRUN recovered with snd_pcm_prepare()");
     return true;
 }
 
 bool AlsaPlayback::write(const void *data, std::size_t frames) {
     if (!handle_) {
-        std::cerr << "[AlsaPlayback] write called before open()" << std::endl;
+        logError("[AlsaPlayback] write called before open()");
         return false;
     }
     if (frames == 0) {
@@ -180,7 +194,7 @@ bool AlsaPlayback::write(const void *data, std::size_t frames) {
 
     snd_pcm_sframes_t written = snd_pcm_writei(handle_, data, frames);
     if (written == -EPIPE) {
-        std::cerr << "[AlsaPlayback] XRUN detected (EPIPE)" << std::endl;
+        logWarn("[AlsaPlayback] XRUN detected (EPIPE)");
         if (!recoverFromXrun()) {
             return false;
         }
@@ -188,13 +202,13 @@ bool AlsaPlayback::write(const void *data, std::size_t frames) {
     }
 
     if (written < 0) {
-        std::cerr << "[AlsaPlayback] write failed: " << snd_strerror(written) << std::endl;
+        logError(std::string("[AlsaPlayback] write failed: ") + snd_strerror(written));
         return false;
     }
 
     if (static_cast<std::size_t>(written) != frames) {
-        std::cerr << "[AlsaPlayback] partial write: " << written << "/" << frames << " frames"
-                  << std::endl;
+        logWarn("[AlsaPlayback] partial write: " + std::to_string(written) + "/" +
+                std::to_string(frames) + " frames");
         return false;
     }
 
@@ -215,5 +229,5 @@ void AlsaPlayback::close() {
     periodSize_ = 0;
     bufferSize_ = 0;
 
-    std::cout << "[AlsaPlayback] closed " << device_ << std::endl;
+    logInfo("[AlsaPlayback] closed " + device_);
 }

@@ -1,6 +1,7 @@
 #include "pcm_stream_handler.h"
 
 #include "alsa_playback.h"
+#include "logging.h"
 #include "tcp_server.h"
 
 #include <cerrno>
@@ -15,8 +16,9 @@
 #include <unistd.h>
 #include <vector>
 
-PcmStreamHandler::PcmStreamHandler(AlsaPlayback &playback, TcpServer &server)
-    : playback_(playback), server_(server) {}
+PcmStreamHandler::PcmStreamHandler(AlsaPlayback &playback, TcpServer &server,
+                                   std::atomic_bool &stopFlag)
+    : playback_(playback), server_(server), stopFlag_(stopFlag) {}
 
 namespace {
 
@@ -40,21 +42,25 @@ bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
     std::size_t offset = 0;
     auto *raw = reinterpret_cast<std::uint8_t *>(&header);
 
-    while (offset < bytesNeeded) {
+    while (offset < bytesNeeded && !stopFlag_.load(std::memory_order_relaxed)) {
         ssize_t n = ::recv(fd, raw + offset, bytesNeeded - offset, 0);
         if (n == 0) {
-            std::cout << "[PcmStreamHandler] client closed before header complete" << std::endl;
+            logWarn("[PcmStreamHandler] client closed before header complete");
             return false;
         }
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                std::cout << "[PcmStreamHandler] header recv timeout" << std::endl;
+                logWarn("[PcmStreamHandler] header recv timeout");
             } else {
-                std::perror("recv");
+                logError(std::string("recv: ") + std::strerror(errno));
             }
             return false;
         }
         offset += static_cast<std::size_t>(n);
+    }
+    if (stopFlag_.load(std::memory_order_relaxed)) {
+        logWarn("[PcmStreamHandler] stop requested during header receive");
+        return false;
     }
     return true;
 }
@@ -62,31 +68,30 @@ bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
 bool PcmStreamHandler::handleClient(int fd) const {
     PcmHeader header{};
     if (!receiveHeader(fd, header)) {
-        std::cout << "[PcmStreamHandler] disconnecting client (header recv failure)" << std::endl;
+        logInfo("[PcmStreamHandler] disconnecting client (header recv failure)");
         return false;
     }
 
     auto validation = validateHeader(header);
     if (!validation.ok) {
-        std::cout << "[PcmStreamHandler] header invalid: " << validation.reason << std::endl;
+        logWarn(std::string("[PcmStreamHandler] header invalid: ") + validation.reason);
         return false;
     }
 
-    std::cout << "[PcmStreamHandler] header ok" << std::endl;
-    std::cout << "  - rate:     " << header.sample_rate << std::endl;
-    std::cout << "  - channels: " << header.channels << std::endl;
-    std::cout << "  - format:   " << header.format << std::endl;
-    std::cout << "  - device:   " << playback_.device() << " (ALSA)" << std::endl;
+    logInfo("[PcmStreamHandler] header ok");
+    logInfo("  - rate:     " + std::to_string(header.sample_rate));
+    logInfo("  - channels: " + std::to_string(header.channels));
+    logInfo("  - format:   " + std::to_string(header.format));
+    logInfo("  - device:   " + playback_.device() + " (ALSA)");
 
     const std::size_t sampleBytes = bytesPerSample(header.format);
     if (sampleBytes == 0) {
-        std::cerr << "[PcmStreamHandler] unsupported format code: " << header.format << std::endl;
+        logError("[PcmStreamHandler] unsupported format code: " + std::to_string(header.format));
         return false;
     }
 
     if (!playback_.open(header.sample_rate, header.channels, header.format)) {
-        std::cerr << "[PcmStreamHandler] failed to open ALSA playback for received header"
-                  << std::endl;
+        logError("[PcmStreamHandler] failed to open ALSA playback for received header");
         return false;
     }
 
@@ -98,15 +103,15 @@ bool PcmStreamHandler::handleClient(int fd) const {
     staging.reserve(RECV_CHUNK_BYTES * 2);
 
     bool ok = true;
-    while (true) {
+    while (!stopFlag_.load(std::memory_order_relaxed)) {
         ssize_t n = ::recv(fd, recvBuf.data(), recvBuf.size(), 0);
         if (n == 0) {
-            std::cout << "[PcmStreamHandler] client closed connection" << std::endl;
+            logInfo("[PcmStreamHandler] client closed connection");
             break;
         }
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                std::cerr << "[PcmStreamHandler] recv timeout; keep waiting" << std::endl;
+                logWarn("[PcmStreamHandler] recv timeout; keep waiting");
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             } else {
@@ -122,7 +127,7 @@ bool PcmStreamHandler::handleClient(int fd) const {
 
         if (framesAvailable > 0) {
             if (!playback_.write(staging.data(), framesAvailable)) {
-                std::cerr << "[PcmStreamHandler] ALSA write failed" << std::endl;
+                logError("[PcmStreamHandler] ALSA write failed");
                 ok = false;
                 break;
             }
@@ -141,12 +146,12 @@ bool PcmStreamHandler::handleClientForTest(int fd) const {
 
 void PcmStreamHandler::run() {
     if (!server_.listening() && !server_.start()) {
-        std::cerr << "[PcmStreamHandler] failed to start TcpServer" << std::endl;
+        logError("[PcmStreamHandler] failed to start TcpServer");
         return;
     }
 
-    std::cout << "[PcmStreamHandler] waiting for clients on port " << server_.port() << std::endl;
-    while (true) {
+    logInfo("[PcmStreamHandler] waiting for clients on port " + std::to_string(server_.port()));
+    while (!stopFlag_.load(std::memory_order_relaxed)) {
         int fd = server_.acceptClient();
         if (fd < 0) {
             if (fd == -2) {
@@ -160,4 +165,5 @@ void PcmStreamHandler::run() {
         handleClient(fd);
         server_.closeClient();
     }
+    logInfo("[PcmStreamHandler] stop requested; exit accept loop");
 }
