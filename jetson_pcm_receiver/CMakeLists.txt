@@ -93,6 +93,7 @@ add_executable(jetson_pcm_receiver_tests
     tests/test_pcm_header.cpp
     tests/test_tcp_server.cpp
     tests/test_pcm_stream_handler.cpp
+    tests/test_alsa_playback.cpp
 )
 
 target_link_libraries(jetson_pcm_receiver_tests

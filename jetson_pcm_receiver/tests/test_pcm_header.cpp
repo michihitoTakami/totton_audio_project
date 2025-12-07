@@ -51,13 +51,13 @@ TEST(PcmHeaderValidation, RejectsOutOfRangeRate) {
     auto lowResult = validateHeader(header);
 
     EXPECT_FALSE(lowResult.ok);
-    EXPECT_EQ(lowResult.reason, "sample_rate out of range");
+    EXPECT_EQ(lowResult.reason, "sample_rate unsupported");
 
     header.sample_rate = 800000;
     auto highResult = validateHeader(header);
 
     EXPECT_FALSE(highResult.ok);
-    EXPECT_EQ(highResult.reason, "sample_rate out of range");
+    EXPECT_EQ(highResult.reason, "sample_rate unsupported");
 }
 
 TEST(PcmHeaderValidation, RejectsOutOfRangeChannels) {
@@ -66,13 +66,13 @@ TEST(PcmHeaderValidation, RejectsOutOfRangeChannels) {
     auto lowResult = validateHeader(header);
 
     EXPECT_FALSE(lowResult.ok);
-    EXPECT_EQ(lowResult.reason, "channels out of range");
+    EXPECT_EQ(lowResult.reason, "channels unsupported");
 
     header.channels = 16;
     auto highResult = validateHeader(header);
 
     EXPECT_FALSE(highResult.ok);
-    EXPECT_EQ(highResult.reason, "channels out of range");
+    EXPECT_EQ(highResult.reason, "channels unsupported");
 }
 
 TEST(PcmHeaderValidation, RejectsUnsupportedFormat) {

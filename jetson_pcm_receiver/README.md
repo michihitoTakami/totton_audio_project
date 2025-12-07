@@ -1,6 +1,6 @@
 # jetson-pcm-receiver
 
-Jetson 向けの PCM over TCP 受信ブリッジの足場プロジェクトです。Raspberry Pi 側の送信アプリから PCM を受信し、ALSA Loopback の playback 側へ書き込む常駐プロセスを想定しています。本コミットではビルドできる最小限の骨組みのみを用意しており、実装は今後追加します。
+Jetson 向けの PCM over TCP 受信ブリッジです。Raspberry Pi 側の送信アプリから PCM を受信し、ALSA Loopback の playback 側へ書き込みます（初期実装は S16_LE / 2ch / 48kHz を想定）。
 
 ## 前提パッケージ (Jetson / Ubuntu 系)
 
@@ -18,13 +18,15 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 
 > `CMAKE_BUILD_TYPE` を `Debug` に変えることでデバッグ向けビルドに切り替えられます。
 
-## 実行方法 (雛形段階)
+## 実行方法
 
 ```bash
 ./jetson_pcm_receiver/build/jetson_pcm_receiver --port 46001 --device hw:Loopback,0,0
 ```
 
-現時点では TCP 待受や ALSA 書き込みは未実装で、起動時に設定値を表示して終了します。`--help` で簡易ヘルプを確認できます。
+- 受信ヘッダが `PCMA` / version 1 かつ 44.1kHz or 48kHz の {1,2,4,8,16} 倍、2ch、フォーマットが `S16_LE(1)` / `S24_3LE(2)` / `S32_LE(4)` の場合に再生します。
+- フォーマットやレートが未対応の場合はエラーログを出して接続を閉じます。
+- XRUN (`-EPIPE`) が発生した場合は `snd_pcm_prepare()` で復旧を試み、結果をログします。
 
 ## ディレクトリ構成
 
@@ -32,9 +34,10 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 - `include/` : `TcpServer` / `AlsaPlayback` / `PcmStreamHandler` のヘッダ
 - `CMakeLists.txt` : ALSA・pthread・BSD ソケット検出を行う単体プロジェクト
 
-## ヘッダ検証の簡易テスト例
+## ALSA Loopback への疎通確認（簡易）
 
-ヘッダのみ送信して受理/拒否のログを確認できます（PCMデータは未処理）。
+### ヘッダのみ送って受理/拒否を確認
+PCM ペイロードなしでヘッダ検証だけ確認できます。
 
 ```bash
 # 正常ヘッダ（48000Hz, 2ch, S16_LE=1）を送る例
@@ -55,3 +58,26 @@ s.sendall(hdr)
 s.close()
 PY
 ```
+
+### ループバックで無音1秒を流す
+1. ループバックをロード（必要な場合）
+   `sudo modprobe snd-aloop`
+2. 受信側を起動
+   `./jetson_pcm_receiver/build/jetson_pcm_receiver --port 46001 --device hw:Loopback,0,0`
+3. 別ターミナルから 1 秒分の無音を送信
+   ```bash
+   python - <<'PY'
+   import socket, struct
+   hdr = struct.pack("<4sIIHH", b"PCMA", 1, 48000, 2, 1)  # S16_LE / 48k / 2ch
+   pcm = b"\x00\x00" * 2 * 48000  # 1秒分のステレオ無音 (4バイト/フレーム)
+   s = socket.create_connection(("127.0.0.1", 46001))
+   s.sendall(hdr + pcm)
+   s.close()
+   PY
+   ```
+4. Loopback capture 側で再生データを確認（例）
+   `arecord -D hw:Loopback,1,0 -f S16_LE -c 2 -r 48000 -d 2 /tmp/captured.wav`
+
+### パラメータ調整メモ
+- ALSA period / buffer サイズの初期値は `DEFAULT_PERIOD_FRAMES=512`、`DEFAULT_BUFFER_FRAMES=2048`（`src/alsa_playback.cpp`）です。XRUN が多い場合はここを拡大してください。
+- フォーマットやチャンネル数を増やす際は `toPcmFormat()` と `bytesPerSample()` に対応を追加してください。
