@@ -69,6 +69,7 @@ docker run --rm --device /dev/snd -e PCM_BRIDGE_MODE=help rpi-pcm-bridge
 # 実際に送信待機を行う例
 docker run --rm --device /dev/snd \\
   --group-add audio \\
+  --restart unless-stopped \\
   -e PCM_BRIDGE_HOST=192.168.55.1 \\
   -e PCM_BRIDGE_PORT=46001 \\
   -e PCM_BRIDGE_DEVICE=hw:0,0 \\
@@ -98,6 +99,7 @@ docker compose -f raspberry_pi/docker-compose.yml down
 
 - 環境変数 `JETSON_HOST` と `JETSON_PORT` でプロキシ先を変更できます（デフォルト: `jetson:80`）。
 - 80番ポートで待ち受けるため、ホスト側で別のサービスが使用していないことを確認してください。必要なら `ports` を `8080:80` に変更して利用してください。
+- `restart: always` で電源ロスト・Dockerデーモン再起動後も自動再立ち上げします（composeデフォルト設定）。
 
 ### 環境変数一覧（コンテナ）
 

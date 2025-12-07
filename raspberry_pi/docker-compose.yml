@@ -19,7 +19,7 @@ services:
       PCM_BRIDGE_FRAMES: ${PCM_BRIDGE_FRAMES:-4096}
       PCM_BRIDGE_LOG_LEVEL: ${PCM_BRIDGE_LOG_LEVEL:-info}
       PCM_BRIDGE_ITERATIONS: ${PCM_BRIDGE_ITERATIONS:--1}
-    restart: unless-stopped
+    restart: always
     depends_on:
       - jetson-proxy
 
@@ -33,4 +33,4 @@ services:
       JETSON_PORT: ${JETSON_PORT:-80}
     volumes:
       - ./docker/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-    restart: unless-stopped
+    restart: always
