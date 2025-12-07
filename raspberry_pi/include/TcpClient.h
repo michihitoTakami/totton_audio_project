@@ -30,5 +30,6 @@ class TcpClient {
     std::array<std::uint8_t, kPcmHeaderSize> headerBytes_{};
     bool headerReady_{false};
     std::chrono::milliseconds backoff_{1000};
-    int maxRetries_{3};
+    const std::chrono::milliseconds backoffMin_{1000};
+    const std::chrono::milliseconds backoffMax_{8000};
 };

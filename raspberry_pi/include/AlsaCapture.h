@@ -2,6 +2,7 @@
 
 #include <alsa/asoundlib.h>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,7 @@ class AlsaCapture {
     void close();
 
     bool isOpen() const;
+    std::optional<unsigned int> currentSampleRate() const;
 
     // Exposed for unit tests and CLI validation
     static snd_pcm_format_t toAlsaFormat(SampleFormat format);

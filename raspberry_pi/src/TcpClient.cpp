@@ -40,13 +40,14 @@ bool TcpClient::ensureConnected() {
         return true;
     }
 
-    for (int attempt = 0; attempt < maxRetries_; ++attempt) {
+    while (true) {
         if (connectOnce()) {
+            backoff_ = backoffMin_;
             return true;
         }
         std::this_thread::sleep_for(backoff_);
+        backoff_ = std::min(backoff_ * 2, backoffMax_);
     }
-    return false;
 }
 
 bool TcpClient::connectOnce() {

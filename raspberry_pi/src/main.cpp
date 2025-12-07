@@ -87,6 +87,7 @@ int main(int argc, char **argv) {
     header.sampleRate = cfg.sampleRate;
     header.channels = static_cast<std::uint16_t>(cfg.channels);
     header.format = toPcmFormatCode(cfg.format);
+    unsigned int lastSampleRate = header.sampleRate;
 
     TcpClient client;
     if (!client.configure(opt.host, opt.port, header)) {
@@ -119,6 +120,21 @@ int main(int argc, char **argv) {
             logError("[rpi_pcm_bridge] Failed to send PCM chunk");
             success = false;
             break;
+        }
+
+        if (auto currentRate = capture.currentSampleRate()) {
+            if (*currentRate != lastSampleRate) {
+                lastSampleRate = *currentRate;
+                header.sampleRate = *currentRate;
+                logInfo("[rpi_pcm_bridge] Sample rate change detected -> " +
+                        std::to_string(*currentRate) + " Hz. Re-sending header.");
+                client.disconnect();
+                if (!client.configure(opt.host, opt.port, header)) {
+                    logError("[rpi_pcm_bridge] Reconnect after rate change failed");
+                    success = false;
+                    break;
+                }
+            }
         }
 
         if (opt.iterations > 0 && ++iteration >= opt.iterations) {

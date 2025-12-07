@@ -3,6 +3,7 @@
 #include "logging.h"
 
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 
 namespace {
@@ -151,6 +152,22 @@ void AlsaCapture::close() {
 
 bool AlsaCapture::isOpen() const {
     return handle_ != nullptr;
+}
+
+std::optional<unsigned int> AlsaCapture::currentSampleRate() const {
+    if (!handle_) {
+        return std::nullopt;
+    }
+    snd_pcm_hw_params_t *params = nullptr;
+    snd_pcm_hw_params_alloca(&params);
+    if (snd_pcm_hw_params_current(handle_, params) < 0) {
+        return std::nullopt;
+    }
+    unsigned int rate = 0;
+    if (snd_pcm_hw_params_get_rate(params, &rate, nullptr) < 0) {
+        return std::nullopt;
+    }
+    return rate;
 }
 
 snd_pcm_format_t AlsaCapture::toAlsaFormat(SampleFormat format) {
