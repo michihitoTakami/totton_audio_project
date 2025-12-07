@@ -7,8 +7,8 @@
 TEST(AlsaPlayback, RejectsUnsupportedParams) {
     AlsaPlayback playback("null");
 
-    EXPECT_FALSE(playback.open(44100, 2, 1));  // rate mismatch
-    EXPECT_FALSE(playback.open(48000, 2, 3));  // unsupported format
+    EXPECT_FALSE(playback.open(50000, 2, 1));  // rate unsupported
+    EXPECT_FALSE(playback.open(48000, 2, 3));  // unsupported format code
     EXPECT_FALSE(playback.open(48000, 1, 1));  // channels mismatch
 }
 

@@ -26,8 +26,6 @@ std::size_t bytesPerSample(uint16_t format) {
         return 2;  // S16_LE
     case 2:
         return 3;  // S24_3LE
-    case 3:
-        return 4;  // S24_LE (packed in 32bit)
     case 4:
         return 4;  // S32_LE
     default:

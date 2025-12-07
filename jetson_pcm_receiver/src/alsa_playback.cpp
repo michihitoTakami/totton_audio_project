@@ -8,6 +8,8 @@ namespace {
 
 constexpr snd_pcm_uframes_t DEFAULT_PERIOD_FRAMES = 512;
 constexpr snd_pcm_uframes_t DEFAULT_BUFFER_FRAMES = DEFAULT_PERIOD_FRAMES * 4;
+constexpr uint32_t BASE_RATES[] = {44100, 48000};
+constexpr uint32_t MULTIPLIERS[] = {1, 2, 4, 8, 16};
 
 snd_pcm_format_t toPcmFormat(uint16_t format) {
     switch (format) {
@@ -15,13 +17,22 @@ snd_pcm_format_t toPcmFormat(uint16_t format) {
         return SND_PCM_FORMAT_S16_LE;
     case 2:
         return SND_PCM_FORMAT_S24_3LE;
-    case 3:
-        return SND_PCM_FORMAT_S24_LE;
     case 4:
         return SND_PCM_FORMAT_S32_LE;
     default:
         return SND_PCM_FORMAT_UNKNOWN;
     }
+}
+
+bool isSupportedRate(uint32_t rate) {
+    for (auto base : BASE_RATES) {
+        for (auto mul : MULTIPLIERS) {
+            if (base * mul == rate) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -107,16 +118,17 @@ bool AlsaPlayback::configureHardware(uint32_t sampleRate, uint16_t channels,
 }
 
 bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format) {
-    if (sampleRate != 48000 || channels != 2) {
+    if (!isSupportedRate(sampleRate) || channels != 2) {
         std::cerr << "[AlsaPlayback] unsupported params (rate=" << sampleRate
-                  << ", channels=" << channels << "). Supported: 48000Hz / 2ch" << std::endl;
+                  << ", channels=" << channels
+                  << "). Supported rates: 44.1k/48k * {1,2,4,8,16}, channels=2" << std::endl;
         return false;
     }
 
     snd_pcm_format_t pcmFormat = toPcmFormat(format);
-    if (pcmFormat != SND_PCM_FORMAT_S16_LE) {
+    if (pcmFormat == SND_PCM_FORMAT_UNKNOWN) {
         std::cerr << "[AlsaPlayback] unsupported format=" << format
-                  << " (only S16_LE=1 is supported currently)" << std::endl;
+                  << " (supported: 1=S16_LE, 2=S24_3LE, 4=S32_LE)" << std::endl;
         return false;
     }
 

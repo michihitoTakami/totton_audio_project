@@ -4,10 +4,9 @@
 
 namespace {
 
-constexpr uint32_t MIN_RATE = 44100;
-constexpr uint32_t MAX_RATE = 768000;
-constexpr uint16_t MIN_CHANNELS = 1;
-constexpr uint16_t MAX_CHANNELS = 8;
+constexpr uint32_t BASE_RATES[] = {44100, 48000};
+constexpr uint32_t MULTIPLIERS[] = {1, 2, 4, 8, 16};
+constexpr uint16_t REQUIRED_CHANNELS = 2;
 
 bool hasValidMagic(const PcmHeader &h) {
     static constexpr char MAGIC[4] = {'P', 'C', 'M', 'A'};
@@ -15,16 +14,25 @@ bool hasValidMagic(const PcmHeader &h) {
 }
 
 bool isSupportedFormat(uint16_t format) {
-    // 現時点の想定: 1=S16_LE, 2=S24_3LE, 3=S24_LE, 4=S32_LE
     switch (format) {
     case 1:
     case 2:
-    case 3:
     case 4:
         return true;
     default:
         return false;
     }
+}
+
+bool isSupportedRate(uint32_t rate) {
+    for (auto base : BASE_RATES) {
+        for (auto mul : MULTIPLIERS) {
+            if (base * mul == rate) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -36,11 +44,11 @@ HeaderValidationResult validateHeader(const PcmHeader &header) {
     if (header.version != 1) {
         return {false, "version != 1"};
     }
-    if (header.sample_rate < MIN_RATE || header.sample_rate > MAX_RATE) {
-        return {false, "sample_rate out of range"};
+    if (!isSupportedRate(header.sample_rate)) {
+        return {false, "sample_rate unsupported"};
     }
-    if (header.channels < MIN_CHANNELS || header.channels > MAX_CHANNELS) {
-        return {false, "channels out of range"};
+    if (header.channels != REQUIRED_CHANNELS) {
+        return {false, "channels unsupported"};
     }
     if (!isSupportedFormat(header.format)) {
         return {false, "unsupported format"};
@@ -48,4 +56,3 @@ HeaderValidationResult validateHeader(const PcmHeader &header) {
 
     return {true, ""};
 }
-

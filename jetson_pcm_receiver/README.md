@@ -24,8 +24,8 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 ./jetson_pcm_receiver/build/jetson_pcm_receiver --port 46001 --device hw:Loopback,0,0
 ```
 
-- 受信ヘッダが `PCMA` / version 1 かつ 48kHz / 2ch / S16_LE(1) の場合のみ再生します。
-- フォーマットが未対応の場合はエラーログを出して接続を閉じます。
+- 受信ヘッダが `PCMA` / version 1 かつ 44.1kHz or 48kHz の {1,2,4,8,16} 倍、2ch、フォーマットが `S16_LE(1)` / `S24_3LE(2)` / `S32_LE(4)` の場合に再生します。
+- フォーマットやレートが未対応の場合はエラーログを出して接続を閉じます。
 - XRUN (`-EPIPE`) が発生した場合は `snd_pcm_prepare()` で復旧を試み、結果をログします。
 
 ## ディレクトリ構成
