@@ -43,13 +43,16 @@ cmake --build raspberry_pi/build
 ```bash
 ./raspberry_pi/build/rpi_pcm_bridge \
   --device hw:0,0 \
+  --host 192.168.55.1 \
+  --port 46001 \
   --rate 48000 \
   --format S16_LE \
+  --log-level info \
   --frames 4096 \
   --iterations 3
 ```
 
 - 対応フォーマット: `S16_LE`, `S24_3LE`, `S32_LE`
+- 対応レート: 44.1/48kHz の 2/4/8/16 倍 (最大 705.6kHz / 768kHz)
 - XRUN発生時は `snd_pcm_prepare()` でリカバリし、ログへ出力します。
-- 未対応フォーマットを指定すると即エラー終了します。
-
+- 未対応フォーマット・レートを指定すると即エラー終了します。
