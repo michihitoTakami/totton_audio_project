@@ -72,6 +72,11 @@ bool PcmStreamHandler::receiveHeader(int fd, PcmHeader &header) const {
 }
 
 bool PcmStreamHandler::handleClient(int fd) {
+    using namespace std::chrono_literals;
+    constexpr auto kAcceptCooldown = 250ms;
+    constexpr int kMaxConsecutiveTimeouts = 3;
+    constexpr auto kRecvTimeoutSleep = 10ms;
+
     PcmStreamConfig configSnapshot;
     if (configMutex_) {
         std::lock_guard<std::mutex> lock(*configMutex_);
@@ -198,6 +203,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     };
 
     bool ok = true;
+    int consecutiveTimeouts = 0;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
         ssize_t n = ::recv(fd, recvBuf.data(), recvBuf.size(), 0);
         if (n == 0) {
@@ -206,8 +212,15 @@ bool PcmStreamHandler::handleClient(int fd) {
         }
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                ++consecutiveTimeouts;
+                if (consecutiveTimeouts >= kMaxConsecutiveTimeouts) {
+                    logWarn(
+                        "[PcmStreamHandler] recv timeout repeated; disconnecting with cooldown");
+                    ok = false;
+                    break;
+                }
                 logWarn("[PcmStreamHandler] recv timeout; keep waiting");
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(kRecvTimeoutSleep);
                 continue;
             } else {
                 std::perror("recv");
@@ -216,6 +229,7 @@ bool PcmStreamHandler::handleClient(int fd) {
             break;
         }
 
+        consecutiveTimeouts = 0;
         enqueueData(recvBuf.data(), static_cast<std::size_t>(n));
 
         if (useRing) {
@@ -240,6 +254,9 @@ bool PcmStreamHandler::handleClient(int fd) {
     if (status_) {
         status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
         status_->setStreaming(false);
+    }
+    if (!stopFlag_.load(std::memory_order_relaxed)) {
+        std::this_thread::sleep_for(kAcceptCooldown);
     }
     return ok;
 }

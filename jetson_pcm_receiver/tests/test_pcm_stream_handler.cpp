@@ -6,6 +6,7 @@
 #include <cstring>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <vector>
 
@@ -234,6 +235,33 @@ TEST(PcmStreamHandler, RejectsInvalidHeader) {
     EXPECT_FALSE(handler.handleClientForTest(fds[1]));
     EXPECT_FALSE(playback.openCalled);
     EXPECT_FALSE(playback.closeCalled);
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+}
+
+TEST(PcmStreamHandler, DisconnectsAfterRepeatedTimeouts) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    PcmStreamHandler handler(playback, server, stop, cfg);
+
+    int fds[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    auto header = makeValidHeader();
+    ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
+
+    struct timeval tv {};
+    tv.tv_sec = 0;
+    tv.tv_usec = 5000;  // 5 ms to force quick EAGAIN
+    ASSERT_EQ(setsockopt(fds[1], SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)), 0);
+
+    EXPECT_FALSE(handler.handleClientForTest(fds[1]));
+    EXPECT_TRUE(playback.openCalled);
+    EXPECT_TRUE(playback.closeCalled);
+    EXPECT_FALSE(playback.writeCalled);
 
     ::close(fds[0]);
     ::close(fds[1]);
