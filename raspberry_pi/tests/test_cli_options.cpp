@@ -57,6 +57,17 @@ TEST(ParseOptions, ParsesProvidedArguments) {
     EXPECT_EQ(parsed->iterations, 5);
 }
 
+TEST(ParseOptions, AcceptsSupportedRates) {
+    for (const auto rate :
+         {44100u, 48000u, 88200u, 96000u, 176400u, 192000u, 352800u, 384000u, 705600u, 768000u}) {
+        std::vector<std::string> args = {"rpi_pcm_bridge", "--rate", std::to_string(rate)};
+        auto argv = makeArgv(args);
+        auto parsed = parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge");
+        ASSERT_TRUE(parsed.has_value());
+        EXPECT_EQ(parsed->rate, rate);
+    }
+}
+
 TEST(ParseOptions, RejectsInvalidFormat) {
     std::vector<std::string> args = {"rpi_pcm_bridge", "--format", "S20_LE"};
     auto argv = makeArgv(args);
@@ -67,6 +78,14 @@ TEST(ParseOptions, RejectsInvalidFormat) {
 
 TEST(ParseOptions, RejectsUnknownFlag) {
     std::vector<std::string> args = {"rpi_pcm_bridge", "--unknown", "value"};
+    auto argv = makeArgv(args);
+    auto parsed = parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge");
+
+    EXPECT_FALSE(parsed.has_value());
+}
+
+TEST(ParseOptions, RejectsUnsupportedRate) {
+    std::vector<std::string> args = {"rpi_pcm_bridge", "--rate", "50000"};
     auto argv = makeArgv(args);
     auto parsed = parseOptions(static_cast<int>(argv.size()), argv.data(), "rpi_pcm_bridge");
 
