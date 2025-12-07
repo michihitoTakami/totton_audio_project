@@ -23,6 +23,7 @@ from generate_hrtf import (  # noqa: E402
     angular_distance,
     find_nearest_position,
     pad_hrir_to_length,
+    trim_hrir,
 )
 
 # Test data paths
@@ -140,6 +141,37 @@ class TestPadHrirToLength:
         result = pad_hrir_to_length(hrir, 10)
 
         assert result.dtype == np.float64
+
+
+class TestTrimHrir:
+    """Unit tests for trim_hrir function."""
+
+    def test_trims_tail_with_padding(self):
+        hrir = np.zeros(1000, dtype=np.float32)
+        hrir[0] = 1.0
+        hrir[300] = 1e-2  # about -40dB relative to peak
+
+        trimmed = trim_hrir(hrir, threshold_db=-60.0, pad=16)
+
+        # Should cut after the last low-level tap + padding
+        assert len(trimmed) == 317
+        assert trimmed[-1] == 0.0
+
+    def test_keeps_significant_tail(self):
+        hrir = np.zeros(1200, dtype=np.float32)
+        hrir[0] = 1.0
+        hrir[900] = 1e-2  # above -60dB threshold
+
+        trimmed = trim_hrir(hrir, threshold_db=-60.0, pad=32)
+
+        # Should retain the significant tap plus padding
+        assert len(trimmed) == 933
+        assert trimmed[900] == pytest.approx(1e-2)
+
+    def test_silent_input_returns_original_length(self):
+        hrir = np.zeros(50, dtype=np.float32)
+        trimmed = trim_hrir(hrir, threshold_db=-80.0, pad=8)
+        assert len(trimmed) == 50
 
 
 class TestAngularDistance:
