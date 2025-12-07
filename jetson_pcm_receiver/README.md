@@ -24,12 +24,15 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
 ./jetson_pcm_receiver/build/jetson_pcm_receiver \
   --port 46001 \
   --device hw:Loopback,0,0 \
-  --log-level info      # error / warn / info / debug
+  --log-level info \        # error / warn / info / debug
+  --ring-buffer-frames 8192 # 0で無効（デフォルト 8192）
+  --ring-buffer-watermark 0 # 0で自動(75%)
 ```
 
 - 受信ヘッダが `PCMA` / version 1 かつ 44.1kHz or 48kHz の {1,2,4,8,16} 倍、2ch、フォーマットが `S16_LE(1)` / `S24_3LE(2)` / `S32_LE(4)` の場合に再生します。
 - フォーマットやレートが未対応の場合はエラーログを出して接続を閉じます。
 - XRUN (`-EPIPE`) が発生した場合は `snd_pcm_prepare()` で復旧を試み、結果をログします。
+- ジッタ吸収リングバッファ（デフォルト有効）。溢れた場合は古いフレームをドロップし、ウォーターマーク到達・ドロップ数をログします。
 - SIGINT/SIGTERM で停止要求を検出し、接続待受ループを抜けて終了します。
 
 ## ディレクトリ構成
