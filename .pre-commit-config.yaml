@@ -25,7 +25,7 @@ repos:
       - id: clang-tidy
         args: [-p=build]
         files: \.(c|cpp)$
-        exclude: ^build/|^raspberry_pi/
+        exclude: ^build/|^raspberry_pi/|^jetson_pcm_receiver/
         stages: [pre-push]
 
   # General file checks
@@ -61,7 +61,7 @@ repos:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
 
-  # Pre-push: Type checking with mypy
+  # Pre-push: Type checking with mypy and Raspberry Pi clang-tidy
   # Uses system Python to access project dependencies
   - repo: local
     hooks:
@@ -90,7 +90,7 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
-  # Pre-push: Diff-based tests
+  # Pre-push: Diff-based tests and jetson_pcm_receiver clang-tidy
   # Only runs tests relevant to changed files
   - repo: local
     hooks:
@@ -101,6 +101,15 @@ repos:
         stages: [pre-push]
         pass_filenames: false
         always_run: true
+      - id: clang-tidy-jetson-pcm
+        name: clang-tidy (jetson_pcm_receiver)
+        entry: clang-tidy
+        language: system
+        types_or: [c, c++]
+        files: ^jetson_pcm_receiver/.*\.(c|cpp|h|hpp|cu|cuh)$
+        args: [-p=jetson_pcm_receiver/build]
+        stages: [pre-push]
+        pass_filenames: true
 
   # OpenAPI spec export (pre-commit, web/ changes only)
   # Generates docs/api/openapi.json from FastAPI app
