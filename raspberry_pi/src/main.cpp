@@ -18,6 +18,9 @@ int main(int argc, char **argv) {
     if (parsed.showHelp) {
         return EXIT_SUCCESS;
     }
+    if (parsed.showVersion) {
+        return EXIT_SUCCESS;
+    }
     if (parsed.hasError) {
         std::cerr << parsed.errorMessage << std::endl;
         return EXIT_FAILURE;
@@ -31,6 +34,9 @@ int main(int argc, char **argv) {
     cfg.channels = 2;
     cfg.format = opt.format;
     cfg.periodFrames = opt.frames;
+
+    std::clog << "[rpi_pcm_bridge] target host=" << opt.host << " port=" << opt.port
+              << " log_level=" << toString(opt.logLevel) << std::endl;
 
     if (!capture.open(cfg)) {
         std::cerr << "[rpi_pcm_bridge] Failed to open device" << std::endl;
