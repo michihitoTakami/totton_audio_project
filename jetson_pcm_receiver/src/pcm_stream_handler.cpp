@@ -133,14 +133,18 @@ bool PcmStreamHandler::handleClient(int fd) {
     }
 
     if (status_) {
+        status_->clearDisconnectReason();
         status_->setHeader(header);
     }
     publishHeaderEvent(header);
 
     const std::size_t bytesPerFrame = sampleBytes * header.channels;
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
+    constexpr std::size_t HEADER_BYTES = sizeof(PcmHeader);
 
     std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
+    std::vector<std::uint8_t> detectionBuf;
+    detectionBuf.reserve(RECV_CHUNK_BYTES + HEADER_BYTES);
 
     const bool useRing = configSnapshot.ringBufferFrames > 0;
     const std::size_t capacityBytes = configSnapshot.ringBufferFrames * bytesPerFrame;
@@ -224,6 +228,8 @@ bool PcmStreamHandler::handleClient(int fd) {
     bool ok = true;
     bool takeoverPending = false;
     int consecutiveTimeouts = 0;
+    bool formatChangeDetected = false;
+    constexpr std::size_t KEEP_BYTES_FOR_DETECTION = HEADER_BYTES - 1;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
         if (connectionMode != ConnectionMode::Single) {
             auto res = server_.acceptClient();
@@ -263,7 +269,57 @@ bool PcmStreamHandler::handleClient(int fd) {
         }
 
         consecutiveTimeouts = 0;
-        enqueueData(recvBuf.data(), static_cast<std::size_t>(n));
+
+        detectionBuf.insert(detectionBuf.end(), recvBuf.begin(),
+                            recvBuf.begin() + static_cast<std::size_t>(n));
+
+        std::size_t searchPos = 0;
+        while (searchPos + HEADER_BYTES <= detectionBuf.size()) {
+            if (std::memcmp(detectionBuf.data() + searchPos, "PCMA", 4) != 0) {
+                ++searchPos;
+                continue;
+            }
+            PcmHeader candidate{};
+            std::memcpy(&candidate, detectionBuf.data() + searchPos, HEADER_BYTES);
+            auto candidateValidation = validateHeader(candidate);
+            if (!candidateValidation.ok) {
+                ++searchPos;
+                continue;
+            }
+
+            const bool differs = candidate.sample_rate != header.sample_rate ||
+                                 candidate.channels != header.channels ||
+                                 candidate.format != header.format;
+            if (differs) {
+                logWarn(
+                    "[PcmStreamHandler] detected new header mid-stream; disconnecting to "
+                    "renegotiate format");
+                logWarn("  - previous: rate=" + std::to_string(header.sample_rate) +
+                        " format=" + std::to_string(header.format));
+                logWarn("  - incoming: rate=" + std::to_string(candidate.sample_rate) +
+                        " format=" + std::to_string(candidate.format));
+                if (status_) {
+                    status_->setDisconnectReason("format_changed");
+                }
+                formatChangeDetected = true;
+                break;
+            }
+            searchPos += HEADER_BYTES;
+        }
+
+        if (formatChangeDetected) {
+            ok = false;
+            break;
+        }
+
+        if (!formatChangeDetected) {
+            if (detectionBuf.size() > KEEP_BYTES_FOR_DETECTION) {
+                const std::size_t toRemove = detectionBuf.size() - KEEP_BYTES_FOR_DETECTION;
+                detectionBuf.erase(detectionBuf.begin(),
+                                   detectionBuf.begin() + static_cast<std::ptrdiff_t>(toRemove));
+            }
+            enqueueData(recvBuf.data(), static_cast<std::size_t>(n));
+        }
 
         if (useRing) {
             if (!tryWrite(ringBuf)) {

@@ -1,5 +1,6 @@
 #include "alsa_playback.h"
 #include "pcm_stream_handler.h"
+#include "status_tracker.h"
 #include "tcp_server.h"
 
 #include <arpa/inet.h>
@@ -107,6 +108,40 @@ int connectLoopback(uint16_t port) {
 }
 
 }  // namespace
+
+TEST(PcmStreamHandler, DetectsMidStreamFormatChangeAndDisconnects) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
+
+    int fds[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    auto firstHeader = makeValidHeader();
+    ASSERT_EQ(::send(fds[0], &firstHeader, sizeof(firstHeader), 0), sizeof(firstHeader));
+
+    std::vector<std::uint8_t> pcm(32, 0);
+    ASSERT_EQ(::send(fds[0], pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+
+    PcmHeader newHeader = makeValidHeader();
+    newHeader.sample_rate = 96000;
+    newHeader.format = 4;
+    ASSERT_EQ(::send(fds[0], &newHeader, sizeof(newHeader), 0), sizeof(newHeader));
+
+    std::vector<std::uint8_t> pcm2(64, 0);
+    ASSERT_EQ(::send(fds[0], pcm2.data(), pcm2.size(), 0), static_cast<ssize_t>(pcm2.size()));
+    ::close(fds[0]);
+
+    EXPECT_FALSE(handler.handleClientForTest(fds[1]));
+    auto snap = status.snapshot();
+    EXPECT_EQ(snap.disconnectReason, "format_changed");
+    EXPECT_TRUE(playback.closeCalled);
+
+    ::close(fds[1]);
+}
 
 TEST(PcmStreamHandler, AcceptsValidHeaderAndWritesFrames) {
     FakeAlsaPlayback playback;
