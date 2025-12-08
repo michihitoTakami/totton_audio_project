@@ -1,3 +1,4 @@
+#include "audio/pcm_format_set.h"
 #include "pcm_header.h"
 
 #include <cstring>
@@ -23,6 +24,15 @@ TEST(PcmHeaderValidation, AcceptsValidHeader) {
 
     EXPECT_TRUE(result.ok);
     EXPECT_TRUE(result.reason.empty());
+}
+
+TEST(PcmHeaderValidation, AcceptsAllAllowedSampleRates) {
+    for (auto rate : PcmFormatSet::allowedSampleRatesVector()) {
+        auto header = makeValidHeader();
+        header.sample_rate = rate;
+        auto result = validateHeader(header);
+        EXPECT_TRUE(result.ok) << "rate=" << rate;
+    }
 }
 
 TEST(PcmHeaderValidation, RejectsInvalidMagic) {

@@ -1,4 +1,5 @@
 #include "alsa_playback.h"
+#include "audio/pcm_format_set.h"
 #include "pcm_stream_handler.h"
 #include "status_tracker.h"
 #include "tcp_server.h"
@@ -66,16 +67,7 @@ class FakeAlsaPlayback : public AlsaPlayback {
     }
 
     static bool isSupportedRate(uint32_t rate) {
-        constexpr uint32_t base[] = {44100, 48000};
-        constexpr uint32_t mul[] = {1, 2, 4, 8, 16};
-        for (auto b : base) {
-            for (auto m : mul) {
-                if (b * m == rate) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return PcmFormatSet::isAllowedSampleRate(rate);
     }
 
     bool shouldFailOpen{false};
@@ -151,6 +143,30 @@ TEST(PcmStreamHandler, DetectsMidStreamFormatChangeAndDisconnects) {
     EXPECT_EQ(snap.disconnectReason, "format_changed");
     EXPECT_TRUE(playback.closeCalled);
 
+    ::close(fds[1]);
+}
+
+TEST(PcmStreamHandler, RejectsUnsupportedHeaderAndReportsStatus) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
+
+    int fds[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    auto header = makeValidHeader();
+    header.sample_rate = 32000;  // not in shared allowlist
+    ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
+    ::shutdown(fds[0], SHUT_WR);
+
+    EXPECT_FALSE(handler.handleClientForTest(fds[1]));
+    auto snap = status.snapshot();
+    EXPECT_EQ(snap.disconnectReason, "sample_rate unsupported");
+
+    ::close(fds[0]);
     ::close(fds[1]);
 }
 

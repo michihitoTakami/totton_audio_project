@@ -3,9 +3,12 @@
  * @brief Unit tests for Rate Family detection logic (CPU-only, no GPU required)
  */
 
+#include "audio/pcm_format_set.h"
 #include "convolution_engine.h"
 
+#include <algorithm>
 #include <gtest/gtest.h>
+#include <vector>
 
 using namespace ConvolutionEngine;
 
@@ -178,4 +181,21 @@ TEST_F(RateFamilyTest, Issue238_MultiRateConfigs_BypassEntries) {
 // Test total config count is now 10
 TEST_F(RateFamilyTest, Issue238_MultiRateConfigCount) {
     EXPECT_EQ(MULTI_RATE_CONFIG_COUNT, 10);
+}
+
+TEST_F(RateFamilyTest, SharedFormatSetMatchesMultiRateConfigs) {
+    auto allowed = PcmFormatSet::allowedSampleRatesVector();
+    std::vector<int> fromConfigs;
+    fromConfigs.reserve(MULTI_RATE_CONFIG_COUNT);
+    for (const auto& cfg : MULTI_RATE_CONFIGS) {
+        fromConfigs.push_back(cfg.inputRate);
+    }
+
+    std::sort(allowed.begin(), allowed.end());
+    std::sort(fromConfigs.begin(), fromConfigs.end());
+
+    ASSERT_EQ(allowed.size(), fromConfigs.size());
+    for (std::size_t i = 0; i < allowed.size(); ++i) {
+        EXPECT_EQ(static_cast<int>(allowed[i]), fromConfigs[i]);
+    }
 }
