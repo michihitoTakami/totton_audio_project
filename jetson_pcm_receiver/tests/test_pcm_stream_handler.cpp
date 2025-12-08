@@ -25,6 +25,7 @@ class FakeAlsaPlayback : public AlsaPlayback {
         lastRate = sampleRate;
         lastChannels = channels;
         lastFormat = format;
+        xrunStorm = false;
 
         if (shouldFailOpen) {
             return false;
@@ -44,6 +45,10 @@ class FakeAlsaPlayback : public AlsaPlayback {
         if (!opened) {
             return false;
         }
+        if (failWriteAsXrun) {
+            xrunStorm = true;
+            return false;
+        }
         if (shouldFailWrite) {
             return false;
         }
@@ -54,6 +59,10 @@ class FakeAlsaPlayback : public AlsaPlayback {
     void close() override {
         closeCalled = true;
         opened = false;
+    }
+
+    bool wasXrunStorm() const override {
+        return xrunStorm;
     }
 
     static bool isSupportedRate(uint32_t rate) {
@@ -71,10 +80,12 @@ class FakeAlsaPlayback : public AlsaPlayback {
 
     bool shouldFailOpen{false};
     bool shouldFailWrite{false};
+    bool failWriteAsXrun{false};
     bool openCalled{false};
     bool writeCalled{false};
     bool closeCalled{false};
     bool opened{false};
+    bool xrunStorm{false};
     std::size_t totalFramesWritten{0};
     uint32_t lastRate{0};
     uint16_t lastChannels{0};
@@ -371,6 +382,34 @@ TEST(PcmStreamHandler, DisconnectsAfterRepeatedTimeouts) {
     EXPECT_FALSE(playback.writeCalled);
 
     ::close(fds[0]);
+    ::close(fds[1]);
+}
+
+TEST(PcmStreamHandler, SetsDisconnectReasonOnXrunStorm) {
+    FakeAlsaPlayback playback;
+    playback.failWriteAsXrun = true;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
+
+    int fds[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    auto header = makeValidHeader();
+    ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
+
+    std::vector<std::uint8_t> pcm(32, 0);  // enough to trigger write
+    ASSERT_EQ(::send(fds[0], pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+    ::close(fds[0]);
+
+    EXPECT_FALSE(handler.handleClientForTest(fds[1]));
+    auto snap = status.snapshot();
+    EXPECT_EQ(snap.disconnectReason, "xrun_storm");
+    EXPECT_TRUE(playback.writeCalled);
+    EXPECT_TRUE(playback.closeCalled);
+
     ::close(fds[1]);
 }
 

@@ -214,7 +214,12 @@ bool PcmStreamHandler::handleClient(int fd) {
             return true;
         }
         if (!playback_.write(buf.data(), framesAvailable)) {
-            logError("[PcmStreamHandler] ALSA write failed");
+            const bool xrunStorm = playback_.wasXrunStorm();
+            logError(xrunStorm ? "[PcmStreamHandler] XRUN storm detected; disconnecting stream"
+                               : "[PcmStreamHandler] ALSA write failed");
+            if (status_) {
+                status_->setDisconnectReason(xrunStorm ? "xrun_storm" : "playback_error");
+            }
             return false;
         }
         const std::size_t bytesUsed = framesAvailable * bytesPerFrame;
@@ -346,6 +351,9 @@ bool PcmStreamHandler::handleClient(int fd) {
         logInfo("[PcmStreamHandler] ring stats: max_buffered_frames=" +
                 std::to_string(maxBufferedFrames) +
                 " dropped_frames=" + std::to_string(droppedFrames));
+    }
+    if (!ok && status_ && playback_.wasXrunStorm()) {
+        status_->setDisconnectReason("xrun_storm");
     }
     if (status_) {
         status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
