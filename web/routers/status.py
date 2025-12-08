@@ -9,7 +9,6 @@ from ..constants import EQ_PROFILES_DIR
 from ..models import ApiResponse, DevicesResponse, SettingsUpdate, Status
 from ..services import (
     check_daemon_running,
-    check_pipewire_sink,
     get_alsa_devices,
     is_safe_profile_name,
     load_config,
@@ -32,14 +31,11 @@ async def get_status():
     """Get current system status."""
     settings = load_config()
     daemon_running = check_daemon_running()
-    pipewire_connected = check_pipewire_sink() if daemon_running else False
     stats = load_stats()
-    input_mode = "rtp" if settings.rtp_enabled else "pipewire"
 
     return Status(
         settings=settings,
         daemon_running=daemon_running,
-        pipewire_connected=pipewire_connected,
         eq_active=bool(settings.eq_enabled and settings.eq_profile_path),
         clip_rate=stats["clip_rate"],
         clip_count=stats["clip_count"],
@@ -47,7 +43,6 @@ async def get_status():
         input_rate=stats["input_rate"],
         output_rate=stats["output_rate"],
         peaks=stats["peaks"],
-        input_mode=input_mode,
     )
 
 

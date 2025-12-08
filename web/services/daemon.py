@@ -16,12 +16,6 @@ from ..constants import (
     STATS_FILE_PATH,
 )
 from .config import load_config
-from .pipewire import (
-    restore_default_sink,
-    setup_audio_routing,
-    setup_pipewire_links,
-    wait_for_daemon_node,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -94,23 +88,6 @@ def _pid_looks_like_daemon(pid: int) -> bool:
         return False
 
 
-def _is_rtp_enabled() -> bool:
-    """Check if RTP mode is enabled in config.json.
-
-    Returns:
-        True if RTP is enabled and autoStart is true.
-    """
-    from ..constants import CONFIG_PATH
-
-    try:
-        with open(CONFIG_PATH) as f:
-            config_data = json.load(f)
-        rtp_config = config_data.get("rtp", {})
-        return rtp_config.get("enabled", False) and rtp_config.get("autoStart", False)
-    except (IOError, json.JSONDecodeError):
-        return False
-
-
 def check_daemon_running() -> bool:
     """Check if the daemon process is running."""
     service = _get_systemd_service_name()
@@ -168,18 +145,15 @@ def get_daemon_pid() -> Optional[int]:
 
 
 def start_daemon() -> tuple[bool, str]:
-    """Start the daemon process with full PipeWire setup.
+    """Start the daemon process.
 
-    This function performs the complete startup sequence:
-    1. Setup audio routing (create sink, set default)
+    This function performs the startup sequence:
+    1. Check if daemon is already running
     2. Start daemon process
-    3. Wait for daemon to register with PipeWire
-    4. Setup PipeWire monitor links
     """
     logger.info("Starting daemon...")
 
     config = load_config()
-    rtp_enabled = _is_rtp_enabled()
 
     # Prefer systemd control when service is installed (Jetson)
     service = _get_systemd_service_name()
@@ -215,17 +189,8 @@ def start_daemon() -> tuple[bool, str]:
         logger.error("Daemon binary not found: %s", DAEMON_BINARY)
         return False, f"Daemon binary not found: {DAEMON_BINARY}"
 
-    # Step 1: Setup audio routing (PipeWire only when NOT in RTP mode)
-    if rtp_enabled:
-        logger.info("RTP mode enabled, skipping PipeWire audio routing")
-    else:
-        routing_success, routing_msg = setup_audio_routing()
-        if not routing_success:
-            logger.error("Failed to setup audio routing: %s", routing_msg)
-            return False, f"Failed to setup audio routing: {routing_msg}"
-
     try:
-        # Step 2: Start daemon process
+        # Start daemon process
         logger.info(
             "Launching daemon binary: %s -d %s", DAEMON_BINARY, config.alsa_device
         )
@@ -238,37 +203,10 @@ def start_daemon() -> tuple[bool, str]:
             start_new_session=True,
         )
 
-        # Step 3: Wait for daemon to register with PipeWire
-        # Skip PipeWire check if RTP mode is enabled (daemon uses RTP input instead)
-        if rtp_enabled:
-            logger.info("RTP mode enabled, skipping PipeWire node check")
-        elif not wait_for_daemon_node(timeout_sec=5.0):
-            # Cleanup: stop the daemon we just started
-            logger.error("Daemon failed to register with PipeWire, cleaning up...")
-            _force_stop_daemon()
-            restore_default_sink()
-            return False, "Daemon started but failed to register with PipeWire"
-
-        # Step 4: Setup PipeWire links
-        # Skip link setup if RTP mode is enabled (daemon uses RTP input instead)
-        if rtp_enabled:
-            logger.info("RTP mode enabled, skipping PipeWire link setup")
-        else:
-            link_success, link_msg = setup_pipewire_links()
-            if not link_success:
-                # Cleanup: stop the daemon we just started
-                logger.error(
-                    "Failed to setup PipeWire links: %s, cleaning up...", link_msg
-                )
-                _force_stop_daemon()
-                restore_default_sink()
-                return False, f"Daemon started but link setup failed: {link_msg}"
-
-        logger.info("Daemon started successfully with audio routing configured")
-        return True, "Daemon started with audio routing configured"
+        logger.info("Daemon started successfully")
+        return True, "Daemon started"
     except subprocess.SubprocessError as e:
         logger.error("Failed to start daemon: %s", e)
-        restore_default_sink()  # Cleanup on failure
         return False, f"Failed to start daemon: {e}"
 
 
@@ -293,7 +231,7 @@ def _force_stop_daemon() -> None:
 
 
 def stop_daemon() -> tuple[bool, str]:
-    """Stop the daemon process and restore audio routing."""
+    """Stop the daemon process."""
     logger.info("Stopping daemon...")
 
     service = _get_systemd_service_name()
@@ -338,9 +276,6 @@ def stop_daemon() -> tuple[bool, str]:
             if not check_daemon_running():
                 break
 
-        # Restore default sink after daemon stops
-        restore_default_sink()
-
         if check_daemon_running():
             logger.error("Daemon is still running after stop attempt")
             return False, "Daemon did not stop"
@@ -350,16 +285,6 @@ def stop_daemon() -> tuple[bool, str]:
     except (OSError, ProcessLookupError):
         logger.error("Daemon process not found")
         return False, "Daemon process not found"
-
-
-def check_pipewire_sink() -> bool:
-    """Check if GPU Upsampler daemon is registered with PipeWire.
-
-    More precise check: looks for specific input port rather than
-    generic string match.
-    """
-    # Use wait_for_daemon_node with 0 timeout for immediate check
-    return wait_for_daemon_node(timeout_sec=0)
 
 
 def get_configured_rates() -> tuple[int, int]:

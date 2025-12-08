@@ -52,32 +52,5 @@
     "consoleOutput": true,
     "coloredOutput": true
   },
-  "rtp": {
-    "enabled": true,
-    "autoStart": true,
-    "sessionId": "pc_stream",
-    "bindAddress": "0.0.0.0",
-    "port": 46000,
-    "payloadType": 127,
-    "sampleRate": 44100,
-    "channels": 2,
-    "bitsPerSample": 16,
-    "bigEndian": true,
-    "signedSamples": true,
-    "targetLatencyMs": 5,
-    "watchdogTimeoutMs": 500,
-    "enableRtcp": true,
-    "discovery": {
-      "scanDurationMs": 250,
-      "cooldownMs": 1500,
-      "maxStreams": 12,
-      "enableMulticast": true,
-      "enableUnicast": true,
-      "ports": [
-        5004,
-        6000
-      ]
-    }
-  },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }

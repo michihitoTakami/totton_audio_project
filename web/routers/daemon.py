@@ -23,7 +23,6 @@ from ..models import (
 )
 from ..services import (
     check_daemon_running,
-    check_pipewire_sink,
     get_daemon_client,
     get_daemon_pid,
     load_config,
@@ -84,17 +83,12 @@ async def daemon_status():
     """Get detailed daemon status."""
     running = check_daemon_running()
     pid = get_daemon_pid()
-    pipewire_connected = check_pipewire_sink() if running else False
-    settings = load_config()
-    input_mode = "rtp" if settings.rtp_enabled else "pipewire"
 
     return DaemonStatus(
         running=running,
         pid=pid,
         pid_file=str(PID_FILE_PATH),
         binary_path=str(DAEMON_BINARY),
-        pipewire_connected=pipewire_connected,
-        input_mode=input_mode,
     )
 
 

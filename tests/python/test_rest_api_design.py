@@ -114,7 +114,6 @@ class TestOpenAPISchema:
             "daemon",
             "eq",
             "opra",
-            "input-mode",
             "output",
             "legacy",
         ]
@@ -135,7 +134,6 @@ class TestOpenAPISchema:
             ("/devices", "get"),
             ("/daemon/status", "get"),
             ("/daemon/zmq/ping", "get"),
-            ("/api/input-mode/switch", "post"),
             ("/api/output/mode", "get"),
             ("/api/output/mode", "post"),
             ("/eq/profiles", "get"),
@@ -170,13 +168,11 @@ class TestResponseModels:
         # Should have Status model fields
         required_fields = [
             "settings",
-            "pipewire_connected",
             "daemon_running",
             "eq_active",
             "clip_rate",
             "clip_count",
             "total_samples",
-            "input_mode",
         ]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"
@@ -212,8 +208,6 @@ class TestResponseModels:
             "running",
             "pid_file",
             "binary_path",
-            "pipewire_connected",
-            "input_mode",
         ]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"

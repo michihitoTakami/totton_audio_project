@@ -2,12 +2,10 @@
 
 from .alsa import get_alsa_devices
 from .config import (
-    get_input_mode,
     load_config,
     load_output_mode,
     load_partitioned_convolution_settings,
     save_config,
-    save_input_mode,
     save_output_mode,
     save_partitioned_convolution_settings,
     save_phase_type,
@@ -21,7 +19,6 @@ from .dac import (
 )
 from .daemon import (
     check_daemon_running,
-    check_pipewire_sink,
     get_configured_rates,
     get_daemon_pid,
     load_stats,
@@ -36,23 +33,6 @@ from .eq import (
     sanitize_filename,
     validate_eq_profile_content,
 )
-from .pipewire import (
-    restore_default_sink,
-    setup_audio_routing,
-    setup_pipewire_links,
-    wait_for_daemon_node,
-)
-from .rtp import (
-    build_discovery_stream,
-    build_session_config_payload,
-    flag_existing_sessions,
-    parse_config_snapshot,
-    parse_discovery_streams,
-    parse_metrics_payload,
-    refresh_sessions_from_daemon,
-    telemetry_poller,
-    telemetry_store,
-)
 
 __all__ = [
     # alsa
@@ -62,8 +42,6 @@ __all__ = [
     "load_output_mode",
     "load_partitioned_convolution_settings",
     "save_config",
-    "get_input_mode",
-    "save_input_mode",
     "save_output_mode",
     "save_partitioned_convolution_settings",
     "save_phase_type",
@@ -75,7 +53,6 @@ __all__ = [
     "scan_dac_capability",
     # daemon
     "check_daemon_running",
-    "check_pipewire_sink",
     "get_configured_rates",
     "get_daemon_pid",
     "load_stats",
@@ -90,19 +67,4 @@ __all__ = [
     "read_and_validate_upload",
     "sanitize_filename",
     "validate_eq_profile_content",
-    # pipewire
-    "restore_default_sink",
-    "setup_audio_routing",
-    "setup_pipewire_links",
-    "wait_for_daemon_node",
-    # rtp
-    "build_discovery_stream",
-    "build_session_config_payload",
-    "flag_existing_sessions",
-    "parse_config_snapshot",
-    "parse_discovery_streams",
-    "parse_metrics_payload",
-    "refresh_sessions_from_daemon",
-    "telemetry_poller",
-    "telemetry_store",
 ]

@@ -33,7 +33,9 @@ def test_get_configured_rates_reads_stats_file(stats_path: Path):
     assert output_rate == 768000
 
 
-def test_get_configured_rates_returns_zero_when_file_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_get_configured_rates_returns_zero_when_file_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     missing = tmp_path / "missing.json"
     monkeypatch.setattr(daemon, "STATS_FILE_PATH", missing)
     assert daemon.get_configured_rates() == (0, 0)
@@ -65,7 +67,9 @@ def test_load_stats_computes_clip_rate_and_peaks(stats_path: Path):
     assert stats["peaks"]["post_gain"]["dbfs"] == -200.0
 
 
-def test_status_endpoint_surfaces_negotiated_rates(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+def test_status_endpoint_surfaces_negotiated_rates(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
     sample_stats = {
         "clip_rate": 0.0,
         "clip_count": 0,
@@ -77,7 +81,6 @@ def test_status_endpoint_surfaces_negotiated_rates(client: TestClient, monkeypat
 
     monkeypatch.setattr(status_router, "load_config", lambda: Settings())
     monkeypatch.setattr(status_router, "check_daemon_running", lambda: True)
-    monkeypatch.setattr(status_router, "check_pipewire_sink", lambda: True)
     monkeypatch.setattr(status_router, "load_stats", lambda: sample_stats)
 
     response = client.get("/status")
@@ -85,6 +88,5 @@ def test_status_endpoint_surfaces_negotiated_rates(client: TestClient, monkeypat
     data = response.json()
 
     assert data["daemon_running"] is True
-    assert data["pipewire_connected"] is True
     assert data["input_rate"] == 176400
     assert data["output_rate"] == 705600
