@@ -112,6 +112,9 @@ bool PcmStreamHandler::handleClient(int fd) {
     auto validation = validateHeader(header);
     if (!validation.ok) {
         logWarn(std::string("[PcmStreamHandler] header invalid: ") + validation.reason);
+        if (status_) {
+            status_->setDisconnectReason(validation.reason);
+        }
         return false;
     }
 

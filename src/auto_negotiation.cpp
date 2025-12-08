@@ -1,30 +1,17 @@
 #include "auto_negotiation.h"
 
+#include "audio/pcm_format_set.h"
+
 #include <algorithm>
 
 namespace AutoNegotiation {
 
-// 44.1kHz family rates (base × 1, 2, 4, 8, 16)
-static const int RATES_44K_FAMILY[] = {44100, 88200, 176400, 352800, 705600};
-static const int RATES_44K_COUNT = 5;
-
-// 48kHz family rates (base × 1, 2, 4, 8, 16)
-static const int RATES_48K_FAMILY[] = {48000, 96000, 192000, 384000, 768000};
-static const int RATES_48K_COUNT = 5;
-
 ConvolutionEngine::RateFamily getRateFamily(int sampleRate) {
-    // Check if it's a 44.1kHz family rate
-    for (int i = 0; i < RATES_44K_COUNT; ++i) {
-        if (sampleRate == RATES_44K_FAMILY[i]) {
-            return ConvolutionEngine::RateFamily::RATE_44K;
-        }
+    if (PcmFormatSet::is44kFamilyRate(static_cast<uint32_t>(sampleRate))) {
+        return ConvolutionEngine::RateFamily::RATE_44K;
     }
-
-    // Check if it's a 48kHz family rate
-    for (int i = 0; i < RATES_48K_COUNT; ++i) {
-        if (sampleRate == RATES_48K_FAMILY[i]) {
-            return ConvolutionEngine::RateFamily::RATE_48K;
-        }
+    if (PcmFormatSet::is48kFamilyRate(static_cast<uint32_t>(sampleRate))) {
+        return ConvolutionEngine::RateFamily::RATE_48K;
     }
 
     // For non-standard rates, determine family by divisibility
@@ -53,21 +40,14 @@ int getBestRateForFamily(ConvolutionEngine::RateFamily family,
         return 0;
     }
 
-    const int* rates;
-    int count;
-
-    if (family == ConvolutionEngine::RateFamily::RATE_44K) {
-        rates = RATES_44K_FAMILY;
-        count = RATES_44K_COUNT;
-    } else {
-        rates = RATES_48K_FAMILY;
-        count = RATES_48K_COUNT;
-    }
+    const auto& rates = (family == ConvolutionEngine::RateFamily::RATE_44K)
+                            ? PcmFormatSet::kRates44k
+                            : PcmFormatSet::kRates48k;
 
     // Find the highest supported rate in descending order
-    for (int i = count - 1; i >= 0; --i) {
-        if (DacCapability::isRateSupported(dacCap, rates[i])) {
-            return rates[i];
+    for (auto it = rates.rbegin(); it != rates.rend(); ++it) {
+        if (DacCapability::isRateSupported(dacCap, static_cast<int>(*it))) {
+            return static_cast<int>(*it);
         }
     }
 
