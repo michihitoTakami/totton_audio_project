@@ -3,6 +3,7 @@
 #include "alsa_playback.h"
 #include "logging.h"
 #include "tcp_server.h"
+#include "zmq_status_server.h"
 
 #include <cerrno>
 #include <chrono>
@@ -19,13 +20,15 @@
 
 PcmStreamHandler::PcmStreamHandler(AlsaPlayback &playback, TcpServer &server,
                                    std::atomic_bool &stopFlag, PcmStreamConfig &config,
-                                   std::mutex *configMutex, StatusTracker *status)
+                                   std::mutex *configMutex, StatusTracker *status,
+                                   ZmqStatusServer *zmqServer)
     : playback_(playback),
       server_(server),
       stopFlag_(stopFlag),
       config_(config),
       configMutex_(configMutex),
-      status_(status) {}
+      status_(status),
+      zmqServer_(zmqServer) {}
 
 namespace {
 
@@ -127,6 +130,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     if (status_) {
         status_->setHeader(header);
     }
+    publishHeaderEvent(header);
 
     if (!playback_.open(header.sample_rate, header.channels, header.format)) {
         logError("[PcmStreamHandler] failed to open ALSA playback for received header");
@@ -292,6 +296,20 @@ bool PcmStreamHandler::handleClient(int fd) {
 
 bool PcmStreamHandler::handleClientForTest(int fd) {
     return handleClient(fd);
+}
+
+void PcmStreamHandler::publishHeaderEvent(const PcmHeader &header) {
+    if (!zmqServer_) {
+        return;
+    }
+    std::optional<PcmHeader> previous{};
+    if (hasLastHeader_) {
+        previous = lastHeader_;
+    }
+    if (zmqServer_->publishHeaderChange(header, previous)) {
+        lastHeader_ = header;
+        hasLastHeader_ = true;
+    }
 }
 
 void PcmStreamHandler::run() {

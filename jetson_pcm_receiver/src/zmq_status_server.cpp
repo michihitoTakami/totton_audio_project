@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <optional>
 
 namespace {
 
@@ -272,5 +273,38 @@ void ZmqStatusServer::publisherLoop() {
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(options_.publishIntervalMs));
+    }
+}
+
+bool ZmqStatusServer::publishHeaderChange(const PcmHeader& header,
+                                          const std::optional<PcmHeader>& previousHeader) {
+    if (!options_.enabled || !options_.publishHeaderEvents) {
+        return false;
+    }
+    if (!server_ || !server_->isRunning()) {
+        return false;
+    }
+
+    nlohmann::json payload;
+    payload["event"] = "pcm_header_changed";
+    payload["header"]["sample_rate"] = header.sample_rate;
+    payload["header"]["channels"] = header.channels;
+    payload["header"]["format"] = header.format;
+    payload["header"]["version"] = header.version;
+    if (previousHeader.has_value()) {
+        payload["previous_header"]["sample_rate"] = previousHeader->sample_rate;
+        payload["previous_header"]["channels"] = previousHeader->channels;
+        payload["previous_header"]["format"] = previousHeader->format;
+        payload["previous_header"]["version"] = previousHeader->version;
+    }
+    payload["timestamp_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+
+    try {
+        return server_->publish(payload.dump());
+    } catch (const std::exception& e) {
+        logWarn(std::string("[ZMQ] header publish failed: ") + e.what());
+        return false;
     }
 }

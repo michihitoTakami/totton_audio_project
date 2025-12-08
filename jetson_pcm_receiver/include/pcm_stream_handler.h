@@ -6,11 +6,13 @@
 
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 class AlsaPlayback;
 class TcpServer;
+class ZmqStatusServer;
 
 struct PcmStreamConfig {
     std::size_t ringBufferFrames{0};  // 0で無効
@@ -28,7 +30,7 @@ class PcmStreamHandler {
    public:
     PcmStreamHandler(AlsaPlayback &playback, TcpServer &server, std::atomic_bool &stopFlag,
                      PcmStreamConfig &config, std::mutex *configMutex = nullptr,
-                     StatusTracker *status = nullptr);
+                     StatusTracker *status = nullptr, ZmqStatusServer *zmqServer = nullptr);
 
     void run();
     bool handleClientForTest(int fd);
@@ -36,6 +38,7 @@ class PcmStreamHandler {
    private:
     bool receiveHeader(int fd, PcmHeader &header) const;
     bool handleClient(int fd);
+    void publishHeaderEvent(const PcmHeader &header);
 
     AlsaPlayback &playback_;
     TcpServer &server_;
@@ -43,4 +46,7 @@ class PcmStreamHandler {
     PcmStreamConfig &config_;
     std::mutex *configMutex_{nullptr};
     StatusTracker *status_{nullptr};
+    ZmqStatusServer *zmqServer_{nullptr};
+    bool hasLastHeader_{false};
+    PcmHeader lastHeader_{};
 };

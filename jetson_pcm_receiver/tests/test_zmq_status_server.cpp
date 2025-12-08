@@ -166,3 +166,33 @@ TEST_F(ZmqStatusServerTest, RestartSetsStopFlagAndPublishes) {
     }
     EXPECT_TRUE(received);
 }
+
+TEST_F(ZmqStatusServerTest, PublishesHeaderChangeEvent) {
+    startServer(0);
+
+    zmq::context_t ctx(1);
+    zmq::socket_t sub(ctx, zmq::socket_type::sub);
+    sub.set(zmq::sockopt::subscribe, "");
+    sub.set(zmq::sockopt::rcvtimeo, 500);
+    sub.connect(server.pubEndpoint());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    PcmHeader hdr{};
+    std::memcpy(hdr.magic, "PCMA", 4);
+    hdr.version = 1;
+    hdr.sample_rate = 96000;
+    hdr.channels = 2;
+    hdr.format = 4;
+
+    ASSERT_TRUE(server.publishHeaderChange(hdr));
+
+    zmq::message_t msg;
+    ASSERT_TRUE(sub.recv(msg, zmq::recv_flags::none));
+    auto payload = nlohmann::json::parse(
+        std::string(static_cast<char*>(msg.data()), static_cast<std::size_t>(msg.size())));
+    EXPECT_EQ(payload["event"], "pcm_header_changed");
+    EXPECT_EQ(payload["header"]["sample_rate"], 96000);
+    EXPECT_EQ(payload["header"]["channels"], 2);
+    EXPECT_EQ(payload["header"]["format"], 4);
+    EXPECT_FALSE(payload.contains("previous_header"));
+}
