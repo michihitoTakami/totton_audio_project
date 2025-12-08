@@ -214,7 +214,7 @@ TEST(PcmStreamHandler, ClearsDisconnectReasonAfterRenegotiation) {
 
     EXPECT_TRUE(handler.handleClientForTest(second[1]));
     auto snap = status.snapshot();
-    EXPECT_TRUE(snap.disconnectReason.empty());
+    EXPECT_EQ(snap.disconnectReason, "client_closed");
     EXPECT_EQ(snap.header.header.sample_rate, newHeader.sample_rate);
     EXPECT_TRUE(playback.openCalled);
     EXPECT_TRUE(playback.writeCalled);
@@ -384,7 +384,8 @@ TEST(PcmStreamHandler, DisconnectsAfterRepeatedTimeouts) {
     cfg.recvTimeoutSleepMs = 1;
     cfg.acceptCooldownMs = 1;
     cfg.maxConsecutiveTimeouts = 3;
-    PcmStreamHandler handler(playback, server, stop, cfg);
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
 
     int fds[2]{-1, -1};
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
@@ -393,12 +394,65 @@ TEST(PcmStreamHandler, DisconnectsAfterRepeatedTimeouts) {
     ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
 
     EXPECT_FALSE(handler.handleClientForTest(fds[1]));
+    EXPECT_EQ(status.snapshot().disconnectReason, "recv_timeout");
     EXPECT_TRUE(playback.openCalled);
     EXPECT_TRUE(playback.closeCalled);
     EXPECT_FALSE(playback.writeCalled);
 
     ::close(fds[0]);
     ::close(fds[1]);
+}
+
+TEST(PcmStreamHandler, SignalsClientCloseAndAllowsReconnect) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
+
+    int first[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, first), 0);
+
+    auto header = makeValidHeader();
+    ASSERT_EQ(::send(first[0], &header, sizeof(header), 0), sizeof(header));
+    std::vector<std::uint8_t> pcm(32, 0);
+    ASSERT_EQ(::send(first[0], pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+    ::close(first[0]);
+
+    EXPECT_TRUE(handler.handleClientForTest(first[1]));
+    auto snapAfterClose = status.snapshot();
+    EXPECT_EQ(snapAfterClose.disconnectReason, "client_closed");
+    EXPECT_FALSE(snapAfterClose.streaming);
+    EXPECT_FALSE(snapAfterClose.header.present);
+    ::close(first[1]);
+
+    playback.openCalled = false;
+    playback.writeCalled = false;
+    playback.closeCalled = false;
+    playback.totalFramesWritten = 0;
+
+    int second[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, second), 0);
+
+    PcmHeader newHeader = makeValidHeader();
+    newHeader.sample_rate = 96000;
+    newHeader.format = 4;
+    ASSERT_EQ(::send(second[0], &newHeader, sizeof(newHeader), 0), sizeof(newHeader));
+    std::vector<std::uint8_t> pcm2(64, 0);
+    ASSERT_EQ(::send(second[0], pcm2.data(), pcm2.size(), 0), static_cast<ssize_t>(pcm2.size()));
+    ::close(second[0]);
+
+    EXPECT_TRUE(handler.handleClientForTest(second[1]));
+    auto snapAfterReconnect = status.snapshot();
+    EXPECT_EQ(snapAfterReconnect.disconnectReason, "client_closed");
+    EXPECT_FALSE(snapAfterReconnect.header.present);
+    EXPECT_EQ(snapAfterReconnect.header.header.sample_rate, newHeader.sample_rate);
+    EXPECT_TRUE(playback.openCalled);
+    EXPECT_TRUE(playback.writeCalled);
+    EXPECT_TRUE(playback.closeCalled);
+
+    ::close(second[1]);
 }
 
 TEST(PcmStreamHandler, SetsDisconnectReasonOnXrunStorm) {
