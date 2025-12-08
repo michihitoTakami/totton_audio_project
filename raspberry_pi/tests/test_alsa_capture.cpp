@@ -9,6 +9,34 @@ TEST(AlsaCaptureHelpers, MapsFormatsToAlsaEnums) {
     EXPECT_EQ(AlsaCapture::toAlsaFormat(AlsaCapture::SampleFormat::S32_LE), SND_PCM_FORMAT_S32_LE);
 }
 
+TEST(AlsaCaptureHelpers, SelectSupportedFormatPrefersRequested) {
+    const auto supported = [](AlsaCapture::SampleFormat fmt) {
+        return fmt == AlsaCapture::SampleFormat::S24_3LE ||
+               fmt == AlsaCapture::SampleFormat::S32_LE;
+    };
+    auto selected =
+        AlsaCapture::selectSupportedFormat(AlsaCapture::SampleFormat::S24_3LE, supported);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected.value(), AlsaCapture::SampleFormat::S24_3LE);
+}
+
+TEST(AlsaCaptureHelpers, SelectSupportedFormatFallsBackInPriorityOrder) {
+    const auto supported = [](AlsaCapture::SampleFormat fmt) {
+        return fmt == AlsaCapture::SampleFormat::S32_LE;
+    };
+    auto selected =
+        AlsaCapture::selectSupportedFormat(AlsaCapture::SampleFormat::S16_LE, supported);
+    ASSERT_TRUE(selected.has_value());
+    EXPECT_EQ(selected.value(), AlsaCapture::SampleFormat::S32_LE);
+}
+
+TEST(AlsaCaptureHelpers, SelectSupportedFormatReturnsNulloptWhenNone) {
+    const auto supported = [](AlsaCapture::SampleFormat /*fmt*/) { return false; };
+    auto selected =
+        AlsaCapture::selectSupportedFormat(AlsaCapture::SampleFormat::S16_LE, supported);
+    EXPECT_FALSE(selected.has_value());
+}
+
 TEST(AlsaCaptureHelpers, CalculatesBytesPerFrame) {
     AlsaCapture::Config config{};
     config.channels = 2;
