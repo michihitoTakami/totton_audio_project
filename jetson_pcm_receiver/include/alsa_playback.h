@@ -1,6 +1,9 @@
 #pragma once
 
+#include "xrun_detector.h"
+
 #include <alsa/asoundlib.h>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -17,6 +20,7 @@ class AlsaPlayback {
     virtual bool open(uint32_t sampleRate, uint16_t channels, uint16_t format);
     virtual bool write(const void *data, std::size_t frames);
     virtual void close();
+    virtual bool wasXrunStorm() const;
     void setStatusTracker(StatusTracker *tracker) {
         statusTracker_ = tracker;
     }
@@ -34,6 +38,8 @@ class AlsaPlayback {
     snd_pcm_uframes_t periodSize_{0};
     snd_pcm_uframes_t bufferSize_{0};
     StatusTracker *statusTracker_{nullptr};
+    XrunDetector xrunDetector_{std::chrono::milliseconds(1000)};
+    bool xrunStormDetected_{false};
 
     bool configureHardware(uint32_t sampleRate, uint16_t channels, snd_pcm_format_t format);
     bool validateCapabilities(uint32_t sampleRate, uint16_t channels, snd_pcm_format_t format);

@@ -45,6 +45,7 @@ add_library(jetson_pcm_receiver_lib
     src/logging.cpp
     src/tcp_server.cpp
     src/alsa_playback.cpp
+    src/xrun_detector.cpp
     src/pcm_stream_handler.cpp
     src/pcm_header.cpp
     src/status_tracker.cpp
@@ -130,6 +131,7 @@ if(BUILD_TESTING)
         tests/test_alsa_playback.cpp
         tests/test_zmq_status_server.cpp
         tests/test_output_device.cpp
+        tests/test_xrun_detector.cpp
     )
 
     target_link_libraries(jetson_pcm_receiver_tests
