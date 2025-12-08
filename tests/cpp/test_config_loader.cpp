@@ -614,3 +614,43 @@ TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndFilterPaths) {
     EXPECT_EQ(config.filterPath48kLinear, "a/path48kLinear.bin");
     EXPECT_EQ(config.coefficientDir, "multi/coefficients");
 }
+
+// ============================================================
+// RTP settings (Issue #697)
+// ============================================================
+
+TEST_F(ConfigLoaderTest, RtpSectionOmittedKeepsDefaultsDisabled) {
+    writeConfig(R"({
+        "alsaDevice": "hw:Test"
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(config.rtp.enabled);
+    EXPECT_FALSE(config.rtp.autoStart);
+}
+
+TEST_F(ConfigLoaderTest, RtpWithoutRateFieldsFallsBackToDefaults) {
+    writeConfig(R"({
+        "rtp": {
+            "enabled": true,
+            "autoStart": true,
+            "port": 5004
+        }
+    })");
+
+    AppConfig config;
+    bool result = loadAppConfig(testConfigPath, config, false);
+
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(config.rtp.enabled);
+    EXPECT_TRUE(config.rtp.autoStart);
+    EXPECT_EQ(config.rtp.port, 5004);
+    EXPECT_EQ(config.rtp.sampleRate, 48000);
+    EXPECT_EQ(config.rtp.channels, 2);
+    EXPECT_EQ(config.rtp.bitsPerSample, 24);
+    EXPECT_TRUE(config.rtp.bigEndian);
+    EXPECT_TRUE(config.rtp.signedSamples);
+}

@@ -50,6 +50,11 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
   - `--priority-client <IP>`（複数指定可 / カンマ区切り可）
     - `priority` モード時に奪取を許可する送信元 IP（数値表記一致のみ）
 
+### 運用指針 (Magic Box 連携)
+- 入力レート/フォーマットは Pi 送信側の `PCMA` ヘッダで伝達し、受信時に ALSA を開き直します。設定ファイルには固定値を持たせません。
+- 許容レート/フォーマットは `PcmFormatSet` に準拠（44.1k/48k 系 × {1,2,4,8,16}、2ch、`S16_LE` / `S24_3LE` / `S32_LE`）。外れたヘッダは拒否されます。
+- GPU デーモンの自動ネゴシエーション (`auto_negotiation`) もこの受信レートを入力として出力レート/アップサンプル比を決定します。Pi 側は上記許容範囲で送出してください。
+
 ## Docker (Jetson)
 `docker/jetson_pcm_receiver/` に Jetson 向けの Dockerfile / Compose を用意しています。ビルドと起動は以下で行えます。
 
