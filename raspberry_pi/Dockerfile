@@ -16,8 +16,7 @@ COPY raspberry_pi/ ./raspberry_pi/
 RUN cmake -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
     && cmake --build raspberry_pi/build --target rpi_pcm_bridge_app -j"$(nproc)"
 
-ARG RUNTIME_IMAGE=${BASE_IMAGE}
-FROM ${RUNTIME_IMAGE} AS runtime
+FROM ${BASE_IMAGE} AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libasound2 \
@@ -26,7 +25,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/pcm-bridge
-COPY --from=builder /app/raspberry_pi/build/rpi_pcm_bridge /usr/local/bin/rpi_pcm_bridge
+COPY --from=builder /app/raspberry_pi/build/src/rpi_pcm_bridge /usr/local/bin/rpi_pcm_bridge
 COPY raspberry_pi/docker/entrypoint.sh /usr/local/bin/pcm-bridge-entrypoint.sh
 RUN chmod +x /usr/local/bin/pcm-bridge-entrypoint.sh
 
