@@ -351,48 +351,6 @@
         }
       }
     },
-    "/daemon/rewire": {
-      "post": {
-        "tags": [
-          "daemon"
-        ],
-        "summary": "Rewire Pipewire",
-        "description": "Rewire PipeWire connections.",
-        "operationId": "rewire_pipewire_daemon_rewire_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RewireRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/eq/profiles": {
       "get": {
         "tags": [
@@ -3110,25 +3068,6 @@
         ],
         "title": "PhaseTypeUpdateRequest",
         "description": "Phase type update request model."
-      },
-      "RewireRequest": {
-        "properties": {
-          "source_node": {
-            "type": "string",
-            "title": "Source Node"
-          },
-          "target_node": {
-            "type": "string",
-            "title": "Target Node"
-          }
-        },
-        "type": "object",
-        "required": [
-          "source_node",
-          "target_node"
-        ],
-        "title": "RewireRequest",
-        "description": "Request model for rewiring PipeWire connections."
       },
       "Settings": {
         "properties": {

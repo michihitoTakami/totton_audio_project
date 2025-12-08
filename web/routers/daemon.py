@@ -1,6 +1,5 @@
 """Daemon control endpoints."""
 
-import subprocess
 import time
 from typing import Any
 
@@ -18,7 +17,6 @@ from ..models import (
     DaemonStatus,
     PhaseTypeResponse,
     PhaseTypeUpdateRequest,
-    RewireRequest,
     ZmqPingResponse,
 )
 from ..services import (
@@ -277,27 +275,3 @@ async def reload_daemon():
         return ApiResponse(
             success=False, message=f"Failed to start daemon: {start_msg}"
         )
-
-
-@router.post("/rewire", response_model=ApiResponse)
-async def rewire_pipewire(request: RewireRequest):
-    """Rewire PipeWire connections."""
-    try:
-        # Use pw-link to create connection
-        result = subprocess.run(
-            ["pw-link", request.source_node, request.target_node],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return ApiResponse(
-                success=True,
-                message=f"Connected {request.source_node} -> {request.target_node}",
-            )
-        else:
-            return ApiResponse(
-                success=False, message=f"pw-link failed: {result.stderr}"
-            )
-    except (subprocess.SubprocessError, FileNotFoundError) as e:
-        return ApiResponse(success=False, message=f"Failed to rewire: {e}")

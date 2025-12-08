@@ -297,55 +297,6 @@ def get_embedded_html() -> str:
             40% { content: '..'; }
             60%, 100% { content: '...'; }
         }
-        /* Input Mode */
-        .input-mode-options {
-            display: flex;
-            gap: 12px;
-        }
-        .input-mode-option {
-            flex: 1;
-            padding: 12px;
-            border: 1px solid #0f3460;
-            border-radius: 6px;
-            background: #0f3460;
-            cursor: pointer;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            transition: border-color 0.2s, background 0.2s;
-        }
-        .input-mode-option input[type="radio"] {
-            appearance: none;
-            width: 0;
-            height: 0;
-            margin: 0;
-        }
-        .input-mode-option .option-title {
-            font-size: 14px;
-            font-weight: 600;
-            color: #fff;
-        }
-        .input-mode-option .option-desc {
-            font-size: 12px;
-            color: #888;
-        }
-        .input-mode-option.active {
-            border-color: #00d4ff;
-            background: #10294a;
-        }
-        .input-mode-option.disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        .input-mode-info {
-            margin-top: 12px;
-            font-size: 12px;
-            color: #9ec9ff;
-        }
-        .input-mode-info .note {
-            color: #666;
-            margin-top: 4px;
-        }
     </style>
 </head>
 <body>
@@ -358,59 +309,11 @@ def get_embedded_html() -> str:
                 <div class="label">Daemon</div>
                 <div class="value">-</div>
             </div>
-            <div class="status-item" id="pwStatus">
-                <div class="label">PipeWire</div>
-                <div class="value">-</div>
-            </div>
             <div class="status-item" id="eqStatus">
                 <div class="label">EQ</div>
                 <div class="value">-</div>
             </div>
         </div>
-    </div>
-
-    <h2>Input Mode</h2>
-    <div class="card">
-        <div class="input-mode-options" id="inputModeOptions">
-            <label class="input-mode-option" data-mode="pipewire">
-                <input type="radio" name="inputMode" value="pipewire">
-                <span class="option-title">PipeWire</span>
-                <span class="option-desc">ローカル入力（最小遅延）</span>
-            </label>
-            <label class="input-mode-option" data-mode="rtp">
-                <input type="radio" name="inputMode" value="rtp">
-                <span class="option-title">RTP</span>
-                <span class="option-desc">ネットワーク入力</span>
-            </label>
-        </div>
-        <div class="input-mode-info">
-            <div id="inputModeStatusText">現在: -</div>
-            <div class="note" id="inputModeRestartHint">切り替え時にデーモンを自動再起動します</div>
-        </div>
-        <div id="inputModeMessage" class="message"></div>
-    </div>
-
-    <h2>RTP Input</h2>
-    <div class="card">
-        <div class="rtp-scan-row">
-            <button type="button" class="btn-secondary" id="rtpScanBtn">RTP入力をスキャン</button>
-            <div class="scan-status" id="rtpScanStatus">未スキャン</div>
-        </div>
-        <div class="form-group">
-            <label>受信候補</label>
-            <select id="rtpStreamSelect" disabled>
-                <option value="">スキャンしてください</option>
-            </select>
-        </div>
-        <div class="btn-row">
-            <button type="button" class="btn-primary" id="rtpStartBtn" disabled>開始</button>
-            <button type="button" class="btn-secondary" id="rtpStopBtn" disabled>停止</button>
-        </div>
-        <div class="rtp-details" id="rtpDetails">
-            スキャンして候補を読み込みます。ソースIPとポートを表示します。
-        </div>
-        <div class="rtp-active" id="rtpActiveSession">稼働中のRTPセッション: なし</div>
-        <div id="rtpMessage" class="message"></div>
     </div>
 
     <h2>Output Device</h2>
@@ -512,177 +415,11 @@ def get_embedded_html() -> str:
 
     <script>
         const API = '';
-        const RTP_API = '/api/rtp';
-        const INPUT_MODE_API = '/api/input-mode';
         let currentAlsaDevice = '';
         let deviceList = [];
-        let lastPipewireConnected = false;
-        const inputModeState = {
-            current: 'pipewire',
-            switching: false,
-        };
-        const rtpState = {
-            streams: [],
-            selectedId: '',
-            scanning: false,
-            lastScanAt: null,
-            activeSessions: [],
-        };
-        const inputModeOptions = document.querySelectorAll('.input-mode-option');
-        const inputModeRadios = document.querySelectorAll('input[name="inputMode"]');
-        const inputModeMessage = document.getElementById('inputModeMessage');
-        const inputModeStatusText = document.getElementById('inputModeStatusText');
-        const inputModeRestartHint = document.getElementById('inputModeRestartHint');
-        const pwStatusLabel = document.querySelector('#pwStatus .label');
-        const rtpSelect = document.getElementById('rtpStreamSelect');
-        const rtpScanBtn = document.getElementById('rtpScanBtn');
-        const rtpStartBtn = document.getElementById('rtpStartBtn');
-        const rtpStopBtn = document.getElementById('rtpStopBtn');
-        const rtpMessage = document.getElementById('rtpMessage');
-        const rtpDetails = document.getElementById('rtpDetails');
-        const rtpActiveSession = document.getElementById('rtpActiveSession');
-        const rtpScanStatus = document.getElementById('rtpScanStatus');
-
-        /**
-         * Normalize port number to valid integer or null.
-         * @param {any} value - Port number candidate
-         * @returns {number|null} Normalized port or null if invalid
-         */
-        function normalizePort(value) {
-            const parsed = Number(value);
-            return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-        }
 
         async function restartDaemon() {
             await fetch(API + '/daemon/restart', { method: 'POST' });
-        }
-
-        /**
-         * Convert RTP session metrics (from daemon telemetry) to discovery stream format.
-         * This enables auto-started sessions to appear in the UI alongside scanned streams.
-         * @param {Object} session - Session metrics from daemon
-         * @returns {Object|null} Discovery stream object or null if invalid
-         */
-        function sessionMetricsToStream(session) {
-            const sessionId = session?.session_id || session?.sessionId;
-            if (!sessionId) {
-                return null;
-            }
-            // Fallback: infer RTP port from RTCP port (typically RTCP = RTP + 1)
-            // If session.port is missing but rtcp_port exists, derive RTP port
-            const fallbackPort = session?.rtcp_port ? normalizePort(Number(session.rtcp_port) - 1) : null;
-            const port = normalizePort(session?.port) ?? fallbackPort;
-            return {
-                session_id: sessionId,
-                display_name: sessionId,
-                source_host: session?.source_host || null,
-                bind_address: session?.bind_address || null,
-                port,
-                sample_rate: session?.sample_rate || null,
-                channels: session?.channels || null,
-                payload_type: session?.payload_type ?? null,
-                multicast: Boolean(session?.multicast),
-                multicast_group: session?.multicast_group || null,
-                status: 'active',
-                existing_session: true,
-                synthetic: true,
-                auto_start: Boolean(session?.auto_start),
-            };
-        }
-
-        /**
-         * Merge metadata from source stream into target stream.
-         * Only overwrites fields that are missing or invalid in target.
-         * @param {Object} target - Target stream object (mutated in place)
-         * @param {Object} source - Source stream object (read-only)
-         */
-        function mergeStreamMetadata(target, source) {
-            if (!source) {
-                return;
-            }
-            const fields = [
-                'display_name',
-                'source_host',
-                'bind_address',
-                'port',
-                'sample_rate',
-                'channels',
-                'payload_type',
-                'multicast',
-                'multicast_group',
-            ];
-            fields.forEach((field) => {
-                if (
-                    (target[field] === undefined ||
-                        target[field] === null ||
-                        target[field] === '' ||
-                        (typeof target[field] === 'number' && Number.isNaN(target[field]))) &&
-                    source[field] !== undefined &&
-                    source[field] !== null &&
-                    source[field] !== ''
-                ) {
-                    target[field] = source[field];
-                }
-            });
-        }
-
-        /**
-         * Merge active RTP sessions (from daemon telemetry) into scanned streams.
-         * This ensures auto-started sessions appear in the UI without requiring a scan.
-         *
-         * Logic:
-         * 1. Convert active sessions to synthetic streams
-         * 2. Merge with existing scanned streams by session_id
-         * 3. Remove synthetic entries that are no longer active
-         * 4. Mark all active streams with existing_session=true
-         */
-        function mergeActiveSessionsIntoStreams() {
-            const map = new Map();
-            // Start with all scanned streams
-            rtpState.streams.forEach((stream) => {
-                map.set(stream.session_id, { ...stream });
-            });
-
-            const activeIds = new Set();
-
-            // Process active sessions from daemon
-            rtpState.activeSessions.forEach((session) => {
-                const synthetic = sessionMetricsToStream(session);
-                if (!synthetic) {
-                    return;
-                }
-                activeIds.add(synthetic.session_id);
-                if (map.has(synthetic.session_id)) {
-                    // Merge metadata from telemetry into existing stream
-                    const current = map.get(synthetic.session_id);
-                    const merged = { ...current };
-                    mergeStreamMetadata(merged, synthetic);
-                    merged.status = 'active';
-                    merged.existing_session = true;
-                    merged.synthetic = current.synthetic || synthetic.synthetic;
-                    merged.auto_start = merged.auto_start || synthetic.auto_start;
-                    map.set(synthetic.session_id, merged);
-                } else {
-                    // Add new synthetic stream (auto-started, not yet scanned)
-                    map.set(synthetic.session_id, synthetic);
-                }
-            });
-
-            // Clean up: remove synthetic streams that are no longer active
-            for (const [sessionId, stream] of map.entries()) {
-                if (!activeIds.has(sessionId)) {
-                    if (stream.synthetic) {
-                        // Synthetic stream no longer active - remove from UI
-                        map.delete(sessionId);
-                        continue;
-                    }
-                    // Scanned stream not active - keep but mark as inactive
-                    stream.existing_session = false;
-                    stream.auto_start = false;
-                }
-            }
-
-            rtpState.streams = Array.from(map.values());
         }
 
         async function fetchDevices() {
@@ -729,10 +466,6 @@ def get_embedded_html() -> str:
 
                 setStatus('daemonStatus', data.daemon_running ? 'Running' : 'Stopped', data.daemon_running);
                 setStatus('eqStatus', data.eq_active ? 'ON' : 'OFF', data.eq_active);
-                const inputMode = data.input_mode || (data.settings?.rtp_enabled ? 'rtp' : 'pipewire');
-                lastPipewireConnected = data.pipewire_connected;
-                updatePipewireCard(inputMode, lastPipewireConnected);
-                setInputModeStatus(inputMode, lastPipewireConnected);
 
                 if (currentAlsaDevice !== data.settings.alsa_device) {
                     currentAlsaDevice = data.settings.alsa_device;
@@ -750,335 +483,12 @@ def get_embedded_html() -> str:
             el.classList.add(ok ? 'ok' : 'error');
         }
 
-        let inputModeMessageTimeout = null;
-
-        function updateInputModeOptionStyles() {
-            inputModeOptions.forEach(option => {
-                const mode = option.dataset.mode;
-                const radio = option.querySelector('input[type="radio"]');
-                const isActive = mode === inputModeState.current;
-                option.classList.toggle('active', isActive);
-                option.classList.toggle('disabled', inputModeState.switching);
-                if (radio) {
-                    radio.checked = isActive;
-                    radio.disabled = inputModeState.switching;
-                }
-            });
-        }
-
-        function showInputModeMessage(text, success) {
-            if (inputModeMessageTimeout) {
-                clearTimeout(inputModeMessageTimeout);
-            }
-            inputModeMessage.textContent = text || '';
-            inputModeMessage.classList.remove('success', 'error');
-            if (text) {
-                inputModeMessage.classList.add(success ? 'success' : 'error');
-                inputModeMessageTimeout = setTimeout(() => {
-                    inputModeMessage.classList.remove('success', 'error');
-                }, 4000);
-            }
-        }
-
-        function setInputModeStatus(mode, pipewireConnected) {
-            const normalized = mode === 'rtp' ? 'rtp' : 'pipewire';
-            if (!inputModeState.switching) {
-                inputModeState.current = normalized;
-            }
-            const description = normalized === 'rtp'
-                ? '現在: RTP (ネットワーク入力)'
-                : `現在: PipeWire (${pipewireConnected ? '接続済み' : '未接続'})`;
-            inputModeStatusText.textContent = description;
-            updateInputModeOptionStyles();
-        }
-
-        function updatePipewireCard(normalizedMode, pipewireConnected) {
-            if (normalizedMode === 'rtp') {
-                pwStatusLabel.textContent = 'Input Mode';
-                setStatus('pwStatus', 'RTP Active', true);
-            } else {
-                pwStatusLabel.textContent = 'PipeWire';
-                setStatus('pwStatus', pipewireConnected ? 'OK' : 'N/A', pipewireConnected);
-            }
-        }
-
-        async function requestInputModeChange(mode) {
-            if (!mode || mode === inputModeState.current || inputModeState.switching) {
-                return;
-            }
-            inputModeState.switching = true;
-            updateInputModeOptionStyles();
-            inputModeRestartHint.textContent = 'デーモンを再起動しています...';
-            showInputModeMessage('モード切り替え中...', true);
-            try {
-                const res = await fetch(INPUT_MODE_API + '/switch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode }),
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || !data.success) {
-                    throw new Error(data.detail || data.message || '切り替えに失敗しました');
-                }
-                inputModeState.current = data.current_mode || mode;
-                showInputModeMessage(data.message || 'モードを切り替えました', true);
-            } catch (e) {
-                showInputModeMessage('エラー: ' + e.message, false);
-            } finally {
-                inputModeState.switching = false;
-                inputModeRestartHint.textContent = '切り替え時にデーモンを自動再起動します';
-                updateInputModeOptionStyles();
-                fetchStatus();
-            }
-        }
-
         function showMessage(text, success) {
             const el = document.getElementById('settingsMessage');
             el.textContent = text;
             el.classList.remove('success', 'error');
             el.classList.add(success ? 'success' : 'error');
             setTimeout(() => el.classList.remove('success', 'error'), 4000);
-        }
-
-        function showRtpMessage(text, success) {
-            rtpMessage.textContent = text;
-            rtpMessage.classList.remove('success', 'error');
-            rtpMessage.classList.add(success ? 'success' : 'error');
-            setTimeout(() => rtpMessage.classList.remove('success', 'error'), 4000);
-        }
-
-        function updateRtpScanStatus() {
-            if (rtpState.scanning) {
-                rtpScanStatus.textContent = 'スキャン中...';
-                return;
-            }
-            if (rtpState.lastScanAt) {
-                const updated = new Date(rtpState.lastScanAt);
-                const hh = String(updated.getHours()).padStart(2, '0');
-                const mm = String(updated.getMinutes()).padStart(2, '0');
-                rtpScanStatus.textContent = `${hh}:${mm} に更新 (${rtpState.streams.length}件)`;
-            } else {
-                rtpScanStatus.textContent = '未スキャン';
-            }
-        }
-
-        function renderRtpOptions() {
-            rtpSelect.innerHTML = '';
-            if (!rtpState.streams.length) {
-                const placeholder = document.createElement('option');
-                placeholder.value = '';
-                placeholder.textContent = rtpState.scanning ? 'スキャン中...' : '候補がありません';
-                rtpSelect.appendChild(placeholder);
-                rtpSelect.disabled = true;
-                rtpStartBtn.disabled = true;
-                updateRtpDetails();
-                return;
-            }
-            rtpSelect.disabled = false;
-            rtpState.streams.forEach((stream) => {
-                const opt = document.createElement('option');
-                opt.value = stream.session_id;
-                const hostLabel = stream.source_host || stream.bind_address || '-';
-                const portLabel = stream.port ?? '-';
-                const badges = [];
-                if (stream.existing_session) {
-                    badges.push('稼働中');
-                }
-                if (stream.auto_start) {
-                    badges.push('自動起動');
-                }
-                const suffix = badges.length ? ` (${badges.join(' / ')})` : '';
-                opt.textContent = `${stream.display_name} • ${hostLabel}:${portLabel}${suffix}`;
-                rtpSelect.appendChild(opt);
-            });
-            if (!rtpState.selectedId || !rtpState.streams.some((s) => s.session_id === rtpState.selectedId)) {
-                rtpState.selectedId = rtpState.streams[0].session_id;
-            }
-            rtpSelect.value = rtpState.selectedId;
-            const selectedStream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
-            rtpStartBtn.disabled = !selectedStream || (selectedStream.synthetic && selectedStream.existing_session);
-            updateRtpDetails();
-        }
-
-        function updateRtpDetails() {
-            const stream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
-            if (!stream) {
-                rtpDetails.textContent = 'スキャンして候補を読み込みます。';
-                return;
-            }
-            const tags = [`<span class="pill">${stream.status || 'unknown'}</span>`];
-            if (stream.existing_session) {
-                tags.push('<span class="pill pill-active">稼働中</span>');
-            }
-            if (stream.auto_start) {
-                tags.push('<span class="pill pill-auto">自動起動</span>');
-            }
-            const infoBits = [];
-            if (stream.sample_rate) infoBits.push(`${stream.sample_rate} Hz`);
-            if (stream.channels) infoBits.push(`${stream.channels}ch`);
-            if (stream.payload_type !== null && stream.payload_type !== undefined) {
-                infoBits.push(`PT${stream.payload_type}`);
-            }
-            const listenHost = stream.bind_address || stream.source_host || '-';
-            const listenPort = stream.port ?? '-';
-            const sourceHost = stream.source_host || '-';
-            rtpDetails.innerHTML = `
-                <div><strong>${stream.display_name}</strong></div>
-                <div>受信: <strong>${listenHost}</strong>${listenPort !== '-' ? ':' + listenPort : ''}</div>
-                <div>ソース: <strong>${sourceHost}</strong></div>
-                <div>${tags.join(' ')}</div>
-                <div>${infoBits.length ? infoBits.join(' / ') : '詳細情報なし'}</div>
-                ${stream.synthetic ? '<div class="rtp-note">自動起動済みのセッションを監視中です。停止ボタンで制御できます。</div>' : ''}
-            `;
-        }
-
-        function updateActiveSessionText() {
-            if (!rtpState.activeSessions.length) {
-                rtpActiveSession.textContent = '稼働中のRTPセッション: なし';
-                rtpStopBtn.disabled = true;
-                delete rtpStopBtn.dataset.targetId;
-                return;
-            }
-            const labels = rtpState.activeSessions
-                .map((session) => {
-                    const auto = session.auto_start ? '（自動起動）' : '';
-                    return `${session.session_id}${auto}`;
-                })
-                .join(', ');
-            rtpActiveSession.innerHTML = `稼働中のRTPセッション: <span>${labels}</span>`;
-            rtpStopBtn.disabled = false;
-            rtpStopBtn.dataset.targetId = rtpState.activeSessions[0].session_id;
-        }
-
-        async function refreshRtpSessions() {
-            try {
-                const res = await fetch(RTP_API + '/sessions');
-                if (!res.ok) {
-                    return;
-                }
-                const data = await res.json();
-                rtpState.activeSessions = Array.isArray(data.sessions) ? data.sessions : [];
-                mergeActiveSessionsIntoStreams();
-                renderRtpOptions();
-                updateActiveSessionText();
-            } catch (e) {
-                console.error('Failed to refresh RTP sessions:', e);
-            }
-        }
-
-        function buildRtpSessionPayload(stream) {
-            const payload = {
-                session_id: stream.session_id,
-                endpoint: {
-                    bind_address: stream.bind_address || '0.0.0.0',
-                    port: stream.port,
-                },
-                format: {
-                    sample_rate: stream.sample_rate || 48000,
-                    channels: stream.channels || 2,
-                    payload_type: (stream.payload_type !== undefined && stream.payload_type !== null) ? stream.payload_type : 97,
-                },
-            };
-            if (stream.source_host) {
-                payload.endpoint.source_host = stream.source_host;
-            }
-            if (stream.multicast) {
-                payload.endpoint.multicast = true;
-            }
-            if (stream.multicast_group) {
-                payload.endpoint.multicast_group = stream.multicast_group;
-            }
-            return payload;
-        }
-
-        async function scanRtpStreams() {
-            if (rtpState.scanning) return;
-            rtpState.scanning = true;
-            rtpScanBtn.disabled = true;
-            rtpScanBtn.textContent = 'スキャン中...';
-            updateRtpScanStatus();
-            try {
-                const res = await fetch(RTP_API + '/discover');
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(data.detail || data.message || 'スキャンに失敗しました');
-                }
-                rtpState.streams = (data.streams || []).map((stream) => ({
-                    ...stream,
-                    synthetic: Boolean(stream.synthetic),
-                }));
-                rtpState.selectedId = rtpState.streams[0]?.session_id || '';
-                rtpState.lastScanAt = data.scanned_at_unix_ms || Date.now();
-                renderRtpOptions();
-                updateRtpScanStatus();
-                showRtpMessage(`候補を更新しました (${rtpState.streams.length}件)`, true);
-                await refreshRtpSessions();
-            } catch (e) {
-                console.error('RTP scan failed:', e);
-                showRtpMessage('エラー: ' + e.message, false);
-            } finally {
-                rtpState.scanning = false;
-                rtpScanBtn.disabled = false;
-                rtpScanBtn.textContent = 'RTP入力をスキャン';
-                updateRtpScanStatus();
-            }
-        }
-
-        async function startSelectedRtpSession() {
-            const stream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
-            if (!stream) {
-                showRtpMessage('候補を選択してください', false);
-                return;
-            }
-            const payload = buildRtpSessionPayload(stream);
-            rtpStartBtn.disabled = true;
-            rtpStartBtn.textContent = '開始中...';
-            try {
-                const res = await fetch(RTP_API + '/sessions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(data.detail || data.message || '開始に失敗しました');
-                }
-                showRtpMessage(`${stream.display_name} を開始しました`, true);
-                await refreshRtpSessions();
-            } catch (e) {
-                console.error('Failed to start RTP session:', e);
-                showRtpMessage('エラー: ' + e.message, false);
-            } finally {
-                rtpStartBtn.disabled = false;
-                rtpStartBtn.textContent = '開始';
-            }
-        }
-
-        async function stopActiveRtpSession() {
-            const targetId = rtpStopBtn.dataset.targetId;
-            if (!targetId) {
-                showRtpMessage('停止できるセッションがありません', false);
-                return;
-            }
-            rtpStopBtn.disabled = true;
-            rtpStopBtn.textContent = '停止中...';
-            try {
-                const res = await fetch(`${RTP_API}/sessions/${encodeURIComponent(targetId)}`, {
-                    method: 'DELETE',
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(data.detail || data.message || '停止に失敗しました');
-                }
-                showRtpMessage(data.message || 'RTPを停止しました', true);
-                await refreshRtpSessions();
-            } catch (e) {
-                console.error('Failed to stop RTP session:', e);
-                showRtpMessage('エラー: ' + e.message, false);
-            } finally {
-                rtpStopBtn.disabled = false;
-                rtpStopBtn.textContent = '停止';
-            }
         }
 
         document.getElementById('settingsForm').addEventListener('submit', async (e) => {
@@ -1111,23 +521,6 @@ def get_embedded_html() -> str:
                 btn.disabled = false;
                 btn.textContent = 'Save & Restart';
             }
-        });
-
-        inputModeRadios.forEach(radio => {
-            radio.addEventListener('change', (event) => {
-                const mode = event.target.value;
-                requestInputModeChange(mode);
-            });
-        });
-
-        rtpScanBtn.addEventListener('click', scanRtpStreams);
-        rtpStartBtn.addEventListener('click', startSelectedRtpSession);
-        rtpStopBtn.addEventListener('click', stopActiveRtpSession);
-        rtpSelect.addEventListener('change', (event) => {
-            rtpState.selectedId = event.target.value;
-            const selectedStream = rtpState.streams.find((item) => item.session_id === rtpState.selectedId);
-            rtpStartBtn.disabled = !selectedStream || (selectedStream.synthetic && selectedStream.existing_session);
-            updateRtpDetails();
         });
 
         // OPRA Functions
@@ -1535,19 +928,15 @@ def get_embedded_html() -> str:
         });
 
         // Initial load
-        setInputModeStatus('pipewire', false);
         fetchDevices();
         fetchStatus();
         fetchPhaseType();
         fetchPartitionStatus();
         fetchCrossfeedStatus();
-        updateRtpScanStatus();
-        refreshRtpSessions();
         setInterval(fetchStatus, 5000);
         setInterval(fetchPhaseType, 5000);
         setInterval(fetchPartitionStatus, 5000);
         setInterval(fetchCrossfeedStatus, 5000);
-        setInterval(refreshRtpSessions, 7000);
     </script>
 </body>
 </html>
