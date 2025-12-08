@@ -1,0 +1,43 @@
+FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+
+LABEL org.opencontainers.image.source="https://github.com/michihitoTakami/michy_os"
+LABEL org.opencontainers.image.description="jetson-pcm-receiver (PCM over TCP -> ALSA Loopback)"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Tokyo
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+WORKDIR /opt/jetson-pcm-receiver
+
+# Runtime and build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config \
+    libasound2-dev \
+    libzmq3-dev \
+    libasound2 \
+    libzmq5 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy source
+COPY . .
+
+# Build jetson-pcm-receiver (standalone CMake project)
+RUN cmake -S jetson_pcm_receiver -B jetson_pcm_receiver/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build jetson_pcm_receiver/build --target jetson_pcm_receiver -j"$(nproc)" \
+    && cp jetson_pcm_receiver/build/jetson_pcm_receiver /usr/local/bin/jetson-pcm-receiver \
+    && strip /usr/local/bin/jetson-pcm-receiver || true
+
+# Default port exposed for PCM TCP
+EXPOSE 46001/tcp
+
+# Entrypoint
+COPY docker/jetson_pcm_receiver/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["jetson-pcm-receiver"]

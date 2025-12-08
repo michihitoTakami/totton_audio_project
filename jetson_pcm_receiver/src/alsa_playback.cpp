@@ -3,8 +3,10 @@
 #include "logging.h"
 #include "status_tracker.h"
 
+#include <chrono>
 #include <iostream>
 #include <memory>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -237,27 +239,44 @@ bool AlsaPlayback::write(const void *data, std::size_t frames) {
         return true;
     }
 
-    snd_pcm_sframes_t written = snd_pcm_writei(handle_, data, frames);
-    if (written == -EPIPE) {
-        logWarn("[AlsaPlayback] XRUN detected (EPIPE)");
-        if (statusTracker_) {
-            statusTracker_->incrementXrun();
+    const std::uint8_t *ptr = static_cast<const std::uint8_t *>(data);
+    std::size_t framesLeft = frames;
+    const std::size_t frameBytes =
+        snd_pcm_frames_to_bytes(handle_, static_cast<snd_pcm_uframes_t>(1));
+
+    while (framesLeft > 0) {
+        snd_pcm_sframes_t written = snd_pcm_writei(handle_, ptr, framesLeft);
+        if (written == -EPIPE) {
+            logWarn("[AlsaPlayback] XRUN detected (EPIPE)");
+            if (statusTracker_) {
+                statusTracker_->incrementXrun();
+            }
+            if (!recoverFromXrun()) {
+                return false;
+            }
+            continue;  // retry after recover
         }
-        if (!recoverFromXrun()) {
+        if (written == -EINTR) {
+            continue;  // interrupted; retry
+        }
+        if (written == -EAGAIN) {
+            // Non-blocking edge; yield briefly
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        if (written < 0) {
+            logError(std::string("[AlsaPlayback] write failed: ") + snd_strerror(written));
             return false;
         }
-        written = snd_pcm_writei(handle_, data, frames);
-    }
 
-    if (written < 0) {
-        logError(std::string("[AlsaPlayback] write failed: ") + snd_strerror(written));
-        return false;
-    }
+        if (static_cast<std::size_t>(written) < framesLeft) {
+            logWarn("[AlsaPlayback] partial write: " + std::to_string(written) + "/" +
+                    std::to_string(framesLeft) + " frames; retrying remainder");
+        }
 
-    if (static_cast<std::size_t>(written) != frames) {
-        logWarn("[AlsaPlayback] partial write: " + std::to_string(written) + "/" +
-                std::to_string(frames) + " frames");
-        return false;
+        const std::size_t bytesWritten = static_cast<std::size_t>(written) * frameBytes;
+        framesLeft -= static_cast<std::size_t>(written);
+        ptr += bytesWritten;
     }
 
     return true;
