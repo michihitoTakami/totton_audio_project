@@ -31,6 +31,11 @@ void StatusTracker::setHeader(const PcmHeader& header) {
     status_.header.header = header;
 }
 
+void StatusTracker::clearHeader() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    status_.header.present = false;
+}
+
 void StatusTracker::updateRingConfig(std::size_t ringFrames, std::size_t watermarkFrames) {
     std::lock_guard<std::mutex> lock(mutex_);
     status_.ring.configuredFrames = ringFrames;
