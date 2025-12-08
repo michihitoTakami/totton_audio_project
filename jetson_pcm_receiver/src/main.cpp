@@ -38,6 +38,7 @@ struct AppOptions {
     std::size_t ringBufferFrames = 8192;  // 0で無効
     std::size_t watermarkFrames = 0;      // 0で自動 (75%)
     bool enableZmq = true;
+    bool enableZmqRateNotify = true;
     std::string zmqEndpoint = "ipc:///tmp/jetson_pcm_receiver.sock";
     std::string zmqToken;
     int zmqPublishIntervalMs = 1000;
@@ -68,6 +69,7 @@ void printHelp(const char *exeName) {
     std::cout << "  --priority-client ADDR  priority client IP (repeatable)\n";
     std::cout << "  --disable-zmq           disable ZeroMQ status/control API\n";
     std::cout << "  --enable-zmq            explicitly enable ZeroMQ API (default: on)\n";
+    std::cout << "  --disable-zmq-rate-notify  disable header change PUB events\n";
     std::cout << "  --zmq-endpoint <uri>    ZeroMQ REP endpoint (default: "
                  "ipc:///tmp/jetson_pcm_receiver.sock)\n";
     std::cout << "  --zmq-token <token>     shared token for ZeroMQ commands\n";
@@ -160,6 +162,10 @@ bool parseArgs(int argc, char **argv, AppOptions &options, bool &showHelp) {
             options.enableZmq = true;
             continue;
         }
+        if (arg == "--disable-zmq-rate-notify") {
+            options.enableZmqRateNotify = false;
+            continue;
+        }
         if (arg == "--zmq-endpoint" && i + 1 < argc) {
             options.zmqEndpoint = argv[++i];
             continue;
@@ -218,6 +224,8 @@ int main(int argc, char **argv) {
         if (!options.zmqToken.empty()) {
             logInfo("  - ZeroMQ token: <configured>");
         }
+        logInfo(std::string("  - ZeroMQ rate notify: ") +
+                (options.enableZmqRateNotify ? "enabled" : "disabled"));
     } else {
         logInfo("  - ZeroMQ API: disabled");
     }
@@ -257,7 +265,6 @@ int main(int argc, char **argv) {
     cfg.maxConsecutiveTimeouts = options.maxConsecutiveTimeouts;
     cfg.connectionMode = options.connectionMode;
     cfg.priorityClients = options.priorityClients;
-    PcmStreamHandler handler(playback, server, stopRequested, cfg, &configMutex, &status);
 
     ZmqStatusServer zmqServer(status, cfg, configMutex, stopRequested);
     if (options.enableZmq) {
@@ -266,6 +273,7 @@ int main(int argc, char **argv) {
         zmqOpts.endpoint = options.zmqEndpoint;
         zmqOpts.token = options.zmqToken;
         zmqOpts.publishIntervalMs = options.zmqPublishIntervalMs;
+        zmqOpts.publishHeaderEvents = options.enableZmqRateNotify;
         if (!zmqServer.start(zmqOpts)) {
             logError("[jetson-pcm-receiver] failed to start ZeroMQ server");
             return 1;
@@ -275,6 +283,10 @@ int main(int argc, char **argv) {
             logInfo("  - ZeroMQ PUB bound to: " + zmqServer.pubEndpoint());
         }
     }
+
+    PcmStreamHandler handler(
+        playback, server, stopRequested, cfg, &configMutex, &status,
+        options.enableZmq && options.enableZmqRateNotify ? &zmqServer : nullptr);
 
     if (!server.start()) {
         logError("[jetson-pcm-receiver] failed to start TCP server");

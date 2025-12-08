@@ -18,6 +18,7 @@ class ZmqStatusServer {
         std::string endpoint;
         std::string token;
         int publishIntervalMs{1000};
+        bool publishHeaderEvents{true};
     };
 
     ZmqStatusServer(StatusTracker& status, PcmStreamConfig& config, std::mutex& configMutex,
@@ -35,6 +36,8 @@ class ZmqStatusServer {
     bool restartRequested() const {
         return restartRequested_.load();
     }
+    bool publishHeaderChange(const PcmHeader& header,
+                             const std::optional<PcmHeader>& previousHeader = std::nullopt);
 
    private:
     bool checkToken(const daemon_ipc::ZmqRequest& request, std::string& error) const;
