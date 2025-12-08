@@ -14,9 +14,14 @@ find_package(Threads REQUIRED)
 pkg_check_modules(ALSA REQUIRED alsa)
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
+# Disable bundled dependency tests to avoid phantom CTest entries
+set(CPPZMQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZMQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
 include(CheckIncludeFileCXX)
 include(CheckCXXSymbolExists)
 include(FetchContent)
+include(CTest)
 
 check_include_file_cxx("sys/socket.h" HAVE_SYS_SOCKET_H)
 check_include_file_cxx("netdb.h" HAVE_NETDB_H)
@@ -36,6 +41,7 @@ if(NOT HAVE_SYS_SOCKET_H OR NOT HAVE_NETDB_H OR NOT HAVE_GETADDRINFO OR NOT HAVE
 endif()
 
 add_library(jetson_pcm_receiver_lib
+    src/app_options.cpp
     src/logging.cpp
     src/tcp_server.cpp
     src/alsa_playback.cpp
@@ -85,14 +91,6 @@ if(JETSON_PCM_ENABLE_WARNINGS)
     )
 endif()
 
-message(STATUS "ALSA include dirs: ${ALSA_INCLUDE_DIRS}")
-message(STATUS "ALSA libraries: ${ALSA_LIBRARIES}")
-
-# =========================
-# Tests
-# =========================
-enable_testing()
-
 FetchContent_Declare(
     cppzmq
     GIT_REPOSITORY https://github.com/zeromq/cppzmq.git
@@ -105,33 +103,46 @@ FetchContent_Declare(
     GIT_TAG v3.11.3
 )
 
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.14.0
-)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest cppzmq nlohmann_json)
+FetchContent_MakeAvailable(cppzmq nlohmann_json)
 
-add_executable(jetson_pcm_receiver_tests
-    tests/test_pcm_header.cpp
-    tests/test_tcp_server.cpp
-    tests/test_pcm_stream_handler.cpp
-    tests/test_alsa_playback.cpp
-    tests/test_zmq_status_server.cpp
-    tests/test_output_device.cpp
-)
+message(STATUS "ALSA include dirs: ${ALSA_INCLUDE_DIRS}")
+message(STATUS "ALSA libraries: ${ALSA_LIBRARIES}")
 
-target_link_libraries(jetson_pcm_receiver_tests
-    PRIVATE
-        jetson_pcm_receiver_lib
-        GTest::gtest_main
-)
+# =========================
+# Tests
+# =========================
+if(BUILD_TESTING)
+    enable_testing()
 
-target_include_directories(jetson_pcm_receiver_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.14.0
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
 
-add_test(NAME jetson_pcm_receiver_tests COMMAND jetson_pcm_receiver_tests)
+    add_executable(jetson_pcm_receiver_tests
+        tests/test_app_options.cpp
+        tests/test_pcm_header.cpp
+        tests/test_tcp_server.cpp
+        tests/test_pcm_stream_handler.cpp
+        tests/test_alsa_playback.cpp
+        tests/test_zmq_status_server.cpp
+        tests/test_output_device.cpp
+    )
+
+    target_link_libraries(jetson_pcm_receiver_tests
+        PRIVATE
+            jetson_pcm_receiver_lib
+            GTest::gtest_main
+    )
+
+    target_include_directories(jetson_pcm_receiver_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+
+    add_test(NAME jetson_pcm_receiver_tests COMMAND jetson_pcm_receiver_tests)
+endif()

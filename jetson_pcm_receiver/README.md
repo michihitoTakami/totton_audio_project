@@ -50,6 +50,24 @@ cmake --build jetson_pcm_receiver/build -j$(nproc)
   - `--priority-client <IP>`（複数指定可 / カンマ区切り可）
     - `priority` モード時に奪取を許可する送信元 IP（数値表記一致のみ）
 
+## Docker (Jetson)
+`docker/jetson_pcm_receiver/` に Jetson 向けの Dockerfile / Compose を用意しています。ビルドと起動は以下で行えます。
+
+```bash
+cd docker
+docker compose -f jetson_pcm_receiver/docker-compose.jetson.yml up -d --build
+docker compose -f jetson_pcm_receiver/docker-compose.jetson.yml logs -f
+```
+
+必須:
+- JetPack 6.1 以降 / NVIDIA Container Runtime
+- `--device /dev/snd` を付与（Loopback/実デバイスを渡す）
+
+環境変数で CLI 相当の設定を上書き可能です（コンテナ内でパースされます）。
+- `JPR_PORT`, `JPR_DEVICE`, `JPR_LOG_LEVEL`
+- `JPR_CONNECTION_MODE`, `JPR_PRIORITY_CLIENTS`
+- `JPR_DISABLE_ZMQ`, `JPR_ZMQ_ENDPOINT`, `JPR_ZMQ_PUB_INTERVAL_MS`, `JPR_ZMQ_TOKEN`
+
 ## ZeroMQ ステータス/制御 API
 
 - デフォルト: REP `ipc:///tmp/jetson_pcm_receiver.sock` / PUB `ipc:///tmp/jetson_pcm_receiver.sock.pub`

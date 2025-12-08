@@ -1,0 +1,29 @@
+services:
+  jetson-pcm-receiver:
+    image: jetson-pcm-receiver:latest
+    build:
+      context: ../..
+      dockerfile: docker/jetson_pcm_receiver/Dockerfile.jetson
+    container_name: jetson-pcm-receiver
+    restart: unless-stopped
+    runtime: nvidia
+    devices:
+      - /dev/snd:/dev/snd
+    ports:
+      - "46001:46001/tcp"
+    environment:
+      # 必要に応じて上書き（CLI引数と同等）
+      # JPR_PORT: "46001"
+      # JPR_DEVICE: "loopback"
+      # JPR_LOG_LEVEL: "info"
+      # JPR_CONNECTION_MODE: "single"
+      # JPR_PRIORITY_CLIENTS: "10.0.0.1,10.0.0.2"
+      # JPR_DISABLE_ZMQ: "false"
+      # JPR_ZMQ_ENDPOINT: "ipc:///tmp/jetson_pcm_receiver.sock"
+      # JPR_ZMQ_PUB_INTERVAL_MS: "1000"
+    healthcheck:
+      test: ["CMD", "pgrep", "jetson-pcm-receiver"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
