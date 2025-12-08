@@ -76,6 +76,7 @@ TEST_F(ZmqStatusServerTest, ReturnsStatusSnapshot) {
     status.updateRingConfig(64, 48);
     status.updateRingBuffer(32, 48, 1);
     status.incrementXrun();
+    status.setDisconnectReason("format_changed");
 
     nlohmann::json cmd;
     cmd["cmd"] = "STATUS";
@@ -91,6 +92,7 @@ TEST_F(ZmqStatusServerTest, ReturnsStatusSnapshot) {
     EXPECT_EQ(data["dropped_frames"], 1);
     EXPECT_EQ(data["xrun_count"], 1);
     EXPECT_EQ(data["last_header"]["sample_rate"], 48000);
+    EXPECT_EQ(data["disconnect_reason"], "format_changed");
 }
 
 TEST_F(ZmqStatusServerTest, UpdatesRingConfigFromSetCache) {

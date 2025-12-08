@@ -25,6 +25,7 @@ struct StatusSnapshot {
     bool clientConnected{false};
     bool streaming{false};
     std::size_t xrunCount{0};
+    std::string disconnectReason;
     RingBufferSnapshot ring;
     HeaderSnapshot header;
 };
@@ -41,6 +42,8 @@ class StatusTracker {
     void updateRingBuffer(std::size_t bufferedFrames, std::size_t maxBufferedFrames,
                           std::size_t droppedFrames);
     void incrementXrun();
+    void setDisconnectReason(const std::string& reason);
+    void clearDisconnectReason();
 
     StatusSnapshot snapshot() const;
 

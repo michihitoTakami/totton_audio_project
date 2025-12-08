@@ -223,6 +223,11 @@ nlohmann::json ZmqStatusServer::buildStatusJson() {
     data["buffered_frames"] = snap.ring.bufferedFrames;
     data["max_buffered_frames"] = snap.ring.maxBufferedFrames;
     data["dropped_frames"] = snap.ring.droppedFrames;
+    if (snap.disconnectReason.empty()) {
+        data["disconnect_reason"] = nullptr;
+    } else {
+        data["disconnect_reason"] = snap.disconnectReason;
+    }
     {
         std::lock_guard<std::mutex> lock(configMutex_);
         data["connection_mode"] = toString(config_.connectionMode);

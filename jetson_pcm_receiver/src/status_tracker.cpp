@@ -54,3 +54,13 @@ StatusSnapshot StatusTracker::snapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return status_;
 }
+
+void StatusTracker::setDisconnectReason(const std::string& reason) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    status_.disconnectReason = reason;
+}
+
+void StatusTracker::clearDisconnectReason() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    status_.disconnectReason.clear();
+}
