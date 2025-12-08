@@ -270,8 +270,17 @@ bool PcmStreamHandler::handleClient(int fd) {
 
         consecutiveTimeouts = 0;
 
-        detectionBuf.insert(detectionBuf.end(), recvBuf.begin(),
-                            recvBuf.begin() + static_cast<std::size_t>(n));
+        const std::size_t bytesReceived = static_cast<std::size_t>(n);
+        if (bytesReceived % bytesPerFrame != 0) {
+            logWarn("[PcmStreamHandler] recv size not aligned to frame size; disconnecting");
+            if (status_) {
+                status_->setDisconnectReason("format_mismatch");
+            }
+            ok = false;
+            break;
+        }
+
+        detectionBuf.insert(detectionBuf.end(), recvBuf.begin(), recvBuf.begin() + bytesReceived);
 
         std::size_t searchPos = 0;
         while (searchPos + HEADER_BYTES <= detectionBuf.size()) {
@@ -318,16 +327,22 @@ bool PcmStreamHandler::handleClient(int fd) {
                 detectionBuf.erase(detectionBuf.begin(),
                                    detectionBuf.begin() + static_cast<std::ptrdiff_t>(toRemove));
             }
-            enqueueData(recvBuf.data(), static_cast<std::size_t>(n));
+            enqueueData(recvBuf.data(), bytesReceived);
         }
 
         if (useRing) {
             if (!tryWrite(ringBuf)) {
+                if (status_) {
+                    status_->setDisconnectReason("playback_error");
+                }
                 ok = false;
                 break;
             }
         } else {
             if (!tryWrite(staging)) {
+                if (status_) {
+                    status_->setDisconnectReason("playback_error");
+                }
                 ok = false;
                 break;
             }

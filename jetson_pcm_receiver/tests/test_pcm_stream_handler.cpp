@@ -143,6 +143,86 @@ TEST(PcmStreamHandler, DetectsMidStreamFormatChangeAndDisconnects) {
     ::close(fds[1]);
 }
 
+TEST(PcmStreamHandler, DetectsFrameMisalignmentAndSetsReason) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
+
+    int fds[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    auto header = makeValidHeader();
+    ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
+
+    std::vector<std::uint8_t> misaligned(10, 0);  // not divisible by 4-byte frames
+    ASSERT_EQ(::send(fds[0], misaligned.data(), misaligned.size(), 0),
+              static_cast<ssize_t>(misaligned.size()));
+    ::close(fds[0]);
+
+    EXPECT_FALSE(handler.handleClientForTest(fds[1]));
+    auto snap = status.snapshot();
+    EXPECT_EQ(snap.disconnectReason, "format_mismatch");
+    EXPECT_TRUE(playback.closeCalled);
+
+    ::close(fds[1]);
+}
+
+TEST(PcmStreamHandler, ClearsDisconnectReasonAfterRenegotiation) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
+
+    int first[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, first), 0);
+
+    auto header = makeValidHeader();
+    ASSERT_EQ(::send(first[0], &header, sizeof(header), 0), sizeof(header));
+
+    std::vector<std::uint8_t> badPayload(10, 0);
+    ASSERT_EQ(::send(first[0], badPayload.data(), badPayload.size(), 0),
+              static_cast<ssize_t>(badPayload.size()));
+    ::close(first[0]);
+
+    EXPECT_FALSE(handler.handleClientForTest(first[1]));
+    EXPECT_EQ(status.snapshot().disconnectReason, "format_mismatch");
+    ::close(first[1]);
+
+    // Reset playback flags for the next negotiation
+    playback.openCalled = false;
+    playback.writeCalled = false;
+    playback.closeCalled = false;
+    playback.totalFramesWritten = 0;
+
+    int second[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, second), 0);
+
+    PcmHeader newHeader = makeValidHeader();
+    newHeader.sample_rate = 96000;
+    newHeader.format = 4;  // S32_LE (8 bytes per frame for stereo)
+    ASSERT_EQ(::send(second[0], &newHeader, sizeof(newHeader), 0), sizeof(newHeader));
+
+    std::vector<std::uint8_t> pcm(64, 0);  // 8 frames for S32_LE stereo
+    ASSERT_EQ(::send(second[0], pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+    ::close(second[0]);
+
+    EXPECT_TRUE(handler.handleClientForTest(second[1]));
+    auto snap = status.snapshot();
+    EXPECT_TRUE(snap.disconnectReason.empty());
+    EXPECT_EQ(snap.header.header.sample_rate, newHeader.sample_rate);
+    EXPECT_TRUE(playback.openCalled);
+    EXPECT_TRUE(playback.writeCalled);
+    EXPECT_TRUE(playback.closeCalled);
+    EXPECT_EQ(playback.totalFramesWritten, 8u);
+
+    ::close(second[1]);
+}
+
 TEST(PcmStreamHandler, AcceptsValidHeaderAndWritesFrames) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
