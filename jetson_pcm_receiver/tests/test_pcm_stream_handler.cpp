@@ -143,33 +143,6 @@ TEST(PcmStreamHandler, DetectsMidStreamFormatChangeAndDisconnects) {
     ::close(fds[1]);
 }
 
-TEST(PcmStreamHandler, DetectsFrameMisalignmentAndSetsReason) {
-    FakeAlsaPlayback playback;
-    TcpServer server(0);
-    std::atomic_bool stop{false};
-    PcmStreamConfig cfg{};
-    StatusTracker status;
-    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
-
-    int fds[2]{-1, -1};
-    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
-
-    auto header = makeValidHeader();
-    ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
-
-    std::vector<std::uint8_t> misaligned(10, 0);  // not divisible by 4-byte frames
-    ASSERT_EQ(::send(fds[0], misaligned.data(), misaligned.size(), 0),
-              static_cast<ssize_t>(misaligned.size()));
-    ::close(fds[0]);
-
-    EXPECT_FALSE(handler.handleClientForTest(fds[1]));
-    auto snap = status.snapshot();
-    EXPECT_EQ(snap.disconnectReason, "format_mismatch");
-    EXPECT_TRUE(playback.closeCalled);
-
-    ::close(fds[1]);
-}
-
 TEST(PcmStreamHandler, ClearsDisconnectReasonAfterRenegotiation) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
@@ -184,13 +157,14 @@ TEST(PcmStreamHandler, ClearsDisconnectReasonAfterRenegotiation) {
     auto header = makeValidHeader();
     ASSERT_EQ(::send(first[0], &header, sizeof(header), 0), sizeof(header));
 
-    std::vector<std::uint8_t> badPayload(10, 0);
-    ASSERT_EQ(::send(first[0], badPayload.data(), badPayload.size(), 0),
-              static_cast<ssize_t>(badPayload.size()));
+    // Send mid-stream header with different format to trigger disconnect_reason
+    PcmHeader midHeader = makeValidHeader();
+    midHeader.format = 4;
+    ASSERT_EQ(::send(first[0], &midHeader, sizeof(midHeader), 0), sizeof(midHeader));
     ::close(first[0]);
 
     EXPECT_FALSE(handler.handleClientForTest(first[1]));
-    EXPECT_EQ(status.snapshot().disconnectReason, "format_mismatch");
+    EXPECT_EQ(status.snapshot().disconnectReason, "format_changed");
     ::close(first[1]);
 
     // Reset playback flags for the next negotiation

@@ -271,14 +271,6 @@ bool PcmStreamHandler::handleClient(int fd) {
         consecutiveTimeouts = 0;
 
         const std::size_t bytesReceived = static_cast<std::size_t>(n);
-        if (bytesReceived % bytesPerFrame != 0) {
-            logWarn("[PcmStreamHandler] recv size not aligned to frame size; disconnecting");
-            if (status_) {
-                status_->setDisconnectReason("format_mismatch");
-            }
-            ok = false;
-            break;
-        }
 
         detectionBuf.insert(detectionBuf.end(), recvBuf.begin(), recvBuf.begin() + bytesReceived);
 
