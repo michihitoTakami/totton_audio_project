@@ -2,6 +2,7 @@
 
 #include <alsa/asoundlib.h>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -43,6 +44,8 @@ class AlsaCapture {
     static snd_pcm_format_t toAlsaFormat(SampleFormat format);
     static std::optional<SampleFormat> fromAlsaFormat(snd_pcm_format_t format);
     static std::size_t bytesPerFrame(const Config &config);
+    static std::optional<SampleFormat> selectSupportedFormat(
+        SampleFormat requested, const std::function<bool(SampleFormat)> &isSupported);
 
    private:
     Config config_{};

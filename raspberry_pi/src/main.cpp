@@ -69,6 +69,12 @@ bool openCaptureWithRetry(AlsaCapture &capture, AlsaCapture::Config &cfg) {
             if (auto currentRate = capture.currentSampleRate()) {
                 cfg.sampleRate = *currentRate;
             }
+            if (auto currentCh = capture.currentChannels()) {
+                cfg.channels = *currentCh;
+            }
+            if (auto currentFmt = capture.currentFormat()) {
+                cfg.format = *currentFmt;
+            }
             return true;
         }
         logWarn("[rpi_pcm_bridge] Failed to open/start ALSA device, retrying in " +

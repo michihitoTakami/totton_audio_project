@@ -2,6 +2,7 @@
 
 #include "logging.h"
 
+#include <algorithm>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -24,7 +25,6 @@ bool AlsaCapture::open(const Config &config) {
     close();
 
     config_ = config;
-    frameBytes_ = bytesPerFrame(config_);
 
     auto fail = [&](const std::string &message, int err) {
         logAlsaError(message, err);
@@ -46,6 +46,23 @@ bool AlsaCapture::open(const Config &config) {
     rc = snd_pcm_hw_params_set_access(handle_, hwParams, SND_PCM_ACCESS_RW_INTERLEAVED);
     if (rc < 0) {
         return fail("[AlsaCapture] set_access failed", rc);
+    }
+
+    auto selectedFormat = selectSupportedFormat(config_.format, [&](SampleFormat fmt) {
+        const snd_pcm_format_t alsaFmt = toAlsaFormat(fmt);
+        return snd_pcm_hw_params_test_format(handle_, hwParams, alsaFmt) == 0;
+    });
+    if (!selectedFormat) {
+        logError("[AlsaCapture] No supported PCM format found for device");
+        close();
+        return false;
+    }
+    if (*selectedFormat != config_.format) {
+        logInfo("[AlsaCapture] Requested format " +
+                std::string(snd_pcm_format_name(toAlsaFormat(config_.format))) +
+                " not supported, falling back to " +
+                std::string(snd_pcm_format_name(toAlsaFormat(*selectedFormat))));
+        config_.format = *selectedFormat;
     }
 
     const snd_pcm_format_t alsaFormat = toAlsaFormat(config_.format);
@@ -80,6 +97,8 @@ bool AlsaCapture::open(const Config &config) {
     if (rc < 0) {
         return fail("[AlsaCapture] apply hw_params failed", rc);
     }
+
+    frameBytes_ = bytesPerFrame(config_);
 
     logInfo("[AlsaCapture] opened device=" + config_.deviceName + " rate=" +
             std::to_string(config_.sampleRate) + " ch=" + std::to_string(config_.channels) +
@@ -237,4 +256,22 @@ std::size_t AlsaCapture::bytesPerFrame(const Config &config) {
         return static_cast<std::size_t>(config.channels) * 4U;
     }
     throw std::runtime_error("Unsupported sample format");
+}
+
+std::optional<AlsaCapture::SampleFormat> AlsaCapture::selectSupportedFormat(
+    SampleFormat requested, const std::function<bool(SampleFormat)> &isSupported) {
+    std::vector<SampleFormat> candidates;
+    candidates.push_back(requested);
+    for (auto fmt : {SampleFormat::S32_LE, SampleFormat::S24_3LE, SampleFormat::S16_LE}) {
+        if (std::find(candidates.begin(), candidates.end(), fmt) == candidates.end()) {
+            candidates.push_back(fmt);
+        }
+    }
+
+    for (auto fmt : candidates) {
+        if (isSupported(fmt)) {
+            return fmt;
+        }
+    }
+    return std::nullopt;
 }
