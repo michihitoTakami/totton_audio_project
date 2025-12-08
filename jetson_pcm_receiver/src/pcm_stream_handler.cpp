@@ -127,15 +127,15 @@ bool PcmStreamHandler::handleClient(int fd) {
         return false;
     }
 
-    if (status_) {
-        status_->setHeader(header);
-    }
-    publishHeaderEvent(header);
-
     if (!playback_.open(header.sample_rate, header.channels, header.format)) {
         logError("[PcmStreamHandler] failed to open ALSA playback for received header");
         return false;
     }
+
+    if (status_) {
+        status_->setHeader(header);
+    }
+    publishHeaderEvent(header);
 
     const std::size_t bytesPerFrame = sampleBytes * header.channels;
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
