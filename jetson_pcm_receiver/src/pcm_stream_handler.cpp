@@ -165,6 +165,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     const std::size_t bytesPerFrame = sampleBytes * header.channels;
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
     constexpr std::size_t HEADER_BYTES = sizeof(PcmHeader);
+    const std::size_t misalignmentThresholdBytes = RECV_CHUNK_BYTES;
 
     std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
     std::vector<std::uint8_t> detectionBuf;
@@ -258,6 +259,8 @@ bool PcmStreamHandler::handleClient(int fd) {
     bool takeoverPending = false;
     int consecutiveTimeouts = 0;
     bool formatChangeDetected = false;
+    std::size_t frameAlignmentRemainder = 0;
+    std::size_t misalignedBytesAccumulated = 0;
     constexpr std::size_t KEEP_BYTES_FOR_DETECTION = HEADER_BYTES - 1;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
         if (connectionMode != ConnectionMode::Single) {
@@ -303,6 +306,21 @@ bool PcmStreamHandler::handleClient(int fd) {
         consecutiveTimeouts = 0;
 
         const std::size_t bytesReceived = static_cast<std::size_t>(n);
+
+        frameAlignmentRemainder = (frameAlignmentRemainder + bytesReceived) % bytesPerFrame;
+        if (frameAlignmentRemainder == 0) {
+            misalignedBytesAccumulated = 0;
+        } else {
+            misalignedBytesAccumulated += bytesReceived;
+            if (misalignedBytesAccumulated >= misalignmentThresholdBytes) {
+                logWarn(
+                    "[PcmStreamHandler] payload bytes do not align to frame size from header; "
+                    "disconnecting");
+                setDisconnectReason("frame_bytes_mismatch");
+                ok = false;
+                break;
+            }
+        }
 
         detectionBuf.insert(detectionBuf.end(), recvBuf.begin(), recvBuf.begin() + bytesReceived);
 

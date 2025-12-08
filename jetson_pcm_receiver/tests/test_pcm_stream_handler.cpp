@@ -308,6 +308,36 @@ TEST(PcmStreamHandler, AcceptsS24AndHighRate) {
     ::close(fds[1]);
 }
 
+TEST(PcmStreamHandler, DisconnectsOnFrameBytesMismatch) {
+    FakeAlsaPlayback playback;
+    TcpServer server(0);
+    std::atomic_bool stop{false};
+    PcmStreamConfig cfg{};
+    StatusTracker status;
+    PcmStreamHandler handler(playback, server, stop, cfg, nullptr, &status);
+
+    int fds[2]{-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    auto header = makeValidHeader();
+    header.format = 2;  // expect 3 bytes/sample (6 bytes per frame for stereo)
+    ASSERT_EQ(::send(fds[0], &header, sizeof(header), 0), sizeof(header));
+
+    std::vector<std::uint8_t> pcm(4096, 0);  // not divisible by 6 bytes/frame
+    ASSERT_EQ(::send(fds[0], pcm.data(), pcm.size(), 0), static_cast<ssize_t>(pcm.size()));
+    ::close(fds[0]);
+
+    EXPECT_FALSE(handler.handleClientForTest(fds[1]));
+    auto snap = status.snapshot();
+    EXPECT_EQ(snap.disconnectReason, "frame_bytes_mismatch");
+    EXPECT_TRUE(playback.openCalled);
+    EXPECT_FALSE(playback.writeCalled);
+    EXPECT_TRUE(playback.closeCalled);
+    EXPECT_FALSE(snap.header.present);
+
+    ::close(fds[1]);
+}
+
 TEST(PcmStreamHandler, RejectsUnsupportedRate) {
     FakeAlsaPlayback playback;
     TcpServer server(0);
