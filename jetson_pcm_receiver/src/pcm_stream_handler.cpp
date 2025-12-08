@@ -165,7 +165,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     const std::size_t bytesPerFrame = sampleBytes * header.channels;
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
     constexpr std::size_t HEADER_BYTES = sizeof(PcmHeader);
-    const std::size_t misalignmentThresholdBytes = RECV_CHUNK_BYTES;
+    const std::size_t misalignmentThresholdBytes = bytesPerFrame * 256;
 
     std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
     std::vector<std::uint8_t> detectionBuf;
@@ -307,19 +307,25 @@ bool PcmStreamHandler::handleClient(int fd) {
 
         const std::size_t bytesReceived = static_cast<std::size_t>(n);
 
+        const bool chunkAligned =
+            frameAlignmentRemainder == 0 && (bytesReceived % bytesPerFrame == 0);
+        if (!chunkAligned) {
+            misalignedBytesAccumulated += bytesReceived;
+        } else {
+            misalignedBytesAccumulated = 0;
+        }
+
         frameAlignmentRemainder = (frameAlignmentRemainder + bytesReceived) % bytesPerFrame;
+        if (misalignedBytesAccumulated >= misalignmentThresholdBytes) {
+            logWarn(
+                "[PcmStreamHandler] payload bytes do not align to frame size from header; "
+                "disconnecting");
+            setDisconnectReason("frame_bytes_mismatch");
+            ok = false;
+            break;
+        }
         if (frameAlignmentRemainder == 0) {
             misalignedBytesAccumulated = 0;
-        } else {
-            misalignedBytesAccumulated += bytesReceived;
-            if (misalignedBytesAccumulated >= misalignmentThresholdBytes) {
-                logWarn(
-                    "[PcmStreamHandler] payload bytes do not align to frame size from header; "
-                    "disconnecting");
-                setDisconnectReason("frame_bytes_mismatch");
-                ok = false;
-                break;
-            }
         }
 
         detectionBuf.insert(detectionBuf.end(), recvBuf.begin(), recvBuf.begin() + bytesReceived);
@@ -359,6 +365,10 @@ bool PcmStreamHandler::handleClient(int fd) {
         if (formatChangeDetected) {
             ok = false;
             break;
+        }
+
+        if (frameAlignmentRemainder != 0 || misalignedBytesAccumulated > 0) {
+            continue;
         }
 
         if (!formatChangeDetected) {
