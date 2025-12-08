@@ -165,6 +165,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     const std::size_t bytesPerFrame = sampleBytes * header.channels;
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
     constexpr std::size_t HEADER_BYTES = sizeof(PcmHeader);
+    const std::size_t misalignmentThresholdBytes = bytesPerFrame * 256;
 
     std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
     std::vector<std::uint8_t> detectionBuf;
@@ -258,6 +259,8 @@ bool PcmStreamHandler::handleClient(int fd) {
     bool takeoverPending = false;
     int consecutiveTimeouts = 0;
     bool formatChangeDetected = false;
+    std::size_t frameAlignmentRemainder = 0;
+    std::size_t misalignedBytesAccumulated = 0;
     constexpr std::size_t KEEP_BYTES_FOR_DETECTION = HEADER_BYTES - 1;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
         if (connectionMode != ConnectionMode::Single) {
@@ -304,6 +307,27 @@ bool PcmStreamHandler::handleClient(int fd) {
 
         const std::size_t bytesReceived = static_cast<std::size_t>(n);
 
+        const bool chunkAligned =
+            frameAlignmentRemainder == 0 && (bytesReceived % bytesPerFrame == 0);
+        if (!chunkAligned) {
+            misalignedBytesAccumulated += bytesReceived;
+        } else {
+            misalignedBytesAccumulated = 0;
+        }
+
+        frameAlignmentRemainder = (frameAlignmentRemainder + bytesReceived) % bytesPerFrame;
+        if (misalignedBytesAccumulated >= misalignmentThresholdBytes) {
+            logWarn(
+                "[PcmStreamHandler] payload bytes do not align to frame size from header; "
+                "disconnecting");
+            setDisconnectReason("frame_bytes_mismatch");
+            ok = false;
+            break;
+        }
+        if (frameAlignmentRemainder == 0) {
+            misalignedBytesAccumulated = 0;
+        }
+
         detectionBuf.insert(detectionBuf.end(), recvBuf.begin(), recvBuf.begin() + bytesReceived);
 
         std::size_t searchPos = 0;
@@ -341,6 +365,10 @@ bool PcmStreamHandler::handleClient(int fd) {
         if (formatChangeDetected) {
             ok = false;
             break;
+        }
+
+        if (frameAlignmentRemainder != 0 || misalignedBytesAccumulated > 0) {
+            continue;
         }
 
         if (!formatChangeDetected) {
