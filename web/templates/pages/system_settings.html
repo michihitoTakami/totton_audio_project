@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+{% import "components/buttons.html" as buttons %}
+{% import "components/card_panel.html" as panels %}
+{% import "components/status_card.html" as status_card %}
+
+{% block title %}{{ t.get('nav.system') }} - {{ t.get('app.title') }}{% endblock %}
+
+{% block content %}
+<div x-data="systemPage()" x-init="init()">
+    <div class="page-header">
+        <h1 class="page-title">{{ t.get('nav.system') }}</h1>
+        <p class="page-subtitle">{{ t.get('system.subtitle') }}</p>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">{{ t.get('system.health.title') }}</h2>
+        <div class="card-grid">
+            {% set status_icon = "⚙️" %}
+            {% set status_title = t.get('system.health.daemon') %}
+            {% set status_class = "health.daemon_running ? 'status-ok' : 'status-error'" %}
+            {% set status_text = "health.daemon_running ? '{{ t.get('system.daemon.running') }}' : '{{ t.get('system.daemon.stopped') }}'" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "🎚️" %}
+            {% set status_title = t.get('system.health.input_rate') %}
+            {% set status_class = "health.input_rate > 0 ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "health.input_rate ? `${health.input_rate} Hz` : '{{ t.get('system.health.na') }}'" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "🎛️" %}
+            {% set status_title = t.get('system.health.output_rate') %}
+            {% set status_class = "health.output_rate > 0 ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "health.output_rate ? `${health.output_rate} Hz` : '{{ t.get('system.health.na') }}'" %}
+            {% include 'components/status_card.html' %}
+        </div>
+    </div>
+
+    {% call panels.card_panel(t.get('system.daemon.title')) %}
+        <div class="card-row wrap">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.daemon.pid') }}</div>
+                <div class="mono" x-text="daemon.pid ?? 'N/A'"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('system.daemon.binary') }}</div>
+                <div class="mono" x-text="daemon.binary_path ?? 'N/A'"></div>
+            </div>
+            {{ buttons.btn_primary(t.get('system.daemon.restart'), icon='🔄', click='restartDaemon()', disabled='actionInProgress') }}
+        </div>
+    {% endcall %}
+
+    {% call panels.card_panel(t.get('system.dac.title')) %}
+        <div class="card-row wrap">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.dac.current') }}</div>
+                <div class="mono" x-text="dac.runtime?.active_device || '{{ t.get('system.dac.no_devices') }}'"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('system.dac.sample_rate') }}</div>
+                <div class="mono" x-text="dac.runtime?.output_rate || 'N/A'"></div>
+            </div>
+            {{ buttons.btn_primary(t.get('system.dac.rescan'), icon='🔍', click='rescanDac()', disabled='actionInProgress || dac.loading', extra_class='btn-secondary') }}
+        </div>
+
+        <div class="device-list" x-show="dac.devices.length > 0">
+            <template x-for="device in dac.devices" :key="device.id">
+                <div class="device-row">
+                    <div class="stack">
+                        <div class="mono" x-text="device.id"></div>
+                        <div class="muted" x-text="device.name"></div>
+                        <div class="muted" x-show="device.description" x-text="device.description"></div>
+                    </div>
+                    {{ buttons.btn_primary(t.get('system.dac.select'), icon='🎧', click='selectDac(device.id)', disabled='actionInProgress || dac.runtime?.active_device === device.id', extra_class='btn-secondary btn-sm') }}
+                </div>
+            </template>
+        </div>
+        <template x-if="dac.devices.length === 0">
+            {% set info_message = t.get('system.dac.no_devices') %}
+            {% include 'components/info_text.html' %}
+        </template>
+    {% endcall %}
+
+    {% call panels.card_panel(t.get('system.partitioned.title')) %}
+        <div class="card-row wrap">
+            {% set toggle_id = "partitioned-toggle" %}
+            {% set toggle_label = t.get('system.partitioned.enable') %}
+            {% set toggle_desc = t.get('system.partitioned.desc') %}
+            {% set alpine_model = "partitioned.enabled" %}
+            {% set alpine_click = "togglePartitioned()" %}
+            {% include 'components/toggle_switch.html' %}
+        </div>
+
+        <div class="form-grid" x-show="partitioned.enabled">
+            {% set form_label = t.get('system.partitioned.fast_taps') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "partitioned.fast_partition_taps" %}
+            {% set form_input_attrs = 'min="4096" max="131072" step="4096"' %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('system.partitioned.min_taps') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "partitioned.min_partition_taps" %}
+            {% set form_input_attrs = 'min="4096" max="131072" step="4096"' %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('system.partitioned.max_partitions') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "partitioned.max_partitions" %}
+            {% set form_input_attrs = 'min="1" max="16" step="1"' %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('system.partitioned.tail_multiple') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "partitioned.tail_fft_multiple" %}
+            {% set form_input_attrs = 'min="2" max="16" step="1"' %}
+            {% include 'components/form_group.html' %}
+        </div>
+
+        <div class="btn-row" x-show="partitioned.enabled">
+            {{ buttons.btn_primary(t.get('system.partitioned.save'), icon='💾', click='savePartitioned()', disabled='partitioned.loading || actionInProgress') }}
+            {{ buttons.btn_primary(t.get('system.partitioned.reset_defaults'), icon='↺', click='resetPartitioned()', disabled='partitioned.loading || actionInProgress', extra_class='btn-secondary') }}
+        </div>
+    {% endcall %}
+
+    {% call panels.card_panel(t.get('system.buffer.title')) %}
+        <div class="grid-2">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.buffer.size') }}</div>
+                <div class="mono" x-text="config.bufferSize ?? 'N/A'"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('system.buffer.period') }}</div>
+                <div class="mono" x-text="config.periodSize ?? 'N/A'"></div>
+            </div>
+        </div>
+        <div class="grid-2">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.gain.gain') }}</div>
+                <div class="mono" x-text="config.gain ?? 'N/A'"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('system.gain.headroom') }}</div>
+                <div class="mono" x-text="config.headroomTarget ?? 'N/A'"></div>
+            </div>
+        </div>
+    {% endcall %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function systemPage() {
+    return {
+        health: { daemon_running: false, input_rate: 0, output_rate: 0 },
+        daemon: { pid: null, binary_path: null },
+        dac: { devices: [], runtime: null, loading: false },
+        partitioned: {
+            enabled: false,
+            fast_partition_taps: 32768,
+            min_partition_taps: 32768,
+            max_partitions: 4,
+            tail_fft_multiple: 2,
+            loading: false,
+        },
+        config: { bufferSize: null, periodSize: null, gain: null, headroomTarget: null },
+        actionInProgress: false,
+
+        init() {
+            this.refreshAll();
+            setInterval(() => {
+                this.fetchStatus();
+                this.fetchDacState();
+            }, 5000);
+        },
+
+        async refreshAll() {
+            await Promise.all([
+                this.fetchStatus(),
+                this.fetchDaemonStatus(),
+                this.fetchDacDevices(),
+                this.fetchDacState(),
+                this.fetchPartitioned(),
+                this.fetchConfig(),
+            ]);
+        },
+
+        async fetchStatus() {
+            try {
+                const res = await fetch('/status');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.health.daemon_running = data.daemon_running;
+                this.health.input_rate = data.input_rate || 0;
+                this.health.output_rate = data.output_rate || 0;
+            } catch (err) {
+                console.error('status fetch failed', err);
+            }
+        },
+
+        async fetchDaemonStatus() {
+            try {
+                const res = await fetch('/daemon/status');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.daemon.pid = data.pid;
+                this.daemon.binary_path = data.binary_path;
+                this.health.daemon_running = data.running;
+            } catch (err) {
+                console.error('daemon status failed', err);
+            }
+        },
+
+        async restartDaemon() {
+            if (!confirm('{{ t.get("system.confirm.restart") }}')) return;
+            this.actionInProgress = true;
+            try {
+                const res = await fetch('/daemon/restart', { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || data.message || 'restart failed');
+                showToast(data.message || '{{ t.get("system.toast.restart_ok") }}', 'success');
+                await this.fetchDaemonStatus();
+            } catch (err) {
+                showToast(err.message, 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async fetchDacDevices() {
+            this.dac.loading = true;
+            try {
+                const res = await fetch('/dac/devices');
+                const data = await res.json();
+                this.dac.devices = data.devices || [];
+            } catch (err) {
+                console.error('dac devices failed', err);
+            } finally {
+                this.dac.loading = false;
+            }
+        },
+
+        async fetchDacState() {
+            try {
+                const res = await fetch('/dac/state');
+                if (!res.ok) return;
+                this.dac.runtime = await res.json();
+            } catch (err) {
+                console.error('dac state failed', err);
+            }
+        },
+
+        async rescanDac() {
+            this.actionInProgress = true;
+            try {
+                await fetch('/dac/rescan', { method: 'POST' });
+                await this.fetchDacDevices();
+                await this.fetchDacState();
+            } catch (err) {
+                console.error('dac rescan failed', err);
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async selectDac(id) {
+            if (!confirm('{{ t.get("system.confirm.switch_dac") }}')) return;
+            this.actionInProgress = true;
+            try {
+                const res = await fetch('/dac/select', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device: id, persist: true }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || data.message || 'failed');
+                showToast(data.message || '{{ t.get("system.toast.dac_ok") }}', 'success');
+                await this.fetchDacState();
+            } catch (err) {
+                showToast(err.message, 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async fetchPartitioned() {
+            try {
+                const res = await fetch('/partitioned-convolution');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.partitioned.enabled = data.enabled;
+                this.partitioned.fast_partition_taps = data.fast_partition_taps;
+                this.partitioned.min_partition_taps = data.min_partition_taps;
+                this.partitioned.max_partitions = data.max_partitions;
+                this.partitioned.tail_fft_multiple = data.tail_fft_multiple;
+            } catch (err) {
+                console.error('partitioned fetch failed', err);
+            }
+        },
+
+        togglePartitioned() {
+            this.partitioned.enabled = !this.partitioned.enabled;
+        },
+
+        async savePartitioned() {
+            this.partitioned.loading = true;
+            this.actionInProgress = true;
+            try {
+                const res = await fetch('/partitioned-convolution', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.partitioned),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) {
+                    throw new Error(data.detail || data.message || 'failed');
+                }
+                showToast(data.message || '{{ t.get("system.partitioned.save") }}', 'success');
+                await this.fetchPartitioned();
+            } catch (err) {
+                showToast(err.message, 'error');
+            } finally {
+                this.partitioned.loading = false;
+                this.actionInProgress = false;
+            }
+        },
+
+        resetPartitioned() {
+            this.partitioned.fast_partition_taps = 32768;
+            this.partitioned.min_partition_taps = 32768;
+            this.partitioned.max_partitions = 4;
+            this.partitioned.tail_fft_multiple = 2;
+            showToast('{{ t.get("system.partitioned.reset_defaults") }}', 'info');
+        },
+
+        async fetchConfig() {
+            try {
+                const res = await fetch('/status');
+                if (!res.ok) return;
+                const data = await res.json();
+                const settings = data.settings;
+                if (settings) {
+                    this.config.bufferSize = settings.buffer_size;
+                    this.config.periodSize = settings.period_size;
+                    this.config.gain = settings.gain;
+                    this.config.headroomTarget = settings.headroom_target;
+                }
+            } catch (err) {
+                console.error('config fetch failed', err);
+            }
+        },
+    };
+}
+</script>
+{% endblock %}

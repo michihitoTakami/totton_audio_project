@@ -67,12 +67,10 @@ def render_system(lang: str = "en", current_page: str = "system") -> str:
     Returns:
         Rendered HTML string
     """
-    # TODO: Implement in Issue #414
-    template = env.get_template("base.html")
+    template = env.get_template("pages/system_settings.html")
     return template.render(
         t=get_translations(lang),
         current_page=current_page,
-        content="<h2>System - Coming Soon</h2>",
     )
 
 
