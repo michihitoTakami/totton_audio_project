@@ -14,7 +14,7 @@ services:
     environment:
       # 必要に応じて上書き（CLI引数と同等）
       # JPR_PORT: "46001"
-      # JPR_DEVICE: "loopback"
+      JPR_DEVICE: "hw:Loopback,0,0"
       # JPR_LOG_LEVEL: "warn"
       # JPR_CONNECTION_MODE: "single"
       # JPR_PRIORITY_CLIENTS: "10.0.0.1,10.0.0.2"
