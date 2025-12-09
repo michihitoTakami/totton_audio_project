@@ -101,3 +101,34 @@ def test_config_init_resets_when_flag_true(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert json.loads(config_file.read_text()) == default_payload
+
+
+def test_config_init_recovers_invalid_json(tmp_path: Path) -> None:
+    """Invalid JSON should be backed up and default restored."""
+    default_file = tmp_path / "default" / "config.json"
+    default_file.parent.mkdir(parents=True)
+    default_payload = {"safe": True}
+    default_file.write_text(json.dumps(default_payload))
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True)
+    config_file = config_dir / "config.json"
+    config_file.write_text("{ invalid json }")
+
+    result = _run_entrypoint(
+        tmp_path,
+        {
+            "MAGICBOX_CONFIG_DIR": str(config_dir),
+            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
+        },
+        "config-init",
+    )
+
+    assert result.returncode == 0, result.stderr
+    # Default should be restored
+    assert json.loads(config_file.read_text()) == default_payload
+    # Backup should exist with original broken content
+    backup = config_file.with_suffix(".json.bak")
+    assert backup.exists()
+    assert "{ invalid json }" in backup.read_text()
