@@ -81,7 +81,7 @@ tags_metadata = [
 _tcp_telemetry_store = TcpTelemetryStore()
 
 
-async def _fetch_tcp_telemetry() -> TcpInputTelemetry | TcpInputStatusResponse | None:
+async def _fetch_tcp_telemetry() -> TcpInputTelemetry | None:
     """ZeroMQ経由でTCPテレメトリを取得."""
     with get_daemon_client(timeout_ms=1500) as client:
         response = client.tcp_input_status()
@@ -92,7 +92,9 @@ async def _fetch_tcp_telemetry() -> TcpInputTelemetry | TcpInputStatusResponse |
         if isinstance(data, TcpInputTelemetry):
             return data
         if isinstance(data, dict):
-            return parse_tcp_telemetry(data)
+            telemetry_payload = data.get("telemetry", data)
+            if isinstance(telemetry_payload, dict):
+                return parse_tcp_telemetry(telemetry_payload)
         return None
     if response.error:
         # 例外はポーラー側で握りつぶし、storeにエラーを記録させる
