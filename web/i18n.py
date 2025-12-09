@@ -5,6 +5,8 @@ Basic structure for server-side i18n using Python dictionaries and Jinja2.
 Actual language switching functionality will be implemented in Issue #415.
 """
 
+SUPPORTED_LANGS = {"en", "ja"}
+
 TRANSLATIONS = {
     "en": {
         "app.title": "Magic Box",
@@ -146,6 +148,10 @@ TRANSLATIONS = {
         "system.partitioned.tail_multiple": "Tail FFT Multiple",
         "system.partitioned.save": "Save Settings",
         "system.partitioned.reset_defaults": "Reset to Defaults",
+        "system.language.title": "Language",
+        "system.language.description": "Switch the Web UI language",
+        "system.language.english": "English",
+        "system.language.japanese": "Japanese",
         "system.buffer.title": "Buffer & Gain (read-only)",
         "system.buffer.size": "Buffer Size",
         "system.buffer.period": "Period Size",
@@ -267,6 +273,10 @@ TRANSLATIONS = {
         "system.partitioned.tail_multiple": "Tail FFT Multiple",
         "system.partitioned.save": "設定を保存",
         "system.partitioned.reset_defaults": "デフォルトに戻す",
+        "system.language.title": "言語設定",
+        "system.language.description": "Web UIの表示言語を切り替えます",
+        "system.language.english": "英語",
+        "system.language.japanese": "日本語",
         "system.buffer.title": "バッファとゲイン (読み取り専用)",
         "system.buffer.size": "バッファサイズ",
         "system.buffer.period": "ピリオドサイズ",
@@ -384,7 +394,8 @@ def get_text(key: str, lang: str = "en") -> str:
     Returns:
         Translated string, or the key itself if not found
     """
-    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+    normalized = normalize_lang(lang)
+    return TRANSLATIONS.get(normalized, TRANSLATIONS["en"]).get(key, key)
 
 
 def get_translations(lang: str = "en") -> dict:
@@ -397,4 +408,21 @@ def get_translations(lang: str = "en") -> dict:
     Returns:
         Dictionary of translations
     """
-    return TRANSLATIONS.get(lang, TRANSLATIONS["en"])
+    normalized = normalize_lang(lang)
+    return TRANSLATIONS.get(normalized, TRANSLATIONS["en"])
+
+
+def normalize_lang(lang: str | None) -> str:
+    """
+    Normalize a language code to a supported value.
+
+    Args:
+        lang: Language code from client input.
+
+    Returns:
+        Normalized language code ("en" or "ja"), defaulting to English.
+    """
+    if not lang:
+        return "en"
+    lowered = lang.lower()
+    return lowered if lowered in SUPPORTED_LANGS else "en"
