@@ -12,13 +12,9 @@
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/control/control_plane.h"
 #include "daemon/control/handlers/handler_registry.h"
-#include "daemon/input/pipewire_input.h"
-#include "daemon/input/rtp_input_adapter.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/alsa_output.h"
 #include "daemon/pcm/dac_manager.h"
-#include "daemon/rtp/rtp_engine_coordinator.h"
-#include "daemon/rtp/rtp_session_manager.h"
 #include "daemon/shutdown_manager.h"
 #include "daemon_constants.h"
 #include "eq_parser.h"
@@ -58,11 +54,9 @@
 #include <netinet/in.h>
 #include <nlohmann/json.hpp>
 #include <optional>
-#include <pipewire/pipewire.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
-#include <spa/param/audio/format-utils.h>
 #include <sstream>
 #include <string>
 #include <sys/file.h>
@@ -169,12 +163,9 @@ static std::atomic<float> g_effective_gain{1.0f};
 // Global state
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_reload_requested{false};
-static std::atomic<bool> g_main_loop_running{false};  // True when pw_main_loop_run() is active
 static std::atomic<bool> g_zmq_bind_failed{false};    // True if ZeroMQ bind failed
 static std::atomic<bool> g_output_ready{false};  // Indicates ALSA DAC is ready for input processing
 static ConvolutionEngine::GPUUpsampler* g_upsampler = nullptr;
-static struct pw_main_loop* g_pw_loop = nullptr;  // For signal check timer
-static std::unique_ptr<rtp_engine::RtpEngineCoordinator> g_rtp_coordinator;
 static std::mutex g_input_process_mutex;
 
 static std::unique_ptr<audio_pipeline::AudioPipeline> g_audio_pipeline;
@@ -345,14 +336,12 @@ static daemon_core::api::DaemonDependencies g_daemon_dependencies{
     .softMute = &g_soft_mute,
     .upsampler = &g_upsampler,
     .audioPipeline = nullptr,
-    .rtpCoordinator = nullptr,
     .dacManager = nullptr,
     .streamingMutex = &g_streaming_mutex,
     .refreshHeadroom = refresh_current_headroom,
 };
 
 static audio_pipeline::AudioPipeline* g_audio_pipeline_raw = nullptr;
-static rtp_engine::RtpEngineCoordinator* g_rtp_coordinator_raw = nullptr;
 static dac::DacManager* g_dac_manager_raw = nullptr;
 
 static std::unique_ptr<audio_pipeline::RateSwitcher> g_rate_switcher;
@@ -375,7 +364,6 @@ static void update_daemon_dependencies() {
     g_daemon_dependencies.softMute = &g_soft_mute;
     g_daemon_dependencies.upsampler = &g_upsampler;
     g_daemon_dependencies.audioPipeline = &g_audio_pipeline_raw;
-    g_daemon_dependencies.rtpCoordinator = &g_rtp_coordinator_raw;
     g_daemon_dependencies.dacManager = &g_dac_manager_raw;
     g_daemon_dependencies.streamingMutex = &g_streaming_mutex;
     g_daemon_dependencies.refreshHeadroom = [](const std::string& reason) {
@@ -945,6 +933,7 @@ static void load_runtime_config() {
     g_effective_gain.store(initialOutput, std::memory_order_relaxed);
 }
 
+#if 0  // PipeWire path disabled (legacy)
 // PipeWire objects
 // PipeWire objects
 struct Data {
@@ -1136,6 +1125,7 @@ static bool handle_rate_change(int detected_sample_rate) {
 
     return switch_success;
 }
+#endif  // PipeWire path disabled
 
 // Open and configure ALSA device. Returns nullptr on failure.
 static snd_pcm_t* open_and_configure_pcm(const std::string& device) {
@@ -1858,57 +1848,6 @@ int main(int argc, char* argv[]) {
         }
 
         initialize_event_modules();
-
-        // Determine PipeWire mode (config + env overrides)
-        bool pipewireEnabled = g_config.pipewireEnabled;
-        std::string pipewireOverrideReason;
-        auto toLower = [](std::string value) {
-            std::transform(value.begin(), value.end(), value.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return value;
-        };
-        if (g_config.loopback.enabled) {
-            pipewireEnabled = false;
-            pipewireOverrideReason = "loopback.enabled=true";
-            std::cout << "Config: Loopback input enabled -> PipeWire path disabled" << std::endl;
-        }
-        if (const char* env_mode = std::getenv("MAGICBOX_INPUT_MODE")) {
-            std::string mode = toLower(env_mode);
-            if (mode == "rtp") {
-                pipewireEnabled = false;
-                pipewireOverrideReason = "MAGICBOX_INPUT_MODE=rtp";
-            } else if (mode == "pipewire") {
-                pipewireEnabled = true;
-                pipewireOverrideReason = "MAGICBOX_INPUT_MODE=pipewire";
-            }
-        }
-        auto disableFromEnv = [&](const char* envName) {
-            if (const char* value = std::getenv(envName)) {
-                std::string flag = toLower(value);
-                if (flag == "1" || flag == "true" || flag == "yes") {
-                    pipewireEnabled = false;
-                    pipewireOverrideReason = std::string(envName) + "=true";
-                }
-            }
-        };
-        disableFromEnv("PIPEWIRE_DISABLED");
-        disableFromEnv("MAGICBOX_DISABLE_PIPEWIRE");
-        auto enableFromEnv = [&](const char* envName) {
-            if (const char* value = std::getenv(envName)) {
-                std::string flag = toLower(value);
-                if (flag == "1" || flag == "true" || flag == "yes") {
-                    pipewireEnabled = true;
-                    pipewireOverrideReason = std::string(envName) + "=true";
-                }
-            }
-        };
-        enableFromEnv("PIPEWIRE_ENABLED");
-        enableFromEnv("MAGICBOX_ENABLE_PIPEWIRE");
-        if (!pipewireEnabled) {
-            std::cout << "Config: PipeWire input disabled ("
-                      << (pipewireOverrideReason.empty() ? "config.json" : pipewireOverrideReason)
-                      << "). Running in RTP-only mode." << std::endl;
-        }
 
         PartitionRuntime::RuntimeRequest partitionRequest{g_config.partitionedConvolution.enabled,
                                                           g_config.eqEnabled,

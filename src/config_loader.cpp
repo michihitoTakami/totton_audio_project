@@ -149,10 +149,6 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("coefficientDir"))
             outConfig.coefficientDir = j["coefficientDir"].get<std::string>();
 
-        // PipeWire input toggle (Docker / RTP-only mode)
-        if (j.contains("pipewireEnabled"))
-            outConfig.pipewireEnabled = j["pipewireEnabled"].get<bool>();
-
         if (j.contains("loopback") && j["loopback"].is_object()) {
             auto lb = j["loopback"];
             try {
@@ -290,6 +286,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             }
         }
 
+        /* RTP configuration removed (legacy path)
         if (j.contains("rtp") && j["rtp"].is_object()) {
             auto rtp = j["rtp"];
             try {
@@ -438,6 +435,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 }
             }
         }
+        */
 
         // Clamp derived floating-point values after parsing (ensures sane bounds)
         outConfig.gain = std::max(0.0f, outConfig.gain);
