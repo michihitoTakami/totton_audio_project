@@ -138,7 +138,7 @@ std::optional<AlsaCapture::SampleFormat> parseFormat(std::string_view value) {
 void printHelp(std::string_view programName) {
     std::cout << "Usage: " << programName << " [--device hw:0,0] [--host 127.0.0.1] [--port 46001]"
               << " [--rate 48000] [--format S16_LE|S24_3LE|S32_LE]"
-              << " [--frames 4096] [--log-level info]"
+              << " [--frames 4096] [--log-level warn]"
               << " [--iterations -1] [--help] [--version]" << std::endl
               << std::endl
               << "PCM bridge CLI options:" << std::endl

@@ -11,7 +11,7 @@
 struct AppOptions {
     int port = 46001;
     OutputDeviceSpec device{};
-    LogLevel logLevel = LogLevel::Info;
+    LogLevel logLevel = LogLevel::Warn;
     std::size_t ringBufferFrames = 8192;  // 0で無効
     std::size_t watermarkFrames = 0;      // 0で自動 (75%)
     bool enableZmq = true;

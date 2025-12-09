@@ -168,7 +168,7 @@ void printHelp(const char *exeName) {
     std::cout << "  -p, --port <number>     TCP listen port (default: 46001)\n";
     std::cout << "  -d, --device <name>     Output device alias/ALSA name (default: loopback)\n";
     std::cout << "                          Accepted: loopback | null | alsa:<pcm> | <raw pcm>\n";
-    std::cout << "  -l, --log-level <lvl>   error/warn/info/debug (default: info)\n";
+    std::cout << "  -l, --log-level <lvl>   error/warn/info/debug (default: warn)\n";
     std::cout << "  --ring-buffer-frames N  enable jitter buffer with N frames (default: 8192)\n";
     std::cout
         << "  --ring-buffer-watermark N  watermark frames for warning (default: 75% of buffer)\n";

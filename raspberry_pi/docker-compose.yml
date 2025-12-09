@@ -15,11 +15,16 @@ services:
       PCM_BRIDGE_RATE: ${PCM_BRIDGE_RATE:-48000}
       PCM_BRIDGE_FORMAT: ${PCM_BRIDGE_FORMAT:-S16_LE}
       PCM_BRIDGE_FRAMES: ${PCM_BRIDGE_FRAMES:-4096}
-      PCM_BRIDGE_LOG_LEVEL: ${PCM_BRIDGE_LOG_LEVEL:-info}
+      PCM_BRIDGE_LOG_LEVEL: ${PCM_BRIDGE_LOG_LEVEL:-warn}
       PCM_BRIDGE_ITERATIONS: ${PCM_BRIDGE_ITERATIONS:--1}
     restart: always
     depends_on:
       - jetson-proxy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   jetson-proxy:
     image: nginx:1.27-alpine
@@ -32,3 +37,8 @@ services:
     volumes:
       - ./docker/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

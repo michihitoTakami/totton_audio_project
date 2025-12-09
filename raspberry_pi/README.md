@@ -33,7 +33,7 @@ cmake --build raspberry_pi/build
 - 起動時にPCMヘッダ（`PCMA` / version=1 / rate / ch / format）をTCP接続確立後に送信し、その後はALSAから読み取ったPCMを順次送出します。
 - TCP切断時は無制限リトライし、再接続後にヘッダを再送してPCM送出を再開します。
 - SIGINT/SIGTERM受信でALSAとソケットをクリーンにクローズして終了します。
-- `--log-level` で `debug|info|warn|error` を選択（デフォルト: `info`）。主要イベントを標準出力/標準エラーへ出力します。
+- `--log-level` で `debug|info|warn|error` を選択（デフォルト: `warn`）。主要イベントを標準出力/標準エラーへ出力します。
 - `--iterations` はテスト用。0以下で無限ループ、正の値を指定するとその回数で自動終了します。
 - ALSA実測サンプルレート/チャネル数/フォーマットの変化やデバイス再列挙を検知すると、ALSAを再オープンし、TCP再接続とヘッダ再送で追従します。
 - ALSAデバイスが一時的に消失しても、復活するまでバックオフしながら再オープンを繰り返し、復旧後にヘッダを再送して送出を再開します。
@@ -121,7 +121,7 @@ docker compose -f raspberry_pi/docker-compose.yml down
 - `PCM_BRIDGE_RATE` (既定: `48000`)
 - `PCM_BRIDGE_FORMAT` (`S16_LE` | `S24_3LE` | `S32_LE`)
 - `PCM_BRIDGE_FRAMES` (既定: `4096`)
-- `PCM_BRIDGE_LOG_LEVEL` (`debug` | `info` | `warn` | `error`)
+- `PCM_BRIDGE_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, 既定: `warn`)
 - `PCM_BRIDGE_ITERATIONS` (`-1` で無限送信)
 =======
 

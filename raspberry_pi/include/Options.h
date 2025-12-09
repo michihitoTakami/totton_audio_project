@@ -16,7 +16,7 @@ struct Options {
     unsigned int rate{48000};
     AlsaCapture::SampleFormat format{AlsaCapture::SampleFormat::S16_LE};
     snd_pcm_uframes_t frames{4096};
-    LogLevel logLevel{LogLevel::Info};
+    LogLevel logLevel{LogLevel::Warn};
     int iterations{-1};  // 負の値は無限ループで送信を続ける。
 };
 
