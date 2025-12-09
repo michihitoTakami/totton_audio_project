@@ -4,15 +4,12 @@
 
 - Verify that the fast partition delivers the promised latency (<10–12 ms for the default 32k taps).
 - Confirm that the tail partitions catch up without introducing ripples or stopband regressions.
-- Provide a repeatable loopback workflow (ALSA/PipeWire) that records impulse and sweep data while monitoring XRUN and GPU load.
 - Document how to feed the captured files into the updated analysis scripts.
 
 ---
 
 ## Prerequisites
 
-- PipeWire 1.0+ with `pw-loopback` and `pw-record`.
-- ALSA loopback module (`snd_aloop`) for systems without PipeWire.
 - `uv` environment (or `python -m venv`) with project dependencies installed: `uv sync`.
 - GPU daemon built from `main` after PR #371 (partition switches on via `/partitioned-convolution` API or `config.json`).
 
@@ -35,7 +32,6 @@ Artifacts:
 
 ---
 
-## Step 2 – PipeWire Loopback Capture
 
 1. **Connect daemon output to a dedicated loopback sink**
 
@@ -144,4 +140,3 @@ Record results in `docs/jetson/quality/test-checklist.md` (new section “低遅
 
 - **Tail never catches up**: verify `maxPartitions` ≥ 3 and `fastPartitionTaps < total taps`. Use the JSON summary to confirm.
 - **FFT artifacts**: ensure the capture file is at the upsampled output rate (705.6k/768k). Down-sampled captures hide stopband leakage.
-- **XRUN bursts**: increase PipeWire buffer (`pw-metadata -n settings 0 clock.min.quantum 256`) and confirm `periodSize` in `config.json` matches.

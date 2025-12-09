@@ -50,9 +50,7 @@ sudo apt install -y \
     pkg-config \
     nvidia-cuda-toolkit \
     libsndfile1-dev \
-    libpipewire-0.3-dev \
     libasound2-dev \
-    libspa-0.2-dev \
     git
 ```
 
@@ -152,7 +150,6 @@ uv run pytest
 | Python packages | uv | pyproject.toml |
 | CUDA toolkit | apt | system |
 | libsndfile | apt | system |
-| PipeWire | apt | system |
 | ALSA | apt | system |
 
 ## Troubleshooting
@@ -178,14 +175,11 @@ nvidia-smi
 sudo apt install nvidia-cuda-toolkit
 ```
 
-### PipeWire開発ライブラリが見つからない
 
 ```bash
 # pkg-configで確認
-pkg-config --modversion libpipewire-0.3
 
 # なければインストール
-sudo apt install libpipewire-0.3-dev libspa-0.2-dev
 ```
 
 ## Next Steps

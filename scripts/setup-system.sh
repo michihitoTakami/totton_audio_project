@@ -38,9 +38,7 @@ case $DISTRO in
             pkg-config \
             nvidia-cuda-toolkit \
             libsndfile1-dev \
-            libpipewire-0.3-dev \
             libasound2-dev \
-            libspa-0.2-dev \
             git
         ;;
     fedora)
@@ -50,7 +48,6 @@ case $DISTRO in
             pkgconfig \
             cuda \
             libsndfile-devel \
-            pipewire-devel \
             alsa-lib-devel \
             git
         ;;
@@ -61,7 +58,6 @@ case $DISTRO in
             pkgconf \
             cuda \
             libsndfile \
-            pipewire \
             alsa-lib \
             git
         ;;
@@ -73,7 +69,6 @@ case $DISTRO in
         echo "  - pkg-config"
         echo "  - CUDA toolkit (nvcc, cuFFT)"
         echo "  - libsndfile development files"
-        echo "  - PipeWire development files (libpipewire-0.3)"
         echo "  - ALSA development files"
         echo "  - git"
         exit 1

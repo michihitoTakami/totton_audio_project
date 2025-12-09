@@ -175,7 +175,7 @@ add_executable(gpu_upsampler_alsa
 
 target_include_directories(gpu_upsampler_alsa PRIVATE src)
 
-# Link against core library, eq_support, PipeWire, ALSA, ZeroMQ, SoftMute, FallbackManager, and Logging
+# Link against core library, eq_support, ALSA, ZeroMQ, SoftMute, FallbackManager, and Logging
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support

@@ -21,7 +21,6 @@ PCM in ───► │ Stage A: Wide FIR (≥640k, 最小位相) │ ──► 
             └──────────────┘
 ```
 - Stage AとBを別CUDAストリーム＋ダブルバッファで接続し、長大FIRの実行時間がHRTFパスをブロックしないようにする。
-- ALSA/PipeWireの入出力バッファは両ステージで共有するが、内部バッファはステージ毎に分離（リングバッファ）してスケジューリングを平滑化。
 
 ## 推奨パラメータ（初期値）
 | 項目 | Stage A: 広帯域FIR | Stage B: HRTF |
@@ -48,9 +47,7 @@ PCM in ───► │ Stage A: Wide FIR (≥640k, 最小位相) │ ──► 
 - 実効遅延目安: Stage Aブロック23ms + Stage Bブロック12ms + ALSA I/Oバッファ（例: 2〜3×16ms）でおおむね <70ms を目標。
 - さらなる低遅延が必要な場合は Stage A をパーティション分割（例: 64kパーティション×10）するハイブリッド畳み込みを別Issueで検討。
 
-## ALSA / PipeWire バッファリング指針
 - ALSA: 705.6k/768k 出力時に `period_size = 8192`, `buffer_size = period_size * 4` を目安（約43–45ms）。Stage A/Bのブロックと整合性を取る。
-- PipeWire: RTP/USB入力のジッタを吸収するため、上流バッファは最小1 period多めに取る（例: 10–15ms相当）。
 - ダブルバッファ or 小リングバッファで Stage A->B を接続し、CUDAストリーム間の待ち合わせを最小化。
 
 ## 追加で必要なコード変更（別Issue化する項目）

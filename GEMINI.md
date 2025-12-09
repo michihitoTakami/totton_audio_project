@@ -25,7 +25,6 @@ Think in English and answer in Japanese.
 | Control Plane | Python, FastAPI, scipy |
 | Data Plane | C++17, CUDA, cuFFT |
 | Communication | ZeroMQ |
-| Audio I/O | PipeWire, ALSA |
 
 ## Hardware Targets
 

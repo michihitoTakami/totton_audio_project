@@ -88,7 +88,6 @@ sleep 5
 pgrep -f gpu_upsampler_alsa && echo "Running" || echo "Failed"
 ```
 
-### 3. PipeWireリンク確立
 
 ```bash
 # リンク状態確認
@@ -138,7 +137,6 @@ rm -f /tmp/gpu_os.sock /tmp/alsa_daemon.log
 - クロスフィード有効化: `{'message': 'Crossfeed enabled', 'status': 'ok'}`
 - デーモン: クラッシュせず継続動作
 - ログ: CUDAエラーなし
-- PipeWireストリーム: `streaming` 状態に遷移
 
 ## 関連ファイル
 
