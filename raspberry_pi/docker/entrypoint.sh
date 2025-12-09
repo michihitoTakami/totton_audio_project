@@ -21,7 +21,7 @@ args=(
   --rate "${PCM_BRIDGE_RATE:-48000}"
   --format "${PCM_BRIDGE_FORMAT:-S16_LE}"
   --frames "${PCM_BRIDGE_FRAMES:-4096}"
-  --log-level "${PCM_BRIDGE_LOG_LEVEL:-info}"
+  --log-level "${PCM_BRIDGE_LOG_LEVEL:-warn}"
 )
 
 if [[ -n "${PCM_BRIDGE_ITERATIONS:-}" ]]; then

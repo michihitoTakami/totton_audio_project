@@ -33,7 +33,7 @@ cmake --build raspberry_pi/build
 - 起動時にPCMヘッダ（`PCMA` / version=1 / rate / ch / format）をTCP接続確立後に送信し、その後はALSAから読み取ったPCMを順次送出します。
 - TCP切断時は無制限リトライし、再接続後にヘッダを再送してPCM送出を再開します。
 - SIGINT/SIGTERM受信でALSAとソケットをクリーンにクローズして終了します。
-- `--log-level` で `debug|info|warn|error` を選択（デフォルト: `info`）。主要イベントを標準出力/標準エラーへ出力します。
+- `--log-level` で `debug|info|warn|error` を選択（デフォルト: `warn`）。主要イベントを標準出力/標準エラーへ出力します。
 - `--iterations` はテスト用。0以下で無限ループ、正の値を指定するとその回数で自動終了します。
 - ALSA実測サンプルレート/チャネル数/フォーマットの変化やデバイス再列挙を検知すると、ALSAを再オープンし、TCP再接続とヘッダ再送で追従します。
 - ALSAデバイスが一時的に消失しても、復活するまでバックオフしながら再オープンを繰り返し、復旧後にヘッダを再送して送出を再開します。
@@ -64,7 +64,6 @@ TCP送信先とキャプチャ設定を指定する例:
 - 対応レート: `44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000`
 - ポート範囲外や未対応フォーマット/レート指定時は起動時にエラー終了します。
 - XRUN発生時は `snd_pcm_prepare()` でリカバリし、ログへ出力します。
-<<<<<<< HEAD
 - `PCM_BRIDGE_*` 環境変数でデフォルト値を上書き可能です（Dockerで利用）。
 
 ## Docker 実行（Raspberry Pi上）
@@ -79,14 +78,14 @@ docker build -f raspberry_pi/Dockerfile -t rpi-pcm-bridge .
 docker run --rm --device /dev/snd -e PCM_BRIDGE_MODE=help rpi-pcm-bridge
 
 # 実際に送信待機を行う例
-docker run --rm --device /dev/snd \\
-  --group-add audio \\
-  --restart unless-stopped \\
-  -e PCM_BRIDGE_HOST=192.168.55.1 \\
-  -e PCM_BRIDGE_PORT=46001 \\
-  -e PCM_BRIDGE_DEVICE=hw:0,0 \\
-  -e PCM_BRIDGE_RATE=48000 \\
-  -e PCM_BRIDGE_FORMAT=S16_LE \\
+docker run --rm --device /dev/snd \
+  --group-add audio \
+  --restart unless-stopped \
+  -e PCM_BRIDGE_HOST=192.168.55.1 \
+  -e PCM_BRIDGE_PORT=46001 \
+  -e PCM_BRIDGE_DEVICE=hw:0,0 \
+  -e PCM_BRIDGE_RATE=48000 \
+  -e PCM_BRIDGE_FORMAT=S16_LE \
   rpi-pcm-bridge
 ```
 
@@ -121,9 +120,8 @@ docker compose -f raspberry_pi/docker-compose.yml down
 - `PCM_BRIDGE_RATE` (既定: `48000`)
 - `PCM_BRIDGE_FORMAT` (`S16_LE` | `S24_3LE` | `S32_LE`)
 - `PCM_BRIDGE_FRAMES` (既定: `4096`)
-- `PCM_BRIDGE_LOG_LEVEL` (`debug` | `info` | `warn` | `error`)
+- `PCM_BRIDGE_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, 既定: `warn`)
 - `PCM_BRIDGE_ITERATIONS` (`-1` で無限送信)
-=======
 
 ## 手動テスト（null sink/loopback + nc）
 
@@ -151,4 +149,3 @@ Jetson側TCPサーバが無くても、ローカルのALSA loopback + `nc` で�
    - `hexdump -C /tmp/pcm_dump.raw | head` で先頭16バイトが `50 43 4d 41` (`PCMA`) になっていることを確認。
    - ファイルサイズが再生に合わせて増えていくことを確認。
    - ブリッジは `Ctrl+C` で終了（SIGINTでクリーンに停止）。
->>>>>>> origin/main

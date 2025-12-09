@@ -29,7 +29,7 @@ docker run --rm \
 
 - `JPR_PORT` (default: 46001)
 - `JPR_DEVICE` (`loopback` | `null` | `alsa:<pcm>` | `<raw pcm>`)
-- `JPR_LOG_LEVEL` (`error|warn|info|debug`)
+- `JPR_LOG_LEVEL` (`error|warn|info|debug`, default: `warn`)
 - `JPR_RING_FRAMES`, `JPR_WATERMARK_FRAMES`, `JPR_DISABLE_RING_BUFFER`
 - `JPR_RECV_TIMEOUT_MS`, `JPR_RECV_TIMEOUT_SLEEP_MS`, `JPR_ACCEPT_COOLDOWN_MS`, `JPR_MAX_CONSEC_TIMEOUTS`
 - `JPR_CONNECTION_MODE` (`single|takeover|priority`)
