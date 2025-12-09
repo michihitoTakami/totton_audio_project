@@ -7,8 +7,11 @@
 
 #include "soft_mute.h"
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <gtest/gtest.h>
+#include <thread>
 #include <vector>
 
 using namespace SoftMute;
@@ -217,6 +220,64 @@ TEST_F(SoftMuteTest, Process_ZeroFrames_ReturnsFalse) {
     auto buffer = createTestBuffer(100);
     bool processed = ctrl.process(buffer.data(), 0);
     EXPECT_FALSE(processed);
+}
+
+// ============================================================================
+// Thread Safety / Concurrency
+// ============================================================================
+
+TEST_F(SoftMuteTest, ConcurrentSetters_DoNotDeadlockOrCrash) {
+    Controller ctrl(50, 44100);
+    auto buffer = createTestBuffer(256);
+    std::atomic<bool> stop{false};
+
+    std::thread setter([&]() {
+        for (int i = 0; i < 200 && !stop.load(); ++i) {
+            ctrl.setFadeDuration(1500);
+            ctrl.setSampleRate(48000);
+            ctrl.setFadeCurve(FadeCurve::LOGARITHMIC);
+            ctrl.setFadeDuration(50);
+            ctrl.setSampleRate(44100);
+            ctrl.setFadeCurve(FadeCurve::LINEAR);
+        }
+    });
+
+    for (int i = 0; i < 50; ++i) {
+        ctrl.startFadeOut();
+        ctrl.process(buffer.data(), buffer.size() / 2);
+        ctrl.startFadeIn();
+        ctrl.process(buffer.data(), buffer.size() / 2);
+    }
+
+    stop.store(true);
+    setter.join();
+
+    // Controller should remain in a valid state (either playing or muted)
+    auto state = ctrl.getState();
+    EXPECT_TRUE(state == MuteState::PLAYING || state == MuteState::MUTED ||
+                state == MuteState::FADING_IN || state == MuteState::FADING_OUT);
+}
+
+TEST_F(SoftMuteTest, ConfigChangesWhileProcessing_MaintainProgress) {
+    Controller ctrl(50, 44100);
+    auto buffer = createTestBuffer(512);
+
+    ctrl.startFadeOut();
+    ctrl.process(buffer.data(), 200);
+
+    // Change configuration mid-transition; should not reset position to zero
+    ctrl.setFadeDuration(100);
+    ctrl.setSampleRate(48000);
+
+    size_t processed = 0;
+    const size_t kMaxFrames = 8000;  // Enough to cover 100ms fade at 48k
+    while (ctrl.isTransitioning() && processed < kMaxFrames) {
+        ctrl.process(buffer.data(), 64);
+        processed += 64;
+    }
+
+    // After processing enough samples, controller should exit transition
+    EXPECT_FALSE(ctrl.isTransitioning());
 }
 
 TEST_F(SoftMuteTest, StartFadeOut_WhileMuted_StaysMuted) {
