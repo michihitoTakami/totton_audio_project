@@ -15,6 +15,8 @@ from ..models import (
     CrossfeedSettings,
     PartitionedConvolutionSettings,
     Settings,
+    TcpInputConfigUpdate,
+    TcpInputSettings,
 )
 
 DEFAULT_OUTPUT_MODE = "usb"
@@ -291,6 +293,66 @@ def save_output_mode(mode: str, preferred_device: str) -> bool:
         output_section["mode"] = normalized_mode
         options_section["usb"]["preferredDevice"] = device
         existing["alsaDevice"] = device
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+def get_tcp_config() -> TcpInputSettings:
+    """Return TCP入力設定 (missing/invalid values fall back to defaults)."""
+    raw = load_raw_config()
+    section = raw.get("tcpInput", {})
+    if not isinstance(section, dict):
+        section = {}
+    try:
+        return TcpInputSettings.model_validate(section)
+    except ValidationError:
+        return TcpInputSettings()
+
+
+def update_tcp_config(
+    updates: TcpInputConfigUpdate | dict[str, Any],
+) -> bool:
+    """Merge TCP入力設定をconfig.jsonへ保存する."""
+
+    def _to_camel(payload: dict[str, Any]) -> dict[str, Any]:
+        """Serialize tcpInput settings using config.json camelCase keys."""
+        serialized = {
+            "enabled": payload.get("enabled", True),
+            "bindAddress": payload.get("bind_address", "0.0.0.0"),
+            "port": payload.get("port", 46001),
+            "bufferSizeBytes": payload.get("buffer_size_bytes", 262_144),
+        }
+        return serialized
+
+    try:
+        payload = (
+            updates.model_dump(by_alias=True, exclude_none=True)
+            if isinstance(updates, TcpInputConfigUpdate)
+            else TcpInputConfigUpdate.model_validate(updates).model_dump(
+                by_alias=True, exclude_none=True
+            )
+        )
+    except (ValidationError, TypeError, ValueError):
+        return False
+
+    try:
+        existing = load_raw_config()
+        current_section = existing.get("tcpInput", {})
+        if not isinstance(current_section, dict):
+            current_section = {}
+
+        try:
+            current = TcpInputSettings.model_validate(current_section)
+        except ValidationError:
+            current = TcpInputSettings()
+
+        merged = current.model_dump(by_alias=True)
+        merged.update(payload)
+        existing["tcpInput"] = _to_camel(merged)
+
         with open(CONFIG_PATH, "w") as f:
             json.dump(existing, f, indent=2)
         return True
