@@ -96,6 +96,14 @@ def test_eq_settings_translations_consistency():
     assert "/opra/search" in html_ja
 
 
+def test_active_filters_merge_opra_and_corrections():
+    """Active EQ display should merge OPRA and correction filters."""
+    html = render_eq_settings(lang="en")
+
+    assert "filters.push(...data.opra_filters);" in html
+    assert "filters.push(...data.original_filters);" in html
+
+
 def test_eq_profiles_selector_present():
     """Test that EQ profiles selector is present when headphone is selected.
 

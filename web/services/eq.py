@@ -169,6 +169,34 @@ def _parse_filter_line(line: str) -> dict[str, Any] | None:
     return result
 
 
+def _is_close(value: float | None, target: float, tolerance: float) -> bool:
+    """Check if value is within tolerance of target."""
+    return value is not None and abs(value - target) <= tolerance
+
+
+# Modern Target (KB5000_7) correction filters
+MODERN_TARGET_FILTERS = [
+    {"frequency": 5366.0, "gain": 2.8, "q": 1.5},
+    {"frequency": 2350.0, "gain": -0.9, "q": 2.0},
+]
+
+
+def _is_modern_target_filter(parsed_filter: dict[str, Any] | None) -> bool:
+    """Detect whether a parsed filter matches the Modern Target correction band."""
+    if not parsed_filter:
+        return False
+
+    for target in MODERN_TARGET_FILTERS:
+        if (
+            _is_close(parsed_filter["frequency"], target["frequency"], 5.0)
+            and _is_close(parsed_filter["gain"], target["gain"], 0.2)
+            and _is_close(parsed_filter["q"], target["q"], 0.1)
+        ):
+            return True
+
+    return False
+
+
 def validate_eq_profile_content(content: str) -> dict[str, Any]:
     """
     Validate EQ profile content for correctness and safety.
@@ -440,23 +468,17 @@ def parse_eq_profile_content(file_path: Path) -> dict[str, Any]:
     filter_lines = []
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("Preamp:") or stripped.startswith("Filter "):
+        if stripped.startswith("Preamp:") or stripped.startswith("Filter"):
             filter_lines.append(stripped)
 
-    # For OPRA with Modern Target, separate original addition
-    # KB5000_7 correction: Fc 5366 Hz, Gain 2.8 dB, Q 1.5
+    # For OPRA with Modern Target, separate original additions (KB5000_7 correction)
     opra_filters: list[str] = []
     original_filters: list[str] = []
 
     if is_opra and has_modern_target:
-        # Detection patterns for KB5000_7 correction filter
-        fc_pattern = "Fc 5366"
-        gain_pattern = "Gain 2.8"
-        q_pattern = "Q 1.5"
-
         for line in filter_lines:
-            # Check if this is the KB5000_7 correction filter
-            if fc_pattern in line and gain_pattern in line and q_pattern in line:
+            parsed_filter = _parse_filter_line(line)
+            if _is_modern_target_filter(parsed_filter):
                 original_filters.append(line)
             else:
                 opra_filters.append(line)
