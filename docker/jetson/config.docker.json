@@ -20,8 +20,8 @@
   "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_min_phase.bin",
   "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
   "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
-  "eqEnabled": true,
-  "eqProfilePath": "data/EQ/Sample_EQ.txt",
+  "eqEnabled": false,
+  "eqProfilePath": "",
   "partitionedConvolution": {
     "enabled": true,
     "fastPartitionTaps": 32768,

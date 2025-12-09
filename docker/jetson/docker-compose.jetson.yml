@@ -47,11 +47,14 @@ services:
     volumes:
       - ../../data:/opt/magicbox/data:ro
       - ../../data/EQ:/opt/magicbox/data/EQ:rw
+      # Persist runtime config outside the image (survives rebuilds)
+      - magicbox-config:/opt/magicbox/config
 
     # Environment (NVIDIA)
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
 
     # Real-time priority (requires CAP_SYS_NICE)
     cap_add:
@@ -70,3 +73,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  magicbox-config:

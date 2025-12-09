@@ -14,7 +14,11 @@ set -e
 # Paths
 UVICORN="/opt/magicbox/venv/bin/uvicorn"
 DAEMON="/opt/magicbox/bin/gpu_upsampler_alsa"
-CONFIG="/opt/magicbox/config.json"
+CONFIG_DIR="${MAGICBOX_CONFIG_DIR:-/opt/magicbox/config}"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
+DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
+RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
 
 # Colors for logging
 RED='\033[0;31m'
@@ -32,6 +36,31 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
+}
+
+prepare_config() {
+    mkdir -p "$CONFIG_DIR"
+
+    if [[ ! -f "$DEFAULT_CONFIG" ]]; then
+        log_error "Default config not found: $DEFAULT_CONFIG"
+        exit 1
+    fi
+
+    # Optional reset via env
+    local reset_flag
+    reset_flag="$(echo "$RESET_CONFIG" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$reset_flag" == "true" || "$reset_flag" == "1" ]]; then
+        log_warn "Reset requested via MAGICBOX_RESET_CONFIG, restoring default config"
+        cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+    elif [[ ! -s "$CONFIG_FILE" ]]; then
+        log_info "Config not found, seeding default config to $CONFIG_FILE"
+        cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+    else
+        log_info "Using existing config at $CONFIG_FILE"
+    fi
+
+    ln -sf "$CONFIG_FILE" "$CONFIG_SYMLINK"
 }
 
 # Check NVIDIA runtime
@@ -85,8 +114,8 @@ start_web() {
 # Start Audio Daemon
 start_daemon() {
     log_info "Starting Audio Daemon..."
-    if [ ! -f "$CONFIG" ]; then
-        log_error "Config file not found: $CONFIG"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        log_error "Config file not found: $CONFIG_FILE"
         exit 1
     fi
     exec "$DAEMON"
@@ -131,18 +160,24 @@ start_all() {
 
 # Main
 case "${1:-web}" in
+    config-init)
+        prepare_config
+        ;;
     web)
         # Web UI doesn't require GPU, skip nvidia check
+        prepare_config
         start_web
         ;;
     daemon)
         check_nvidia
         check_audio
+        prepare_config
         start_daemon
         ;;
     all)
         check_nvidia
         check_audio
+        prepare_config
         start_all
         ;;
     bash|sh)
