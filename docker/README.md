@@ -29,6 +29,17 @@ docker compose -f jetson_pcm_receiver/docker-compose.jetson.yml down
 ## 既存 Magic Box Jetson コンテナ
 `docker/jetson/` は従来の Magic Box (Web/UI + Audio Daemon) 用です。今回の Issue では新規 `jetson_pcm_receiver/` を優先してください。
 
+### 事前ビルド（Jetson 本体で実行）
+`docker/jetson/Dockerfile.jetson` はホストでビルド済みのバイナリをコピーする前提です。コンテナを立ち上げる前に Jetson 上で以下を実行し、`build/gpu_upsampler_alsa` と `build/gpu_upsampler_daemon` を用意してください。
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=87
+cmake --build build -j$(nproc)
+ls -l build/gpu_upsampler_alsa build/gpu_upsampler_daemon
+```
+
+ビルド手順の詳細は `../docs/setup/build.md` を参照してください。
+
 ## 設定の永続化と初期化（Jetson magicbox）
 - `magicbox-config` ボリューム(`/opt/magicbox/config`)に `config.json` を保存し、コンテナ再ビルドでも設定が維持されます。
 - 初回またはリセット時は `docker/jetson/config.docker.json` の安全な初期値をコピーします（本体イメージ内の `config-default` からシード）。
