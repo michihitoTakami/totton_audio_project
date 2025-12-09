@@ -1,7 +1,9 @@
 #include "alsa_playback.h"
 
+#include "audio/pcm_format_set.h"
 #include "logging.h"
 #include "status_tracker.h"
+#include "xrun_detector.h"
 
 #include <chrono>
 #include <iostream>
@@ -13,8 +15,6 @@ namespace {
 
 constexpr snd_pcm_uframes_t DEFAULT_PERIOD_FRAMES = 512;
 constexpr snd_pcm_uframes_t DEFAULT_BUFFER_FRAMES = DEFAULT_PERIOD_FRAMES * 4;
-constexpr uint32_t BASE_RATES[] = {44100, 48000};
-constexpr uint32_t MULTIPLIERS[] = {1, 2, 4, 8, 16};
 
 snd_pcm_format_t toPcmFormat(uint16_t format) {
     switch (format) {
@@ -43,14 +43,11 @@ std::string formatName(snd_pcm_format_t fmt) {
 }
 
 bool isSupportedRate(uint32_t rate) {
-    for (auto base : BASE_RATES) {
-        for (auto mul : MULTIPLIERS) {
-            if (base * mul == rate) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return PcmFormatSet::isAllowedSampleRate(rate);
+}
+
+std::string supportedRatesForLog() {
+    return PcmFormatSet::allowedSampleRatesString();
 }
 
 }  // namespace
@@ -174,10 +171,13 @@ bool AlsaPlayback::validateCapabilities(uint32_t sampleRate, uint16_t channels,
 }
 
 bool AlsaPlayback::open(uint32_t sampleRate, uint16_t channels, uint16_t format) {
-    if (!isSupportedRate(sampleRate) || channels != 2) {
+    xrunDetector_.reset();
+    xrunStormDetected_ = false;
+    if (!isSupportedRate(sampleRate) || !PcmFormatSet::isAllowedChannels(channels)) {
         logError("[AlsaPlayback] unsupported params (rate=" + std::to_string(sampleRate) +
                  ", channels=" + std::to_string(channels) +
-                 "). Supported rates: 44.1k/48k * {1,2,4,8,16}, channels=2");
+                 "). Supported rates: " + supportedRatesForLog() +
+                 ", channels=" + std::to_string(PcmFormatSet::kRequiredChannels));
         return false;
     }
 
@@ -254,6 +254,12 @@ bool AlsaPlayback::write(const void *data, std::size_t frames) {
             if (!recoverFromXrun()) {
                 return false;
             }
+            const auto now = XrunDetector::Clock::now();
+            if (xrunDetector_.onXrun(now)) {
+                xrunStormDetected_ = true;
+                logError("[AlsaPlayback] XRUN storm detected (>1s continuous); disconnecting");
+                return false;
+            }
             continue;  // retry after recover
         }
         if (written == -EINTR) {
@@ -277,6 +283,7 @@ bool AlsaPlayback::write(const void *data, std::size_t frames) {
         const std::size_t bytesWritten = static_cast<std::size_t>(written) * frameBytes;
         framesLeft -= static_cast<std::size_t>(written);
         ptr += bytesWritten;
+        xrunDetector_.onSuccess(XrunDetector::Clock::now());
     }
 
     return true;
@@ -297,4 +304,8 @@ void AlsaPlayback::close() {
     bufferSize_ = 0;
 
     logInfo("[AlsaPlayback] closed " + device_);
+}
+
+bool AlsaPlayback::wasXrunStorm() const {
+    return xrunStormDetected_;
 }

@@ -1,12 +1,10 @@
 #include "pcm_header.h"
 
+#include "audio/pcm_format_set.h"
+
 #include <cstring>
 
 namespace {
-
-constexpr uint32_t BASE_RATES[] = {44100, 48000};
-constexpr uint32_t MULTIPLIERS[] = {1, 2, 4, 8, 16};
-constexpr uint16_t REQUIRED_CHANNELS = 2;
 
 bool hasValidMagic(const PcmHeader &h) {
     static constexpr char MAGIC[4] = {'P', 'C', 'M', 'A'};
@@ -14,25 +12,11 @@ bool hasValidMagic(const PcmHeader &h) {
 }
 
 bool isSupportedFormat(uint16_t format) {
-    switch (format) {
-    case 1:
-    case 2:
-    case 4:
-        return true;
-    default:
-        return false;
-    }
+    return PcmFormatSet::isAllowedFormat(format);
 }
 
 bool isSupportedRate(uint32_t rate) {
-    for (auto base : BASE_RATES) {
-        for (auto mul : MULTIPLIERS) {
-            if (base * mul == rate) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return PcmFormatSet::isAllowedSampleRate(rate);
 }
 
 }  // namespace
@@ -47,7 +31,7 @@ HeaderValidationResult validateHeader(const PcmHeader &header) {
     if (!isSupportedRate(header.sample_rate)) {
         return {false, "sample_rate unsupported"};
     }
-    if (header.channels != REQUIRED_CHANNELS) {
+    if (!PcmFormatSet::isAllowedChannels(header.channels)) {
         return {false, "channels unsupported"};
     }
     if (!isSupportedFormat(header.format)) {

@@ -38,6 +38,7 @@ class StatusTracker {
     void setClientConnected(bool connected);
     void setStreaming(bool streaming);
     void setHeader(const PcmHeader& header);
+    void clearHeader();
     void updateRingConfig(std::size_t ringFrames, std::size_t watermarkFrames);
     void updateRingBuffer(std::size_t bufferedFrames, std::size_t maxBufferedFrames,
                           std::size_t droppedFrames);

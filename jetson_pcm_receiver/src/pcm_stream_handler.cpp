@@ -106,12 +106,20 @@ bool PcmStreamHandler::handleClient(int fd) {
     PcmHeader header{};
     if (!receiveHeader(fd, header)) {
         logInfo("[PcmStreamHandler] disconnecting client (header recv failure)");
+        if (status_) {
+            status_->setDisconnectReason("header_recv_failed");
+            status_->clearHeader();
+        }
         return false;
     }
 
     auto validation = validateHeader(header);
     if (!validation.ok) {
         logWarn(std::string("[PcmStreamHandler] header invalid: ") + validation.reason);
+        if (status_) {
+            status_->setDisconnectReason(validation.reason);
+            status_->clearHeader();
+        }
         return false;
     }
 
@@ -122,13 +130,29 @@ bool PcmStreamHandler::handleClient(int fd) {
     logInfo("  - device:   " + playback_.device() + " (ALSA)");
 
     const std::size_t sampleBytes = bytesPerSample(header.format);
+    bool disconnectReasonSet = false;
+    auto setDisconnectReason = [&](const std::string &reason) {
+        if (status_) {
+            status_->setDisconnectReason(reason);
+        }
+        disconnectReasonSet = true;
+    };
+
     if (sampleBytes == 0) {
         logError("[PcmStreamHandler] unsupported format code: " + std::to_string(header.format));
+        setDisconnectReason("unsupported_format");
+        if (status_) {
+            status_->clearHeader();
+        }
         return false;
     }
 
     if (!playback_.open(header.sample_rate, header.channels, header.format)) {
         logError("[PcmStreamHandler] failed to open ALSA playback for received header");
+        setDisconnectReason("playback_open_failed");
+        if (status_) {
+            status_->clearHeader();
+        }
         return false;
     }
 
@@ -141,6 +165,7 @@ bool PcmStreamHandler::handleClient(int fd) {
     const std::size_t bytesPerFrame = sampleBytes * header.channels;
     constexpr std::size_t RECV_CHUNK_BYTES = 4096;
     constexpr std::size_t HEADER_BYTES = sizeof(PcmHeader);
+    const std::size_t misalignmentThresholdBytes = bytesPerFrame * 256;
 
     std::vector<std::uint8_t> recvBuf(RECV_CHUNK_BYTES);
     std::vector<std::uint8_t> detectionBuf;
@@ -214,7 +239,12 @@ bool PcmStreamHandler::handleClient(int fd) {
             return true;
         }
         if (!playback_.write(buf.data(), framesAvailable)) {
-            logError("[PcmStreamHandler] ALSA write failed");
+            const bool xrunStorm = playback_.wasXrunStorm();
+            logError(xrunStorm ? "[PcmStreamHandler] XRUN storm detected; disconnecting stream"
+                               : "[PcmStreamHandler] ALSA write failed");
+            if (status_) {
+                status_->setDisconnectReason(xrunStorm ? "xrun_storm" : "playback_error");
+            }
             return false;
         }
         const std::size_t bytesUsed = framesAvailable * bytesPerFrame;
@@ -229,6 +259,8 @@ bool PcmStreamHandler::handleClient(int fd) {
     bool takeoverPending = false;
     int consecutiveTimeouts = 0;
     bool formatChangeDetected = false;
+    std::size_t frameAlignmentRemainder = 0;
+    std::size_t misalignedBytesAccumulated = 0;
     constexpr std::size_t KEEP_BYTES_FOR_DETECTION = HEADER_BYTES - 1;
     while (!stopFlag_.load(std::memory_order_relaxed)) {
         if (connectionMode != ConnectionMode::Single) {
@@ -247,6 +279,7 @@ bool PcmStreamHandler::handleClient(int fd) {
         ssize_t n = ::recv(fd, recvBuf.data(), recvBuf.size(), 0);
         if (n == 0) {
             logInfo("[PcmStreamHandler] client closed connection");
+            setDisconnectReason("client_closed");
             break;
         }
         if (n < 0) {
@@ -256,6 +289,7 @@ bool PcmStreamHandler::handleClient(int fd) {
                     logWarn(
                         "[PcmStreamHandler] recv timeout repeated; disconnecting with cooldown");
                     ok = false;
+                    setDisconnectReason("recv_timeout");
                     break;
                 }
                 logWarn("[PcmStreamHandler] recv timeout; keep waiting");
@@ -263,6 +297,7 @@ bool PcmStreamHandler::handleClient(int fd) {
                 continue;
             } else {
                 std::perror("recv");
+                setDisconnectReason("recv_error");
             }
             ok = false;
             break;
@@ -271,6 +306,27 @@ bool PcmStreamHandler::handleClient(int fd) {
         consecutiveTimeouts = 0;
 
         const std::size_t bytesReceived = static_cast<std::size_t>(n);
+
+        const bool chunkAligned =
+            frameAlignmentRemainder == 0 && (bytesReceived % bytesPerFrame == 0);
+        if (!chunkAligned) {
+            misalignedBytesAccumulated += bytesReceived;
+        } else {
+            misalignedBytesAccumulated = 0;
+        }
+
+        frameAlignmentRemainder = (frameAlignmentRemainder + bytesReceived) % bytesPerFrame;
+        if (misalignedBytesAccumulated >= misalignmentThresholdBytes) {
+            logWarn(
+                "[PcmStreamHandler] payload bytes do not align to frame size from header; "
+                "disconnecting");
+            setDisconnectReason("frame_bytes_mismatch");
+            ok = false;
+            break;
+        }
+        if (frameAlignmentRemainder == 0) {
+            misalignedBytesAccumulated = 0;
+        }
 
         detectionBuf.insert(detectionBuf.end(), recvBuf.begin(), recvBuf.begin() + bytesReceived);
 
@@ -299,9 +355,7 @@ bool PcmStreamHandler::handleClient(int fd) {
                         " format=" + std::to_string(header.format));
                 logWarn("  - incoming: rate=" + std::to_string(candidate.sample_rate) +
                         " format=" + std::to_string(candidate.format));
-                if (status_) {
-                    status_->setDisconnectReason("format_changed");
-                }
+                setDisconnectReason("format_changed");
                 formatChangeDetected = true;
                 break;
             }
@@ -311,6 +365,10 @@ bool PcmStreamHandler::handleClient(int fd) {
         if (formatChangeDetected) {
             ok = false;
             break;
+        }
+
+        if (frameAlignmentRemainder != 0 || misalignedBytesAccumulated > 0) {
+            continue;
         }
 
         if (!formatChangeDetected) {
@@ -324,17 +382,13 @@ bool PcmStreamHandler::handleClient(int fd) {
 
         if (useRing) {
             if (!tryWrite(ringBuf)) {
-                if (status_) {
-                    status_->setDisconnectReason("playback_error");
-                }
+                setDisconnectReason("playback_error");
                 ok = false;
                 break;
             }
         } else {
             if (!tryWrite(staging)) {
-                if (status_) {
-                    status_->setDisconnectReason("playback_error");
-                }
+                setDisconnectReason("playback_error");
                 ok = false;
                 break;
             }
@@ -347,9 +401,15 @@ bool PcmStreamHandler::handleClient(int fd) {
                 std::to_string(maxBufferedFrames) +
                 " dropped_frames=" + std::to_string(droppedFrames));
     }
+    if (!ok && status_ && playback_.wasXrunStorm()) {
+        setDisconnectReason("xrun_storm");
+    }
     if (status_) {
         status_->updateRingBuffer(0, maxBufferedFrames, droppedFrames);
         status_->setStreaming(false);
+        if (disconnectReasonSet) {
+            status_->clearHeader();
+        }
     }
     if (!stopFlag_.load(std::memory_order_relaxed) && !takeoverPending) {
         std::this_thread::sleep_for(std::chrono::milliseconds(acceptCooldownMs));
