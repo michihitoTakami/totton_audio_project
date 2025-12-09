@@ -6,28 +6,6 @@
     "version": "1.0.0"
   },
   "paths": {
-    "/legacy": {
-      "get": {
-        "tags": [
-          "status"
-        ],
-        "summary": "Legacy Root",
-        "description": "Serve the embedded HTML page (legacy).",
-        "operationId": "legacy_root_legacy_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/status": {
       "get": {
         "tags": [
@@ -1762,25 +1740,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin": {
-      "get": {
-        "summary": "Admin Page",
-        "description": "Serve the admin dashboard (legacy).",
-        "operationId": "admin_page_admin_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
                 }
               }
             }

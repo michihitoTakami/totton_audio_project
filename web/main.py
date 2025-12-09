@@ -30,7 +30,6 @@ from .services.tcp_input import (
     TcpTelemetryStore,
     parse_tcp_telemetry,
 )
-from .templates import get_admin_html
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
@@ -205,12 +204,6 @@ async def system_page(lang: str = "en"):
 async def tcp_input_page(lang: str = "en"):
     """Serve the TCP Input page."""
     return render_tcp_input(lang=lang)
-
-
-@app.get("/admin", response_class=HTMLResponse)
-async def admin_page():
-    """Serve the admin dashboard (legacy)."""
-    return get_admin_html()
 
 
 # ============================================================================
