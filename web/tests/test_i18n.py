@@ -72,7 +72,6 @@ class TestDashboardTranslations:
         keys = [
             "dashboard.subtitle",
             "dashboard.daemon",
-            "dashboard.input_mode",
             "dashboard.eq",
             "dashboard.sample_rate",
             "dashboard.status.running",
@@ -89,7 +88,6 @@ class TestDashboardTranslations:
         keys = [
             "dashboard.subtitle",
             "dashboard.daemon",
-            "dashboard.input_mode",
             "dashboard.eq",
             "dashboard.sample_rate",
             "dashboard.status.running",

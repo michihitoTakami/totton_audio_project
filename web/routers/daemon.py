@@ -1,6 +1,5 @@
 """Daemon control endpoints."""
 
-import subprocess
 import time
 from typing import Any
 
@@ -18,12 +17,10 @@ from ..models import (
     DaemonStatus,
     PhaseTypeResponse,
     PhaseTypeUpdateRequest,
-    RewireRequest,
     ZmqPingResponse,
 )
 from ..services import (
     check_daemon_running,
-    check_pipewire_sink,
     get_daemon_client,
     get_daemon_pid,
     load_config,
@@ -84,17 +81,12 @@ async def daemon_status():
     """Get detailed daemon status."""
     running = check_daemon_running()
     pid = get_daemon_pid()
-    pipewire_connected = check_pipewire_sink() if running else False
-    settings = load_config()
-    input_mode = "rtp" if settings.rtp_enabled else "pipewire"
 
     return DaemonStatus(
         running=running,
         pid=pid,
         pid_file=str(PID_FILE_PATH),
         binary_path=str(DAEMON_BINARY),
-        pipewire_connected=pipewire_connected,
-        input_mode=input_mode,
     )
 
 
@@ -283,27 +275,3 @@ async def reload_daemon():
         return ApiResponse(
             success=False, message=f"Failed to start daemon: {start_msg}"
         )
-
-
-@router.post("/rewire", response_model=ApiResponse)
-async def rewire_pipewire(request: RewireRequest):
-    """Rewire PipeWire connections."""
-    try:
-        # Use pw-link to create connection
-        result = subprocess.run(
-            ["pw-link", request.source_node, request.target_node],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return ApiResponse(
-                success=True,
-                message=f"Connected {request.source_node} -> {request.target_node}",
-            )
-        else:
-            return ApiResponse(
-                success=False, message=f"pw-link failed: {result.stderr}"
-            )
-    except (subprocess.SubprocessError, FileNotFoundError) as e:
-        return ApiResponse(success=False, message=f"Failed to rewire: {e}")

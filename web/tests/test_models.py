@@ -7,7 +7,6 @@ from web.models import (
     EqProfileInfo,
     PhaseTypeResponse,
     PhaseTypeUpdateRequest,
-    RtpSessionCreateRequest,
     Settings,
     Status,
 )
@@ -63,9 +62,7 @@ class TestStatus:
         status = Status(settings=settings)
         assert status.daemon_running is False
         assert status.eq_active is False
-        assert status.pipewire_connected is False
         assert status.alsa_connected is False
-        assert status.input_mode == "pipewire"
 
 
 class TestDaemonStatus:
@@ -154,34 +151,6 @@ class TestPhaseType:
         """Test PhaseTypeUpdateRequest model."""
         request = PhaseTypeUpdateRequest(phase_type="linear")
         assert request.phase_type == "linear"
-
-
-class TestRtpSessionCreate:
-    """Test RtpSessionCreateRequest model."""
-
-    def test_rtp_session_create_default_values(self):
-        """Test RtpSessionCreateRequest with default values."""
-        session = RtpSessionCreateRequest(session_id="test-session")
-        assert session.session_id == "test-session"
-        assert session.endpoint.port == 6000
-        assert session.format.sample_rate == 48000
-        assert session.format.channels == 2
-
-    def test_rtp_session_create_custom_values(self):
-        """Test RtpSessionCreateRequest with custom values."""
-        from web.models import RtpEndpointSettings, RtpFormatSettings
-
-        endpoint = RtpEndpointSettings(port=7000, multicast=True)
-        format_settings = RtpFormatSettings(sample_rate=44100, channels=2)
-
-        session = RtpSessionCreateRequest(
-            session_id="custom-session",
-            endpoint=endpoint,
-            format=format_settings,
-        )
-        assert session.session_id == "custom-session"
-        assert session.endpoint.port == 7000
-        assert session.format.sample_rate == 44100
 
 
 class TestModelSerialization:

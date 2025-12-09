@@ -18,19 +18,15 @@ from .routers import (
     dac_router,
     daemon_router,
     eq_router,
-    input_mode_router,
     opra_router,
     output_mode_router,
     partitioned_router,
-    rtp_router,
     status_router,
 )
-from .services import telemetry_poller
-from .templates import get_admin_html, get_rtp_sessions_html
+from .templates import get_admin_html
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
-    render_rtp_management,
     render_system,
 )
 
@@ -61,14 +57,6 @@ tags_metadata = [
         "description": "Crossfeed (HRTF-based headphone virtualization) control",
     },
     {
-        "name": "rtp",
-        "description": "RTP session lifecycle management and telemetry",
-    },
-    {
-        "name": "input-mode",
-        "description": "Switch between PipeWire and RTP input sources",
-    },
-    {
         "name": "output",
         "description": "Output mode selection and device preferences",
     },
@@ -81,12 +69,10 @@ tags_metadata = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage RTP telemetry poller lifecycle."""
-    # Startup: start telemetry polling
-    await telemetry_poller.start()
+    """Manage application lifecycle."""
+    # Startup
     yield
-    # Shutdown: stop telemetry polling
-    await telemetry_poller.stop()
+    # Shutdown
 
 
 app = FastAPI(
@@ -129,9 +115,7 @@ app.include_router(eq_router)
 app.include_router(opra_router)
 app.include_router(dac_router)
 app.include_router(crossfeed_router)
-app.include_router(rtp_router)
 app.include_router(partitioned_router)
-app.include_router(input_mode_router)
 app.include_router(output_mode_router)
 
 
@@ -167,12 +151,6 @@ async def eq_page(lang: str = "en"):
     return render_eq_settings(lang=lang)
 
 
-@app.get("/rtp", response_class=HTMLResponse)
-async def rtp_management_page(lang: str = "en"):
-    """Serve the RTP Management page."""
-    return render_rtp_management(lang=lang)
-
-
 @app.get("/system", response_class=HTMLResponse)
 async def system_page(lang: str = "en"):
     """Serve the System page."""
@@ -183,12 +161,6 @@ async def system_page(lang: str = "en"):
 async def admin_page():
     """Serve the admin dashboard (legacy)."""
     return get_admin_html()
-
-
-@app.get("/rtp-sessions", response_class=HTMLResponse)
-async def rtp_sessions_page():
-    """Serve the RTP session management page (legacy)."""
-    return get_rtp_sessions_html()
 
 
 # ============================================================================

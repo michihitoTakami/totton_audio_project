@@ -52,10 +52,5 @@
     "consoleOutput": true,
     "coloredOutput": true
   },
-  "rtp": {
-    "enabled": false,
-    "autoStart": false,
-    "_comment": "RTP入力は削除予定。入力レート/フォーマットはTCP経由でのヘッダ検出に委ねます。"
-  },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }

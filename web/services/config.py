@@ -13,7 +13,6 @@ from ..constants import (
 )
 from ..models import (
     CrossfeedSettings,
-    InputMode,
     PartitionedConvolutionSettings,
     Settings,
 )
@@ -28,15 +27,6 @@ def _build_profile_path(profile_name: str | None) -> str | None:
     if not profile_name:
         return None
     return str(EQ_PROFILES_DIR / f"{profile_name}.txt")
-
-
-def _resolve_input_mode(config_data: dict[str, Any]) -> InputMode:
-    """Return input mode string based on RTP section."""
-    rtp_section = config_data.get("rtp", {})
-    enabled = False
-    if isinstance(rtp_section, dict):
-        enabled = bool(rtp_section.get("enabled"))
-    return "rtp" if enabled else "pipewire"
 
 
 def _normalize_output_mode(mode: str | None) -> str:
@@ -122,8 +112,6 @@ def load_config() -> Settings:
                 hrtf_path=crossfeed_data.get("hrtfPath", "data/crossfeed/hrtf/"),
             )
 
-            input_mode = _resolve_input_mode(data)
-
             preferred_device = _extract_preferred_device(data)
 
             return Settings(
@@ -135,7 +123,6 @@ def load_config() -> Settings:
                 input_rate=data.get("inputRate", 44100),
                 output_rate=data.get("outputRate", 352800),
                 crossfeed=crossfeed,
-                rtp_enabled=input_mode == "rtp",
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # ValueError catches Pydantic validation errors (e.g., invalid head_size)
@@ -261,37 +248,7 @@ def save_config(settings: Settings) -> bool:
             "headSize": settings.crossfeed.head_size,
             "hrtfPath": settings.crossfeed.hrtf_path,
         }
-        # Preserve RTP settings but update enabled flag when provided
-        if settings.rtp_enabled:
-            rtp_section = existing.get("rtp", {})
-            if not isinstance(rtp_section, dict):
-                rtp_section = {}
-            rtp_section["enabled"] = True
-            existing["rtp"] = rtp_section
 
-        with open(CONFIG_PATH, "w") as f:
-            json.dump(existing, f, indent=2)
-        return True
-    except IOError:
-        return False
-
-
-def get_input_mode() -> InputMode:
-    """Read current input mode from config.json."""
-    raw = load_raw_config()
-    return _resolve_input_mode(raw)
-
-
-def save_input_mode(mode: InputMode) -> bool:
-    """Persist input mode (PipeWire or RTP) to config.json."""
-    normalized: InputMode = "rtp" if mode == "rtp" else "pipewire"
-    try:
-        existing = load_raw_config()
-        rtp_section = existing.get("rtp", {})
-        if not isinstance(rtp_section, dict):
-            rtp_section = {}
-        rtp_section["enabled"] = normalized == "rtp"
-        existing["rtp"] = rtp_section
         with open(CONFIG_PATH, "w") as f:
             json.dump(existing, f, indent=2)
         return True
@@ -334,40 +291,6 @@ def save_output_mode(mode: str, preferred_device: str) -> bool:
         output_section["mode"] = normalized_mode
         options_section["usb"]["preferredDevice"] = device
         existing["alsaDevice"] = device
-        with open(CONFIG_PATH, "w") as f:
-            json.dump(existing, f, indent=2)
-        return True
-    except IOError:
-        return False
-
-
-def update_rtp_config(updates: dict[str, Any]) -> bool:
-    """Update RTP configuration in config.json.
-
-    Args:
-        updates: Dictionary containing RTP config updates
-                (port, bind_address, payload_type, target_latency_ms)
-
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        existing = load_raw_config()
-        rtp_section = existing.get("rtp", {})
-        if not isinstance(rtp_section, dict):
-            rtp_section = {}
-
-        # Update only provided fields (camelCase for JSON)
-        if "port" in updates:
-            rtp_section["port"] = updates["port"]
-        if "bind_address" in updates:
-            rtp_section["bindAddress"] = updates["bind_address"]
-        if "payload_type" in updates:
-            rtp_section["payloadType"] = updates["payload_type"]
-        if "target_latency_ms" in updates:
-            rtp_section["targetLatencyMs"] = updates["target_latency_ms"]
-
-        existing["rtp"] = rtp_section
         with open(CONFIG_PATH, "w") as f:
             json.dump(existing, f, indent=2)
         return True

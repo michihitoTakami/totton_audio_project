@@ -56,24 +56,6 @@ def render_eq_settings(lang: str = "en", current_page: str = "eq") -> str:
     )
 
 
-def render_rtp_management(lang: str = "en", current_page: str = "rtp") -> str:
-    """
-    Render the RTP Management page.
-
-    Args:
-        lang: Language code ("en" or "ja")
-        current_page: Current page name for sidebar highlighting
-
-    Returns:
-        Rendered HTML string
-    """
-    template = env.get_template("pages/rtp_management.html")
-    return template.render(
-        t=get_translations(lang),
-        current_page=current_page,
-    )
-
-
 def render_system(lang: str = "en", current_page: str = "system") -> str:
     """
     Render the System page.

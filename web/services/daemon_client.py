@@ -483,28 +483,6 @@ class DaemonClient:
         params = {"head_size": head_size.lower()}
         return self.send_json_command_v2("CROSSFEED_SET_SIZE", params)
 
-    # ========== RTP Session Commands (#359) ==========
-
-    def rtp_start_session(self, params: dict[str, Any]) -> DaemonResponse:
-        """Start an RTP session with the provided SessionConfig parameters."""
-        return self.send_json_command_v2("RTP_START_SESSION", params)
-
-    def rtp_stop_session(self, session_id: str) -> DaemonResponse:
-        """Stop a running RTP session."""
-        return self.send_json_command_v2("RTP_STOP_SESSION", {"session_id": session_id})
-
-    def rtp_list_sessions(self) -> DaemonResponse:
-        """List current RTP sessions and telemetry."""
-        return self.send_json_command_v2("RTP_LIST_SESSIONS")
-
-    def rtp_get_session(self, session_id: str) -> DaemonResponse:
-        """Retrieve metrics for a single RTP session."""
-        return self.send_json_command_v2("RTP_GET_SESSION", {"session_id": session_id})
-
-    def rtp_discover_streams(self) -> DaemonResponse:
-        """Trigger a short-lived scan for available RTP senders."""
-        return self.send_json_command_v2("RTP_DISCOVER_STREAMS")
-
 
 def get_daemon_client(
     timeout_ms: int = 3000, endpoint: str | None = None

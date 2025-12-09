@@ -20,7 +20,6 @@
   "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_min_phase.bin",
   "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
   "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
-  "pipewireEnabled": false,
   "eqEnabled": true,
   "eqProfilePath": "data/EQ/Sample_EQ.txt",
   "partitionedConvolution": {
@@ -51,11 +50,6 @@
     "maxBackups": 5,
     "consoleOutput": true,
     "coloredOutput": true
-  },
-  "rtp": {
-    "enabled": false,
-    "autoStart": false,
-    "_comment": "RTP入力は削除予定。TCP (jetson_pcm_receiver) 経由でヘッダからレート/フォーマットを自動検出するため、ここで固定値を設定しません。"
   },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }

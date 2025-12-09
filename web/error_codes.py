@@ -41,8 +41,6 @@ class ErrorCode(str, Enum):
     AUDIO_FILTER_NOT_FOUND = "AUDIO_FILTER_NOT_FOUND"
     AUDIO_BUFFER_OVERFLOW = "AUDIO_BUFFER_OVERFLOW"
     AUDIO_XRUN_DETECTED = "AUDIO_XRUN_DETECTED"
-    AUDIO_RTP_SOCKET_ERROR = "AUDIO_RTP_SOCKET_ERROR"
-    AUDIO_RTP_SESSION_NOT_FOUND = "AUDIO_RTP_SESSION_NOT_FOUND"
 
     # DAC/ALSA (0x2000)
     DAC_DEVICE_NOT_FOUND = "DAC_DEVICE_NOT_FOUND"
@@ -114,12 +112,6 @@ ERROR_MAPPINGS: dict[ErrorCode, ErrorMapping] = {
     ),
     ErrorCode.AUDIO_XRUN_DETECTED: ErrorMapping(
         500, ErrorCategory.AUDIO_PROCESSING, "Audio XRUN Detected"
-    ),
-    ErrorCode.AUDIO_RTP_SOCKET_ERROR: ErrorMapping(
-        500, ErrorCategory.AUDIO_PROCESSING, "RTP Socket Error"
-    ),
-    ErrorCode.AUDIO_RTP_SESSION_NOT_FOUND: ErrorMapping(
-        404, ErrorCategory.AUDIO_PROCESSING, "RTP Session Not Found"
     ),
     # DAC/ALSA (6 codes)
     ErrorCode.DAC_DEVICE_NOT_FOUND: ErrorMapping(

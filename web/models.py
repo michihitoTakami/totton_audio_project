@@ -1,9 +1,5 @@
 """Pydantic models for the GPU Upsampler Web API."""
 
-import base64
-import binascii
-import ipaddress
-import re
 from typing import Annotated, Any, Literal, Optional
 
 from pydantic import (
@@ -14,7 +10,6 @@ from pydantic import (
     StringConstraints,
     conint,
     constr,
-    field_validator,
     model_validator,
 )
 
@@ -52,7 +47,6 @@ class CrossfeedSettingsUpdate(BaseModel):
     hrtf_path: Optional[str] = None
 
 
-InputMode = Literal["pipewire", "rtp"]
 OutputModeName = Literal["usb"]
 
 
@@ -67,7 +61,6 @@ class Settings(BaseModel):
     input_rate: int = 44100
     output_rate: int = 352800
     crossfeed: CrossfeedSettings = Field(default_factory=CrossfeedSettings)
-    rtp_enabled: bool = False
 
 
 class SettingsUpdate(BaseModel):
@@ -166,7 +159,6 @@ class Status(BaseModel):
     """System status response model."""
 
     settings: Settings
-    pipewire_connected: bool = False
     alsa_connected: bool = False
     clip_count: int = 0
     total_samples: int = 0
@@ -176,9 +168,6 @@ class Status(BaseModel):
     input_rate: int = 0
     output_rate: int = 0
     peaks: PeakLevels = Field(default_factory=PeakLevels)
-    input_mode: InputMode = Field(
-        default="pipewire", description="Current input mode reported by config.json"
-    )
 
 
 class DaemonStatus(BaseModel):
@@ -188,10 +177,6 @@ class DaemonStatus(BaseModel):
     pid: Optional[int] = None
     pid_file: str
     binary_path: str
-    pipewire_connected: bool = False
-    input_mode: InputMode = Field(
-        default="pipewire", description="Current input mode reported by config.json"
-    )
 
 
 class ZmqPingResponse(BaseModel):
@@ -482,13 +467,6 @@ class OpraEqResponse(BaseModel):
 # ============================================================================
 
 
-class RewireRequest(BaseModel):
-    """Request model for rewiring PipeWire connections."""
-
-    source_node: str
-    target_node: str
-
-
 class DacSelectRequest(BaseModel):
     """Request model for runtime DAC selection."""
 
@@ -508,32 +486,6 @@ class ApiResponse(BaseModel):
     message: str
     data: Optional[dict[str, Any]] = None
     restart_required: bool = False
-
-
-# ============================================================================
-# Input Mode Models
-# ============================================================================
-
-
-class InputModeSwitchRequest(BaseModel):
-    """Request body for switching between PipeWire and RTP modes."""
-
-    mode: InputMode = Field(
-        description="Target mode: 'pipewire' to use local PipeWire input or 'rtp' for network input"
-    )
-
-
-class InputModeSwitchResponse(BaseModel):
-    """Response returned after attempting to switch input modes."""
-
-    success: bool
-    current_mode: InputMode = Field(
-        description="Mode currently active after the switch"
-    )
-    restart_required: bool = Field(
-        default=False, description="True when the daemon was restarted to apply changes"
-    )
-    message: str
 
 
 # ============================================================================
@@ -606,447 +558,6 @@ class ErrorResponse(BaseModel):
     inner_error: Optional[InnerError] = Field(
         default=None, description="Nested error details from lower layers"
     )
-
-
-# ============================================================================
-# RTP Models
-# ============================================================================
-
-
-def _validate_ipv4_literal(value: Optional[str]) -> Optional[str]:
-    """Validate IPv4 literal strings (or return None)."""
-    if value is None:
-        return None
-    stripped = value.strip()
-    if not stripped:
-        return None
-    try:
-        ipaddress.IPv4Address(stripped)
-    except ipaddress.AddressValueError as exc:  # pragma: no cover - defensive
-        raise ValueError("Must be an IPv4 literal") from exc
-    return stripped
-
-
-class RtpEndpointSettings(BaseModel):
-    """Networking options for an RTP session."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    bind_address: str = Field(
-        default="0.0.0.0",
-        description="IPv4 address to bind for RTP reception",
-    )
-    port: int = Field(
-        default=6000, description="UDP port for RTP payloads", ge=1024, le=65535
-    )
-    source_host: Optional[str] = Field(
-        default=None,
-        description="Optional IPv4 address filter for incoming packets",
-    )
-    multicast: bool = Field(default=False, description="Join multicast group")
-    multicast_group: Optional[str] = Field(
-        default=None, description="Multicast group address when multicast is enabled"
-    )
-    interface: Optional[str] = Field(
-        default=None,
-        description="Interface name or IPv4 address used for multicast subscription",
-    )
-    ttl: int = Field(
-        default=32, description="TTL for multicast/QoS traffic", ge=1, le=255
-    )
-    dscp: int = Field(
-        default=-1, description="DiffServ code point (-1 to disable)", ge=-1, le=63
-    )
-
-    @field_validator("bind_address", "source_host", "multicast_group")
-    @classmethod
-    def _validate_ipv4(cls, value: Optional[str]) -> Optional[str]:
-        return _validate_ipv4_literal(value)
-
-
-class RtpFormatSettings(BaseModel):
-    """PCM payload description for RTP session."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    sample_rate: int = Field(default=48000, description="Samples per second", gt=0)
-    channels: int = Field(default=2, description="Channel count", ge=1, le=8)
-    bits_per_sample: Literal[16, 24, 32] = Field(
-        default=24, description="PCM word size"
-    )
-    payload_type: int = Field(
-        default=97, description="Dynamic RTP payload type", ge=0, le=127
-    )
-    big_endian: bool = Field(default=True, description="Endianness of PCM payload")
-    signed_samples: bool = Field(default=True, description="True if PCM is signed")
-
-
-class RtpSyncSettings(BaseModel):
-    """Latency and synchronization settings."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    target_latency_ms: int = Field(
-        default=5, description="Target buffering latency in milliseconds", ge=1, le=5000
-    )
-    watchdog_timeout_ms: int = Field(
-        default=500,
-        description="Watchdog timeout used for gap detection",
-        ge=100,
-        le=60000,
-    )
-    telemetry_interval_ms: int = Field(
-        default=1000, description="Interval for telemetry emission", ge=100, le=60000
-    )
-    enable_ptp: bool = Field(default=False, description="Enable PTP clock tracking")
-    ptp_interface: Optional[str] = Field(
-        default=None, description="PTP network interface name"
-    )
-    ptp_domain: int = Field(
-        default=0,
-        description="PTP domain number (defaults to 0)",
-    )
-
-
-class RtpRtcpSettings(BaseModel):
-    """RTCP monitoring options."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enable: bool = Field(default=True, description="Enable RTCP listener")
-    port: Optional[int] = Field(
-        default=None,
-        description="Explicit RTCP port (defaults to RTP port + 1)",
-        ge=1024,
-        le=65535,
-    )
-
-
-class RtpAdvancedSettings(BaseModel):
-    """Advanced buffer tuning for RTP reception."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    socket_buffer_bytes: int = Field(
-        default=1 << 20, description="SO_RCVBUF size", ge=65536, le=4 * 1024 * 1024
-    )
-    mtu_bytes: int = Field(
-        default=1500, description="Expected MTU for incoming packets", ge=256, le=9000
-    )
-
-
-class RtpSecurityConfig(BaseModel):
-    """Optional SRTP parameters for SDP generation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    crypto_suite: Literal["AES_CM_128_HMAC_SHA1_80", "AES_CM_128_HMAC_SHA1_32"] = Field(
-        default="AES_CM_128_HMAC_SHA1_80", description="SRTP crypto suite"
-    )
-    key_base64: str = Field(
-        min_length=40,
-        description="Base64-encoded master key (per RFC 4568)",
-    )
-
-    @field_validator("key_base64")
-    @classmethod
-    def _validate_key(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9+/=]+", value):
-            raise ValueError("Key must be base64 characters only")
-        try:
-            decoded = base64.b64decode(value, validate=True)
-        except (ValueError, binascii.Error) as exc:  # pragma: no cover - defensive
-            raise ValueError("Invalid base64 SRTP key") from exc
-        if len(decoded) < 16:
-            raise ValueError("SRTP key must be at least 128 bits")
-        return value
-
-
-class RtpSdpConfig(BaseModel):
-    """Optional SDP hints for RTP session creation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    body: Optional[str] = Field(
-        default=None,
-        description="Raw SDP string (overrides auto-generation when provided)",
-    )
-    session_name: str = Field(
-        default="MagicBox RTP Session",
-        description="Session name for auto-generated SDP",
-    )
-    connection_address: Optional[str] = Field(
-        default=None,
-        description="Override connection address for auto-generated SDP",
-    )
-    media_format: Optional[str] = Field(
-        default=None,
-        description="Override rtpmap payload descriptor (e.g., 'L24/48000/2')",
-    )
-    media_clock: Optional[str] = Field(
-        default=None,
-        description="Optional mediaclk attribute for deterministic streams",
-    )
-
-    @field_validator("connection_address")
-    @classmethod
-    def _validate_conn_addr(cls, value: Optional[str]) -> Optional[str]:
-        return _validate_ipv4_literal(value)
-
-
-class RtpSessionCreateRequest(BaseModel):
-    """Request body for creating a new RTP session."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    session_id: str = Field(
-        description="Unique identifier for the RTP session",
-        min_length=1,
-        max_length=64,
-        pattern=r"^[A-Za-z0-9._-]+$",
-    )
-    endpoint: RtpEndpointSettings = Field(
-        default_factory=RtpEndpointSettings,
-        description="Endpoint and multicast configuration",
-    )
-    format: RtpFormatSettings = Field(
-        default_factory=RtpFormatSettings,
-        description="PCM payload description",
-    )
-    sync: RtpSyncSettings = Field(
-        default_factory=RtpSyncSettings, description="Latency / sync parameters"
-    )
-    rtcp: RtpRtcpSettings = Field(
-        default_factory=RtpRtcpSettings, description="RTCP monitoring configuration"
-    )
-    advanced: RtpAdvancedSettings = Field(
-        default_factory=RtpAdvancedSettings,
-        description="Advanced socket / MTU settings",
-    )
-    sdp: Optional[RtpSdpConfig] = Field(
-        default=None, description="Optional SDP override"
-    )
-    security: Optional[RtpSecurityConfig] = Field(
-        default=None, description="Optional SRTP settings"
-    )
-
-
-class RtpSessionConfigSnapshot(BaseModel):
-    """Session configuration echoed by the daemon."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    session_id: str
-    bind_address: str
-    port: int
-    source_host: Optional[str] = None
-    multicast: Optional[bool] = None
-    multicast_group: Optional[str] = None
-    interface: Optional[str] = None
-    ttl: Optional[int] = None
-    dscp: Optional[int] = None
-    sample_rate: Optional[int] = None
-    channels: Optional[int] = None
-    bits_per_sample: Optional[int] = None
-    big_endian: Optional[bool] = None
-    signed: Optional[bool] = None
-    payload_type: Optional[int] = None
-    socket_buffer_bytes: Optional[int] = None
-    mtu_bytes: Optional[int] = None
-    target_latency_ms: Optional[int] = None
-    watchdog_timeout_ms: Optional[int] = None
-    telemetry_interval_ms: Optional[int] = None
-    enable_rtcp: Optional[bool] = None
-    rtcp_port: Optional[int] = None
-    enable_ptp: Optional[bool] = None
-    ptp_interface: Optional[str] = None
-    ptp_domain: Optional[int] = None
-    sdp: Optional[str] = None
-
-    @classmethod
-    def from_daemon(cls, payload: dict[str, Any]) -> "RtpSessionConfigSnapshot":
-        return cls(**payload)
-
-
-class RtpSessionMetrics(BaseModel):
-    """Live RTP telemetry reported by the daemon."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    session_id: str
-    bind_address: Optional[str] = None
-    port: Optional[int] = None
-    source_host: Optional[str] = None
-    multicast: Optional[bool] = None
-    multicast_group: Optional[str] = None
-    interface: Optional[str] = None
-    payload_type: Optional[int] = None
-    channels: Optional[int] = None
-    bits_per_sample: Optional[int] = None
-    big_endian: Optional[bool] = None
-    signed: Optional[bool] = None
-    enable_rtcp: Optional[bool] = None
-    rtcp_port: Optional[int] = None
-    enable_ptp: Optional[bool] = None
-    target_latency_ms: Optional[int] = None
-    watchdog_timeout_ms: Optional[int] = None
-    telemetry_interval_ms: Optional[int] = None
-    auto_start: bool = False
-    ssrc: Optional[int] = None
-    ssrc_locked: bool = False
-    packets_received: int = 0
-    packets_dropped: int = 0
-    sequence_resets: int = 0
-    bytes_received: int = 0
-    rtcp_packets: int = 0
-    late_packets: int = 0
-    avg_transit_usec: float = 0.0
-    network_jitter_usec: float = 0.0
-    ptp_offset_ns: float = 0.0
-    ptp_mean_path_ns: float = 0.0
-    ptp_locked: bool = False
-    sample_rate: Optional[int] = None
-    last_rtp_timestamp: Optional[int] = None
-    last_packet_unix_ms: Optional[int] = None
-    updated_at_unix_ms: Optional[int] = Field(
-        default=None, description="Timestamp (ms) when telemetry was sampled"
-    )
-
-    @classmethod
-    def from_daemon(
-        cls, payload: dict[str, Any], *, polled_at_unix_ms: Optional[int] = None
-    ) -> "RtpSessionMetrics":
-        data = payload.copy()
-        if polled_at_unix_ms is not None:
-            data.setdefault("updated_at_unix_ms", polled_at_unix_ms)
-        return cls(**data)
-
-
-class RtpSessionCreateResponse(BaseModel):
-    """Response returned when an RTP session is created."""
-
-    success: bool = Field(default=True, description="True when the session is created")
-    message: str = Field(default="RTP session started")
-    session: RtpSessionConfigSnapshot = Field(
-        description="Normalized SessionConfig echoed by the daemon"
-    )
-
-
-class RtpSessionDetailResponse(BaseModel):
-    """Response for GET /api/rtp/sessions/{id}."""
-
-    session: RtpSessionMetrics
-    polled_at_unix_ms: Optional[int] = None
-
-
-class RtpSessionListResponse(BaseModel):
-    """Response for GET /api/rtp/sessions."""
-
-    sessions: list[RtpSessionMetrics]
-    polled_at_unix_ms: Optional[int] = None
-
-
-class RtpDiscoveryStream(BaseModel):
-    """Single RTP stream candidate discovered by the daemon."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    session_id: str = Field(description="Suggested session identifier")
-    display_name: str = Field(description="Human-friendly label for the stream")
-    source_host: Optional[str] = Field(
-        default=None, description="Source IPv4 host of the RTP sender"
-    )
-    port: int = Field(
-        description="RTP payload port reported by the scanner", ge=1024, le=65535
-    )
-    status: str = Field(
-        default="unknown",
-        description="Scanner-reported status such as 'active', 'idle', or diagnostic text",
-    )
-    existing_session: bool = Field(
-        default=False,
-        description="True when this candidate already has an active RTP session",
-    )
-    sample_rate: Optional[int] = Field(
-        default=None, description="Sample rate hint to pre-fill new RTP sessions"
-    )
-    channels: Optional[int] = Field(
-        default=None, description="Channel count hint to pre-fill new RTP sessions"
-    )
-    payload_type: Optional[int] = Field(
-        default=None, description="Dynamic payload type hint from scanner"
-    )
-    multicast: bool = Field(
-        default=False,
-        description="True if the stream is multicast and requires group subscription",
-    )
-    multicast_group: Optional[str] = Field(
-        default=None, description="Multicast group address when multicast is enabled"
-    )
-    bind_address: Optional[str] = Field(
-        default=None,
-        description="Suggested local bind address for receiving the stream",
-    )
-    last_seen_unix_ms: Optional[int] = Field(
-        default=None,
-        description="Unix timestamp (ms) when the stream was last observed",
-    )
-    latency_ms: Optional[int] = Field(
-        default=None, description="Estimated transport latency reported by scanner"
-    )
-
-    @field_validator("source_host", "multicast_group", "bind_address")
-    @classmethod
-    def _validate_ipv4(cls, value: Optional[str]) -> Optional[str]:
-        return _validate_ipv4_literal(value)
-
-
-class RtpDiscoveryResponse(BaseModel):
-    """Response payload for RTP discovery scans."""
-
-    streams: list[RtpDiscoveryStream] = Field(
-        default_factory=list, description="List of discovered RTP senders"
-    )
-    scanned_at_unix_ms: Optional[int] = Field(
-        default=None, description="Unix timestamp (ms) when the scan completed"
-    )
-    duration_ms: Optional[int] = Field(
-        default=None, description="Approximate scan duration in milliseconds"
-    )
-
-
-class RtpConfigUpdate(BaseModel):
-    """RTP configuration update request model."""
-
-    port: Optional[int] = Field(
-        default=None,
-        ge=1024,
-        le=65535,
-        description="Listening port for RTP streams (1024-65535)",
-    )
-    bind_address: Optional[str] = Field(
-        default=None,
-        description="Bind address for RTP receiver (IPv4 address or '0.0.0.0')",
-    )
-    payload_type: Optional[int] = Field(
-        default=None,
-        ge=96,
-        le=127,
-        description="Dynamic payload type (96-127)",
-    )
-    target_latency_ms: Optional[int] = Field(
-        default=None,
-        ge=10,
-        le=1000,
-        description="Target latency in milliseconds (10-1000ms)",
-    )
-
-    @field_validator("bind_address")
-    @classmethod
-    def _validate_bind_address(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None:
-            return _validate_ipv4_literal(value)
-        return value
 
 
 # ============================================================================

@@ -287,10 +287,6 @@ def get_admin_html() -> str:
                 <div class="label">PID</div>
                 <div class="value">-</div>
             </div>
-            <div class="status-item" id="pwStatus">
-                <div class="label">PipeWire</div>
-                <div class="value">-</div>
-            </div>
         </div>
         <div class="btn-row">
             <button class="btn-success" id="startBtn">Start</button>
@@ -551,7 +547,6 @@ def get_admin_html() -> str:
                 document.getElementById('pidStatus').querySelector('.value').textContent = daemon.pid || '-';
                 document.getElementById('pidStatus').classList.remove('ok', 'error');
                 document.getElementById('pidStatus').classList.add(daemon.pid ? 'ok' : 'error');
-                setStatus('pwStatus', daemon.pipewire_connected ? 'OK' : 'N/A', daemon.pipewire_connected);
 
                 // Stats - clip_rate is now a ratio (0-1), multiply by 100 for percentage
                 const clipPct = (status.clip_rate * 100).toFixed(4);
