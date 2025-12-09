@@ -7,9 +7,13 @@ import inspect
 import logging
 import os
 import time
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 
-from ..models import TcpInputStreamFormat, TcpInputTelemetry
+from ..models import (
+    TcpConnectionMode,
+    TcpInputStreamFormat,
+    TcpInputTelemetry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +65,13 @@ def _normalize_format(value: Any) -> str:
     return "unknown"
 
 
-def _normalize_connection_mode(value: Any) -> str:
+def _normalize_connection_mode(value: Any) -> TcpConnectionMode:
     """Normalize connection mode to supported literals."""
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"single", "takeover", "priority"}:
-            return normalized
-    return "single"
+            return cast(TcpConnectionMode, normalized)
+    return cast(TcpConnectionMode, "single")
 
 
 def _parse_header(raw: Any) -> TcpInputStreamFormat | None:
