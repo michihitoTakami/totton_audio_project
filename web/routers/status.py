@@ -3,7 +3,6 @@
 import asyncio
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
 
 from ..constants import EQ_PROFILES_DIR
 from ..models import ApiResponse, DevicesResponse, SettingsUpdate, Status
@@ -15,15 +14,8 @@ from ..services import (
     load_stats,
     save_config,
 )
-from ..templates import get_embedded_html
 
 router = APIRouter(tags=["status"])
-
-
-@router.get("/legacy", response_class=HTMLResponse)
-async def legacy_root():
-    """Serve the embedded HTML page (legacy)."""
-    return get_embedded_html()
 
 
 @router.get("/status", response_model=Status)

@@ -1,10 +1,5 @@
 """
-Tests for the admin UI HTML template (Issue #354).
-
-Focus:
-- `/admin` renders successfully
-- Partitioned convolution controls exist in the DOM
-- JavaScript references the new API helpers
+Regression tests to ensure legacy/admin pages stay removed (Issue #718).
 """
 
 import sys
@@ -25,30 +20,13 @@ def client():
     return TestClient(app, raise_server_exceptions=False)
 
 
-class TestAdminPartitionUi:
-    """Partitioned convolution UI regression tests."""
+def test_admin_route_removed(client):
+    """`/admin` should be gone."""
+    response = client.get("/admin")
+    assert response.status_code == 404
 
-    def test_partition_section_exists(self, client):
-        """Section heading and form fields should be rendered."""
-        response = client.get("/admin")
-        assert response.status_code == 200
-        html = response.text
-        assert "低遅延パーティション" in html
-        for element_id in [
-            "partitionToggle",
-            "fastPartitionTaps",
-            "minPartitionTaps",
-            "maxPartitions",
-            "tailFftMultiple",
-            "partitionSaveBtn",
-            "partitionResetBtn",
-        ]:
-            assert f'id="{element_id}"' in html
 
-    def test_javascript_references_partition_api(self, client):
-        """Client-side helpers should call the new API endpoints."""
-        html = client.get("/admin").text
-        assert "/partitioned-convolution" in html
-        assert "fetchPartitionSettings" in html
-        assert "savePartitionSettings" in html
-
+def test_legacy_route_removed(client):
+    """`/legacy` should be gone."""
+    response = client.get("/legacy")
+    assert response.status_code == 404
