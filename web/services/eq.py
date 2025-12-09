@@ -177,14 +177,13 @@ def _is_close(value: float | None, target: float, tolerance: float) -> bool:
 
 
 # Modern Target (KB5000_7) correction filters (strict match)
-MODERN_TARGET_FILTERS = [
-    {
-        "frequency": float(MODERN_TARGET_CORRECTION_BAND["frequency"]),
-        "gain": float(MODERN_TARGET_CORRECTION_BAND["gain_db"]),
-        "q": float(MODERN_TARGET_CORRECTION_BAND["q"]),
-    },
-    {"frequency": 2350.0, "gain": -0.9, "q": 2.0},
-]
+MODERN_TARGET_PRIMARY = {
+    "frequency": float(MODERN_TARGET_CORRECTION_BAND["frequency"]),
+    "gain": float(MODERN_TARGET_CORRECTION_BAND["gain_db"]),
+    "q": float(MODERN_TARGET_CORRECTION_BAND["q"]),
+}
+MODERN_TARGET_SECONDARY = {"frequency": 2350.0, "gain": -0.9, "q": 2.0}
+MODERN_TARGET_FILTERS = [MODERN_TARGET_PRIMARY, MODERN_TARGET_SECONDARY]
 
 
 def _is_modern_target_filter(parsed_filter: dict[str, Any] | None) -> bool:
