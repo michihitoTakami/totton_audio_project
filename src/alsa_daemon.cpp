@@ -220,43 +220,40 @@ static int g_input_sample_rate = DEFAULT_INPUT_SAMPLE_RATE;
 // Soft Mute controller for glitch-free shutdown (50ms fade at output sample rate)
 static SoftMute::Controller* g_soft_mute = nullptr;
 static std::mutex g_soft_mute_op_mutex;
+static std::atomic<bool> g_soft_mute_restore_pending{false};
+static std::atomic<int> g_soft_mute_restore_fade_ms{0};
+static std::atomic<int> g_soft_mute_restore_sample_rate{0};
+
+static void maybe_restore_soft_mute_params() {
+    if (!g_soft_mute) {
+        return;
+    }
+    if (!g_soft_mute_restore_pending.load(std::memory_order_acquire)) {
+        return;
+    }
+    SoftMute::MuteState st = g_soft_mute->getState();
+    if (st != SoftMute::MuteState::PLAYING && st != SoftMute::MuteState::MUTED) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_soft_mute_op_mutex);
+    if (!g_soft_mute) {
+        return;
+    }
+    int fadeMs = g_soft_mute_restore_fade_ms.load(std::memory_order_relaxed);
+    int sr = g_soft_mute_restore_sample_rate.load(std::memory_order_relaxed);
+    g_soft_mute->setFadeDuration(fadeMs);
+    g_soft_mute->setSampleRate(sr);
+    g_soft_mute_restore_pending.store(false, std::memory_order_release);
+}
 
 // Helper function for soft mute during filter switching (Issue #266)
 // Fade-out: 1.5 seconds, perform filter switch, fade-in: 1.5 seconds
 //
 // Thread safety & responsiveness:
 // - Called from ZeroMQ command thread, guarded by a mutex to serialize parameter updates
-// - Non-blocking: start fade-out, perform switch, then trigger fade-in without waiting for
-//   full completion on the calling thread
-// - Original fade parameters are restored asynchronously once the transition settles
-static void restore_soft_mute_params_async(int fadeDurationMs, int sampleRate) {
-    if (!g_soft_mute) {
-        return;
-    }
-
-    std::thread([fadeDurationMs, sampleRate]() {
-        using namespace DaemonConstants;
-        const auto deadline = std::chrono::steady_clock::now() +
-                              std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS + 250);
-        while (std::chrono::steady_clock::now() < deadline) {
-            if (!g_soft_mute) {
-                return;
-            }
-            SoftMute::MuteState state = g_soft_mute->getState();
-            if (state == SoftMute::MuteState::PLAYING || state == SoftMute::MuteState::MUTED) {
-                g_soft_mute->setFadeDuration(fadeDurationMs);
-                g_soft_mute->setSampleRate(sampleRate);
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-
-        if (g_soft_mute) {
-            g_soft_mute->setFadeDuration(fadeDurationMs);
-            g_soft_mute->setSampleRate(sampleRate);
-        }
-    }).detach();
-}
+// - Non-blocking: start fade-out, perform switch, then trigger fade-in with minimal wait
+// - Original fade parameters are restored in the audio thread once the transition settles
 
 static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc) {
     using namespace DaemonConstants;
@@ -283,8 +280,20 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
               << "s)..." << std::endl;
     g_soft_mute->startFadeOut();
 
-    // Let fade-out begin without blocking the command thread
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Wait briefly until mostly muted (or timeout) to avoid pops, but keep command responsive
+    auto fade_start = std::chrono::steady_clock::now();
+    const auto quick_timeout = std::chrono::milliseconds(250);
+    while (true) {
+        SoftMute::MuteState st = g_soft_mute->getState();
+        float gain = g_soft_mute->getCurrentGain();
+        if (st == SoftMute::MuteState::MUTED || gain < 0.05f) {
+            break;
+        }
+        if (std::chrono::steady_clock::now() - fade_start > quick_timeout) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 
     // Perform filter switch while fade-out is progressing
     bool switch_success = filterSwitchFunc();
@@ -295,8 +304,10 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
                   << "s)..." << std::endl;
         g_soft_mute->startFadeIn();
 
-        // Restore original fade parameters asynchronously after transition settles
-        restore_soft_mute_params_async(originalFadeDuration, outputSampleRate);
+        // Mark pending restoration to be applied once transition completes
+        g_soft_mute_restore_fade_ms.store(originalFadeDuration, std::memory_order_relaxed);
+        g_soft_mute_restore_sample_rate.store(outputSampleRate, std::memory_order_relaxed);
+        g_soft_mute_restore_pending.store(true, std::memory_order_release);
     } else {
         // If switch failed, restore original state immediately
         std::cerr << "[Filter Switch] Switch failed, restoring audio state" << std::endl;
@@ -1509,6 +1520,9 @@ void alsa_output_thread() {
             renderResult.wroteSilence = true;
             std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
         }
+
+        // Apply pending soft mute parameter restoration once transition completes
+        maybe_restore_soft_mute_params();
 
         static auto last_stats_write = std::chrono::steady_clock::now();
         if (!renderResult.wroteSilence && renderResult.framesRendered > 0) {
