@@ -9,12 +9,16 @@ Magic Box Project の Web コントロールインターフェースの設定と
 
 ## 概要
 
-Web UI は FastAPI ベースで、2つのページを提供:
+Web UI は FastAPI ベースで、以下のページを提供:
 
 | ページ | URL | 用途 |
 |--------|-----|------|
-| User Page | `/` | デバイス選択、EQ設定 |
-| Admin Page | `/admin` | Daemon制御、統計監視 |
+| Dashboard | `/` | 稼働状況のサマリー |
+| EQ Settings | `/eq` | EQ管理、OPRA検索、インポート |
+| System Settings | `/system` | デバイス・出力モード設定 |
+| TCP Input | `/tcp-input` | TCP入力の監視と制御 |
+
+※ 旧 `/legacy` と `/admin` ページは廃止済みです。
 
 ## 起動方法
 
@@ -45,8 +49,10 @@ sudo systemctl start gpu_upsampler_web
 ### ローカルアクセス
 
 ```
-http://127.0.0.1:11881/       # ユーザーページ
-http://127.0.0.1:11881/admin  # 管理者ページ
+http://127.0.0.1:11881/        # ダッシュボード
+http://127.0.0.1:11881/eq      # EQ設定
+http://127.0.0.1:11881/system  # システム設定
+http://127.0.0.1:11881/tcp-input  # TCP入力
 ```
 
 ### 外部アクセス (LAN内)
@@ -128,10 +134,10 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return credentials.username
 
-# 管理者ページに認証を追加
-@app.get("/admin", response_class=HTMLResponse)
-async def admin_page(username: str = Depends(verify_credentials)):
-    return get_admin_html()
+# ダッシュボードをBasic認証で保護する例
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
+async def dashboard_page(lang: str = "en"):
+    return render_dashboard(lang=lang)
 ```
 
 ## API エンドポイント一覧
