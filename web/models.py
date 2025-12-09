@@ -1,6 +1,6 @@
 """Pydantic models for the GPU Upsampler Web API."""
 
-from typing import Annotated, Any, Literal, Optional, TypeAlias
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -8,7 +8,6 @@ from pydantic import (
     Field,
     ConfigDict,
     StringConstraints,
-    conint,
     constr,
     model_validator,
 )
@@ -28,7 +27,7 @@ SessionId = constr(
     max_length=64,
     pattern=r"^[A-Za-z0-9._-]+$",
 )
-Port: TypeAlias = conint(ge=1024, le=65535)
+Port = Annotated[int, Field(ge=1024, le=65535)]
 
 
 class CrossfeedSettings(BaseModel):
@@ -216,7 +215,7 @@ class PhaseTypeUpdateRequest(BaseModel):
 
 TcpConnectionMode = Literal["single", "takeover", "priority"]
 # Allow 0 when daemon has not bound yet (listening disabled)
-BoundPort: TypeAlias = conint(ge=0, le=65535)
+BoundPort = Annotated[int, Field(ge=0, le=65535)]
 
 
 class TcpInputStreamFormat(BaseModel):
