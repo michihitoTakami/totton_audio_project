@@ -49,13 +49,14 @@ graph TD
     Controller <-->|ZeroMQ IPC| Engine[C++ Audio Engine Daemon]
 
     subgraph Production Data Path
-        PC[PC Audio Source] -->|USB UAC2| RasPi[Raspberry Pi 5]
-        RasPi -->|RTP over Ethernet| RTPReceiver[RTP Session Manager]
-        RTPReceiver --> Engine
+        Source[PC / Streamer] -->|USB UAC2| RasPi[Raspberry Pi 5 PCM Bridge]
+        RasPi -->|TCP PCM Stream| Receiver[Jetson TCP PCM Receiver]
+        Receiver --> Engine
         Engine -->|GPU Processing| DAC[External USB DAC]
     end
 
     subgraph Development Data Path
+        DevSource[PC Audio Source] -->|TCP PCM Stream| Receiver
     end
 ```
 
@@ -72,11 +73,11 @@ graph TD
 ### Data Plane (C++ Audio Engine)
 システムの心臓。低遅延・高負荷処理を担当。
 
-- **Input Interface (Production):**
-  - RTP Session Manager: Raspberry Pi 5からのRTPストリーム受信
-  - **ハイレゾ対応**: SDP自動パース → サンプルレート/ビット深度自動認識
+- **Input Interface (Production / Dev):**
+  - `jetson_pcm_receiver`: TCPで受信したPCMストリームをリングバッファへ投入
+  - **ハイレゾ対応**: PCMヘッダーからサンプルレート/ビット深度/チャンネル数を自動認識
   - **対応フォーマット**: 16/24/32-bit, 44.1k〜768kHz, ステレオ/マルチチャンネル
-  - **動的追従**: RTPストリームのレート変更に自動追従（グリッチフリー切り替え）
+  - **フェイルセーフ**: XRUN検知・切断リカバリと優先クライアント制御
 - **Input Interface (Development):**
 - **Convolution Core (GPU):**
   - CUDA FFT (`cuFFT`) を使用したOverlap-Save法
@@ -98,17 +99,17 @@ graph TD
 ### Production Environment (Magic Box)
 
 **I/O分離アーキテクチャ:**
-- **入力デバイス**: Raspberry Pi 5 (UAC2 + RTP送信)
-- **処理デバイス**: Jetson Orin Nano Super (RTP受信 + GPU処理 + DAC出力)
+- **入力デバイス**: Raspberry Pi 5 (UAC2 + TCP PCM送信)
+- **処理デバイス**: Jetson Orin Nano Super (TCP PCM受信 + GPU処理 + DAC出力)
 
 #### Raspberry Pi 5 (Universal Audio Input Hub)
 | Item | Specification |
 |------|---------------|
 | SoC | Broadcom BCM2712 (Quad-core Cortex-A76) |
-| Role | ユニバーサルオーディオ入力ハブ + RTP送信 |
+| Role | ユニバーサルオーディオ入力ハブ + TCP送信 |
 | Input (Primary) | USB Type-C (UAC2 Device Mode) ← PC接続 |
 | Input (Network) | Spotify Connect / AirPlay 2 / Roon Bridge / UPnP/DLNA |
-| Output | Ethernet → Jetson へRTP送信（ハイレゾ対応） |
+| Output | Ethernet → Jetson へTCP PCM送信（ハイレゾ対応） |
 
 #### Jetson Orin Nano Super (Processing Unit)
 | Item | Specification |
@@ -116,7 +117,7 @@ graph TD
 | SoC | NVIDIA Jetson Orin Nano Super (8GB, 1024 CUDA Cores) |
 | CUDA Arch | SM 8.7 (Ampere) |
 | Storage | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
-| Input | RTP over Ethernet ← Raspberry Pi 5 |
+| Input | TCP PCM over Ethernet ← Raspberry Pi 5 |
 | Output | USB Type-A → External USB DAC |
 | Network | Wi-Fi / Ethernet (Web UI access) |
 | Deployment | Docker (C++ Daemon + Python Web UI + CUDA Runtime) |

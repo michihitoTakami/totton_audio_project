@@ -51,8 +51,8 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
   - GPU Upsamplerのマルチレート対応完了
 
 - [x] **Daemon Implementation**
-  - RTP Session Manager統合（ハイレゾ対応）
-  - SDP自動パース機能
+  - TCP PCM Receiver統合（jetson_pcm_receiver）
+  - PCMヘッダー自動パースによるレート/フォーマット検知
 
 - [x] **ZeroMQ Communication Layer**
   - Control Plane ↔ Data Plane通信完了
@@ -62,7 +62,7 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 - [x] **Safety Mechanisms**
   - **Soft Mute**: レート切り替え時のクロスフェード実装済み
   - **Hot-swap IR loading**: グリッチフリーな係数切り替え
-  - **Streaming Cache Reset**: RTPセッション切り替え時のキャッシュフラッシュ
+  - **TCP Client Handoff**: 優先クライアント切替時のバッファリセット
 
 - [x] **Crossfeed/HRTF Engine**
   - バイノーラル処理エンジン実装
@@ -74,7 +74,7 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
   - テキストインポート機能
 
 - [x] **ZeroMQ Communication Layer** ✅
-  - 20以上のコマンドタイプ実装完了（LOAD_IR, SET_GAIN, SOFT_RESET, APPLY_EQ, CROSSFEED_*, RTP_*, など）
+  - 20以上のコマンドタイプ実装完了（LOAD_IR, SET_GAIN, SOFT_RESET, APPLY_EQ, CROSSFEED_*, TCP_INPUT_*, など）
   - REQ/REP パターン、完全なJSON API
   - Control Plane ↔ Data Plane完全統合
   - 実装: `src/zeromq_interface.cpp`, `src/daemon/control/zmq_server.cpp`
@@ -283,13 +283,13 @@ Phase 3（ハードウェア統合）に進む前に、コードベースを健�
 
 - [ ] **エッジケーステスト強化**
   - レート切り替え繰り返し
-  - RTP接続/切断の頻繁な繰り返し
+  - TCP入力の接続/切断・クライアント切替の繰り返し
   - GPU高負荷時の挙動
   - 長時間稼働テスト（メモリリーク検出）
 
 - [ ] **非通常系テスト**
   - デバイス切断時の挙動
-  - 不正なRTP/SDP受信時の挙動
+  - 不正なTCPヘッダー/PCMストリーム受信時の挙動
   - CUDA/GPU エラー時の復帰
 
 ### 技術的負債解消の優先順位
@@ -309,8 +309,8 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
 **Status:** 📋 Planned
 
 **アーキテクチャ:** I/O分離構成
-- **Raspberry Pi 5**: UAC2デバイス + RTP送信
-- **Jetson Orin Nano**: RTP受信 + GPU処理 + DAC出力
+- **Raspberry Pi 5**: UAC2デバイス + TCP PCM送信
+- **Jetson Orin Nano**: TCP PCM受信 + GPU処理 + DAC出力
 
 ### Tasks
 
@@ -366,13 +366,13 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
   - CMakeLists.txt の CUDA_ARCHITECTURES 修正
   - パフォーマンス検証・チューニング
 
-- [x] **RTP受信機能（実装済み）** ✅
-  - RTP Session Manager統合完了
-  - **SDP自動パース**: サンプルレート/ビット深度/チャンネル数を自動認識
+- [x] **TCP入力受信機能（実装済み）** ✅
+  - `jetson_pcm_receiver` によるTCP PCM受信とXRUN監視
+  - **ヘッダー自動パース**: サンプルレート/ビット深度/チャンネル数を自動認識
   - **ハイレゾ対応**: 16/24/32-bit, 44.1k〜768kHz
-  - **動的追従**: RTPストリームのレート変更に自動追従
+  - **優先クライアント制御**: `single / takeover / priority` モード
   - **グリッチフリー切り替え**: Soft Mute機能によるシームレスなレート変更
-  - 実装ファイル: `src/daemon/rtp/rtp_session_manager.cpp`, `src/alsa_daemon.cpp`
+  - 実装ファイル: `jetson_pcm_receiver/src/`, `src/alsa_daemon.cpp`
 
 - [ ] **ALSA Direct Output**
   - USB DAC直接出力
@@ -408,7 +408,7 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
 | Item | Specification |
 |------|---------------|
 | SoC | Broadcom BCM2712 (Quad-core Cortex-A76) |
-| Role | USB UAC2デバイス、RTP送信 |
+| Role | USB UAC2デバイス、TCP PCM送信 |
 | Input | USB Type-C (UAC2 Device Mode) |
 | Output | Ethernet → Jetson |
 | Deployment | Docker |
@@ -420,7 +420,7 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
 | CUDA Cores | 1024 |
 | CUDA Arch | SM 8.7 (Ampere) |
 | Storage | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
-| Input | RTP over Ethernet |
+| Input | TCP PCM over Ethernet |
 | Output | USB Type-A → External USB DAC |
 | Network | Wi-Fi / Ethernet |
 | Deployment | Docker (CUDA Runtime) |

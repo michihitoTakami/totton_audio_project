@@ -146,6 +146,7 @@ IOWeight=200
 
 # リアルタイム優先度
 Nice=-10
+# LimitRTPRIO は Real-Time Priority の設定（プロトコル名ではない）
 LimitRTPRIO=99
 LimitMEMLOCK=infinity
 
