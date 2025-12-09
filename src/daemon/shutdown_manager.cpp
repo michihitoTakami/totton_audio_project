@@ -15,8 +15,8 @@
 namespace shutdown_manager {
 
 ShutdownManager::ShutdownManager(Dependencies deps) : deps_(std::move(deps)) {
-    if (!deps_.runningFlag || !deps_.reloadFlag || !deps_.mainLoopRunningFlag) {
-        throw std::invalid_argument("ShutdownManager requires running/reload/mainLoop flags");
+    if (!deps_.runningFlag || !deps_.reloadFlag) {
+        throw std::invalid_argument("ShutdownManager requires running/reload flags");
     }
 
     controller_.setSignalState(&GracefulShutdown::getGlobalSignalState());
@@ -44,7 +44,9 @@ void ShutdownManager::setQuitLoopCallback(std::function<void()> cb) {
 }
 
 void ShutdownManager::setMainLoopRunning(bool running) {
-    deps_.mainLoopRunningFlag->store(running);
+    if (deps_.mainLoopRunningFlag) {
+        deps_.mainLoopRunningFlag->store(running);
+    }
     controller_.setMainLoopRunning(running);
 }
 
@@ -90,7 +92,9 @@ void ShutdownManager::reset() {
     stoppingNotified_ = false;
     deps_.runningFlag->store(true);
     deps_.reloadFlag->store(false);
-    deps_.mainLoopRunningFlag->store(false);
+    if (deps_.mainLoopRunningFlag) {
+        deps_.mainLoopRunningFlag->store(false);
+    }
     controller_.setRunning(true);
     controller_.clearReloadRequest();
     GracefulShutdown::getGlobalSignalState().reset();

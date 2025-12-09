@@ -14,7 +14,7 @@ class ShutdownManager {
         SoftMute::Controller** softMute = nullptr;
         std::atomic<bool>* runningFlag = nullptr;
         std::atomic<bool>* reloadFlag = nullptr;
-        std::atomic<bool>* mainLoopRunningFlag = nullptr;
+        std::atomic<bool>* mainLoopRunningFlag = nullptr;  // optional (nullptr if no external loop)
     };
 
     explicit ShutdownManager(Dependencies deps);

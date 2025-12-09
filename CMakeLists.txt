@@ -273,21 +273,6 @@ target_compile_options(zeromq_interface PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
-add_library(rtp_session STATIC
-    src/daemon/rtp/rtp_session_manager.cpp
-)
-target_link_libraries(rtp_session PUBLIC
-    logging
-    error_codes
-    nlohmann_json::nlohmann_json
-)
-target_include_directories(rtp_session PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
-)
-target_compile_options(rtp_session PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-)
-
 # DAC Capability Library (CPU-only, ALSA required)
 add_library(dac_capability STATIC
     src/dac_capability.cpp
@@ -388,7 +373,6 @@ target_compile_options(eq_support PRIVATE
 
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)
-install(TARGETS gpu_upsampler_daemon DESTINATION bin)
 install(TARGETS gpu_upsampler_alsa DESTINATION bin)
 install(TARGETS gpu_upsampler_core DESTINATION lib)
 install(TARGETS zeromq_interface DESTINATION lib)
@@ -465,7 +449,6 @@ add_executable(cpu_tests
     tests/cpp/test_playback_buffer_threshold.cpp
     tests/cpp/test_runtime_stats.cpp
     tests/cpp/test_audio_pipeline.cpp
-    tests/cpp/daemon/test_daemon_skeleton.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
@@ -558,18 +541,6 @@ target_include_directories(error_codes_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(error_codes_tests)
-
-add_executable(rtp_session_tests
-    tests/cpp/test_rtp_session_manager.cpp
-)
-target_link_libraries(rtp_session_tests
-    GTest::gtest_main
-    rtp_session
-)
-target_include_directories(rtp_session_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-gtest_discover_tests(rtp_session_tests)
 
 # Auto-Negotiation tests (CPU-only, no ALSA hardware required)
 add_executable(auto_negotiation_tests

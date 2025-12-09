@@ -24,21 +24,13 @@ enum class CommandType {
     SHUTDOWN,         // Shutdown daemon
     OUTPUT_MODE_GET,  // Get current output mode + options
     OUTPUT_MODE_SET,  // Set output mode + options
-
     // Crossfeed commands (#150)
-    CROSSFEED_ENABLE,              // Enable crossfeed processing
-    CROSSFEED_DISABLE,             // Disable crossfeed processing
-    CROSSFEED_SET_COMBINED,        // Set combined filter (4ch x 2 rate families, Base64 encoded)
-    CROSSFEED_SET_SIZE,            // Set head size (xs/s/m/l/xl)
-    CROSSFEED_GET_STATUS,          // Get crossfeed status (enabled, head_size, headphone)
-    CROSSFEED_GENERATE_WOODWORTH,  // Procedurally generate Woodworth HRTF
-
-    // RTP session management (#358)
-    RTP_START_SESSION,
-    RTP_STOP_SESSION,
-    RTP_LIST_SESSIONS,
-    RTP_GET_SESSION,
-    RTP_DISCOVER_STREAMS
+    CROSSFEED_ENABLE,             // Enable crossfeed processing
+    CROSSFEED_DISABLE,            // Disable crossfeed processing
+    CROSSFEED_SET_COMBINED,       // Set combined filter (4ch x 2 rate families, Base64 encoded)
+    CROSSFEED_SET_SIZE,           // Set head size (xs/s/m/l/xl)
+    CROSSFEED_GET_STATUS,         // Get crossfeed status (enabled, head_size, headphone)
+    CROSSFEED_GENERATE_WOODWORTH  // Procedurally generate Woodworth HRTF
 };
 
 // Response status
@@ -169,13 +161,6 @@ class ZMQClient {
     // Output mode commands
     CommandResult outputModeGet();
     CommandResult outputModeSet(const std::string& mode, const std::string& preferredDevice);
-
-    // RTP session controls
-    CommandResult rtpStartSession(const std::string& paramsJson);
-    CommandResult rtpStopSession(const std::string& sessionId);
-    CommandResult rtpListSessions();
-    CommandResult rtpGetSession(const std::string& sessionId);
-    CommandResult rtpDiscoverStreams();
 
     // Subscribe to status updates (async)
     bool subscribeStatus(const std::string& pubEndpoint, StatusCallback callback);

@@ -198,7 +198,6 @@ void ControlPlane::registerHandlers() {
                                 [this](const auto& req) { return handlePhaseTypeGet(req); });
     zmqServer_->registerCommand("PHASE_TYPE_SET",
                                 [this](const auto& req) { return handlePhaseTypeSet(req); });
-
 }
 
 void ControlPlane::startStatsThread() {
