@@ -6,8 +6,6 @@ from typing import Any
 
 from fastapi import HTTPException, UploadFile
 
-from opra import MODERN_TARGET_CORRECTION_BAND
-
 from ..constants import (
     FREQ_MAX_HZ,
     FREQ_MIN_HZ,
@@ -22,6 +20,7 @@ from ..constants import (
     SAFE_FILENAME_PATTERN,
     SAFE_PROFILE_NAME_PATTERN,
 )
+from .modern_target import is_modern_target_filter
 
 # ============================================================================
 # Filter Type Definitions
@@ -169,38 +168,6 @@ def _parse_filter_line(line: str) -> dict[str, Any] | None:
         result["oct"] = float(oct_match.group(1))
 
     return result
-
-
-def _is_close(value: float | None, target: float, tolerance: float) -> bool:
-    """Check if value is within tolerance of target."""
-    return value is not None and abs(value - target) <= tolerance
-
-
-# Modern Target (KB5000_7) correction filters (strict match)
-MODERN_TARGET_PRIMARY = {
-    "frequency": float(MODERN_TARGET_CORRECTION_BAND["frequency"]),
-    "gain": float(MODERN_TARGET_CORRECTION_BAND["gain_db"]),
-    "q": float(MODERN_TARGET_CORRECTION_BAND["q"]),
-}
-MODERN_TARGET_SECONDARY = {"frequency": 2350.0, "gain": -0.9, "q": 2.0}
-MODERN_TARGET_FILTERS = [MODERN_TARGET_PRIMARY, MODERN_TARGET_SECONDARY]
-
-
-def _is_modern_target_filter(parsed_filter: dict[str, Any] | None) -> bool:
-    """Detect whether a parsed filter matches the Modern Target correction band."""
-    if not parsed_filter:
-        return False
-
-    # Use strict tolerance to avoid false positives (test_similar_but_different_filter)
-    for target in MODERN_TARGET_FILTERS:
-        if (
-            _is_close(parsed_filter["frequency"], target["frequency"], 0.01)
-            and _is_close(parsed_filter["gain"], target["gain"], 0.01)
-            and _is_close(parsed_filter["q"], target["q"], 0.01)
-        ):
-            return True
-
-    return False
 
 
 def validate_eq_profile_content(content: str) -> dict[str, Any]:
@@ -484,7 +451,7 @@ def parse_eq_profile_content(file_path: Path) -> dict[str, Any]:
     if is_opra and has_modern_target:
         for line in filter_lines:
             parsed_filter = _parse_filter_line(line)
-            if _is_modern_target_filter(parsed_filter):
+            if is_modern_target_filter(parsed_filter):
                 original_filters.append(line)
             else:
                 opra_filters.append(line)
