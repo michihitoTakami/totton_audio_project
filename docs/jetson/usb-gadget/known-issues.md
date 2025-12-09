@@ -155,17 +155,10 @@ PC  ──USB──>  DAC  ─┤ I2S (BCLK, LRCK, DATA) ├──>  Magic Box (
 - ネットワーク依存（パケットロス）
 - リアルタイム性が低い
 
-#### 設定例
+#### 設定例（廃止）
 
-**PC側 (送信)**:
-```bash
-pw-link audio_source rtp-sink
-```
-
-**Jetson側 (受信)**:
-```bash
-pactl load-module module-rtp-recv
-```
+> ⚠️ RTP/PipeWire経路は #690 で廃止し、TCP PCM入力に一本化しました。
+> 本節の設定は現在サポートされていません（歴史的記録のみ）。
 
 ---
 

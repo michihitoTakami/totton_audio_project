@@ -33,9 +33,9 @@ services:
     devices:
       - /dev/snd:/dev/snd
 
-    # RTP input port + Web UI
+    # TCP input port + Web UI
     ports:
-      - "46000:46000/udp"
+      - "46001:46001/tcp"
       - "80:80"
 
     # Shared memory for audio buffers

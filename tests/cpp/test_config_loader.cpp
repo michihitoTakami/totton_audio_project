@@ -592,7 +592,3 @@ TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndFilterPaths) {
     EXPECT_EQ(config.filterPath48kLinear, "a/path48kLinear.bin");
     EXPECT_EQ(config.coefficientDir, "multi/coefficients");
 }
-
-// ============================================================
-// RTP settings (Issue #697)
-// ============================================================

@@ -368,6 +368,10 @@ cmake --build build -j$(nproc)
 | `/api/eq/apply` | POST | EQ適用 |
 | `/api/opra/search` | GET | OPRAヘッドホン検索 |
 | `/api/dac/capability/{id}` | GET | DAC性能取得 |
+| `/api/tcp-input/status` | GET | TCP入力ステータス・テレメトリ取得 |
+| `/api/tcp-input/start` | POST | TCP入力開始 |
+| `/api/tcp-input/stop` | POST | TCP入力停止 |
+| `/api/tcp-input/config` | PUT | TCP入力設定更新 |
 
 ### ZeroMQコマンド
 
@@ -380,7 +384,10 @@ cmake --build build -j$(nproc)
 | `SWITCH_RATE` | レートファミリー切り替え |
 | `APPLY_EQ` | EQ適用 |
 | `RESTORE_EQ` | EQ解除 |
-| `RTP_DISCOVER_STREAMS` | RTP送信元スキャン |
+| `TCP_INPUT_STATUS` | TCP入力ステータス取得 |
+| `TCP_INPUT_START` | TCP入力開始 |
+| `TCP_INPUT_STOP` | TCP入力停止 |
+| `TCP_INPUT_CONFIG_UPDATE` | TCP入力設定更新 |
 
 ---
 
