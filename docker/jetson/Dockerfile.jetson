@@ -9,6 +9,12 @@
 # Build on Jetson:
 #   docker build -f docker/jetson/Dockerfile.jetson -t magicbox:latest .
 #
+# Note: This image copies pre-built host binaries (same arch, SM 8.7).
+# Build them on Jetson before docker build:
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=87
+#   cmake --build build -j$(nproc)
+#   ls -l build/gpu_upsampler_alsa build/gpu_upsampler_daemon
+#
 # Run:
 #   docker run --runtime=nvidia --device /dev/snd -p 80:80 magicbox:latest
 #
