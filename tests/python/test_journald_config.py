@@ -10,9 +10,13 @@ CONFIG_PATH = (
 )
 
 
+def _lower_option(option: str) -> str:
+    return option.lower()
+
+
 def load_config() -> ConfigParser:
     parser = ConfigParser()
-    parser.optionxform = str.lower  # keep option names case-insensitive
+    parser.optionxform = _lower_option  # keep option names case-insensitive
     parser.read(CONFIG_PATH)
     return parser
 
