@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .exceptions import register_exception_handlers
-from .models import ApiResponse
+from .models import ApiResponse, TcpInputStatusResponse, TcpInputTelemetry
 from .routers import (
     crossfeed_router,
     dac_router,
@@ -22,6 +22,13 @@ from .routers import (
     output_mode_router,
     partitioned_router,
     status_router,
+    tcp_input_router,
+)
+from .services import get_daemon_client
+from .services.tcp_input import (
+    TcpTelemetryPoller,
+    TcpTelemetryStore,
+    parse_tcp_telemetry,
 )
 from .templates import get_admin_html
 from .templates.pages import (
@@ -64,15 +71,48 @@ tags_metadata = [
         "name": "legacy",
         "description": "Deprecated endpoints - use alternatives instead",
     },
+    {
+        "name": "tcp-input",
+        "description": "TCP入力のステータス取得と制御 (ZeroMQ経由)",
+    },
 ]
+
+
+_tcp_telemetry_store = TcpTelemetryStore()
+
+
+async def _fetch_tcp_telemetry() -> TcpInputTelemetry | TcpInputStatusResponse | None:
+    """ZeroMQ経由でTCPテレメトリを取得."""
+    with get_daemon_client(timeout_ms=1500) as client:
+        response = client.tcp_input_status()
+    if response.success:
+        data = response.data
+        if isinstance(data, TcpInputStatusResponse):
+            return data.telemetry
+        if isinstance(data, TcpInputTelemetry):
+            return data
+        if isinstance(data, dict):
+            return parse_tcp_telemetry(data)
+        return None
+    if response.error:
+        # 例外はポーラー側で握りつぶし、storeにエラーを記録させる
+        raise response.error
+    return None
+
+
+_tcp_telemetry_poller = TcpTelemetryPoller(
+    fetcher=_fetch_tcp_telemetry, store=_tcp_telemetry_store
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""
     # Startup
+    await _tcp_telemetry_poller.start()
     yield
     # Shutdown
+    await _tcp_telemetry_poller.stop()
 
 
 app = FastAPI(
@@ -117,6 +157,7 @@ app.include_router(dac_router)
 app.include_router(crossfeed_router)
 app.include_router(partitioned_router)
 app.include_router(output_mode_router)
+app.include_router(tcp_input_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)

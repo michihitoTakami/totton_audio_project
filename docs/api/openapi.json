@@ -1474,6 +1474,114 @@
         }
       }
     },
+    "/api/tcp-input/status": {
+      "get": {
+        "tags": [
+          "tcp-input"
+        ],
+        "summary": "TCP入力ステータス・テレメトリ取得",
+        "description": "ZeroMQ経由でTCP入力のステータスを取得する.",
+        "operationId": "tcp_input_status_api_tcp_input_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TcpInputStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tcp-input/start": {
+      "post": {
+        "tags": [
+          "tcp-input"
+        ],
+        "summary": "TCP入力を開始",
+        "description": "デーモンにTCP入力開始を要求する.",
+        "operationId": "tcp_input_start_api_tcp_input_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tcp-input/stop": {
+      "post": {
+        "tags": [
+          "tcp-input"
+        ],
+        "summary": "TCP入力を停止",
+        "description": "デーモンにTCP入力停止を要求する.",
+        "operationId": "tcp_input_stop_api_tcp_input_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tcp-input/config": {
+      "put": {
+        "tags": [
+          "tcp-input"
+        ],
+        "summary": "TCP入力設定を更新",
+        "description": "TCP入力設定をバリデートしてデーモンに反映する.",
+        "operationId": "tcp_input_config_update_api_tcp_input_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TcpInputConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -3276,6 +3384,316 @@
         "title": "Status",
         "description": "System status response model."
       },
+      "TcpInputConfigUpdate": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "bind_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bind Address"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "buffer_size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buffer Size Bytes"
+          },
+          "connection_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "single",
+                  "takeover",
+                  "priority"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Mode"
+          },
+          "priority_clients": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority Clients"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TcpInputConfigUpdate",
+        "description": "Config update payload for TCP input."
+      },
+      "TcpInputSettings": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "bind_address": {
+            "type": "string",
+            "title": "Bind Address",
+            "default": "0.0.0.0"
+          },
+          "port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Port",
+            "default": 46001
+          },
+          "buffer_size_bytes": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Buffer Size Bytes",
+            "default": 262144
+          },
+          "connection_mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "takeover",
+              "priority"
+            ],
+            "title": "Connection Mode",
+            "default": "single"
+          },
+          "priority_clients": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Priority Clients"
+          }
+        },
+        "type": "object",
+        "title": "TcpInputSettings",
+        "description": "TCP input configuration settings."
+      },
+      "TcpInputStatusResponse": {
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/TcpInputSettings"
+          },
+          "telemetry": {
+            "$ref": "#/components/schemas/TcpInputTelemetry"
+          }
+        },
+        "type": "object",
+        "required": [
+          "settings",
+          "telemetry"
+        ],
+        "title": "TcpInputStatusResponse",
+        "description": "Aggregated TCP input status (config + telemetry)."
+      },
+      "TcpInputStreamFormat": {
+        "properties": {
+          "sample_rate": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sample Rate",
+            "default": 0
+          },
+          "channels": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Channels",
+            "default": 0
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": "unknown"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Version",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "title": "TcpInputStreamFormat",
+        "description": "PCM stream format reported by TCP input source."
+      },
+      "TcpInputTelemetry": {
+        "properties": {
+          "listening": {
+            "type": "boolean",
+            "title": "Listening",
+            "default": false
+          },
+          "bound_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Port"
+          },
+          "client_connected": {
+            "type": "boolean",
+            "title": "Client Connected",
+            "default": false
+          },
+          "streaming": {
+            "type": "boolean",
+            "title": "Streaming",
+            "default": false
+          },
+          "xrun_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Xrun Count",
+            "default": 0
+          },
+          "ring_buffer_frames": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Ring Buffer Frames",
+            "default": 0
+          },
+          "watermark_frames": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Watermark Frames",
+            "default": 0
+          },
+          "buffered_frames": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Buffered Frames",
+            "default": 0
+          },
+          "max_buffered_frames": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Max Buffered Frames",
+            "default": 0
+          },
+          "dropped_frames": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Dropped Frames",
+            "default": 0
+          },
+          "disconnect_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disconnect Reason"
+          },
+          "connection_mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "takeover",
+              "priority"
+            ],
+            "title": "Connection Mode",
+            "default": "single"
+          },
+          "priority_clients": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Priority Clients"
+          },
+          "last_header": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TcpInputStreamFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rep_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rep Endpoint"
+          },
+          "pub_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pub Endpoint"
+          }
+        },
+        "type": "object",
+        "title": "TcpInputTelemetry",
+        "description": "Real-time telemetry for TCP input pipeline."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -3371,6 +3789,10 @@
     {
       "name": "legacy",
       "description": "Deprecated endpoints - use alternatives instead"
+    },
+    {
+      "name": "tcp-input",
+      "description": "TCP入力のステータス取得と制御 (ZeroMQ経由)"
     }
   ]
 }
