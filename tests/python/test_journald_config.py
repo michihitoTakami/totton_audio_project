@@ -16,7 +16,7 @@ def _lower_option(option: str) -> str:
 
 def load_config() -> ConfigParser:
     parser = ConfigParser()
-    parser.optionxform = _lower_option  # keep option names case-insensitive
+    parser.optionxform = _lower_option  # type: ignore[assignment]
     parser.read(CONFIG_PATH)
     return parser
 
