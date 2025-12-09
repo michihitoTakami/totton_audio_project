@@ -35,6 +35,7 @@ from .templates.pages import (
     render_dashboard,
     render_eq_settings,
     render_system,
+    render_tcp_input,
 )
 
 # OpenAPI tag descriptions
@@ -198,6 +199,12 @@ async def eq_page(lang: str = "en"):
 async def system_page(lang: str = "en"):
     """Serve the System page."""
     return render_system(lang=lang)
+
+
+@app.get("/tcp-input", response_class=HTMLResponse)
+async def tcp_input_page(lang: str = "en"):
+    """Serve the TCP Input page."""
+    return render_tcp_input(lang=lang)
 
 
 @app.get("/admin", response_class=HTMLResponse)

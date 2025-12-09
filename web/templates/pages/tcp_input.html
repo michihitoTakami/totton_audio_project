@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% from "components/card_panel.html" import card_panel %}
+{% from "components/buttons.html" import btn_primary %}
+
+{% block title %}{{ t.get('nav.tcp_input') }} - {{ t.get('app.title') }}{% endblock %}
+
+{% block content %}
+<div x-data="tcpInputPage()" x-init="init()">
+    <div class="page-header">
+        <h1 class="page-title">{{ t.get('nav.tcp_input') }}</h1>
+        <p class="page-subtitle">{{ t.get('tcp.subtitle') }}</p>
+    </div>
+
+    {% call card_panel(t.get('tcp.status.title')) %}
+    <div class="status-display">
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.status.connection') }}</div>
+            <div
+                class="value"
+                :class="status.telemetry.listening && status.telemetry.client_connected ? 'ok' : ''"
+                x-text="connectionText()"
+            ></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.status.client') }}</div>
+            <div class="value" x-text="clientText()"></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.status.uptime') }}</div>
+            <div class="value" x-text="uptimeText()"></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.status.last_updated') }}</div>
+            <div class="value" x-text="lastUpdatedText()"></div>
+        </div>
+    </div>
+    <div class="btn-row" style="margin-top: 16px;">
+        {{ btn_primary(t.get('tcp.actions.start'), "▶", "startServer()", "actionInProgress") }}
+        {{ btn_primary(t.get('tcp.actions.stop'), "■", "stopServer()", "actionInProgress") }}
+    </div>
+    {% set alert_type = "warning" %}
+    {% set alert_show = "errorMessage" %}
+    {% set alert_message = '<span x-text="errorMessage"></span>' | safe %}
+    {% include 'components/alert.html' %}
+    {% endcall %}
+
+    {% call card_panel(t.get('tcp.format.title')) %}
+    <div class="status-display">
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.format.sample_rate') }}</div>
+            <div class="value" x-text="sampleRateText()"></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.format.channels') }}</div>
+            <div class="value" x-text="channelsText()"></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.format.bit_depth') }}</div>
+            <div class="value" x-text="bitDepthText()"></div>
+        </div>
+    </div>
+    {% endcall %}
+
+    {% call card_panel(t.get('tcp.metrics.title')) %}
+    <div class="status-display">
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.metrics.frames') }}</div>
+            <div class="value" x-text="formatNumber(status.telemetry.buffered_frames)"></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.metrics.xrun') }}</div>
+            <div class="value" x-text="formatNumber(status.telemetry.xrun_count)"></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.metrics.latency') }}</div>
+            <div class="value" x-text="latencyText()"></div>
+        </div>
+        <div class="status-display-item">
+            <div class="label">{{ t.get('tcp.metrics.throughput') }}</div>
+            <div class="value" x-text="throughputText()"></div>
+        </div>
+    </div>
+    {% endcall %}
+
+    {% call card_panel(t.get('tcp.settings.title')) %}
+    <div class="section-subtitle">{{ t.get('tcp.settings.description') }}</div>
+    {% set form_label = t.get('tcp.settings.bind_address') %}
+    {% set form_input_type = "text" %}
+    {% set form_input_id = "tcpBindAddress" %}
+    {% set form_input_model = "form.bindAddress" %}
+    {% set form_input_placeholder = "0.0.0.0" %}
+    {% set form_input_disabled = "actionInProgress" %}
+    {% include 'components/form_group.html' %}
+
+    {% set form_label = t.get('tcp.settings.port') %}
+    {% set form_input_type = "text" %}
+    {% set form_input_id = "tcpPort" %}
+    {% set form_input_model = "form.port" %}
+    {% set form_input_placeholder = "46001" %}
+    {% include 'components/form_group.html' %}
+
+    {% set form_label = t.get('tcp.settings.buffer') %}
+    {% set form_input_type = "text" %}
+    {% set form_input_id = "tcpBuffer" %}
+    {% set form_input_model = "form.bufferSizeBytes" %}
+    {% set form_input_placeholder = "262144" %}
+    {% include 'components/form_group.html' %}
+
+    {% set form_label = t.get('tcp.settings.connection_mode') %}
+    {% set form_input_type = "select" %}
+    {% set form_input_id = "tcpMode" %}
+    {% set form_input_model = "form.connectionMode" %}
+    {% set form_select_options = '<option value=\"single\">single</option><option value=\"takeover\">takeover</option><option value=\"priority\">priority</option>' %}
+    {% include 'components/form_group.html' %}
+
+    {% set form_label = t.get('tcp.settings.priority_clients') %}
+    {% set form_input_type = "textarea" %}
+    {% set form_input_id = "tcpPriorityClients" %}
+    {% set form_input_model = "form.priorityClientsText" %}
+    {% set form_textarea_rows = "3" %}
+    {% set form_input_placeholder = "192.168.1.10\n192.168.1.20" %}
+    {% set form_style = "margin-top: 12px;" %}
+    {% include 'components/form_group.html' %}
+
+    <div class="btn-row" style="margin-top: 16px;">
+        {{ btn_primary(t.get('tcp.actions.update'), "💾", "updateConfig()", "actionInProgress") }}
+    </div>
+    {% endcall %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/tcp_input.js"></script>
+<script>
+function tcpInputPage() {
+    return createTcpInputPage({
+        pollingMs: 2000,
+        translations: {
+            connected: "{{ t.get('tcp.status.connected') }}",
+            disconnected: "{{ t.get('tcp.status.disconnected') }}",
+            listening: "{{ t.get('tcp.status.listening') }}",
+            stopped: "{{ t.get('tcp.status.stopped') }}",
+            noClient: "{{ t.get('tcp.status.no_client') }}",
+            unknown: "{{ t.get('tcp.status.unknown') }}",
+            startSuccess: "{{ t.get('tcp.actions.start_success') }}",
+            stopSuccess: "{{ t.get('tcp.actions.stop_success') }}",
+            updateSuccess: "{{ t.get('tcp.actions.update_success') }}",
+            updateError: "{{ t.get('tcp.actions.update_error') }}",
+            startError: "{{ t.get('tcp.actions.start_error') }}",
+            stopError: "{{ t.get('tcp.actions.stop_error') }}",
+        },
+    });
+}
+</script>
+{% endblock %}

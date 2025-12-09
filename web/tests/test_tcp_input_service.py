@@ -27,6 +27,8 @@ def test_parse_tcp_telemetry_maps_fields():
         "bound_port": 46001,
         "client_connected": True,
         "streaming": True,
+        "client_address": "10.0.0.5",
+        "uptime_seconds": 42,
         "xrun_count": 2,
         "ring_buffer_frames": 8192,
         "watermark_frames": 6144,
@@ -52,6 +54,8 @@ def test_parse_tcp_telemetry_maps_fields():
     assert telemetry.bound_port == 46001
     assert telemetry.connection_mode == "takeover"
     assert telemetry.priority_clients == ["10.0.0.1"]
+    assert telemetry.client_address == "10.0.0.5"
+    assert telemetry.uptime_seconds == 42
     assert telemetry.last_header is not None
     assert telemetry.last_header.format == "S16_LE"
     assert telemetry.last_header.sample_rate == 48000

@@ -6,13 +6,16 @@
 
 <nav>
     <a href="/" class="nav-item {% if current_page == 'dashboard' %}active{% endif %}">
-        <span style="margin-right: 8px;">📊</span> Dashboard
+        <span style="margin-right: 8px;">📊</span> {{ t.get('nav.dashboard') }}
+    </a>
+    <a href="/tcp-input" class="nav-item {% if current_page == 'tcp-input' %}active{% endif %}">
+        <span style="margin-right: 8px;">🌐</span> {{ t.get('nav.tcp_input') }}
     </a>
     <a href="/eq" class="nav-item {% if current_page == 'eq' %}active{% endif %}">
-        <span style="margin-right: 8px;">🎚️</span> EQ Settings
+        <span style="margin-right: 8px;">🎚️</span> {{ t.get('nav.eq') }}
     </a>
     <a href="/system" class="nav-item {% if current_page == 'system' %}active{% endif %}">
-        <span style="margin-right: 8px;">⚙️</span> System
-        <span style="font-size: 10px; opacity: 0.5; margin-left: 8px;">(Coming Soon)</span>
+        <span style="margin-right: 8px;">⚙️</span> {{ t.get('nav.system') }}
+        <span style="font-size: 10px; opacity: 0.5; margin-left: 8px;">({{ t.get('common.coming_soon') }})</span>
     </a>
 </nav>

@@ -74,3 +74,21 @@ def render_system(lang: str = "en", current_page: str = "system") -> str:
         current_page=current_page,
         content="<h2>System - Coming Soon</h2>",
     )
+
+
+def render_tcp_input(lang: str = "en", current_page: str = "tcp-input") -> str:
+    """
+    Render the TCP Input page.
+
+    Args:
+        lang: Language code ("en" or "ja")
+        current_page: Current page name for sidebar highlighting
+
+    Returns:
+        Rendered HTML string
+    """
+    template = env.get_template("pages/tcp_input.html")
+    return template.render(
+        t=get_translations(lang),
+        current_page=current_page,
+    )

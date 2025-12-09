@@ -1,0 +1,9 @@
+{# Card panel macro to wrap sections with consistent layout #}
+{% macro card_panel(title) -%}
+<div class="section">
+    <h2 class="section-title">{{ title }}</h2>
+    <div class="card">
+        {{ caller() }}
+    </div>
+</div>
+{%- endmacro %}

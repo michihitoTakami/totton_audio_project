@@ -242,6 +242,8 @@ class TcpInputTelemetry(BaseModel):
     )
     client_connected: bool = False
     streaming: bool = False
+    client_address: Optional[str] = None
+    uptime_seconds: Optional[int] = Field(default=None, ge=0)
     xrun_count: int = Field(default=0, ge=0)
     ring_buffer_frames: int = Field(default=0, ge=0)
     watermark_frames: int = Field(default=0, ge=0)
