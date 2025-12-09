@@ -266,6 +266,9 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
 
     std::lock_guard<std::mutex> lock(g_soft_mute_op_mutex);
 
+    // Cancel any stale pending restore (new switch supersedes)
+    g_soft_mute_restore_pending.store(false, std::memory_order_release);
+
     // Save current fade duration for restoration
     int originalFadeDuration = g_soft_mute->getFadeDuration();
     int outputSampleRate = g_soft_mute->getSampleRate();
