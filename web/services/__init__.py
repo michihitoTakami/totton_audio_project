@@ -33,6 +33,7 @@ from .eq import (
     sanitize_filename,
     validate_eq_profile_content,
 )
+from .tcp_input import parse_tcp_telemetry, TcpTelemetryPoller, TcpTelemetryStore
 
 __all__ = [
     # alsa
@@ -67,4 +68,8 @@ __all__ = [
     "read_and_validate_upload",
     "sanitize_filename",
     "validate_eq_profile_content",
+    # tcp input
+    "parse_tcp_telemetry",
+    "TcpTelemetryPoller",
+    "TcpTelemetryStore",
 ]

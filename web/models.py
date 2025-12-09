@@ -211,6 +211,121 @@ class PhaseTypeUpdateRequest(BaseModel):
 
 
 # ============================================================================
+# TCP Input Models
+# ============================================================================
+
+TcpConnectionMode = Literal["single", "takeover", "priority"]
+# Allow 0 when daemon has not bound yet (listening disabled)
+BoundPort = conint(ge=0, le=65535)
+
+
+class TcpInputStreamFormat(BaseModel):
+    """PCM stream format reported by TCP input source."""
+
+    sample_rate: int = Field(default=0, ge=0)
+    channels: int = Field(default=0, ge=0)
+    format: str = Field(default="unknown")
+    version: int = Field(default=1, ge=0)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class TcpInputTelemetry(BaseModel):
+    """Real-time telemetry for TCP input pipeline."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    listening: bool = False
+    bound_port: BoundPort | None = Field(
+        default=None,
+        validation_alias=AliasChoices("bound_port", "boundPort"),
+        serialization_alias="bound_port",
+    )
+    client_connected: bool = False
+    streaming: bool = False
+    xrun_count: int = Field(default=0, ge=0)
+    ring_buffer_frames: int = Field(default=0, ge=0)
+    watermark_frames: int = Field(default=0, ge=0)
+    buffered_frames: int = Field(default=0, ge=0)
+    max_buffered_frames: int = Field(default=0, ge=0)
+    dropped_frames: int = Field(default=0, ge=0)
+    disconnect_reason: Optional[str] = None
+    connection_mode: TcpConnectionMode = "single"
+    priority_clients: list[str] = Field(default_factory=list)
+    last_header: Optional[TcpInputStreamFormat] = None
+    rep_endpoint: Optional[str] = None
+    pub_endpoint: Optional[str] = None
+
+
+class TcpInputSettings(BaseModel):
+    """TCP input configuration settings."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    enabled: bool = True
+    bind_address: str = Field(
+        default="0.0.0.0",
+        validation_alias=AliasChoices("bind_address", "bindAddress"),
+        serialization_alias="bind_address",
+    )
+    port: Port = Field(default=46001)
+    buffer_size_bytes: int = Field(
+        default=262_144,
+        ge=0,
+        validation_alias=AliasChoices("buffer_size_bytes", "bufferSizeBytes"),
+        serialization_alias="buffer_size_bytes",
+    )
+    connection_mode: TcpConnectionMode = "single"
+    priority_clients: list[str] = Field(default_factory=list)
+
+
+class TcpInputStatusResponse(BaseModel):
+    """Aggregated TCP input status (config + telemetry)."""
+
+    settings: TcpInputSettings
+    telemetry: TcpInputTelemetry
+
+
+class TcpInputConfigUpdate(BaseModel):
+    """Config update payload for TCP input."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    enabled: Optional[bool] = None
+    bind_address: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("bind_address", "bindAddress"),
+        serialization_alias="bind_address",
+    )
+    port: Optional[Port] = None
+    buffer_size_bytes: Optional[int] = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("buffer_size_bytes", "bufferSizeBytes"),
+        serialization_alias="buffer_size_bytes",
+    )
+    connection_mode: Optional[TcpConnectionMode] = None
+    priority_clients: Optional[list[str]] = None
+
+    @model_validator(mode="after")
+    def _ensure_any_field(self) -> "TcpInputConfigUpdate":
+        """Ensure at least one field is provided to avoid no-op updates."""
+        if all(
+            value is None
+            for value in (
+                self.enabled,
+                self.bind_address,
+                self.port,
+                self.buffer_size_bytes,
+                self.connection_mode,
+                self.priority_clients,
+            )
+        ):
+            raise ValueError("At least one field must be provided for update")
+        return self
+
+
+# ============================================================================
 # Device Models
 # ============================================================================
 
