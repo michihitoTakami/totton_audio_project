@@ -95,6 +95,16 @@ def parse_tcp_telemetry(payload: dict[str, Any] | None) -> TcpInputTelemetry:
     if not isinstance(payload, dict):
         return TcpInputTelemetry()
 
+    uptime_seconds: int | None = None
+    uptime_raw = payload.get("uptime_seconds", payload.get("uptime_sec"))
+    if uptime_raw is not None:
+        try:
+            uptime_seconds = max(0, int(float(uptime_raw)))
+        except (TypeError, ValueError):
+            uptime_seconds = None
+
+    client_address = payload.get("client_address") or payload.get("client_ip")
+
     bound_port = payload.get("bound_port", payload.get("boundPort"))
     try:
         bound_port_int = int(bound_port) if bound_port is not None else None
@@ -115,6 +125,8 @@ def parse_tcp_telemetry(payload: dict[str, Any] | None) -> TcpInputTelemetry:
         bound_port=bound_port_int,
         client_connected=bool(payload.get("client_connected", False)),
         streaming=bool(payload.get("streaming", False)),
+        client_address=str(client_address) if client_address is not None else None,
+        uptime_seconds=uptime_seconds,
         xrun_count=int(payload.get("xrun_count", 0) or 0),
         ring_buffer_frames=int(payload.get("ring_buffer_frames", 0) or 0),
         watermark_frames=int(payload.get("watermark_frames", 0) or 0),
