@@ -17,7 +17,7 @@
             <div class="label">{{ t.get('tcp.status.connection') }}</div>
             <div
                 class="value"
-                :class="status.telemetry.listening ? 'ok' : ''"
+                :class="status.telemetry.listening && status.telemetry.client_connected ? 'ok' : ''"
                 x-text="connectionText()"
             ></div>
         </div>

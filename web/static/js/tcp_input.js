@@ -292,7 +292,10 @@
                 const fmt = this.status.telemetry.last_header?.format;
                 const depth = bitDepthFromFormat(fmt);
                 if (depth) return `${depth}-bit`;
-                return fmt ? fmt : this.translations.unknown;
+                const fmtText = fmt ? String(fmt) : null;
+                if (!fmtText) return this.translations.unknown;
+                if (fmtText.toLowerCase() === "unknown") return this.translations.unknown;
+                return fmtText;
             },
 
             latencyText() {
