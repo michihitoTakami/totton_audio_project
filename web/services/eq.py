@@ -6,6 +6,8 @@ from typing import Any
 
 from fastapi import HTTPException, UploadFile
 
+from opra import MODERN_TARGET_CORRECTION_BAND
+
 from ..constants import (
     FREQ_MAX_HZ,
     FREQ_MIN_HZ,
@@ -174,10 +176,13 @@ def _is_close(value: float | None, target: float, tolerance: float) -> bool:
     return value is not None and abs(value - target) <= tolerance
 
 
-# Modern Target (KB5000_7) correction filters
+# Modern Target (KB5000_7) correction filters (strict match)
 MODERN_TARGET_FILTERS = [
-    {"frequency": 5366.0, "gain": 2.8, "q": 1.5},
-    {"frequency": 2350.0, "gain": -0.9, "q": 2.0},
+    {
+        "frequency": float(MODERN_TARGET_CORRECTION_BAND["frequency"]),
+        "gain": float(MODERN_TARGET_CORRECTION_BAND["gain_db"]),
+        "q": float(MODERN_TARGET_CORRECTION_BAND["q"]),
+    }
 ]
 
 
@@ -186,11 +191,12 @@ def _is_modern_target_filter(parsed_filter: dict[str, Any] | None) -> bool:
     if not parsed_filter:
         return False
 
+    # Use strict tolerance to avoid false positives (test_similar_but_different_filter)
     for target in MODERN_TARGET_FILTERS:
         if (
-            _is_close(parsed_filter["frequency"], target["frequency"], 5.0)
-            and _is_close(parsed_filter["gain"], target["gain"], 0.2)
-            and _is_close(parsed_filter["q"], target["q"], 0.1)
+            _is_close(parsed_filter["frequency"], target["frequency"], 0.01)
+            and _is_close(parsed_filter["gain"], target["gain"], 0.01)
+            and _is_close(parsed_filter["q"], target["q"], 0.01)
         ):
             return True
 
