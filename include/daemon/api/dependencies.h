@@ -21,15 +21,6 @@ namespace daemon_output {
 class AlsaOutput;
 }
 
-namespace daemon_input {
-class PipeWireInput;
-class RtpInputAdapter;
-}  // namespace daemon_input
-
-namespace rtp_engine {
-class RtpEngineCoordinator;
-}
-
 namespace dac {
 class DacManager;
 }
@@ -46,7 +37,6 @@ struct DaemonDependencies {
     SoftMute::Controller** softMute = nullptr;
     ConvolutionEngine::GPUUpsampler** upsampler = nullptr;
     audio_pipeline::AudioPipeline** audioPipeline = nullptr;
-    rtp_engine::RtpEngineCoordinator** rtpCoordinator = nullptr;
     dac::DacManager** dacManager = nullptr;
     std::mutex* streamingMutex = nullptr;
     std::function<void(const std::string&)> refreshHeadroom;
