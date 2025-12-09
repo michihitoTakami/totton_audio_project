@@ -13,8 +13,8 @@
 
 namespace {
 
-constexpr snd_pcm_uframes_t DEFAULT_PERIOD_FRAMES = 512;
-constexpr snd_pcm_uframes_t DEFAULT_BUFFER_FRAMES = DEFAULT_PERIOD_FRAMES * 4;
+constexpr snd_pcm_uframes_t DEFAULT_PERIOD_FRAMES = 1024;
+constexpr snd_pcm_uframes_t DEFAULT_BUFFER_FRAMES = 8192;
 
 snd_pcm_format_t toPcmFormat(uint16_t format) {
     switch (format) {
