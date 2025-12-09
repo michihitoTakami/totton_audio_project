@@ -1,5 +1,7 @@
 """Unit tests for Pydantic models."""
 
+import pytest
+
 from web.models import (
     ApiResponse,
     CrossfeedSettings,
@@ -9,6 +11,9 @@ from web.models import (
     PhaseTypeUpdateRequest,
     Settings,
     Status,
+    TcpInputConfigUpdate,
+    TcpInputSettings,
+    TcpInputTelemetry,
 )
 
 
@@ -186,3 +191,41 @@ class TestModelSerialization:
         request = PhaseTypeUpdateRequest(phase_type="linear")
         data = request.model_dump()
         assert data["phase_type"] == "linear"
+
+
+class TestTcpInputModels:
+    """Tests for TCP input related models."""
+
+    def test_tcp_input_settings_defaults(self):
+        """Settings should provide safe defaults."""
+        settings = TcpInputSettings()
+        assert settings.enabled is True
+        assert settings.bind_address == "0.0.0.0"
+        assert settings.port == 46001
+        assert settings.buffer_size_bytes == 262_144
+        assert settings.connection_mode == "single"
+        assert settings.priority_clients == []
+
+    def test_tcp_input_config_update_requires_fields(self):
+        """Empty update should be rejected."""
+        with pytest.raises(ValueError):
+            TcpInputConfigUpdate()
+
+    def test_tcp_input_config_update_aliases(self):
+        """CamelCase aliases should be accepted."""
+        update = TcpInputConfigUpdate(
+            bindAddress="127.0.0.1",
+            bufferSizeBytes=131072,
+            port=5001,
+        )
+        assert update.bind_address == "127.0.0.1"
+        assert update.buffer_size_bytes == 131072
+        assert update.port == 5001
+
+    def test_tcp_input_telemetry_defaults_and_types(self):
+        """Telemetry defaults should be zero/None friendly."""
+        telemetry = TcpInputTelemetry()
+        assert telemetry.listening is False
+        assert telemetry.bound_port is None
+        assert telemetry.connection_mode == "single"
+        assert telemetry.last_header is None
