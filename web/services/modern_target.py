@@ -24,13 +24,14 @@ def is_modern_target_filter(
     if not parsed_filter:
         return False
 
-    for target in spec.filters:
+    for idx, target in enumerate(spec.filters):
+        freq_tol = (
+            spec.tolerance.frequency_primary
+            if idx == 0
+            else spec.tolerance.frequency_secondary
+        )
         if (
-            _is_close(
-                parsed_filter.get("frequency"),
-                target["frequency"],
-                spec.tolerance.frequency,
-            )
+            _is_close(parsed_filter.get("frequency"), target["frequency"], freq_tol)
             and _is_close(
                 parsed_filter.get("gain"), target["gain_db"], spec.tolerance.gain_db
             )

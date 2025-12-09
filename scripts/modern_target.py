@@ -17,7 +17,8 @@ class CorrectionBandDict(TypedDict):
 class CorrectionTolerance:
     """Tolerance for matching correction bands (used in parsing)."""
 
-    frequency: float
+    frequency_primary: float
+    frequency_secondary: float
     gain_db: float
     q: float
 
@@ -55,7 +56,8 @@ MODERN_TARGET_SPEC = ModernTargetSpec(
         "q": 2.0,
     },
     tolerance=CorrectionTolerance(
-        frequency=2.0,  # Hz
+        frequency_primary=0.6,  # Hz, strict to avoid false positives near 5366
+        frequency_secondary=1.2,  # Hz, allow slight rounding for 2350->2351
         gain_db=0.1,  # dB
         q=0.05,
     ),
