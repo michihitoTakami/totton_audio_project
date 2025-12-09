@@ -321,18 +321,22 @@ void watchdog_thread() {
 
 ### Journald 設定
 
-`/etc/systemd/journald.conf.d/magicbox.conf`:
+`/etc/systemd/journald.conf.d/magicbox.conf`（テンプレート: `systemd/journald.conf.d/magicbox.conf`）:
 
 ```ini
 [Journal]
 Storage=persistent
 Compress=yes
-SystemMaxUse=100M
-SystemMaxFileSize=10M
-MaxRetentionSec=7day
-RateLimitInterval=30s
-RateLimitBurst=1000
+SystemMaxUse=200M
+SystemKeepFree=512M
+SystemMaxFileSize=16M
+MaxRetentionSec=14day
+RateLimitIntervalSec=30s
+RateLimitBurst=500
+ForwardToSyslog=no
 ```
+
+運用手順と確認コマンドは [`../logging/journald.md`](../logging/journald.md) を参照。
 
 ### ログ確認コマンド
 

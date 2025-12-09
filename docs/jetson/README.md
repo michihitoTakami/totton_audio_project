@@ -96,6 +96,7 @@ USBケーブル接続後、ブラウザで以下にアクセス：
 | [architecture/](./architecture/) | システムアーキテクチャ設計 |
 | [usb-gadget/](./usb-gadget/) | USB Composite Gadget設計 |
 | [systemd/](./systemd/) | Systemdサービス設計 |
+| [logging/](./logging/) | journald設定・運用ガイド |
 | [network/](./network/) | ネットワーク設計 |
 | [deployment/](./deployment/) | デプロイメント・OTA設計 |
 | [reliability/](./reliability/) | 信頼性・エラー回復設計 |
