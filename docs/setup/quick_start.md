@@ -14,7 +14,7 @@
 # システムパッケージ
 sudo apt update
 sudo apt install -y build-essential cmake \
-    libpipewire-0.3-dev libasound2-dev libzmq3-dev
+    libasound2-dev libzmq3-dev
 
 # Python環境（uv推奨）
 curl -LsSf https://astral.sh/uv/install.sh | sh

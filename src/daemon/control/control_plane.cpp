@@ -198,14 +198,6 @@ void ControlPlane::registerHandlers() {
                                 [this](const auto& req) { return handlePhaseTypeGet(req); });
     zmqServer_->registerCommand("PHASE_TYPE_SET",
                                 [this](const auto& req) { return handlePhaseTypeSet(req); });
-
-    const std::vector<std::string> rtpCommands = {
-        "RTP_START_SESSION",    "RTP_STOP_SESSION", "RTP_LIST_SESSIONS", "RTP_GET_SESSION",
-        "RTP_DISCOVER_STREAMS", "StartSession",     "StopSession",       "ListSessions",
-        "GetSession",           "DiscoverStreams"};
-    for (const auto& cmd : rtpCommands) {
-        zmqServer_->registerCommand(cmd, [this](const auto& req) { return handleRtpCommand(req); });
-    }
 }
 
 void ControlPlane::startStatsThread() {
@@ -597,24 +589,6 @@ std::string ControlPlane::handleCrossfeedSetSize(const daemon_ipc::ZmqRequest& r
     nlohmann::json data;
     data["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
     return buildOkResponse(request, "", data);
-}
-
-std::string ControlPlane::handleRtpCommand(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json) {
-        return buildErrorResponse(request, "IPC_INVALID_COMMAND",
-                                  "RTP command requires JSON payload");
-    }
-    if (!deps_.rtpCoordinator) {
-        return buildErrorResponse(request, "IPC_INVALID_COMMAND",
-                                  "RTP coordinator not initialized");
-    }
-
-    std::string response;
-    if (deps_.rtpCoordinator->handleZeroMqCommand(request.command, *request.json, response)) {
-        return response;
-    }
-    return buildErrorResponse(request, "IPC_INVALID_COMMAND",
-                              "Unknown JSON command: " + request.command);
 }
 
 std::string ControlPlane::handleDacList(const daemon_ipc::ZmqRequest& request) {

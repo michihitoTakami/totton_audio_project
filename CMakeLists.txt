@@ -16,7 +16,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(CUDAToolkit REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SNDFILE REQUIRED sndfile)
-pkg_check_modules(PIPEWIRE REQUIRED libpipewire-0.3)
 pkg_check_modules(ALSA REQUIRED alsa)
 
 # ZeroMQ for IPC communication
@@ -95,7 +94,6 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/data/coefficients
     ${SNDFILE_INCLUDE_DIRS}
-    ${PIPEWIRE_INCLUDE_DIRS}
     ${ALSA_INCLUDE_DIRS}
 )
 
@@ -158,27 +156,6 @@ target_compile_options(gpu_upsampler PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
-# PipeWire Daemon executable
-add_executable(gpu_upsampler_daemon
-    src/pipewire_daemon.cpp
-    src/config_loader.cpp
-    src/partition_runtime_utils.cpp
-)
-
-# Link against core library, PipeWire, SoftMute, and Logging
-target_link_libraries(gpu_upsampler_daemon
-    gpu_upsampler_core
-    soft_mute
-    logging
-    ${PIPEWIRE_LIBRARIES}
-    nlohmann_json::nlohmann_json
-)
-
-# Compiler flags for daemon
-target_compile_options(gpu_upsampler_daemon PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-)
-
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
@@ -190,9 +167,6 @@ add_executable(gpu_upsampler_alsa
     src/daemon/control/handlers/handler_registry.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/control/control_plane.cpp
-    src/daemon/rtp/rtp_engine_coordinator.cpp
-    src/daemon/input/pipewire_input.cpp
-    src/daemon/input/rtp_input_adapter.cpp
     src/daemon/output/alsa_output.cpp
     src/daemon/control/zmq_server.cpp
     src/daemon/metrics/runtime_stats.cpp
@@ -210,10 +184,8 @@ target_link_libraries(gpu_upsampler_alsa
     graceful_shutdown
     fallback_manager
     zeromq_interface
-    rtp_session
     dac_capability
     logging
-    ${PIPEWIRE_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${ZMQ_LIBRARIES}
 )
@@ -298,21 +270,6 @@ target_include_directories(zeromq_interface PUBLIC
     ${cppzmq_SOURCE_DIR}
 )
 target_compile_options(zeromq_interface PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-)
-
-add_library(rtp_session STATIC
-    src/daemon/rtp/rtp_session_manager.cpp
-)
-target_link_libraries(rtp_session PUBLIC
-    logging
-    error_codes
-    nlohmann_json::nlohmann_json
-)
-target_include_directories(rtp_session PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
-)
-target_compile_options(rtp_session PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
@@ -416,7 +373,6 @@ target_compile_options(eq_support PRIVATE
 
 # Installation for command-line tool and library
 install(TARGETS gpu_upsampler DESTINATION bin)
-install(TARGETS gpu_upsampler_daemon DESTINATION bin)
 install(TARGETS gpu_upsampler_alsa DESTINATION bin)
 install(TARGETS gpu_upsampler_core DESTINATION lib)
 install(TARGETS zeromq_interface DESTINATION lib)
@@ -488,14 +444,11 @@ add_executable(cpu_tests
     tests/cpp/test_eq_parser.cpp
     tests/cpp/test_eq_to_fir.cpp
     tests/cpp/test_config_loader.cpp
-    tests/cpp/test_rtp_discovery.cpp
     tests/cpp/test_partition_plan.cpp
     tests/cpp/test_phase_alignment.cpp
     tests/cpp/test_playback_buffer_threshold.cpp
     tests/cpp/test_runtime_stats.cpp
     tests/cpp/test_audio_pipeline.cpp
-    tests/cpp/daemon/test_daemon_skeleton.cpp
-    src/daemon/rtp/rtp_engine_coordinator.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
@@ -503,15 +456,12 @@ add_executable(cpu_tests
     src/daemon/control/handlers/handler_registry.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/pcm/dac_manager.cpp
-    src/daemon/input/pipewire_input.cpp
-    src/daemon/input/rtp_input_adapter.cpp
     src/daemon/output/alsa_output.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
     gpu_upsampler_core
     eq_support
-    rtp_session
     logging
     filter_headroom
     fallback_manager
@@ -591,18 +541,6 @@ target_include_directories(error_codes_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(error_codes_tests)
-
-add_executable(rtp_session_tests
-    tests/cpp/test_rtp_session_manager.cpp
-)
-target_link_libraries(rtp_session_tests
-    GTest::gtest_main
-    rtp_session
-)
-target_include_directories(rtp_session_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-gtest_discover_tests(rtp_session_tests)
 
 # Auto-Negotiation tests (CPU-only, no ALSA hardware required)
 add_executable(auto_negotiation_tests

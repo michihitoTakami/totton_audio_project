@@ -15,8 +15,8 @@
 namespace shutdown_manager {
 
 ShutdownManager::ShutdownManager(Dependencies deps) : deps_(std::move(deps)) {
-    if (!deps_.runningFlag || !deps_.reloadFlag || !deps_.mainLoopRunningFlag) {
-        throw std::invalid_argument("ShutdownManager requires running/reload/mainLoop flags");
+    if (!deps_.runningFlag || !deps_.reloadFlag) {
+        throw std::invalid_argument("ShutdownManager requires running/reload flags");
     }
 
     controller_.setSignalState(&GracefulShutdown::getGlobalSignalState());
@@ -43,29 +43,22 @@ void ShutdownManager::setQuitLoopCallback(std::function<void()> cb) {
     quitLoopCallback_ = std::move(cb);
 }
 
-void ShutdownManager::setPipewireShutdownCallback(std::function<void()> cb) {
-    pipewireShutdownCallback_ = std::move(cb);
-}
-
-void ShutdownManager::setRtpShutdownCallback(std::function<void()> cb) {
-    rtpShutdownCallback_ = std::move(cb);
-}
-
 void ShutdownManager::setMainLoopRunning(bool running) {
-    deps_.mainLoopRunningFlag->store(running);
+    if (deps_.mainLoopRunningFlag) {
+        deps_.mainLoopRunningFlag->store(running);
+    }
     controller_.setMainLoopRunning(running);
 }
 
-void ShutdownManager::notifyReady(bool pipewireActive) {
+void ShutdownManager::notifyReady() {
 #ifdef HAVE_SYSTEMD
     if (!readyNotified_) {
-        sendReadyNotify(pipewireActive);
+        sendReadyNotify();
     }
 #endif
 }
 
-void ShutdownManager::tick(bool pipewireActive) {
-    (void)pipewireActive;
+void ShutdownManager::tick() {
     bool processed = controller_.processPendingSignals();
     if (processed) {
         deps_.runningFlag->store(controller_.isRunning());
@@ -78,7 +71,7 @@ void ShutdownManager::tick(bool pipewireActive) {
 #endif
 }
 
-void ShutdownManager::runShutdownSequence(bool pipewireActive) {
+void ShutdownManager::runShutdownSequence() {
     if (sequenceRan_) {
         return;
     }
@@ -91,14 +84,6 @@ void ShutdownManager::runShutdownSequence(bool pipewireActive) {
 #endif
 
     waitForFadeOut();
-
-    if (pipewireActive) {
-        if (pipewireShutdownCallback_) {
-            pipewireShutdownCallback_();
-        }
-    } else if (rtpShutdownCallback_) {
-        rtpShutdownCallback_();
-    }
 }
 
 void ShutdownManager::reset() {
@@ -107,7 +92,9 @@ void ShutdownManager::reset() {
     stoppingNotified_ = false;
     deps_.runningFlag->store(true);
     deps_.reloadFlag->store(false);
-    deps_.mainLoopRunningFlag->store(false);
+    if (deps_.mainLoopRunningFlag) {
+        deps_.mainLoopRunningFlag->store(false);
+    }
     controller_.setRunning(true);
     controller_.clearReloadRequest();
     GracefulShutdown::getGlobalSignalState().reset();
@@ -156,9 +143,8 @@ void ShutdownManager::sendWatchdog() {
 }
 
 #ifdef HAVE_SYSTEMD
-void ShutdownManager::sendReadyNotify(bool pipewireActive) {
-    std::string status = pipewireActive ? "Processing audio..." : "Processing audio (RTP-only)...";
-    sd_notify(0, ("READY=1\nSTATUS=" + status + "\n").c_str());
+void ShutdownManager::sendReadyNotify() {
+    sd_notify(0, "READY=1\nSTATUS=Processing audio...\n");
     readyNotified_ = true;
     std::cout << "systemd: Notified READY=1" << std::endl;
 }

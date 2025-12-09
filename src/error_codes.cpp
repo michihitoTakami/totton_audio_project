@@ -17,8 +17,6 @@ static const std::unordered_map<ErrorCode, const char*> kErrorCodeStrings = {
     {ErrorCode::AUDIO_FILTER_NOT_FOUND, "AUDIO_FILTER_NOT_FOUND"},
     {ErrorCode::AUDIO_BUFFER_OVERFLOW, "AUDIO_BUFFER_OVERFLOW"},
     {ErrorCode::AUDIO_XRUN_DETECTED, "AUDIO_XRUN_DETECTED"},
-    {ErrorCode::AUDIO_RTP_SOCKET_ERROR, "AUDIO_RTP_SOCKET_ERROR"},
-    {ErrorCode::AUDIO_RTP_SESSION_NOT_FOUND, "AUDIO_RTP_SESSION_NOT_FOUND"},
 
     // DAC/ALSA
     {ErrorCode::DAC_DEVICE_NOT_FOUND, "DAC_DEVICE_NOT_FOUND"},
@@ -68,8 +66,6 @@ static const std::unordered_map<ErrorCode, int> kHttpStatusMap = {
     {ErrorCode::AUDIO_FILTER_NOT_FOUND, 404},
     {ErrorCode::AUDIO_BUFFER_OVERFLOW, 500},
     {ErrorCode::AUDIO_XRUN_DETECTED, 500},
-    {ErrorCode::AUDIO_RTP_SOCKET_ERROR, 500},
-    {ErrorCode::AUDIO_RTP_SESSION_NOT_FOUND, 404},
 
     // DAC/ALSA
     {ErrorCode::DAC_DEVICE_NOT_FOUND, 404},
@@ -119,8 +115,6 @@ static const std::unordered_map<std::string, ErrorCode> kStringToErrorCode = {
     {"AUDIO_FILTER_NOT_FOUND", ErrorCode::AUDIO_FILTER_NOT_FOUND},
     {"AUDIO_BUFFER_OVERFLOW", ErrorCode::AUDIO_BUFFER_OVERFLOW},
     {"AUDIO_XRUN_DETECTED", ErrorCode::AUDIO_XRUN_DETECTED},
-    {"AUDIO_RTP_SOCKET_ERROR", ErrorCode::AUDIO_RTP_SOCKET_ERROR},
-    {"AUDIO_RTP_SESSION_NOT_FOUND", ErrorCode::AUDIO_RTP_SESSION_NOT_FOUND},
 
     // DAC/ALSA
     {"DAC_DEVICE_NOT_FOUND", ErrorCode::DAC_DEVICE_NOT_FOUND},

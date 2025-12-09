@@ -5,7 +5,6 @@
 #include "daemon/control/zmq_server.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/pcm/dac_manager.h"
-#include "daemon/rtp/rtp_engine_coordinator.h"
 #include "soft_mute.h"
 
 #include <atomic>
@@ -55,7 +54,6 @@ struct ControlPlaneDependencies {
     std::function<void(AppConfig&, const std::string&)> setPreferredOutputDevice;
 
     dac::DacManager* dacManager = nullptr;
-    rtp_engine::RtpEngineCoordinator* rtpCoordinator = nullptr;
     ConvolutionEngine::GPUUpsampler** upsampler = nullptr;
     CrossfeedControls crossfeed;
 
@@ -91,7 +89,6 @@ class ControlPlane {
     std::string handleCrossfeedSetCombined(const daemon_ipc::ZmqRequest& request);
     std::string handleCrossfeedGenerate(const daemon_ipc::ZmqRequest& request);
     std::string handleCrossfeedSetSize(const daemon_ipc::ZmqRequest& request);
-    std::string handleRtpCommand(const daemon_ipc::ZmqRequest& request);
     std::string handleDacList(const daemon_ipc::ZmqRequest& request);
     std::string handleDacStatus(const daemon_ipc::ZmqRequest& request);
     std::string handleDacSelect(const daemon_ipc::ZmqRequest& request);

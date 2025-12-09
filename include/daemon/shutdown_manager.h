@@ -14,7 +14,7 @@ class ShutdownManager {
         SoftMute::Controller** softMute = nullptr;
         std::atomic<bool>* runningFlag = nullptr;
         std::atomic<bool>* reloadFlag = nullptr;
-        std::atomic<bool>* mainLoopRunningFlag = nullptr;
+        std::atomic<bool>* mainLoopRunningFlag = nullptr;  // optional (nullptr if no external loop)
     };
 
     explicit ShutdownManager(Dependencies deps);
@@ -22,21 +22,19 @@ class ShutdownManager {
     // Signal handling
     void installSignalHandlers();
 
-    // PipeWire-specific callbacks
+    // Shutdown callbacks
     void setQuitLoopCallback(std::function<void()> cb);
-    void setPipewireShutdownCallback(std::function<void()> cb);
-    void setRtpShutdownCallback(std::function<void()> cb);
 
     void setMainLoopRunning(bool running);
 
     // Notifications
-    void notifyReady(bool pipewireActive);
+    void notifyReady();
 
     // Periodic processing (called from main loops)
-    void tick(bool pipewireActive);
+    void tick();
 
-    // Shutdown execution (shared across PipeWire/RTP paths)
-    void runShutdownSequence(bool pipewireActive);
+    // Shutdown execution
+    void runShutdownSequence();
 
     // Reset manager state between restarts
     void reset();
@@ -49,15 +47,13 @@ class ShutdownManager {
     void waitForFadeOut();
     void sendWatchdog();
 #ifdef HAVE_SYSTEMD
-    void sendReadyNotify(bool pipewireActive);
+    void sendReadyNotify();
     void sendStoppingNotify();
 #endif
 
     Dependencies deps_;
     GracefulShutdown::Controller controller_;  // own signal controller
     std::function<void()> quitLoopCallback_;
-    std::function<void()> pipewireShutdownCallback_;
-    std::function<void()> rtpShutdownCallback_;
 
     bool readyNotified_{false};
     bool stoppingNotified_{false};
