@@ -9,7 +9,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 # 単一の定義元に集約（一次/二次バンドと許容値を scripts/modern_target.py に保持）
-from modern_target import MODERN_TARGET_SPEC  # type: ignore  # noqa: E402
+from modern_target import MODERN_TARGET_SPEC  # noqa: E402
 
 
 def _is_close(value: float | None, target: float, tolerance: float) -> bool:

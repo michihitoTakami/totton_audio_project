@@ -23,7 +23,7 @@ CURRENT_DIR = Path(__file__).parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
-from modern_target import (  # type: ignore  # noqa: E402
+from modern_target import (  # noqa: E402
     MODERN_TARGET_CORRECTION_BAND,
 )
 
