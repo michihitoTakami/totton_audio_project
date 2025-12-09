@@ -33,9 +33,8 @@ services:
     devices:
       - /dev/snd:/dev/snd
 
-    # TCP input port (host 46002 to avoid clash) + Web UI
+    # Web UI (TCP入力はjetson-pcm-receiver側で受ける)
     ports:
-      - "46002:46001/tcp"
       - "80:80"
 
     # Shared memory for audio buffers

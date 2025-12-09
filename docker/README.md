@@ -20,7 +20,7 @@ docker compose -f jetson/docker-compose.jetson.yml down
 - JetPack 6.1 以降 + NVIDIA Container Runtime 必須
 - `--device /dev/snd` を必ず付与（Loopback/実デバイスをコンテナへ渡す）
 - 環境変数 `JPR_*` で CLI 相当の設定を上書き可能（ポート、デバイス、接続モード、ZeroMQ など）
-- `jetson-pcm-receiver` はホスト 46001/TCP、`magicbox` の TCP 入力は競合回避のためホスト 46002→コンテナ 46001 を割り当て
+- TCP入力は `jetson-pcm-receiver` が受け、Magic Box には ALSA Loopback で渡す（Magic Box 側のTCP穴あけ不要）
 - サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build jetson-pcm-receiver` のようにサービス名を指定
 
 ### 入力レート/フォーマットの扱い（TCPのみ）
