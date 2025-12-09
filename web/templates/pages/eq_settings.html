@@ -259,6 +259,7 @@ function eqSettingsData() {
             if (!this.opra.selected || this.actionInProgress) return;
 
             this.actionInProgress = true;
+            let needsRestart = false;
             try {
                 const eqId = this.opra.selectedEqId || this.opra.eqProfiles[0]?.id;
                 if (!eqId) {
@@ -273,14 +274,23 @@ function eqSettingsData() {
                 if (!response.ok) throw new Error('Failed to apply EQ');
 
                 const data = await response.json();
-                this.showToast(data.message || 'EQを適用しました', 'success');
-                await this.fetchActiveEq();
-                await this.fetchProfiles();
+                needsRestart = Boolean(data.success && data.restart_required);
+                this.showToast(
+                    data.message || 'EQを適用しました',
+                    data.success ? 'success' : 'error'
+                );
+                if (data.success) {
+                    await this.fetchActiveEq();
+                    await this.fetchProfiles();
+                }
             } catch (error) {
                 console.error('Failed to apply EQ:', error);
                 this.showToast('EQの適用に失敗しました', 'error');
             } finally {
                 this.actionInProgress = false;
+                if (needsRestart) {
+                    await this.restartDaemon();
+                }
             }
         },
 
@@ -288,6 +298,7 @@ function eqSettingsData() {
             if (this.actionInProgress) return;
 
             this.actionInProgress = true;
+            let needsRestart = false;
             try {
                 const response = await fetch(`/eq/activate/${encodeURIComponent(name)}`, {
                     method: 'POST',
@@ -296,13 +307,22 @@ function eqSettingsData() {
                 if (!response.ok) throw new Error('Failed to activate profile');
 
                 const data = await response.json();
-                this.showToast(data.message || 'プロファイルを有効化しました', 'success');
-                await this.fetchActiveEq();
+                needsRestart = Boolean(data.success && data.restart_required);
+                this.showToast(
+                    data.message || 'プロファイルを有効化しました',
+                    data.success ? 'success' : 'error'
+                );
+                if (data.success) {
+                    await this.fetchActiveEq();
+                }
             } catch (error) {
                 console.error('Failed to activate profile:', error);
                 this.showToast('プロファイルの有効化に失敗しました', 'error');
             } finally {
                 this.actionInProgress = false;
+                if (needsRestart) {
+                    await this.restartDaemon();
+                }
             }
         },
 
@@ -310,6 +330,7 @@ function eqSettingsData() {
             if (this.actionInProgress) return;
 
             this.actionInProgress = true;
+            let needsRestart = false;
             try {
                 const response = await fetch('/eq/deactivate', {
                     method: 'POST',
@@ -318,13 +339,22 @@ function eqSettingsData() {
                 if (!response.ok) throw new Error('Failed to deactivate EQ');
 
                 const data = await response.json();
-                this.showToast(data.message || 'EQを無効化しました', 'success');
-                await this.fetchActiveEq();
+                needsRestart = Boolean(data.success && data.restart_required);
+                this.showToast(
+                    data.message || 'EQを無効化しました',
+                    data.success ? 'success' : 'error'
+                );
+                if (data.success) {
+                    await this.fetchActiveEq();
+                }
             } catch (error) {
                 console.error('Failed to deactivate EQ:', error);
                 this.showToast('EQの無効化に失敗しました', 'error');
             } finally {
                 this.actionInProgress = false;
+                if (needsRestart) {
+                    await this.restartDaemon();
+                }
             }
         },
 
@@ -391,6 +421,35 @@ function eqSettingsData() {
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        async restartDaemon() {
+            if (this.actionInProgress) return;
+
+            this.actionInProgress = true;
+            try {
+                const response = await fetch('/daemon/restart', {
+                    method: 'POST',
+                });
+
+                if (!response.ok) throw new Error('Restart failed');
+
+                const data = await response.json();
+                this.showToast(
+                    data.message || 'デーモンを再起動しました',
+                    data.success ? 'success' : 'error'
+                );
+
+                setTimeout(() => {
+                    this.fetchActiveEq();
+                    this.fetchProfiles();
+                }, 1500);
+            } catch (error) {
+                console.error('Failed to restart daemon:', error);
+                this.showToast('デーモンの再起動に失敗しました', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
         },
     };
 }

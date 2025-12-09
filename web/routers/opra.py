@@ -22,9 +22,32 @@ from ..models import (
     OpraStats,
     OpraVendorsResponse,
 )
-from ..services import load_config, save_config
+from ..services import (
+    check_daemon_running,
+    get_daemon_client,
+    load_config,
+    save_config,
+)
 
 router = APIRouter(prefix="/opra", tags=["opra"])
+
+
+def _reload_daemon_if_running() -> tuple[bool, bool, str | None]:
+    """Reload the daemon when running to apply new EQ profile."""
+    daemon_running = check_daemon_running()
+    if not daemon_running:
+        return daemon_running, False, None
+
+    try:
+        with get_daemon_client() as client:
+            reload_success, reload_message = client.reload_config()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        return daemon_running, False, str(exc)
+
+    if not reload_success:
+        return daemon_running, False, reload_message
+
+    return daemon_running, True, None
 
 
 @router.get("/stats", response_model=OpraStats)
@@ -174,15 +197,22 @@ async def opra_apply_eq(eq_id: str, apply_correction: bool = False):
         config.eq_profile_path = str(profile_path)
         save_config(config)
 
+        daemon_running, reload_success, reload_error = _reload_daemon_if_running()
+        response_data: dict[str, str | bool] = {
+            "profile_name": profile_path.stem,
+            "modern_target_applied": apply_correction,
+            "author": author,
+            "daemon_running": daemon_running,
+            "daemon_reloaded": reload_success,
+        }
+        if reload_error:
+            response_data["reload_error"] = reload_error
+
         return ApiResponse(
             success=True,
             message=f"Applied '{eq_data.get('name', eq_id)}'",
-            data={
-                "profile_name": profile_path.stem,
-                "modern_target_applied": apply_correction,
-                "author": author,
-            },
-            restart_required=True,
+            data=response_data,
+            restart_required=daemon_running and not reload_success,
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
