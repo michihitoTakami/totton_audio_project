@@ -191,12 +191,13 @@ function eqSettingsData() {
                 if (!response.ok) throw new Error('Failed to fetch active EQ');
                 const data = await response.json();
 
-                // Parse filters from original_filters or opra_filters
-                let filters = [];
+                // Merge OPRA filters and Modern Target corrections for display
+                const filters = [];
+                if (data.opra_filters && data.opra_filters.length > 0) {
+                    filters.push(...data.opra_filters);
+                }
                 if (data.original_filters && data.original_filters.length > 0) {
-                    filters = data.original_filters;
-                } else if (data.opra_filters && data.opra_filters.length > 0) {
-                    filters = data.opra_filters;
+                    filters.push(...data.original_filters);
                 }
 
                 this.activeEq = {
