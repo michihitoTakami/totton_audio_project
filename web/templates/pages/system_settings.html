@@ -12,6 +12,16 @@
         <p class="page-subtitle">{{ t.get('system.subtitle') }}</p>
     </div>
 
+    {% call panels.card_panel(t.get('system.language.title')) %}
+        <div class="card-row wrap">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.language.description') }}</div>
+            </div>
+            {{ buttons.btn_primary(t.get('system.language.english'), icon='🇺🇸', click="switchLanguage('en')", disabled="currentLang === 'en'", extra_class='btn-secondary') }}
+            {{ buttons.btn_primary(t.get('system.language.japanese'), icon='🇯🇵', click="switchLanguage('ja')", disabled="currentLang === 'ja'", extra_class='btn-secondary') }}
+        </div>
+    {% endcall %}
+
     <div class="section">
         <h2 class="section-title">{{ t.get('system.health.title') }}</h2>
         <div class="card-grid">
@@ -154,6 +164,7 @@ function systemPage() {
         health: { daemon_running: false, input_rate: 0, output_rate: 0 },
         daemon: { pid: null, binary_path: null },
         dac: { devices: [], runtime: null, loading: false },
+        currentLang: "{{ lang }}",
         partitioned: {
             enabled: false,
             fast_partition_taps: 32768,
@@ -347,6 +358,13 @@ function systemPage() {
             } catch (err) {
                 console.error('config fetch failed', err);
             }
+        },
+
+        switchLanguage(target) {
+            if (target === this.currentLang) return;
+            const url = new URL(window.location.href);
+            url.searchParams.set('lang', target);
+            window.location.href = url.toString();
         },
     };
 }

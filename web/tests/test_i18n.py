@@ -1,6 +1,6 @@
 """Unit tests for i18n module."""
 
-from web.i18n import TRANSLATIONS, get_text, get_translations
+from web.i18n import TRANSLATIONS, get_text, get_translations, normalize_lang
 
 
 class TestGetText:
@@ -196,3 +196,35 @@ class TestTranslationConsistency:
         for lang in ["en", "ja"]:
             for key, value in TRANSLATIONS[lang].items():
                 assert value.strip() != "", f"Empty translation for {lang}.{key}"
+
+
+class TestNormalizeLang:
+    """Tests for language normalization helper."""
+
+    def test_normalize_lang_handles_none(self):
+        """None should default to English."""
+        assert normalize_lang(None) == "en"
+
+    def test_normalize_lang_lowercases_codes(self):
+        """Uppercase language codes should be normalized."""
+        assert normalize_lang("JA") == "ja"
+
+    def test_normalize_lang_invalid_defaults_to_english(self):
+        """Unsupported language codes should fall back to English."""
+        assert normalize_lang("fr") == "en"
+
+
+class TestLanguageSwitchKeys:
+    """Ensure language switch translation keys exist."""
+
+    def test_language_keys_exist_in_both_locales(self):
+        """Language switch strings must be defined for all locales."""
+        keys = [
+            "system.language.title",
+            "system.language.description",
+            "system.language.english",
+            "system.language.japanese",
+        ]
+        for key in keys:
+            assert key in TRANSLATIONS["en"], f"Missing EN key: {key}"
+            assert key in TRANSLATIONS["ja"], f"Missing JA key: {key}"

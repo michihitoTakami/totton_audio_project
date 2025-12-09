@@ -1594,8 +1594,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "default": "en",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Lang"
             }
           }
@@ -1635,8 +1641,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "default": "en",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Lang"
             }
           }
@@ -1676,8 +1688,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "default": "en",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Lang"
             }
           }
@@ -1717,8 +1735,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "default": "en",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Lang"
             }
           }

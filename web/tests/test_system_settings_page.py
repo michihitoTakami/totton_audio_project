@@ -37,3 +37,21 @@ def test_system_page_structure():
     assert "/dac/rescan" in html
     assert "/dac/select" in html
     assert "/partitioned-convolution" in html
+
+
+def test_language_switch_controls_present():
+    """Language switch UI is rendered with links."""
+    html = render_system(lang="en", current_page="system")
+
+    assert "Language" in html
+    assert "English" in html
+    assert "Japanese" in html
+
+
+def test_language_switch_translated_to_japanese():
+    """Language selector uses Japanese labels when lang=ja."""
+    html = render_system(lang="ja", current_page="system")
+
+    assert "言語設定" in html
+    assert "英語" in html
+    assert "日本語" in html

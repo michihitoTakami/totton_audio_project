@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from web.main import app
+from web.i18n import normalize_lang
 
 
 @pytest.fixture
@@ -52,3 +53,21 @@ def test_responsive_breakpoints_present():
     assert "@media (min-width: 1200px)" in content
     assert "--sidebar-width" in content
     assert ".nav-item:focus-visible" in content
+
+
+def test_language_persists_via_cookie(client):
+    """langクエリ指定時にCookieへ永続化されることを確認."""
+    res = client.get("/?lang=ja")
+    assert res.cookies.get("lang") == "ja"
+
+    # Subsequent request without query should reuse cookie
+    res2 = client.get("/")
+    assert 'lang="ja"' in res2.text or 'lang=\\"ja\\"' in res2.text
+
+
+def test_language_falls_back_to_cookie_when_query_missing(client):
+    """クエリなしでもCookieがあればその言語を使う."""
+    # set cookie manually
+    cookie_lang = normalize_lang("ja")
+    res = client.get("/", cookies={"lang": cookie_lang})
+    assert 'lang="ja"' in res.text or 'lang=\\"ja\\"' in res.text
