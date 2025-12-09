@@ -6,6 +6,7 @@
 namespace SoftMute {
 
 Controller::Controller(int fadeDurationMs, int sampleRate) {
+    std::lock_guard<std::mutex> lock(configMutex_);
     fadeDurationMs_.store(fadeDurationMs, std::memory_order_relaxed);
     sampleRate_.store(sampleRate, std::memory_order_relaxed);
     updateFadeSamples();
@@ -111,6 +112,7 @@ bool Controller::isSilent() const {
 }
 
 void Controller::setFadeDuration(int durationMs) {
+    std::lock_guard<std::mutex> lock(configMutex_);
     fadeDurationMs_.store(std::max(1, durationMs), std::memory_order_relaxed);
     updateFadeSamples();
 }
@@ -120,6 +122,7 @@ int Controller::getFadeDuration() const {
 }
 
 void Controller::setSampleRate(int sampleRate) {
+    std::lock_guard<std::mutex> lock(configMutex_);
     sampleRate_.store(std::max(1, sampleRate), std::memory_order_relaxed);
     updateFadeSamples();
 }
@@ -129,6 +132,7 @@ int Controller::getSampleRate() const {
 }
 
 void Controller::setFadeCurve(FadeCurve curve) {
+    std::lock_guard<std::mutex> lock(configMutex_);
     fadeCurve_.store(curve, std::memory_order_relaxed);
 }
 

@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <mutex>
 
 namespace SoftMute {
 
@@ -74,11 +75,12 @@ class Controller {
     float calculateGain(size_t position, size_t total, bool fadeOut) const;
 
     // Thread safety model:
-    // - All member variables are atomic for safe concurrent access from:
+    // - All realtime parameters are atomic for safe concurrent access from:
     //   - Control thread
     //   (startFadeOut/startFadeIn/setMuted/setPlaying/setFadeDuration/setSampleRate)
     //   - Audio thread (process)
-    // - setFadeDuration/setSampleRate can be called at any time without stopping audio
+    // - Non-realtime setters (duration/sample rate/curve) use a lightweight mutex to avoid races
+    //   while keeping process() lock-free.
     std::atomic<MuteState> state_{MuteState::PLAYING};
     std::atomic<float> currentGain_{1.0f};
     std::atomic<size_t> fadePosition_{0};
@@ -91,6 +93,9 @@ class Controller {
 
     // Recalculate fade samples when parameters change
     void updateFadeSamples();
+
+    // Protect configuration updates (non-RT paths only)
+    mutable std::mutex configMutex_;
 };
 
 // Convenience function: Calculate fade duration in samples
