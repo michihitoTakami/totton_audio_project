@@ -52,5 +52,11 @@
     "consoleOutput": true,
     "coloredOutput": true
   },
+  "tcpInput": {
+    "enabled": true,
+    "bindAddress": "0.0.0.0",
+    "port": 46001,
+    "bufferSizeBytes": 262144
+  },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }

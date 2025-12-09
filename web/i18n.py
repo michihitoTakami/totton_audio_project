@@ -71,6 +71,8 @@ TRANSLATIONS = {
         # Dashboard cards
         "dashboard.crossfeed": "Crossfeed",
         "dashboard.low_latency": "Low Latency Mode",
+        "dashboard.tcp_input": "TCP Input",
+        "dashboard.tcp_input.manage": "View TCP Input",
         # Low Latency Mode section
         "dashboard.low_latency.title": "Low Latency Mode (Partitioned Convolution)",
         "dashboard.low_latency.toggle": "Low Latency Partition",
@@ -214,6 +216,8 @@ TRANSLATIONS = {
         # Dashboard cards
         "dashboard.crossfeed": "クロスフィード",
         "dashboard.low_latency": "低遅延モード",
+        "dashboard.tcp_input": "TCP入力",
+        "dashboard.tcp_input.manage": "TCP入力を開く",
         # Low Latency Mode section
         "dashboard.low_latency.title": "⚡ 低遅延モード (Partitioned Convolution)",
         "dashboard.low_latency.toggle": "低遅延パーティション",
