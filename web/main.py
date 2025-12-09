@@ -6,12 +6,13 @@ FastAPI-based control interface for the GPU audio upsampler daemon.
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .exceptions import register_exception_handlers
+from .i18n import normalize_lang
 from .models import ApiResponse, TcpInputStatusResponse, TcpInputTelemetry
 from .routers import (
     crossfeed_router,
@@ -183,27 +184,39 @@ async def restart():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard_page(lang: str = "en"):
+async def dashboard_page(request: Request, lang: str | None = None):
     """Serve the Dashboard page."""
-    return render_dashboard(lang=lang)
+    resolved_lang = _resolve_lang(request, lang)
+    return _render_with_lang(
+        content=render_dashboard(lang=resolved_lang), lang=resolved_lang
+    )
 
 
 @app.get("/eq", response_class=HTMLResponse)
-async def eq_page(lang: str = "en"):
+async def eq_page(request: Request, lang: str | None = None):
     """Serve the EQ Settings page."""
-    return render_eq_settings(lang=lang)
+    resolved_lang = _resolve_lang(request, lang)
+    return _render_with_lang(
+        content=render_eq_settings(lang=resolved_lang), lang=resolved_lang
+    )
 
 
 @app.get("/system", response_class=HTMLResponse)
-async def system_page(lang: str = "en"):
+async def system_page(request: Request, lang: str | None = None):
     """Serve the System page."""
-    return render_system(lang=lang)
+    resolved_lang = _resolve_lang(request, lang)
+    return _render_with_lang(
+        content=render_system(lang=resolved_lang), lang=resolved_lang
+    )
 
 
 @app.get("/tcp-input", response_class=HTMLResponse)
-async def tcp_input_page(lang: str = "en"):
+async def tcp_input_page(request: Request, lang: str | None = None):
     """Serve the TCP Input page."""
-    return render_tcp_input(lang=lang)
+    resolved_lang = _resolve_lang(request, lang)
+    return _render_with_lang(
+        content=render_tcp_input(lang=resolved_lang), lang=resolved_lang
+    )
 
 
 # ============================================================================
@@ -214,3 +227,36 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=11881)
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _resolve_lang(request: Request, lang: str | None) -> str:
+    """
+    Resolve the language by query param -> cookie -> default.
+    """
+    if lang:
+        return normalize_lang(lang)
+    cookie_lang = request.cookies.get("lang")
+    if cookie_lang:
+        return normalize_lang(cookie_lang)
+    return "en"
+
+
+def _render_with_lang(content: str, lang: str) -> HTMLResponse:
+    """
+    Wrap rendered HTML with a cookie that persists language choice.
+    """
+    response = HTMLResponse(content=content)
+    response.set_cookie(
+        "lang",
+        lang,
+        max_age=60 * 60 * 24 * 365,
+        path="/",
+        httponly=False,
+        samesite="lax",
+    )
+    return response
