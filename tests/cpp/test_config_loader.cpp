@@ -594,5 +594,4 @@ TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndFilterPaths) {
 }
 
 // ============================================================
-// RTP settings (Issue #697)
 // ============================================================

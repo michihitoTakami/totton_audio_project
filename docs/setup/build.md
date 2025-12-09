@@ -14,7 +14,6 @@ sudo apt install -y \
     cmake \
     pkg-config \
     libsndfile1-dev \
-    libpipewire-0.3-dev \
     libasound2-dev \
     libzmq3-dev
 
@@ -94,7 +93,7 @@ cmake -B build -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.0/bin/nvcc
 
 | ファイル | 説明 |
 |---------|------|
-| `gpu_upsampler_alsa` | メインデーモン（PipeWire入力→GPU処理→ALSA出力） |
+| `gpu_upsampler_alsa` | メインデーモン（TCP/ALSA入力→GPU処理→ALSA出力） |
 | `test_eq` | EQテストツール |
 
 ### テストバイナリ
@@ -152,10 +151,10 @@ export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 cmake -B build
 ```
 
-### libpipewire-0.3 が見つからない
+### ALSA開発ヘッダーが見つからない
 
 ```bash
-sudo apt install libpipewire-0.3-dev
+sudo apt install libasound2-dev
 ```
 
 ### libzmq が見つからない

@@ -146,7 +146,6 @@ IOWeight=200
 
 # リアルタイム優先度
 Nice=-10
-LimitRTPRIO=99
 LimitMEMLOCK=infinity
 
 # セキュリティ

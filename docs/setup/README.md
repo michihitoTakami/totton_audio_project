@@ -9,9 +9,8 @@ Magic Box Projectの開発環境構築とセットアップに関するドキュ
 | [クイックスタート](quick_start.md) | 最小限の手順で動作確認 | 初めての方 |
 | [ビルド手順](build.md) | 詳細なビルド手順・トラブルシューティング | 開発者 |
 | [テスト実行](test.md) | テストの実行方法 | 開発者 |
-| [PC開発環境](pc_development.md) | PipeWire/ALSA連携の詳細設定 | 開発者（実機動作） |
+| [PC開発環境](pc_development.md) | ALSA/TCP入力の詳細設定 | 開発者（実機動作） |
 | [Web UI](web_ui.md) | Web UIサーバーの起動・設定 | 開発者 |
-| [Raspberry Pi ブリッジ](pi_bridge.md) | PiをUAC2+RTPブリッジとして初期化 | Jetson + Pi構成 |
 
 ## 環境別ガイド
 
@@ -22,7 +21,7 @@ Magic Box Projectの開発環境構築とセットアップに関するドキュ
 │  PC開発環境 (Ubuntu 22.04+)                                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  GPU: RTX 2070 Super以上 (CUDA SM 7.5+)                         │
-│  Audio: PipeWire → GPU Upsampler → ALSA → USB DAC               │
+│  Audio: ALSA Loopback/TCP → GPU Upsampler → ALSA → USB DAC       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -60,8 +59,7 @@ Magic Box Projectの開発環境構築とセットアップに関するドキュ
 
 | ソフトウェア | バージョン | 用途 |
 |-------------|----------|------|
-| PipeWire | 0.3+ | オーディオ入力 |
-| ALSA | - | オーディオ出力 |
+| ALSA | - | オーディオ入出力 |
 | ZeroMQ | 4.3+ | IPC通信 |
 
 ## セットアップの流れ
@@ -73,7 +71,7 @@ flowchart TD
     C --> D[ビルド]
     D --> E{目的は?}
     E -->|テストのみ| F[テスト実行]
-    E -->|実機動作| G[PipeWire設定]
+    E -->|実機動作| G[ALSA/TCP入力設定]
     G --> H[デーモン起動]
     H --> I[Web UI起動]
 ```
@@ -84,7 +82,7 @@ flowchart TD
 # Ubuntu/Debian
 sudo apt update
 sudo apt install -y build-essential cmake nvidia-cuda-toolkit \
-    libpipewire-0.3-dev libasound2-dev libzmq3-dev
+    libasound2-dev libzmq3-dev
 
 # Python (uv推奨)
 curl -LsSf https://astral.sh/uv/install.sh | sh

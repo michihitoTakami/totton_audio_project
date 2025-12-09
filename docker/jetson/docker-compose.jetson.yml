@@ -33,7 +33,6 @@ services:
     devices:
       - /dev/snd:/dev/snd
 
-    # RTP input port + Web UI
     ports:
       - "46000:46000/udp"
       - "80:80"

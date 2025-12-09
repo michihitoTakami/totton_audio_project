@@ -74,7 +74,6 @@ sudo ./scripts/jetson/setup-dev-autostart.sh status
 
 | サービス名 | 役割 | 主な設定 |
 |------------|------|----------|
-| `gpu-upsampler-dev.service` | `build/gpu_upsampler_alsa` をリポジトリ root で実行 | `LimitRTPRIO=99`, `LimitMEMLOCK=infinity`, `Restart=always` |
 | `magicbox-web-dev.service` | `uv run uvicorn web.main:app` を起動し Web UI を提供 | `After=gpu-upsampler-dev`, `Restart=always`, ポート <1024 の場合は Capability 付与 |
 
 - どちらも `WantedBy=multi-user.target` のため、Jetson 再起動後に自動で起動します。
@@ -99,5 +98,3 @@ sudo ./scripts/jetson/setup-dev-autostart.sh status
 - `magicbox-gadget.service` など USB Gadget まわりとの連携
 - `/opt/magicbox` パッケージとの差分を自動検出し警告
 - `--oneshot` でインストールのみ／有効化のみを切り替えるオプション
-
-

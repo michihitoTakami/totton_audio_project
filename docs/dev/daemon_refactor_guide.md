@@ -10,10 +10,8 @@
 | `src/daemon/control/` | ZMQコマンド受付・ディスパッチ、統計出力、終了処理 | `control_plane.cpp`, `shutdown_manager.cpp` |
 | `src/daemon/control/handlers/` | 制御イベントのハンドラ登録ポイント（イベント→モジュールの橋渡し） | `handler_registry.{h,cpp}` |
 | `src/daemon/audio_pipeline/` | 入力→GPUアップサンプル→CF→出力バッファ管理、ソフトミュート補助 | `audio_pipeline.cpp`, `rate_switcher.cpp`, `filter_manager.cpp`, `soft_mute_runner.cpp` |
-| `src/daemon/input/` | PipeWire/RTP 等の入力アダプタ。レート検出→イベント発火 | `pipewire_input.{h,cpp}`, `rtp_input_adapter.{h,cpp}` |
 | `src/daemon/output/` | ALSA 出力のライフサイクル管理、デバイス切替対応 | `alsa_output.{h,cpp}` |
 | `src/daemon/pcm/` | DAC能力の判定/選択 | `dac_manager.cpp` |
-| `src/daemon/rtp/` | RTP セッション制御 | `rtp_engine_coordinator.cpp` |
 | `src/daemon/metrics/` | ランタイム統計の集約/永続化 | `runtime_stats.cpp` |
 
 ## イベント契約（共通ヘッダ）
@@ -27,7 +25,6 @@
   - `DaemonContext` : Dispatcher と依存関係の束ね
 
 ## スケルトン概要
-- 入力: `PipeWireInput` がレート検出時に `RateChangeRequested` を publish。`RtpInputAdapter` はデバイス切替要求をイベント化。
 - パイプライン: `RateSwitcher` がレートイベントを受けて atomic 状態を更新。`FilterManager`/`SoftMuteRunner` はフィルタ切替イベントを購読し、ヘッドルーム更新やソフトミュートをトリガ。
 - 出力: `AlsaOutput` がデバイス変更イベントを購読し、出力準備フラグを管理。
 - 制御: `HandlerRegistry` がコントロールプレーンの登録窓口となり、イベントディスパッチャに購読を事前登録する。
@@ -43,5 +40,3 @@
 1. `cmake --build build`（テスト込みビルド時は `cpu_tests` に新規ファイルが含まれる）
 2. `ctest -R DaemonSkeleton` でイベント配線テストを実行（将来の CI 組み込み用）
 3. 新規モジュール追加時は上記ディレクトリ責務表に追記する。
-
-

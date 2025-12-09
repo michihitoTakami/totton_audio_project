@@ -2,14 +2,14 @@
 
 ## 概要
 
-このガイドでは、GPU Audio Upsamplerを使用してPipeWireからの音声をマルチレート対応でDACに出力する方法を説明します。システムは入力レートとDAC性能に基づいて自動的に最適なアップサンプリング倍率（2x/4x/8x/16x）を選択します。
+このガイドでは、GPU Audio Upsamplerを ALSA/TCP 入力で動かし、マルチレート対応で DAC に出力する方法を説明します。システムは入力レートと DAC 性能に基づいて自動的に最適なアップサンプリング倍率（2x/4x/8x/16x）を選択します。
 
 ## システム要件
 
 - **GPU**: NVIDIA GeForce RTX 2070 Super以上 (CUDA対応)
 - **DAC**: SMSL D400EX (USB接続、705.6kHz対応)
-- **OS**: Linux (PipeWire使用)
-- **ソフトウェア**: CUDA Toolkit、PipeWire、ALSA
+- **OS**: Linux (ALSA)
+- **ソフトウェア**: CUDA Toolkit、ALSA、(任意) ZeroMQ
 
 ## セットアップ手順
 
@@ -21,21 +21,15 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
-### 2. PipeWire Null Sinkの作成
+### 2. ALSA Loopbackの有効化（任意）
 
-GPU Upsamplerへ音声をルーティングするための仮想デバイスを作成します:
+PC上で簡単に入力を与えるには ALSA Loopback を使います。`snd-aloop` がロードされていない場合は以下を実行してください。
 
 ```bash
-pw-cli create-node adapter '{
-  factory.name=support.null-audio-sink
-  node.name=gpu_upsampler_sink
-  node.description="GPU Upsampler Sink"
-  media.class=Audio/Sink
-  audio.position=[FL FR]
-}'
+sudo modprobe snd-aloop
 ```
 
-**重要**: この設定はPipeWire再起動時にリセットされます。永続化するには`~/.config/pipewire/pipewire.conf.d/`に設定ファイルを作成してください。
+`/proc/asound/cards` に `Loopback` が見えればOKです。
 
 ### 3. GPU Upsampler Daemonの起動
 
@@ -54,54 +48,22 @@ Initializing GPU upsampler...
 GPU upsampler ready (16x upsampling, 4096 samples/block)
 
 Starting ALSA output thread...
-Creating PipeWire input (capturing from gpu_upsampler_sink)...
-ALSA: Sample rate set to 705600 Hz
-PipeWire input stream state: connecting
 ```
 
-### 4. PipeWire Monitor接続の確立
+### 4. 音声を入力する方法
 
-デーモンが起動したら、PipeWireのモニター出力とGPU Upsamplerの入力を手動で接続します:
+#### (推奨) ALSA Loopback を使う場合
+1. ループバックの playback 側に音源を送る
+   ```bash
+   # 例: 48kHz ステレオ WAV を送る
+   aplay -D hw:Loopback,0,0 test.wav
+   ```
+2. `config.json` の `loopback.enabled` を `true` にすると、デーモンが capture 側 (`hw:Loopback,1,0`) から読み込みます。
 
-```bash
-pw-link gpu_upsampler_sink:monitor_FL "GPU Upsampler Input:input_FL"
-pw-link gpu_upsampler_sink:monitor_FR "GPU Upsampler Input:input_FR"
-```
-
-接続が成功すると、デーモンの出力が以下のように変わります:
-```
-PipeWire input stream state: streaming
-ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
-```
-
-### 5. アプリケーションの音声出力先を変更
-
-PulseAudio/PipeWireの音量コントロール、またはGNOME設定で、再生したいアプリケーション(Spotify、Firefox等)の出力先を **"GPU Upsampler Sink"** に変更します。
-
-```bash
-# コマンドラインで確認する場合
-pw-link -l | grep -A2 spotify
-
-# 期待される出力:
-# spotify:output_FL → gpu_upsampler_sink:playback_FL
-# spotify:output_FR → gpu_upsampler_sink:playback_FR
-```
+#### (Jetsonでのネットワーク入力) TCP PCM を使う場合
+Jetson では `jetson_pcm_receiver` を利用して TCP で受信した PCM を ALSA Loopback に流し、同じループバック capture を GPU パイプラインが読む構成が推奨です。詳細は `jetson_pcm_receiver/README.md` を参照してください。
 
 ## 動作確認
-
-### PipeWire接続状態の確認
-
-```bash
-pw-link -l | grep -E "(gpu_upsampler|GPU)"
-```
-
-正しく設定されていれば、以下の接続が表示されます:
-```
-<アプリケーション>:output_FL → gpu_upsampler_sink:playback_FL
-<アプリケーション>:output_FR → gpu_upsampler_sink:playback_FR
-gpu_upsampler_sink:monitor_FL → GPU Upsampler Input:input_FL
-gpu_upsampler_sink:monitor_FR → GPU Upsampler Input:input_FR
-```
 
 ### ALSA出力デバイスの確認
 
@@ -122,7 +84,6 @@ SMSL DACが認識されていることを確認します:
 デーモンログで以下を確認:
 ```
 GPU upsampler ready (16x upsampling, 4096 samples/block)
-PipeWire input stream state: streaming
 ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 ```
 
@@ -130,27 +91,27 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 ### 音が出ない場合
 
-1. **PipeWire接続の確認**:
+1. **Loopback/入力経路の確認**:
    ```bash
-   pw-link -l | grep gpu_upsampler
+   aplay -D hw:Loopback,0,0 /dev/zero 2>/dev/null | head
    ```
-   手順4のモニター接続が確立されているか確認してください。
+   ループバック playback に送った音が capture 側で読めるか確認してください。
 
 2. **ALSA デバイスが使用中**:
    ```
    ALSA: Cannot open device hw:3,0: Device or resource busy
    ```
-   他のプロセス(PipeWire、他のgpu_upsampler_alsa)が使用している可能性があります:
+   他のプロセスがデバイスを使用していないか確認してください:
    ```bash
    # 他のデーモンプロセスを終了
    pkill gpu_upsampler_alsa
 
-   # PipeWireがALSAデバイスを直接使用している場合は設定を確認
-   pw-cli ls Node | grep -A10 "SMSL"
+   # どのプロセスがデバイスを掴んでいるか確認
+   lsof /dev/snd/pcmC3D0p
    ```
 
-3. **Stream状態がPausedのまま**:
-   手順4のモニター接続が欠落しています。`pw-link`コマンドで接続してください。
+3. **ストリームが途切れる**:
+   送信側の TCP/Loopback が止まっていないか確認してください。必要に応じて再送出してください。
 
 ### クラックリングノイズ(プチプチ音)が発生する場合
 
@@ -184,17 +145,8 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 ## 音声経路
 
 ```
-[Spotify/Firefox等のアプリケーション]
-        ↓ (PipeWire/PulseAudio)
-[gpu_upsampler_sink] (PipeWire null sink)
-        ↓ monitor output
-[GPU Upsampler Input] (PipeWire stream capture)
-        ↓ (リングバッファ)
-[GPU Processing] (CUDA, 44.1kHz → 705.6kHz, 640k-tap FIR)
-        ↓ (ALSA hw:3,0 direct)
-[SMSL D400EX DAC] (705.6kHz, S32_LE)
-        ↓ (アナログ出力)
-[スピーカー/ヘッドフォン]
+[音源] ──> ALSA Loopback playback (hw:Loopback,0,0)
+        └─> ALSA Loopback capture (hw:Loopback,1,0) → GPU Upsampler (16x) → ALSA → DAC
 ```
 
 ## 技術仕様
@@ -231,25 +183,6 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 ## 永続化設定(オプション)
 
-### PipeWire Null Sinkの自動作成
-
-`~/.config/pipewire/pipewire.conf.d/99-gpu-upsampler-sink.conf`:
-
-```
-context.objects = [
-    {
-        factory = adapter
-        args = {
-            factory.name           = support.null-audio-sink
-            node.name              = "gpu_upsampler_sink"
-            node.description       = "GPU Upsampler Sink"
-            media.class            = "Audio/Sink"
-            audio.position         = [ FL FR ]
-        }
-    }
-]
-```
-
 ### Systemdサービス化
 
 `~/.config/systemd/user/gpu-upsampler.service`:
@@ -257,7 +190,7 @@ context.objects = [
 ```ini
 [Unit]
 Description=GPU Audio Upsampler Daemon
-After=pipewire.service
+After=sound.target
 
 [Service]
 Type=simple
@@ -276,7 +209,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now gpu-upsampler.service
 ```
 
-**注意**: Monitor接続(`pw-link`コマンド)は現在手動で行う必要があります。自動化スクリプトの作成を推奨します。
+**注意**: ALSA デバイス占有で失敗する場合は、他プロセスがデバイスを掴んでいないか確認してください。
 
 ## 関連ドキュメント
 

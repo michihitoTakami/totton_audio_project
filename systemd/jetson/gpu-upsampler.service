@@ -48,7 +48,6 @@ IOWeight=200
 
 # Real-time priority for audio processing
 Nice=-10
-LimitRTPRIO=99
 LimitMEMLOCK=infinity
 
 # Security hardening (compatible with CUDA)

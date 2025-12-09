@@ -286,8 +286,6 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             }
         }
 
-        // RTP configuration removed (legacy path). No RTP fields are parsed.
-
         // Clamp derived floating-point values after parsing (ensures sane bounds)
         outConfig.gain = std::max(0.0f, outConfig.gain);
         outConfig.headroomTarget =

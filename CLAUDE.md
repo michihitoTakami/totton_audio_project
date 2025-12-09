@@ -50,13 +50,10 @@ graph TD
 
     subgraph Production Data Path
         PC[PC Audio Source] -->|USB UAC2| RasPi[Raspberry Pi 5]
-        RasPi -->|RTP over Ethernet| RTPReceiver[RTP Session Manager]
-        RTPReceiver --> Engine
         Engine -->|GPU Processing| DAC[External USB DAC]
     end
 
     subgraph Development Data Path
-        DevPC[PC Audio] -->|PipeWire| Engine
     end
 ```
 
@@ -74,12 +71,9 @@ graph TD
 システムの心臓。低遅延・高負荷処理を担当。
 
 - **Input Interface (Production):**
-  - RTP Session Manager: Raspberry Pi 5からのRTPストリーム受信
   - **ハイレゾ対応**: SDP自動パース → サンプルレート/ビット深度自動認識
   - **対応フォーマット**: 16/24/32-bit, 44.1k〜768kHz, ステレオ/マルチチャンネル
-  - **動的追従**: RTPストリームのレート変更に自動追従（グリッチフリー切り替え）
 - **Input Interface (Development):**
-  - `libpipewire` APIを使用したローカルストリーム受信
 - **Convolution Core (GPU):**
   - CUDA FFT (`cuFFT`) を使用したOverlap-Save法
   - Partitioned Convolutionにより、640kタップ処理時のレイテンシを制御
@@ -96,24 +90,17 @@ graph TD
 | GPU | NVIDIA RTX 2070 Super (8GB VRAM) |
 | CUDA Arch | SM 7.5 (Turing) |
 | OS | Linux (Ubuntu 22.04+) |
-| Audio | PipeWire (ローカル開発・テスト用) |
 
 ### Production Environment (Magic Box)
 
 **I/O分離アーキテクチャ:**
-- **入力デバイス**: Raspberry Pi 5 (UAC2 + RTP送信)
-- **処理デバイス**: Jetson Orin Nano Super (RTP受信 + GPU処理 + DAC出力)
 
 #### Raspberry Pi 5 (Universal Audio Input Hub)
 | Item | Specification |
 |------|---------------|
 | SoC | Broadcom BCM2712 (Quad-core Cortex-A76) |
-| Role | ユニバーサルオーディオ入力ハブ + RTP送信 |
 | Input (Primary) | USB Type-C (UAC2 Device Mode) ← PC接続 |
 | Input (Network) | Spotify Connect / AirPlay 2 / Roon Bridge / UPnP/DLNA |
-| Output | Ethernet → Jetson へRTP送信（ハイレゾ対応） |
-| Audio Processing | PipeWire（入力ソース統合、サンプルレート変換） |
-| Deployment | Docker (PipeWire + Network Audio Services + RTP Sender) |
 
 #### Jetson Orin Nano Super (Processing Unit)
 | Item | Specification |
@@ -121,7 +108,6 @@ graph TD
 | SoC | NVIDIA Jetson Orin Nano Super (8GB, 1024 CUDA Cores) |
 | CUDA Arch | SM 8.7 (Ampere) |
 | Storage | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
-| Input | RTP over Ethernet ← Raspberry Pi 5 |
 | Output | USB Type-A → External USB DAC |
 | Network | Wi-Fi / Ethernet (Web UI access) |
 | Deployment | Docker (C++ Daemon + Python Web UI + CUDA Runtime) |
@@ -130,7 +116,6 @@ graph TD
 
 ### Phase 1: Core Engine & Middleware (Current Focus)
 - [x] GPU Convolution Algorithm (PC実装完了、~28x realtime)
-- [ ] C++ Daemon実装（PipeWire入力、ALSA出力、libsoxr統合）
 - [ ] ZeroMQ通信の実装
 - [ ] 自動調停ロジック（DACネゴシエーション）の実装
 - [ ] **Multi-Rate Support (Critical)** - 詳細は `docs/roadmap.md` 参照
@@ -150,10 +135,8 @@ graph TD
   - パフォーマンス検証・チューニング
 - [ ] Raspberry Pi 5 セットアップ
   - USB Gadget Mode (UAC2) 設定
-  - PipeWire RTP送信機能
 - [ ] Docker化
   - Jetson: C++ Daemon + Web UI + CUDA Runtime
-  - Raspberry Pi 5: PipeWire + RTP Sender
   - docker-compose による統合管理
 - [ ] 自動起動・監視
   - systemd によるDocker自動起動
@@ -290,7 +273,6 @@ gpu_os/
 ├── src/                   # C++/CUDA source code
 │   ├── convolution_engine.cu   # GPU core
 │   ├── alsa_daemon.cpp         # ALSA output daemon
-│   ├── pipewire_daemon.cpp     # PipeWire daemon
 │   └── ...
 │
 ├── include/               # C++ headers
@@ -480,7 +462,6 @@ Current phase: **Phase 1** (Core Engine & Middleware)
 **Achieved:**
 - 640k-tap minimum phase FIR filter generation (~160dB stopband attenuation)
 - GPU FFT convolution engine (~28x realtime on RTX 2070S)
-- PipeWire→GPU→ALSA daemon (working prototype)
 
 **In Progress:**
 - ZeroMQ communication layer

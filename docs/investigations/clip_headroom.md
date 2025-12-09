@@ -8,7 +8,6 @@
 
 ## Instrumentation Updates
 
-- `alsa_daemon.cpp` now records per-stage peak levels (PipeWire input, GPU/FIR output,
   crossfeed/buffer, post gain + soft-mute). The values are exported via
   `/tmp/gpu_upsampler_stats.json` and surfaced in the Admin UI.
 - The HTML dashboard renders the new `Peak Monitor` card so we can spot which stage
@@ -40,7 +39,6 @@
    uv run python scripts/generate_test_audio.py \
      --amplitude 0.999 --duration 10 --sample-rate 44100
    ```
-   Feed the generated WAV through the daemon and capture the output (PipeWire or loopback).
 
 3. **PCM histogram & clip check**
    ```bash
