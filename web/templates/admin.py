@@ -287,10 +287,6 @@ def get_admin_html() -> str:
                 <div class="label">PID</div>
                 <div class="value">-</div>
             </div>
-            <div class="status-item" id="pwStatus">
-                <div class="label">PipeWire</div>
-                <div class="value">-</div>
-            </div>
         </div>
         <div class="btn-row">
             <button class="btn-success" id="startBtn">Start</button>

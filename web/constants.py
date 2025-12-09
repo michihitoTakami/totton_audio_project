@@ -39,14 +39,6 @@ DAEMON_SERVICE = "gpu_upsampler_alsa"  # legacy/systemd service name (PC)
 DAEMON_SERVICE_NAMES = ("gpu-upsampler", DAEMON_SERVICE)
 
 # ============================================================================
-# PipeWire / PulseAudio
-# ============================================================================
-
-GPU_SINK_NAME = "gpu_upsampler_sink"
-GPU_UPSAMPLER_INPUT_NODE = "GPU Upsampler Input"
-DEFAULT_SINK_FILE_PATH = Path("/tmp/gpu_upsampler_default_sink")
-
-# ============================================================================
 # EQ Profile Upload Security Limits
 # ============================================================================
 

@@ -467,13 +467,6 @@ class OpraEqResponse(BaseModel):
 # ============================================================================
 
 
-class RewireRequest(BaseModel):
-    """Request model for rewiring PipeWire connections."""
-
-    source_node: str
-    target_node: str
-
-
 class DacSelectRequest(BaseModel):
     """Request model for runtime DAC selection."""
 
