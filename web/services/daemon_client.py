@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import ValidationError
 import zmq
 
 from ..constants import (
@@ -17,6 +18,12 @@ from ..constants import (
     ZEROMQ_IPC_PATH,
 )
 from ..error_codes import ErrorCode, get_error_mapping
+from ..models import (
+    TcpInputConfigUpdate,
+    TcpInputSettings,
+    TcpInputStatusResponse,
+)
+from .tcp_input import parse_tcp_telemetry
 
 
 def _get_default_endpoint() -> str:
@@ -482,6 +489,75 @@ class DaemonClient:
 
         params = {"head_size": head_size.lower()}
         return self.send_json_command_v2("CROSSFEED_SET_SIZE", params)
+
+    # ========== TCP Input Commands (#685) ==========
+
+    def tcp_input_start(self) -> DaemonResponse:
+        """Start TCP input server on daemon."""
+        return self.send_json_command_v2("TCP_INPUT_START")
+
+    def tcp_input_stop(self) -> DaemonResponse:
+        """Stop TCP input server on daemon."""
+        return self.send_json_command_v2("TCP_INPUT_STOP")
+
+    def tcp_input_status(self) -> DaemonResponse:
+        """Fetch TCP input telemetry (and settings when available)."""
+        response = self.send_json_command_v2("TCP_INPUT_STATUS")
+        if response.success and isinstance(response.data, dict):
+            payload = response.data
+            telemetry_payload = payload.get("telemetry", payload)
+            telemetry = parse_tcp_telemetry(
+                telemetry_payload if isinstance(telemetry_payload, dict) else None
+            )
+
+            settings_payload = payload.get("settings")
+            if isinstance(settings_payload, dict):
+                try:
+                    settings = TcpInputSettings.model_validate(settings_payload)
+                    response.data = TcpInputStatusResponse(
+                        settings=settings, telemetry=telemetry
+                    )
+                except ValidationError:
+                    response.data = telemetry
+            else:
+                response.data = telemetry
+        return response
+
+    def tcp_input_config_update(
+        self, params: dict[str, Any] | TcpInputConfigUpdate
+    ) -> DaemonResponse:
+        """Update TCP input configuration via daemon."""
+        payload: dict[str, Any] | None = None
+
+        if isinstance(params, TcpInputConfigUpdate):
+            payload = params.model_dump(by_alias=True, exclude_none=True)
+        elif isinstance(params, dict):
+            try:
+                payload = TcpInputConfigUpdate.model_validate(params).model_dump(
+                    by_alias=True, exclude_none=True
+                )
+            except ValidationError as exc:
+                error = DaemonError(
+                    error_code=ErrorCode.IPC_INVALID_PARAMS.value,
+                    message="Invalid TCP input config parameters",
+                    inner_error={"errors": exc.errors()},
+                )
+                return DaemonResponse(success=False, error=error)
+        else:
+            error = DaemonError(
+                error_code=ErrorCode.IPC_INVALID_PARAMS.value,
+                message="params must be dict or TcpInputConfigUpdate",
+            )
+            return DaemonResponse(success=False, error=error)
+
+        if not payload:
+            error = DaemonError(
+                error_code=ErrorCode.IPC_INVALID_PARAMS.value,
+                message="No parameters provided for TCP input config update",
+            )
+            return DaemonResponse(success=False, error=error)
+
+        return self.send_json_command_v2("TCP_INPUT_CONFIG_UPDATE", payload)
 
 
 def get_daemon_client(
