@@ -429,6 +429,7 @@ function dashboardData() {
             if (!this.opra.selected || this.actionInProgress) return;
 
             this.actionInProgress = true;
+            let needsRestart = false;
             try {
                 const eqId = this.opra.selectedEqId || this.opra.eqProfiles[0]?.id;
                 if (!eqId) {
@@ -443,13 +444,22 @@ function dashboardData() {
                 if (!response.ok) throw new Error('Failed to apply EQ');
 
                 const data = await response.json();
-                this.showToast(data.message || 'EQを適用しました', 'success');
-                await this.fetchStatus();
+                needsRestart = Boolean(data.success && data.restart_required);
+                this.showToast(
+                    data.message || 'EQを適用しました',
+                    data.success ? 'success' : 'error'
+                );
+                if (data.success) {
+                    await this.fetchStatus();
+                }
             } catch (error) {
                 console.error('Failed to apply EQ:', error);
                 this.showToast('EQの適用に失敗しました', 'error');
             } finally {
                 this.actionInProgress = false;
+                if (needsRestart) {
+                    await this.restartDaemon();
+                }
             }
         },
 
@@ -457,6 +467,7 @@ function dashboardData() {
             if (this.actionInProgress) return;
 
             this.actionInProgress = true;
+            let needsRestart = false;
             try {
                 const response = await fetch('/eq/deactivate', {
                     method: 'POST',
@@ -465,13 +476,22 @@ function dashboardData() {
                 if (!response.ok) throw new Error('Failed to deactivate EQ');
 
                 const data = await response.json();
-                this.showToast(data.message || 'EQを無効化しました', 'success');
-                await this.fetchStatus();
+                needsRestart = Boolean(data.success && data.restart_required);
+                this.showToast(
+                    data.message || 'EQを無効化しました',
+                    data.success ? 'success' : 'error'
+                );
+                if (data.success) {
+                    await this.fetchStatus();
+                }
             } catch (error) {
                 console.error('Failed to deactivate EQ:', error);
                 this.showToast('EQの無効化に失敗しました', 'error');
             } finally {
                 this.actionInProgress = false;
+                if (needsRestart) {
+                    await this.restartDaemon();
+                }
             }
         },
 
