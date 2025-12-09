@@ -14,7 +14,11 @@ set -e
 # Paths
 UVICORN="/opt/magicbox/venv/bin/uvicorn"
 DAEMON="/opt/magicbox/bin/gpu_upsampler_alsa"
-CONFIG="/opt/magicbox/config.json"
+CONFIG_DIR="${MAGICBOX_CONFIG_DIR:-/opt/magicbox/config}"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
+DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
+RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
 
 # Colors for logging
 RED='\033[0;31m'
@@ -32,6 +36,51 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
+}
+
+prepare_config() {
+    mkdir -p "$CONFIG_DIR"
+
+    if [[ ! -f "$DEFAULT_CONFIG" ]]; then
+        log_error "Default config not found: $DEFAULT_CONFIG"
+        exit 1
+    fi
+
+    local backup_path="${CONFIG_FILE}.bak"
+    local reset_flag
+    reset_flag="$(echo "$RESET_CONFIG" | tr '[:upper:]' '[:lower:]')"
+
+    # Helper: validate JSON file, returns 0 if valid JSON
+    validate_json() {
+        local target="$1"
+        if [[ ! -s "$target" ]]; then
+            return 1
+        fi
+        jq empty "$target" >/dev/null 2>&1
+    }
+
+    # Optional reset via env
+    if [[ "$reset_flag" == "true" || "$reset_flag" == "1" ]]; then
+        log_warn "Reset requested via MAGICBOX_RESET_CONFIG, restoring default config"
+        cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+    else
+        # Seed if missing/empty
+        if [[ ! -s "$CONFIG_FILE" ]]; then
+            log_info "Config not found, seeding default config to $CONFIG_FILE"
+            cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+        else
+            # Validate existing JSON; if invalid, back up and restore defaults
+            if validate_json "$CONFIG_FILE"; then
+                log_info "Using existing config at $CONFIG_FILE"
+            else
+                log_warn "Config is invalid JSON, backing up to $backup_path and restoring default"
+                cp -f "$CONFIG_FILE" "$backup_path" || true
+                cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+            fi
+        fi
+    fi
+
+    ln -sf "$CONFIG_FILE" "$CONFIG_SYMLINK"
 }
 
 # Check NVIDIA runtime
@@ -85,8 +134,8 @@ start_web() {
 # Start Audio Daemon
 start_daemon() {
     log_info "Starting Audio Daemon..."
-    if [ ! -f "$CONFIG" ]; then
-        log_error "Config file not found: $CONFIG"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        log_error "Config file not found: $CONFIG_FILE"
         exit 1
     fi
     exec "$DAEMON"
@@ -131,18 +180,24 @@ start_all() {
 
 # Main
 case "${1:-web}" in
+    config-init)
+        prepare_config
+        ;;
     web)
         # Web UI doesn't require GPU, skip nvidia check
+        prepare_config
         start_web
         ;;
     daemon)
         check_nvidia
         check_audio
+        prepare_config
         start_daemon
         ;;
     all)
         check_nvidia
         check_audio
+        prepare_config
         start_all
         ;;
     bash|sh)

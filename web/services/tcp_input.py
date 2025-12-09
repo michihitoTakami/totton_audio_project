@@ -199,7 +199,7 @@ class TcpTelemetryPoller:
         self._store = store
         self._interval = _resolve_poll_interval_seconds(interval_seconds)
         self._task: asyncio.Task | None = None
-        self._stop_event = asyncio.Event()
+        self._stop_event: asyncio.Event | None = None
         self._disabled = _env_flag("MAGICBOX_DISABLE_TCP_POLLING")
 
     @property
@@ -214,14 +214,15 @@ class TcpTelemetryPoller:
             return
         if self.running:
             return
-        self._stop_event.clear()
+        self._stop_event = asyncio.Event()
         self._task = asyncio.create_task(self._run(), name="tcp-telemetry-poller")
 
     async def stop(self) -> None:
         """ポーリングを停止する."""
         if not self._task:
             return
-        self._stop_event.set()
+        if self._stop_event:
+            self._stop_event.set()
         self._task.cancel()
         try:
             await self._task
@@ -229,6 +230,7 @@ class TcpTelemetryPoller:
             pass
         finally:
             self._task = None
+            self._stop_event = None
 
     async def _awaitable_fetch(self) -> TcpInputTelemetry | dict[str, Any] | None:
         """Fetch helper to support sync/async callables."""
@@ -257,13 +259,12 @@ class TcpTelemetryPoller:
 
     async def _run(self) -> None:
         """Background loop."""
+        stop_event = self._stop_event or asyncio.Event()
         try:
-            while not self._stop_event.is_set():
+            while not stop_event.is_set():
                 await self._poll_once()
                 try:
-                    await asyncio.wait_for(
-                        self._stop_event.wait(), timeout=self._interval
-                    )
+                    await asyncio.wait_for(stop_event.wait(), timeout=self._interval)
                 except asyncio.TimeoutError:
                     continue
         except asyncio.CancelledError:
