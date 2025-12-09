@@ -182,7 +182,8 @@ MODERN_TARGET_FILTERS = [
         "frequency": float(MODERN_TARGET_CORRECTION_BAND["frequency"]),
         "gain": float(MODERN_TARGET_CORRECTION_BAND["gain_db"]),
         "q": float(MODERN_TARGET_CORRECTION_BAND["q"]),
-    }
+    },
+    {"frequency": 2350.0, "gain": -0.9, "q": 2.0},
 ]
 
 
