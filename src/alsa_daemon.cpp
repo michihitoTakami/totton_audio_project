@@ -171,7 +171,7 @@ static std::mutex g_input_process_mutex;
 static std::unique_ptr<audio_pipeline::AudioPipeline> g_audio_pipeline;
 
 // Runtime state: Input sample rate (auto-negotiated, not from config)
-// This value is detected from PipeWire stream or set to default (44100 Hz)
+// Detected from the active input path (TCP/loopback) or defaulted to 44.1 kHz
 // Issue #219: Changed to atomic for thread-safe multi-rate switching
 static std::atomic<int> g_current_input_rate{DEFAULT_INPUT_SAMPLE_RATE};
 static std::atomic<int> g_current_output_rate{DEFAULT_OUTPUT_SAMPLE_RATE};
@@ -197,7 +197,7 @@ static size_t get_max_output_buffer_frames() {
     return static_cast<size_t>(frames);
 }
 
-// Pending rate change (set by PipeWire callback, processed in main loop)
+// Pending rate change (set by input event handlers, processed in main loop)
 // Value: 0 = no change pending, >0 = detected input sample rate
 static std::atomic<int> g_pending_rate_change{0};
 
@@ -1774,7 +1774,7 @@ int main(int argc, char* argv[]) {
                       << g_upsampler->getLatencySamples() << " samples)" << std::endl;
         }
 
-        // Initialize streaming mode to preserve overlap buffers across PipeWire callbacks
+        // Initialize streaming mode to preserve overlap buffers across input callbacks
         if (!g_upsampler->initializeStreaming()) {
             std::cerr << "Failed to initialize streaming mode" << std::endl;
             delete g_upsampler;
@@ -2003,7 +2003,7 @@ int main(int argc, char* argv[]) {
         }
 
         std::unique_ptr<daemon_control::ControlPlane> controlPlane;
-        // PipeWire/RTP path removed: ALSA/TCP-only configuration
+        // Legacy RTP path was removed: ALSA/TCP-only configuration
 
         if (!g_dac_manager) {
             g_dac_manager = std::make_unique<dac::DacManager>(make_dac_dependencies());

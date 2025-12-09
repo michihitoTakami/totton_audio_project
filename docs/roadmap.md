@@ -51,7 +51,6 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
   - GPU Upsamplerのマルチレート対応完了
 
 - [x] **Daemon Implementation**
-  - PipeWire入力 → GPU処理 → ALSA出力
   - RTP Session Manager統合（ハイレゾ対応）
   - SDP自動パース機能
 
@@ -139,7 +138,6 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 - [x] ダブルバッファリング（ピンポン方式）
 
 #### 3. 動的レート検知 ✅ (Issue #218)
-- [x] PipeWire `param_changed` イベントでのレート検出
 - [x] Rate Family判定ロジック (`detectRateFamily()`)
 - [x] `handle_rate_change()` による自動切り替え
 
@@ -273,7 +271,6 @@ Phase 3（ハードウェア統合）に進む前に、コードベースを健�
 - [ ] **alsa_daemon.cpp の責務分割**
   - 現状: 巨大なモノリシックファイル
   - 目標:
-    - `audio_input.cpp` - ALSA/PipeWire/RTP入力管理
     - `audio_output.cpp` - ALSA出力管理
     - `processing_pipeline.cpp` - GPU処理パイプライン
     - `daemon_main.cpp` - メインループ・初期化
@@ -326,14 +323,11 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
   - **ハイレゾ対応**: 16/24/32-bit, 最大768kHz
   - PCからは「高音質USBサウンドカード」として認識
 
-- [ ] **PipeWire RTP送信**
-  - UAC2入力 → PipeWire → **SDP生成** → RTP送信
   - **ハイレゾ透過**: 入力レート/ビット深度をそのままJetsonへ転送
   - 自動サンプルレート検知
   - Jetsonへのネットワーク転送
 
 - [ ] **Docker化 (Raspberry Pi)**
-  - PipeWire + RTP Sender コンテナ
   - systemd による自動起動
   - ヘルスチェック機能
 
@@ -348,7 +342,6 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
   - Apple Lossless (ALAC) → 44.1kHz/16bit
   - iOS/macOS からの無線再生
 
-- [ ] **PipeWire入力ソース管理**
   - 複数入力の自動切り替え（Last Active Wins）
   - または優先順位制御（USB > Roon > Spotify > AirPlay）
   - Web UIでの入力ソース選択機能
@@ -569,7 +562,6 @@ Phase 4は製品リリース後、継続的に改善。初期バージョンは6
 |-----------|-----------|----------|--------|
 | CUDA/cuFFT | NVIDIA EULA | ✅ OK | 再配布制限あり |
 | libsndfile | LGPL-2.1 | ✅ OK | 動的リンク推奨 |
-| libpipewire | MIT | ✅ OK | - |
 | alsa-lib | LGPL-2.1 | ✅ OK | 動的リンク推奨 |
 | libsoxr | LGPL-2.1 | ✅ OK | 動的リンク推奨 |
 | nlohmann/json | MIT | ✅ OK | - |
@@ -657,7 +649,6 @@ LGPL（libsndfile, alsa-lib, libsoxr, ZeroMQ）は以下の条件で商用利用
 ### Phase 1 Dependencies
 - CUDA Toolkit 12.x
 - cuFFT
-- PipeWire (libpipewire)
 - ALSA (alsa-lib)
 - libsoxr
 - ZeroMQ (libzmq)

@@ -3,7 +3,7 @@
 
 #include <cstddef>  // for size_t
 
-// Common constants shared between alsa_daemon and pipewire_daemon
+// Common constants shared across daemon components
 // Issue #105: Daemon common code extraction
 
 namespace DaemonConstants {

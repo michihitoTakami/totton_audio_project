@@ -208,6 +208,6 @@ chmod +x build/gpu_upsampler_alsa
 
 ## 関連ドキュメント
 
-- [PC開発環境](pc_development.md) - デーモン起動・PipeWire設定
+- [PC開発環境](pc_development.md) - デーモン起動・ALSA/TCP設定
 - [REST API仕様](../api/README.md) - API詳細ドキュメント
 - [ビルド手順](build.md) - C++バイナリのビルド

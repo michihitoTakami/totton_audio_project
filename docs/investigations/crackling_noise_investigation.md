@@ -13,7 +13,6 @@ Overlap-Saveアルゴリズムのオーバーラップバッファ計算に不�
 - **Integer変換の疑い**: オフラインWAV変換では正常動作するため、実時間処理時の問題と推測
 
 ### 技術的詳細
-- **入力**: 44.1kHz stereo (PipeWire経由)
 - **出力**: 352.8kHz stereo (8x upsampling, ALSA direct to SMSL D400EX DAC)
 - **フィルタ**: 2,000,000タップ minimum-phase FIR
 - **FFTサイズ**: 1,048,576サンプル
@@ -115,7 +114,6 @@ uv run python scripts/analyze_waveform.py test_data/fanfare_352800hz_fixed.wav
 
 ### 実時間再生テスト
 修正版デーモンでの再生結果:
-- ✅ システム正常動作: PipeWire → GPU Upsampler → ALSA → SMSL D400EX (352.8kHz)
 - ⚠️ クリッピング警告: 極少数のサンプル(~0.0003%)でクリッピング検出
 - **ユーザー評価**: "あんまりプチプチは変わっていない"
 
@@ -132,11 +130,9 @@ uv run python scripts/analyze_waveform.py test_data/fanfare_352800hz_fixed.wav
 - **検証**: `convolution_engine.cu`のConvolveBlock()メソッド全体のレビューが必要
 
 #### B. バッファ管理の問題
-**PipeWire → GPU間**:
 ```cpp
 // src/alsa_daemon.cpp (行数は要確認)
 void on_process(void* userdata) {
-    // PipeWire callback: リングバッファに書き込み
 }
 
 void alsaOutputThread() {
@@ -152,7 +148,6 @@ void alsaOutputThread() {
 
 #### C. サンプルレート変換の問題
 - **8x upsampling精度**: 単純なゼロ挿入 + FIR畳み込みでは高周波ノイズが混入する可能性
-- **タイムスタンプずれ**: PipeWireのクォンタムサイズとGPU処理ブロックサイズの不一致
 
 #### D. 数値精度の問題
 - **Float → Int32変換**: 既に疑われ調査済みだが、再検証の価値あり
@@ -210,7 +205,6 @@ WARNING: Clipping detected - 95 samples clipped out of 29163520 (0.000325749%)
    ```
 
 2. **アンダーラン/オーバーラン検出**
-   - PipeWireコールバックとALSAスレッドの実行頻度を測定
    - バッファ利用率のヒストグラム作成
 
 ### 優先度3: サンプルレート変換の再検証
@@ -282,16 +276,12 @@ chrt -f -p 99 $(pgrep gpu_upsampler_alsa)
 
 ### ソフトウェア
 - **OS**: Linux (カーネル要確認)
-- **PipeWire**: バージョン要確認
 - **CUDA**: バージョン要確認
 
 ### 音声経路 (Audio Path)
 ```
 [アプリケーション(Spotify等)]
-        ↓ (PulseAudio/PipeWire)
-[gpu_upsampler_sink] (PipeWire null sink)
         ↓ monitor
-[GPU Upsampler Input] (PipeWire stream)
         ↓ (リングバッファ)
 [GPU Processing] (CUDA, 44.1kHz → 352.8kHz, 1M-tap FIR)
         ↓
@@ -302,7 +292,6 @@ chrt -f -p 99 $(pgrep gpu_upsampler_alsa)
 [スピーカー/ヘッドフォン]
 ```
 
-### PipeWire接続 (確認済み)
 ```bash
 pw-link -l
 # 正常接続:

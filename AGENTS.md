@@ -24,7 +24,6 @@
 
 ```
 Control Plane (Python/FastAPI)     Data Plane (C++ Audio Engine)
-├── Web UI                         ├── PipeWire/ALSA Input
 ├── IR Generator (scipy)           ├── GPU FFT Convolution (CUDA)
 ├── oratory1990 Integration        ├── libsoxr Resampling
 └── ZeroMQ Command Interface   <-> └── ALSA Output
@@ -112,7 +111,6 @@ gh pr create --title "#123 機能の説明" --body "..."
 
 - Validate with sample WAVs in `test_data/`
 - Run `scripts/verify_frequency_response.py` for filter changes
-- Test realtime via `gpu_upsampler_alsa` with PipeWire null sink
 
 ## Key Technical Constraints
 

@@ -43,7 +43,7 @@
 │                    Data Plane (C++ Audio Engine)                │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                   Audio Processing Pipeline               │   │
-│  │  PipeWire → Rate Detection → GPU FFT → Crossfeed → ALSA  │   │
+│  │  TCP/Loopback Input → Rate Detection → GPU FFT → Crossfeed → ALSA  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │  ┌────────────┐ ┌─────────────┐ ┌───────────┐ ┌─────────────┐  │
 │  │ Auto-Nego  │ │  Soft Mute  │ │ ZeroMQ Srv│ │ DAC Detect  │  │
@@ -56,7 +56,7 @@
 ```mermaid
 flowchart LR
     subgraph Input
-        PW[PipeWire Input<br/>44.1k/48k/96k/...]
+        IN[TCP / Loopback Input<br/>44.1k/48k/96k/...]
     end
 
     subgraph Processing
@@ -73,7 +73,7 @@ flowchart LR
         DAC[USB DAC]
     end
 
-    PW --> RD --> RB1 --> GPU --> CF --> SM --> RB2 --> ALSA --> DAC
+    IN --> RD --> RB1 --> GPU --> CF --> SM --> RB2 --> ALSA --> DAC
 ```
 
 ### ZeroMQ通信フロー
@@ -99,57 +99,10 @@ sequenceDiagram
     Py-->>Web: WebSocket Push
 ```
 
-### RTPセッション管理
+### ネットワーク入力 (現行: TCP/ALSA)
 
-Jetson環境では PipeWire を介さずにネットワークRTPストリームを直接 Data Plane に流せます。
-`config.json` の `rtp` セクション、もしくは ZeroMQ コマンドで制御します。
-
-- `RTP_START_SESSION` / `RTP_STOP_SESSION` でセッションの開始・停止
-- `RTP_LIST_SESSIONS` で受信メトリクス (パケット数、SSRC、PTP状態など) を取得
-- PCM16/24/32 Big/Little Endian に対応し、自動で `float` へ変換して GPU パイプラインへ投入
-- PTP Hook によるオフセット監視・Watchdog により SSRC 変更やギャップを検知
-
-詳細は `docs/architecture/rtp_session_manager.md` を参照してください。
-
-#### Control Plane (FastAPI) からの制御
-
-FastAPI 側に `/api/rtp/sessions` エンドポイントを追加しました。GUI なしでも以下の手順でセッションを作成／監視できます。
-
-```bash
-uv sync
-uv run uvicorn web.main:app --reload --port 8000
-
-# セッション作成
-curl -X POST http://127.0.0.1:8000/api/rtp/sessions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "aes67-main",
-    "endpoint": {"bind_address": "0.0.0.0", "port": 6000},
-    "format": {"sample_rate": 48000, "channels": 2, "bits_per_sample": 24},
-    "sync": {"target_latency_ms": 5}
-  }'
-
-# 状態確認
-curl http://127.0.0.1:8000/api/rtp/sessions/aes67-main
-
-# 停止
-curl -X DELETE http://127.0.0.1:8000/api/rtp/sessions/aes67-main
-```
-
-`GET /api/rtp/sessions` はバックグラウンドポーラがキャッシュした RTCP テレメトリを返し、Data Plane に負荷を掛けません。
-
-#### Web UI からの操作 (Issue #360)
-
-FastAPI アプリを立ち上げると `/rtp` パスに **RTPセッション管理ページ** が追加されます。フォームから
-
-1. セッションID / IP / ポート / ソースIPフィルタ
-2. 同期モード（低遅延 / 安定 / PTP）
-3. 任意のSDP貼り付け、SRTPキー（Base64 40文字以上）
-
-を入力して送信すると `POST /api/rtp/sessions` が呼ばれ、結果はトースト通知で表示されます。
-下段には `GET /api/rtp/sessions` のキャッシュがカード表示され、接続状態・RTCP遅延・ジッタ統計・PTPロック可否を即時確認できます。各カードの「停止」ボタンは `DELETE /api/rtp/sessions/{id}` を呼び出します。
-
-> ブラウザだけで「登録→開始→停止」まで完結するため、非エンジニアでもストリーム切り替えを担当できます。
+- Jetson: `jetson_pcm_receiver` → ALSA Loopback → GPU Upsampler
+- PC: ALSA loopbackまたは直接 ALSA デバイスから入力
 
 ---
 
@@ -215,7 +168,7 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 | GPU | NVIDIA RTX 2070 Super (8GB VRAM) 以上 |
 | CUDA | SM 7.5 (Turing) |
 | OS | Linux (Ubuntu 22.04+) |
-| オーディオ | PipeWire |
+| オーディオ | ALSA (loopback) / TCP PCM |
 
 ### 本番環境（Magic Box）
 
@@ -517,7 +470,6 @@ TBD
 | ライブラリ | 用途 | ライセンス |
 |-----------|------|----------|
 | CUDA/cuFFT | GPU計算 | NVIDIA EULA |
-| libpipewire | オーディオ入力 | MIT |
 | alsa-lib | オーディオ出力 | LGPL-2.1 |
 | ZeroMQ | IPC通信 | LGPL-3.0 |
 | FastAPI | Web API | MIT |

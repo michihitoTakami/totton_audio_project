@@ -1,0 +1,20 @@
+{# Slider input macro for numeric controls #}
+{% macro slider_input(value=0, min=0, max=100, step=1, model=None, disabled=None, label=None, id=None) -%}
+<div class="form-group slider-group">
+    {% if label %}
+    <label{% if id %} for="{{ id }}"{% endif %}>{{ label }}</label>
+    {% endif %}
+    <div class="slider-row">
+        <input
+            type="range"
+            min="{{ min }}"
+            max="{{ max }}"
+            step="{{ step }}"
+            {% if id %}id="{{ id }}"{% endif %}
+            {% if model %}x-model.number="{{ model }}"{% endif %}
+            {% if disabled %}:disabled="{{ disabled }}"{% endif %}
+        >
+        <span class="slider-value" x-text="{{ model or value }}"></span>
+    </div>
+</div>
+{%- endmacro %}

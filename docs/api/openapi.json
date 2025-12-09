@@ -1728,6 +1728,47 @@
         }
       }
     },
+    "/tcp-input": {
+      "get": {
+        "summary": "Tcp Input Page",
+        "description": "Serve the TCP Input page.",
+        "operationId": "tcp_input_page_tcp_input_get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin": {
       "get": {
         "summary": "Admin Page",
@@ -3592,6 +3633,29 @@
             "type": "boolean",
             "title": "Streaming",
             "default": false
+          },
+          "client_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Address"
+          },
+          "uptime_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uptime Seconds"
           },
           "xrun_count": {
             "type": "integer",

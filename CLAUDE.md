@@ -56,7 +56,6 @@ graph TD
     end
 
     subgraph Development Data Path
-        DevPC[PC Audio] -->|PipeWire| Engine
     end
 ```
 
@@ -79,7 +78,6 @@ graph TD
   - **対応フォーマット**: 16/24/32-bit, 44.1k〜768kHz, ステレオ/マルチチャンネル
   - **動的追従**: RTPストリームのレート変更に自動追従（グリッチフリー切り替え）
 - **Input Interface (Development):**
-  - `libpipewire` APIを使用したローカルストリーム受信
 - **Convolution Core (GPU):**
   - CUDA FFT (`cuFFT`) を使用したOverlap-Save法
   - Partitioned Convolutionにより、640kタップ処理時のレイテンシを制御
@@ -96,7 +94,6 @@ graph TD
 | GPU | NVIDIA RTX 2070 Super (8GB VRAM) |
 | CUDA Arch | SM 7.5 (Turing) |
 | OS | Linux (Ubuntu 22.04+) |
-| Audio | PipeWire (ローカル開発・テスト用) |
 
 ### Production Environment (Magic Box)
 
@@ -112,8 +109,6 @@ graph TD
 | Input (Primary) | USB Type-C (UAC2 Device Mode) ← PC接続 |
 | Input (Network) | Spotify Connect / AirPlay 2 / Roon Bridge / UPnP/DLNA |
 | Output | Ethernet → Jetson へRTP送信（ハイレゾ対応） |
-| Audio Processing | PipeWire（入力ソース統合、サンプルレート変換） |
-| Deployment | Docker (PipeWire + Network Audio Services + RTP Sender) |
 
 #### Jetson Orin Nano Super (Processing Unit)
 | Item | Specification |
@@ -130,7 +125,6 @@ graph TD
 
 ### Phase 1: Core Engine & Middleware (Current Focus)
 - [x] GPU Convolution Algorithm (PC実装完了、~28x realtime)
-- [ ] C++ Daemon実装（PipeWire入力、ALSA出力、libsoxr統合）
 - [ ] ZeroMQ通信の実装
 - [ ] 自動調停ロジック（DACネゴシエーション）の実装
 - [ ] **Multi-Rate Support (Critical)** - 詳細は `docs/roadmap.md` 参照
@@ -150,10 +144,8 @@ graph TD
   - パフォーマンス検証・チューニング
 - [ ] Raspberry Pi 5 セットアップ
   - USB Gadget Mode (UAC2) 設定
-  - PipeWire RTP送信機能
 - [ ] Docker化
   - Jetson: C++ Daemon + Web UI + CUDA Runtime
-  - Raspberry Pi 5: PipeWire + RTP Sender
   - docker-compose による統合管理
 - [ ] 自動起動・監視
   - systemd によるDocker自動起動
@@ -290,7 +282,6 @@ gpu_os/
 ├── src/                   # C++/CUDA source code
 │   ├── convolution_engine.cu   # GPU core
 │   ├── alsa_daemon.cpp         # ALSA output daemon
-│   ├── pipewire_daemon.cpp     # PipeWire daemon
 │   └── ...
 │
 ├── include/               # C++ headers
@@ -480,7 +471,6 @@ Current phase: **Phase 1** (Core Engine & Middleware)
 **Achieved:**
 - 640k-tap minimum phase FIR filter generation (~160dB stopband attenuation)
 - GPU FFT convolution engine (~28x realtime on RTX 2070S)
-- PipeWire→GPU→ALSA daemon (working prototype)
 
 **In Progress:**
 - ZeroMQ communication layer

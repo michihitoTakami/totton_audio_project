@@ -1,0 +1,14 @@
+{# Primary button macro for consistent styling #}
+{% macro btn_primary(text, icon=None, click=None, disabled=None, type="button", extra_class="") -%}
+<button
+    class="action-button btn-primary {{ extra_class }}"
+    type="{{ type }}"
+    {% if click %}@click="{{ click }}"{% endif %}
+    {% if disabled %}:disabled="{{ disabled }}"{% endif %}
+>
+    {% if icon %}
+    <span class="action-icon">{{ icon }}</span>
+    {% endif %}
+    <span class="action-label">{{ text }}</span>
+</button>
+{%- endmacro %}

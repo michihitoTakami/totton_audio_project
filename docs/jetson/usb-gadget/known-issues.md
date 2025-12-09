@@ -138,10 +138,8 @@ PC  ──USB──>  DAC  ─┤ I2S (BCLK, LRCK, DATA) ├──>  Magic Box (
 
 ---
 
-### 代替案3: PipeWire over Network (RTP)
 
 ```
-PC (PipeWire)  ──RTP/UDP──>  Magic Box (PipeWire)  ──>  DAC
                   (WiFi/LAN)
 ```
 
@@ -161,13 +159,11 @@ PC (PipeWire)  ──RTP/UDP──>  Magic Box (PipeWire)  ──>  DAC
 
 **PC側 (送信)**:
 ```bash
-# PipeWire RTP送信設定
 pw-link audio_source rtp-sink
 ```
 
 **Jetson側 (受信)**:
 ```bash
-# PipeWire RTP受信設定
 pactl load-module module-rtp-recv
 ```
 
