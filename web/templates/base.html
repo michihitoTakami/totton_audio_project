@@ -16,12 +16,33 @@
 
     {% block extra_head %}{% endblock %}
 </head>
-<body x-data="{ mobileMenuOpen: false }" :class="{ 'menu-open': mobileMenuOpen }">
+<body
+    x-data="{
+        mobileMenuOpen: false,
+        toggleMenu() {
+            this.mobileMenuOpen = !this.mobileMenuOpen;
+            if (this.mobileMenuOpen) {
+                this.$nextTick(() => this.$refs.firstNavLink?.focus());
+            }
+        },
+        closeMenu() {
+            if (this.mobileMenuOpen) {
+                this.mobileMenuOpen = false;
+                this.$nextTick(() => this.$refs.mainContent?.focus());
+            }
+        },
+    }"
+    :class="{ 'menu-open': mobileMenuOpen }"
+    @keydown.window.escape.prevent="closeMenu()"
+>
     <!-- Mobile Menu Toggle Button -->
     <button
         class="mobile-menu-toggle"
-        @click="mobileMenuOpen = !mobileMenuOpen"
-        aria-label="Toggle menu"
+        @click="toggleMenu()"
+        :aria-expanded="mobileMenuOpen"
+        aria-controls="primary-sidebar"
+        aria-label="Toggle navigation menu"
+        data-testid="mobile-menu-toggle"
     >
         <span></span>
         <span></span>
@@ -29,20 +50,28 @@
     </button>
 
     <!-- Sidebar Navigation -->
-    <aside class="sidebar" :class="{ 'open': mobileMenuOpen }">
+    <aside
+        id="primary-sidebar"
+        class="sidebar"
+        :class="{ 'open': mobileMenuOpen }"
+        role="navigation"
+        aria-label="Primary navigation"
+    >
         {% include 'components/sidebar.html' %}
     </aside>
 
     <!-- Overlay for mobile menu (clicking closes menu) -->
     <div
-        @click="mobileMenuOpen = false"
+        class="menu-overlay"
+        data-testid="menu-overlay"
+        @click="closeMenu()"
         x-show="mobileMenuOpen"
         x-transition.opacity
-        style="display: none;"
+        x-cloak
     ></div>
 
     <!-- Main Content -->
-    <main class="main-content">
+    <main class="main-content" x-ref="mainContent" tabindex="-1">
         {% block content %}
         <!-- Page content goes here -->
         {% endblock %}

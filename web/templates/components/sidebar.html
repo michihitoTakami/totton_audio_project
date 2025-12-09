@@ -5,16 +5,37 @@
 </div>
 
 <nav>
-    <a href="/" class="nav-item {% if current_page == 'dashboard' %}active{% endif %}">
+    <a
+        href="/"
+        class="nav-item {% if current_page == 'dashboard' %}active{% endif %}"
+        aria-current="{% if current_page == 'dashboard' %}page{% else %}false{% endif %}"
+        @click="closeMenu()"
+        x-ref="firstNavLink"
+    >
         <span style="margin-right: 8px;">📊</span> {{ t.get('nav.dashboard') }}
     </a>
-    <a href="/tcp-input" class="nav-item {% if current_page == 'tcp-input' %}active{% endif %}">
+    <a
+        href="/tcp-input"
+        class="nav-item {% if current_page == 'tcp-input' %}active{% endif %}"
+        aria-current="{% if current_page == 'tcp-input' %}page{% else %}false{% endif %}"
+        @click="closeMenu()"
+    >
         <span style="margin-right: 8px;">🌐</span> {{ t.get('nav.tcp_input') }}
     </a>
-    <a href="/eq" class="nav-item {% if current_page == 'eq' %}active{% endif %}">
+    <a
+        href="/eq"
+        class="nav-item {% if current_page == 'eq' %}active{% endif %}"
+        aria-current="{% if current_page == 'eq' %}page{% else %}false{% endif %}"
+        @click="closeMenu()"
+    >
         <span style="margin-right: 8px;">🎚️</span> {{ t.get('nav.eq') }}
     </a>
-    <a href="/system" class="nav-item {% if current_page == 'system' %}active{% endif %}">
+    <a
+        href="/system"
+        class="nav-item {% if current_page == 'system' %}active{% endif %}"
+        aria-current="{% if current_page == 'system' %}page{% else %}false{% endif %}"
+        @click="closeMenu()"
+    >
         <span style="margin-right: 8px;">⚙️</span> {{ t.get('nav.system') }}
     </a>
 </nav>

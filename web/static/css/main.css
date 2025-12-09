@@ -6,6 +6,16 @@
     padding: 0;
 }
 
+[x-cloak] {
+    display: none !important;
+}
+
+:root {
+    --sidebar-width: 240px;
+    --content-max-width: 1100px;
+    --content-padding: 40px;
+}
+
 body {
     font-family: 'Courier New', 'SF Mono', 'Consolas', monospace;
     background: #0a0e12;
@@ -33,7 +43,7 @@ body::before {
 
 /* Sidebar */
 .sidebar {
-    width: 240px;
+    width: var(--sidebar-width);
     background: rgba(10, 14, 18, 0.95);
     border-right: 1px solid rgba(0, 255, 255, 0.2);
     box-shadow:
@@ -97,11 +107,21 @@ body::before {
         inset 2px 0 5px rgba(0, 255, 255, 0.3);
 }
 
+.nav-item:focus-visible,
+.mobile-menu-toggle:focus-visible,
+.action-button:focus-visible,
+.btn-icon:focus-visible,
+.toggle-switch:focus-visible {
+    outline: 2px solid #00ffff;
+    outline-offset: 3px;
+    box-shadow: 0 0 12px rgba(0, 255, 255, 0.35);
+}
+
 /* Main content */
 .main-content {
     flex: 1;
-    padding: 40px;
-    max-width: 900px;
+    padding: var(--content-padding);
+    max-width: var(--content-max-width);
     margin: 0 auto;
     overflow-y: auto;
     position: relative;
@@ -905,6 +925,40 @@ body::before {
    Responsive Design - Mobile/Tablet Support
    ============================================ */
 
+@media (min-width: 1200px) {
+    :root {
+        --content-max-width: 1250px;
+        --content-padding: 48px;
+    }
+
+    .card-grid {
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+}
+
+@media (max-width: 1100px) {
+    :root {
+        --content-max-width: 1000px;
+        --content-padding: 32px;
+        --sidebar-width: 220px;
+    }
+}
+
+@media (max-width: 1024px) {
+    :root {
+        --content-max-width: 900px;
+        --content-padding: 28px;
+    }
+
+    .mode-switcher {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+
+    .card-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+}
+
 /* Mobile hamburger menu button */
 .mobile-menu-toggle {
     display: none;
@@ -916,8 +970,11 @@ body::before {
     border: 1px solid rgba(0, 255, 255, 0.3);
     border-radius: 4px;
     padding: 10px;
+    min-width: 44px;
+    min-height: 44px;
     cursor: pointer;
     transition: all 0.3s;
+    touch-action: manipulation;
 }
 
 .mobile-menu-toggle:hover {
@@ -934,6 +991,16 @@ body::before {
     transition: all 0.3s;
 }
 
+.menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.65);
+    z-index: 40;
+}
+
 /* Mobile/Tablet Breakpoint: 768px */
 @media (max-width: 768px) {
     /* Show hamburger menu button */
@@ -945,8 +1012,9 @@ body::before {
     .sidebar {
         position: fixed;
         top: 0;
-        left: -240px;
+        left: calc(var(--sidebar-width) * -1);
         height: 100vh;
+        width: var(--sidebar-width);
         transition: left 0.3s ease;
         z-index: 50;
     }
@@ -1081,7 +1149,7 @@ body::before {
 /* Card Grid for Status Cards */
 .card-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 12px;
     margin-bottom: 32px;
 }
@@ -1311,6 +1379,7 @@ body::before {
     transition: all 0.3s;
     font-family: 'Courier New', monospace;
     min-height: 44px;
+    touch-action: manipulation;
 }
 
 .action-button:hover:not(:disabled) {
@@ -1361,7 +1430,7 @@ body::before {
 .ws-indicator {
     position: fixed;
     bottom: 20px;
-    left: 260px;
+    left: calc(var(--sidebar-width) + 20px);
     padding: 8px 12px;
     border-radius: 4px;
     font-size: 11px;
