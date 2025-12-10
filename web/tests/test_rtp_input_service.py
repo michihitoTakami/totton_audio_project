@@ -3,7 +3,11 @@ import asyncio
 import pytest
 
 from web.models import RtpInputConfigUpdate, RtpInputSettings
-from web.services.rtp_input import build_gst_command, RtpReceiverManager
+from web.services.rtp_input import (
+    RtpDriftEstimator,
+    RtpReceiverManager,
+    build_gst_command,
+)
 
 
 def test_build_gst_command_supports_encodings():
@@ -76,3 +80,163 @@ def test_start_stop_uses_runner():
     asyncio.run(manager.stop())
     status_after = asyncio.run(manager.status())
     assert status_after.running is False
+
+
+def test_rate_monitor_restarts_on_change():
+    calls: list[str] = []
+
+    async def _runner(_cmd):
+        calls.append("start")
+        return _DummyProcess()
+
+    rates = [44100, 44100, 48000, 48000]
+    idx = 0
+
+    async def _probe():
+        nonlocal idx
+        rate = rates[min(idx, len(rates) - 1)]
+        idx += 1
+        return rate
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start()
+        await manager.start_rate_monitor(_probe, interval_sec=0.01)
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    assert status.settings.sample_rate == 48000
+    # 最初の起動とレート変更後の再起動で2回
+    assert calls.count("start") >= 2
+
+
+def test_rate_monitor_continues_when_restart_fails():
+    calls: list[str] = []
+
+    async def _runner(_cmd):
+        calls.append("start")
+        if len(calls) == 1:
+            return _DummyProcess()
+        raise RuntimeError("boom")
+
+    rates = [44100, 48000, 48000]
+    idx = 0
+
+    async def _probe():
+        nonlocal idx
+        rate = rates[min(idx, len(rates) - 1)]
+        idx += 1
+        return rate
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start()
+        await manager.start_rate_monitor(_probe, interval_sec=0.01)
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    # 再起動失敗後も監視は止まらず、last_error が記録される
+    assert status.running is False
+    assert status.settings.sample_rate == 48000
+    assert calls.count("start") == 2
+    assert status.last_error and "restart failed" in status.last_error
+
+
+def test_rate_monitor_does_not_autostart_when_stopped():
+    async def _runner(_cmd):
+        return _DummyProcess()
+
+    rates = [44100, 96000, 96000]
+    idx = 0
+
+    async def _probe():
+        nonlocal idx
+        rate = rates[min(idx, len(rates) - 1)]
+        idx += 1
+        return rate
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start_rate_monitor(_probe, interval_sec=0.01)
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    # 停止中は自動起動せず、設定のみ更新される
+    assert status.running is False
+    assert status.settings.sample_rate == 96000
+
+
+def test_rate_probe_timeout_does_not_hang():
+    async def _runner(_cmd):
+        return _DummyProcess()
+
+    async def _probe_hang():
+        await asyncio.sleep(0.1)  # longer than timeout
+        return 48000
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start()
+        await manager.start_rate_monitor(
+            _probe_hang, interval_sec=0.01, timeout_sec=0.02
+        )
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    # タイムアウト後もフリーズせず last_error が設定され、動作は継続
+    assert status.running is True
+    assert status.last_error and "rate_probe error" in status.last_error
+
+
+def test_apply_config_and_restart_records_error_on_failure():
+    async def _runner(_cmd):
+        raise RuntimeError("fail-start")
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            manager.apply_config_and_restart(
+                RtpInputConfigUpdate(sample_rate=48000, latency_ms=200)
+            )
+        )
+    status = asyncio.run(manager.status())
+    assert status.last_error and "restart failed" in status.last_error
+
+
+def test_drift_estimator_tracks_ppm():
+    estimator = RtpDriftEstimator(sample_rate=48000, window=32)
+    base_ts = 0
+    base_arrival = 0.0
+    estimator.observe(base_ts, 0)
+
+    # 10ms 区間で +50ppm の遅れを持つ到着を5回記録
+    for _ in range(5):
+        base_ts += 480  # 10ms worth of samples
+        base_arrival += 0.0100005  # 50ppm drift
+        stats = estimator.observe(base_ts, int(base_arrival * 1e9))
+
+    assert 40 <= stats.drift_ppm <= 60
+    assert stats.average_jitter_ms < 0.2
