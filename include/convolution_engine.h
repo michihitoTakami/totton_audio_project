@@ -399,6 +399,12 @@ class GPUUpsampler {
     // Free all GPU resources
     void cleanup();
 
+    // Downconversion helpers (float64 -> float32 host)
+    float* getOutputScratch(cudaStream_t stream);
+    cudaError_t downconvertToHost(float* hostDst, const DeviceSample* deviceSrc, size_t count,
+                                  cudaStream_t stream);
+    cudaError_t downconvertToHostSync(float* hostDst, const DeviceSample* deviceSrc, size_t count);
+
     // Release CPU-side filter coefficient memory after GPU transfer
     // This saves ~100MB of RAM, especially important for Jetson Unified Memory
     // Call this after all GPU transfers are complete (FFT pre-computation done)
@@ -504,6 +510,9 @@ class GPUUpsampler {
     DeviceSample* d_streamConvResult_;          // Convolution result
     DeviceFftComplex* d_streamInputFFTBackup_;  // Backup for phase-aware crossfade
     DeviceSample* d_streamConvResultOld_;       // Old filter convolution result during crossfade
+    float* d_outputScratch_;                    // Primary/mono stream scratch (float output)
+    float* d_outputScratchLeft_;                // Left channel scratch (float output)
+    float* d_outputScratchRight_;               // Right channel scratch (float output)
 
     // Device-resident overlap buffers (eliminates H↔D transfers in real-time path)
     DeviceSample* d_overlapLeft_;   // GPU overlap buffer for left channel

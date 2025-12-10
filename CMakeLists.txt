@@ -457,6 +457,7 @@ add_executable(cpu_tests
     tests/cpp/test_playback_buffer_threshold.cpp
     tests/cpp/test_runtime_stats.cpp
     tests/cpp/test_audio_pipeline.cpp
+    tests/cpp/test_precision_traits.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp

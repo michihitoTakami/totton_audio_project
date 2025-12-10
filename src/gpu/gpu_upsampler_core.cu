@@ -55,6 +55,76 @@ inline cudaError_t copyDeviceToHostSamplesAsync(float* dst, const Sample* src, s
                            cudaMemcpyDeviceToHost, stream);
 }
 
+float* GPUUpsampler::getOutputScratch(cudaStream_t stream) {
+    if constexpr (!Precision::kIsDouble) {
+        return nullptr;
+    }
+    if (stream == streamLeft_) {
+        return d_outputScratchLeft_;
+    }
+    if (stream == streamRight_) {
+        return d_outputScratchRight_;
+    }
+    return d_outputScratch_;
+}
+
+cudaError_t GPUUpsampler::downconvertToHost(float* hostDst, const Sample* deviceSrc, size_t count,
+                                            cudaStream_t stream) {
+    if (count == 0) {
+        return cudaSuccess;
+    }
+
+    if constexpr (Precision::kIsDouble) {
+        float* scratch = getOutputScratch(stream);
+        if (!scratch) {
+            return cudaErrorInvalidDevicePointer;
+        }
+
+        int threadsPerBlock = 256;
+        int blocks = static_cast<int>((count + threadsPerBlock - 1) / threadsPerBlock);
+        downconvertToFloatKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+            deviceSrc, scratch, static_cast<int>(count), -1.0f, 1.0f);
+        auto err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            return err;
+        }
+
+        return cudaMemcpyAsync(hostDst, scratch, count * sizeof(float),
+                               cudaMemcpyDeviceToHost, stream);
+    }
+
+    return cudaMemcpyAsync(hostDst, deviceSrc, count * sizeof(float),
+                           cudaMemcpyDeviceToHost, stream);
+}
+
+cudaError_t GPUUpsampler::downconvertToHostSync(float* hostDst, const Sample* deviceSrc,
+                                                size_t count) {
+    if (count == 0) {
+        return cudaSuccess;
+    }
+
+    if constexpr (Precision::kIsDouble) {
+        float* scratch = d_outputScratch_;
+        if (!scratch) {
+            return cudaErrorInvalidDevicePointer;
+        }
+
+        int threadsPerBlock = 256;
+        int blocks = static_cast<int>((count + threadsPerBlock - 1) / threadsPerBlock);
+        downconvertToFloatKernel<<<blocks, threadsPerBlock>>>(deviceSrc, scratch,
+                                                              static_cast<int>(count),
+                                                              -1.0f, 1.0f);
+        auto err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            return err;
+        }
+
+        return cudaMemcpy(hostDst, scratch, count * sizeof(float), cudaMemcpyDeviceToHost);
+    }
+
+    return cudaMemcpy(hostDst, deviceSrc, count * sizeof(float), cudaMemcpyDeviceToHost);
+}
+
 // GPUUpsampler implementation - Core methods
 
 void GPUUpsampler::resizeOverlapBuffers(size_t newSize) {
@@ -91,6 +161,7 @@ GPUUpsampler::GPUUpsampler()
       d_streamInput_(nullptr), d_streamUpsampled_(nullptr), d_streamPadded_(nullptr),
       d_streamInputFFT_(nullptr), d_streamConvResult_(nullptr),
       d_streamInputFFTBackup_(nullptr), d_streamConvResultOld_(nullptr),
+      d_outputScratch_(nullptr), d_outputScratchLeft_(nullptr), d_outputScratchRight_(nullptr),
       d_overlapLeft_(nullptr), d_overlapRight_(nullptr),
       pinnedStreamInputLeft_(nullptr), pinnedStreamInputRight_(nullptr),
       pinnedStreamInputMono_(nullptr),
@@ -172,7 +243,7 @@ bool GPUUpsampler::loadFilterCoefficients(const std::string& path) {
 
     std::cout << "  Filter loaded successfully (" << fileSize / 1024 << " KB)" << std::endl;
     baseFilterCentroid_ = PhaseAlignment::computeEnergyCentroid(h_filterCoeffs_);
-    h_filterCoeffsTyped_ = convertHostToPrecision<Precision>(h_filterCoeffs_);
+    h_filterCoeffsTyped_ = convertCoefficientsToPrecision<Precision>(h_filterCoeffs_);
     return true;
 }
 
@@ -294,6 +365,22 @@ bool GPUUpsampler::setupGPUResources() {
             cudaMalloc(&d_convResult_, fftComplexSize * sizeof(Complex)),
             "cudaMalloc convolution result"
         );
+
+        if constexpr (Precision::kIsDouble) {
+            size_t scratchBytes = static_cast<size_t>(fftSize_) * sizeof(float);
+            Utils::checkCudaError(
+                cudaMalloc(&d_outputScratch_, scratchBytes),
+                "cudaMalloc output scratch (primary)"
+            );
+            Utils::checkCudaError(
+                cudaMalloc(&d_outputScratchLeft_, scratchBytes),
+                "cudaMalloc output scratch (left)"
+            );
+            Utils::checkCudaError(
+                cudaMalloc(&d_outputScratchRight_, scratchBytes),
+                "cudaMalloc output scratch (right)"
+            );
+        }
 
         // Create cuFFT plans
         Utils::checkCufftError(
@@ -696,10 +783,10 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                                       (outputFrames - outputPos) : static_cast<size_t>(validOutputPerBlock);
 
             Utils::checkCudaError(
-                copyDeviceToHostSamplesAsync(outputData.data() + outputPos,
-                                             d_convResult + overlapUse,
-                                             validOutputSize, stream),
-                "cudaMemcpy valid output to host"
+                downconvertToHost(outputData.data() + outputPos,
+                                  d_convResult + overlapUse,
+                                  validOutputSize, stream),
+                "downconvert output to host"
             );
 
             // Save overlap for next block using the contiguous upsampled input
@@ -709,10 +796,10 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                     size_t overlapStart = nextBlockStart - overlapUse;
                     if (overlapStart + overlapUse <= outputFrames) {
                         Utils::checkCudaError(
-                            copyDeviceToHostSamplesAsync(overlapBuffer.data(),
-                                                         d_upsampledInput + overlapStart,
-                                                         overlapUse, stream),
-                            "cudaMemcpy overlap from device"
+                            downconvertToHost(overlapBuffer.data(),
+                                              d_upsampledInput + overlapStart,
+                                              overlapUse, stream),
+                            "downconvert overlap from device"
                         );
                     }
                 }
@@ -966,6 +1053,9 @@ void GPUUpsampler::cleanup() {
     if (d_outputBlock_) cudaFree(d_outputBlock_);
     if (d_inputFFT_) cudaFree(d_inputFFT_);
     if (d_convResult_) cudaFree(d_convResult_);
+    if (d_outputScratch_) cudaFree(d_outputScratch_);
+    if (d_outputScratchLeft_) cudaFree(d_outputScratchLeft_);
+    if (d_outputScratchRight_) cudaFree(d_outputScratchRight_);
     if (d_crossfadeFilterSnapshot_) cudaFree(d_crossfadeFilterSnapshot_);
 
     // Free streaming buffers
@@ -1038,6 +1128,9 @@ void GPUUpsampler::cleanup() {
     d_outputBlock_ = nullptr;
     d_inputFFT_ = nullptr;
     d_convResult_ = nullptr;
+    d_outputScratch_ = nullptr;
+    d_outputScratchLeft_ = nullptr;
+    d_outputScratchRight_ = nullptr;
     d_streamInput_ = nullptr;
     d_streamUpsampled_ = nullptr;
     d_streamPadded_ = nullptr;
@@ -1523,9 +1616,9 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
         tempOutput.resize(samplesToUse);
         registerStreamOutputBuffer(tempOutput, stream);
         Utils::checkCudaError(
-            copyDeviceToHostSamplesAsync(tempOutput.data(), state.d_timeDomain + state.overlapSize,
-                                         samplesToUse, stream),
-            "cudaMemcpy partition output");
+            downconvertToHost(tempOutput.data(), state.d_timeDomain + state.overlapSize,
+                              samplesToUse, stream),
+            "downconvert partition output");
         Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize partition");
 
         if (outputData.size() < static_cast<size_t>(samplesToUse)) {
@@ -1583,9 +1676,9 @@ bool GPUUpsampler::updateActiveImpulseFromSpectrum(const Complex* spectrum,
 
     destination.assign(static_cast<size_t>(filterTaps_), 0.0f);
     Utils::checkCudaError(
-        copyDeviceToHostSamplesSync(destination.data(), d_partitionImpulse_,
-                                    static_cast<size_t>(filterTaps_)),
-        "cudaMemcpy partition impulse to host");
+        downconvertToHostSync(destination.data(), d_partitionImpulse_,
+                              static_cast<size_t>(filterTaps_)),
+        "downconvert partition impulse to host");
     const float scale = static_cast<float>(Precision::scaleFactor(fftSize_));
     for (auto& sample : destination) {
         sample *= scale;

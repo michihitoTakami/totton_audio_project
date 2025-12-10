@@ -83,4 +83,19 @@ __global__ void doubleToFloatComplexKernel(DeviceFftComplex* out, const cufftDou
     out[idx].y = static_cast<DeviceSample>(in[idx].y);
 }
 
+// CUDA kernel to downconvert active precision samples to float with clipping
+__global__ void downconvertToFloatKernel(const DeviceSample* input, float* output, int size,
+                                         float clipMin, float clipMax) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+
+    float value = static_cast<float>(input[idx]);
+    if (value > clipMax) {
+        value = clipMax;
+    } else if (value < clipMin) {
+        value = clipMin;
+    }
+    output[idx] = value;
+}
+
 }  // namespace ConvolutionEngine

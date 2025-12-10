@@ -24,27 +24,6 @@ inline cudaError_t copyHostToDeviceStreaming(Sample* dst, const float* src, size
     return cudaMemcpyAsync(dst, src, count * sizeof(Sample), cudaMemcpyHostToDevice, stream);
 }
 
-inline cudaError_t copyDeviceToHostStreaming(float* dst, const Sample* src, size_t count,
-                                             cudaStream_t stream) {
-    if constexpr (Precision::kIsDouble) {
-        std::vector<Sample> temp(count);
-        auto err = cudaMemcpyAsync(temp.data(), src, count * sizeof(Sample),
-                                   cudaMemcpyDeviceToHost, stream);
-        if (err != cudaSuccess) {
-            return err;
-        }
-        err = cudaStreamSynchronize(stream);
-        if (err != cudaSuccess) {
-            return err;
-        }
-        for (size_t i = 0; i < count; ++i) {
-            dst[i] = static_cast<float>(temp[i]);
-        }
-        return cudaSuccess;
-    }
-    return cudaMemcpyAsync(dst, src, count * sizeof(Sample), cudaMemcpyDeviceToHost, stream);
-}
-
 // GPUUpsampler implementation - Streaming methods
 
 bool GPUUpsampler::initializeStreaming() {
@@ -372,9 +351,9 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         outputData.resize(validOutputPerBlock_);
         registerStreamOutputBuffer(outputData, stream);
         Utils::checkCudaError(
-            copyDeviceToHostStreaming(outputData.data(), d_streamConvResult_ + adjustedOverlapSize,
-                                      validOutputPerBlock_, stream),
-            "cudaMemcpy streaming output to host"
+            downconvertToHost(outputData.data(), d_streamConvResult_ + adjustedOverlapSize,
+                              validOutputPerBlock_, stream),
+            "downconvert streaming output to host"
         );
 
         if (crossfadeEnabled) {
@@ -403,10 +382,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
             crossfadeOldOutput_.resize(validOutputPerBlock_);
             Utils::checkCudaError(
-                copyDeviceToHostStreaming(crossfadeOldOutput_.data(),
-                                          d_streamConvResultOld_ + adjustedOverlapSize,
-                                          validOutputPerBlock_, stream),
-                "cudaMemcpy crossfade old output"
+                downconvertToHost(crossfadeOldOutput_.data(),
+                                  d_streamConvResultOld_ + adjustedOverlapSize,
+                                  validOutputPerBlock_, stream),
+                "downconvert crossfade old output"
             );
         }
 

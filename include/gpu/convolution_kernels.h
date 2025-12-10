@@ -31,6 +31,10 @@ __global__ void exponentiateComplexKernel(cufftDoubleComplex* data, int n);
 __global__ void doubleToFloatComplexKernel(DeviceFftComplex* out, const cufftDoubleComplex* in,
                                            int n);
 
+// CUDA kernel to downconvert active precision samples to float with clipping
+__global__ void downconvertToFloatKernel(const DeviceSample* input, float* output, int size,
+                                         float clipMin, float clipMax);
+
 }  // namespace ConvolutionEngine
 
 #endif  // GPU_CONVOLUTION_KERNELS_H

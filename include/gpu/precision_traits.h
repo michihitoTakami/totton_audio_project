@@ -114,6 +114,15 @@ inline std::vector<typename Traits::Sample> convertHostToPrecision(const std::ve
     return dst;
 }
 
+// Coefficient expansion helper:
+// - Keeps float32 coefficient binaries as-is
+// - When GPU_UPSAMPLER_USE_FLOAT64 is enabled, expands to double on load
+template <typename Traits>
+inline std::vector<typename Traits::Sample> convertCoefficientsToPrecision(
+    const std::vector<float>& src) {
+    return convertHostToPrecision<Traits>(src);
+}
+
 }  // namespace ConvolutionEngine
 
 #endif  // GPU_PRECISION_TRAITS_H
