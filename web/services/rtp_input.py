@@ -310,6 +310,8 @@ class RtpReceiverManager:
             return
         self._monitor_stop.set()
         await asyncio.wait({self._monitor_task})
+        if exc := self._monitor_task.exception():
+            self._last_error = f"monitor stopped: {exc}"
         self._monitor_task = None
 
     async def _monitor_loop(
@@ -338,7 +340,15 @@ class RtpReceiverManager:
                     self._settings = self._settings.model_copy(
                         update={"sample_rate": validated_rate}
                     )
-                    await self._restart_locked()
+                    if self._is_running():
+                        try:
+                            await self._restart_locked()
+                        except Exception as exc:  # noqa: BLE001
+                            # 失敗しても監視は継続し、再試行に任せる
+                            self._last_error = f"restart failed: {exc}"
+                    else:
+                        # 停止中は設定のみ更新し、意図しない自動起動を避ける
+                        self._last_error = None
             await asyncio.sleep(interval_sec)
 
     async def shutdown(self) -> None:

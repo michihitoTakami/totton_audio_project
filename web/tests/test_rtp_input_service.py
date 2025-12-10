@@ -115,6 +115,72 @@ def test_rate_monitor_restarts_on_change():
     assert calls.count("start") >= 2
 
 
+def test_rate_monitor_continues_when_restart_fails():
+    calls: list[str] = []
+
+    async def _runner(_cmd):
+        calls.append("start")
+        if len(calls) == 1:
+            return _DummyProcess()
+        raise RuntimeError("boom")
+
+    rates = [44100, 48000, 48000]
+    idx = 0
+
+    async def _probe():
+        nonlocal idx
+        rate = rates[min(idx, len(rates) - 1)]
+        idx += 1
+        return rate
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start()
+        await manager.start_rate_monitor(_probe, interval_sec=0.01)
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    # 再起動失敗後も監視は止まらず、last_error が記録される
+    assert status.running is False
+    assert status.settings.sample_rate == 48000
+    assert calls.count("start") == 2
+    assert status.last_error and "restart failed" in status.last_error
+
+
+def test_rate_monitor_does_not_autostart_when_stopped():
+    async def _runner(_cmd):
+        return _DummyProcess()
+
+    rates = [44100, 96000, 96000]
+    idx = 0
+
+    async def _probe():
+        nonlocal idx
+        rate = rates[min(idx, len(rates) - 1)]
+        idx += 1
+        return rate
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start_rate_monitor(_probe, interval_sec=0.01)
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    # 停止中は自動起動せず、設定のみ更新される
+    assert status.running is False
+    assert status.settings.sample_rate == 96000
+
+
 def test_drift_estimator_tracks_ppm():
     estimator = RtpDriftEstimator(sample_rate=48000, window=32)
     base_ts = 0
