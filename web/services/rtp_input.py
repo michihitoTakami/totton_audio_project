@@ -122,7 +122,7 @@ def load_default_settings() -> RtpInputSettings:
 
 
 def build_gst_command(settings: RtpInputSettings) -> list[str]:
-    """設定からgst-launch-1.0コマンドを構築 (シンプルなRTP受信)."""
+    """設定からgst-launch-1.0コマンドを構築 (RTCP付きで送信クロックへ同期)."""
     depay, raw_format = _ENCODING_TO_DEPAY_AND_FORMAT.get(
         settings.encoding, ("rtpL24depay", "S24BE")
     )
@@ -131,13 +131,21 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"encoding-name={settings.encoding},payload=96,channels={settings.channels}"
     )
 
-    # シンプルなRTP受信パイプライン（rtpbin不使用）
+    # RTP/RTCP (rtpbin) を用い、送信側タイムスタンプに同期させる
     return [
         "gst-launch-1.0",
         "-e",
+        "rtpbin",
+        "name=rtpbin",
+        f"latency={settings.latency_ms}",
+        "ntp-sync=true",
+        # RTP (payload)
         "udpsrc",
         f"port={settings.port}",
         f"caps={caps}",
+        "!",
+        "rtpbin.recv_rtp_sink_0",
+        "rtpbin.recv_rtp_src_0",
         "!",
         depay,
         "!",
@@ -154,6 +162,20 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "alsasink",
         f"device={settings.device}",
         "sync=true",
+        "provide-clock=true",
+        # RTCP (recv)
+        "udpsrc",
+        f"port={settings.rtcp_port}",
+        "!",
+        "rtpbin.recv_rtcp_sink_0",
+        # RTCP (send back to sender host)
+        "rtpbin.send_rtcp_src_0",
+        "!",
+        "udpsink",
+        f"host={settings.sender_host}",
+        f"port={settings.rtcp_send_port}",
+        "sync=false",
+        "async=false",
     ]
 
 
