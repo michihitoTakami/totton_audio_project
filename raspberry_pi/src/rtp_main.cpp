@@ -44,6 +44,20 @@ bool spawnProcess(const std::vector<std::string> &args, pid_t &pid) {
     return true;
 }
 
+bool runCurlPost(const std::string &url, const std::string &body) {
+    std::vector<std::string> args = {"curl", "-s", "-X", "POST", "-d", body, url};
+    pid_t pid = -1;
+    if (!spawnProcess(args, pid)) {
+        return false;
+    }
+    int status = 0;
+    const pid_t waited = waitpid(pid, &status, 0);
+    if (waited != pid) {
+        return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 void waitForExit(pid_t pid, int timeoutMs) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
     int status = 0;
@@ -95,13 +109,11 @@ void notifyRateChange(const RtpOptions &opt, const CaptureParams &params) {
     if (opt.rateNotifyUrl.empty()) {
         return;
     }
-    const std::string cmd = "curl -s -X POST -d \"rate=" + std::to_string(params.sampleRate) +
-                            "&channels=" + std::to_string(params.channels) +
-                            "&format=" + formatToString(params.format) + "\" \"" +
-                            opt.rateNotifyUrl + "\" > /dev/null";
-    const int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        logWarn("[rpi_rtp_sender] Rate notify failed with exit code " + std::to_string(rc));
+    const std::string body = "rate=" + std::to_string(params.sampleRate) +
+                             "&channels=" + std::to_string(params.channels) +
+                             "&format=" + formatToString(params.format);
+    if (!runCurlPost(opt.rateNotifyUrl, body)) {
+        logWarn("[rpi_rtp_sender] Rate notify failed");
     }
 }
 
@@ -159,6 +171,19 @@ int main(int argc, char **argv) {
 
     const std::chrono::milliseconds pollInterval{opt.pollIntervalMs};
     while (!gStopRequested.load()) {
+        int status = 0;
+        if (pid > 0) {
+            const pid_t ret = waitpid(pid, &status, WNOHANG);
+            if (ret == pid) {
+                logWarn("[rpi_rtp_sender] Pipeline process exited; restarting");
+                if (!spawnProcess(pipelineArgs, pid)) {
+                    logError("[rpi_rtp_sender] Failed to restart after exit");
+                    return 1;
+                }
+                notifyRateChange(opt, *currentParams);
+            }
+        }
+
         std::this_thread::sleep_for(pollInterval);
         auto params = monitor.readCurrent();
         if (!params) {

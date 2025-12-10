@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -49,6 +50,31 @@ std::optional<std::string> HwParamsMonitor::resolveHwParamsPath() const {
     const std::string afterPrefix = deviceName_.substr(colonPos + 1);
     const auto commaPos = afterPrefix.find(',');
     if (commaPos == std::string::npos || commaPos + 1 >= afterPrefix.size()) {
+        // device名にカード/デバイス番号が含まれないケース (例: default, plughw)
+        // -> /proc/asound 以下を走査して最初に見つかった capture hw_params を返す。
+        std::error_code ec;
+        for (const auto &cardDir : std::filesystem::directory_iterator("/proc/asound", ec)) {
+            if (ec) {
+                break;
+            }
+            const auto name = cardDir.path().filename().string();
+            if (name.rfind("card", 0) != 0 || !cardDir.is_directory()) {
+                continue;
+            }
+            for (const auto &pcmDir : std::filesystem::directory_iterator(cardDir, ec)) {
+                if (ec) {
+                    break;
+                }
+                const auto pcmName = pcmDir.path().filename().string();
+                if (pcmName.rfind("pcm", 0) != 0 || !pcmDir.is_directory()) {
+                    continue;
+                }
+                const auto hwPath = pcmDir.path() / "sub0" / "hw_params";
+                if (std::filesystem::exists(hwPath, ec)) {
+                    return hwPath.string();
+                }
+            }
+        }
         return std::nullopt;
     }
     const std::string cardStr = afterPrefix.substr(0, commaPos);
@@ -65,7 +91,38 @@ std::optional<std::string> HwParamsMonitor::resolveHwParamsPath() const {
         }
     }
 
-    return "/proc/asound/card" + cardStr + "/pcm" + devStr + "c/sub0/hw_params";
+    const std::string primaryPath =
+        "/proc/asound/card" + cardStr + "/pcm" + devStr + "c/sub0/hw_params";
+    std::error_code ec;
+    if (std::filesystem::exists(primaryPath, ec)) {
+        return primaryPath;
+    }
+
+    // sub0 が存在しない場合のフォールバック: sub1 など最初に見つかったものを返す
+    const std::filesystem::path base = "/proc/asound/card" + cardStr;
+    for (const auto &pcmDir : std::filesystem::directory_iterator(base, ec)) {
+        if (ec) {
+            break;
+        }
+        const auto pcmName = pcmDir.path().filename().string();
+        if (pcmName != "pcm" + devStr + "c" || !pcmDir.is_directory()) {
+            continue;
+        }
+        for (const auto &subDir : std::filesystem::directory_iterator(pcmDir, ec)) {
+            if (ec) {
+                break;
+            }
+            if (subDir.path().filename().string().rfind("sub", 0) != 0) {
+                continue;
+            }
+            const auto hwPath = subDir.path() / "hw_params";
+            if (std::filesystem::exists(hwPath, ec)) {
+                return hwPath.string();
+            }
+        }
+    }
+
+    return std::nullopt;
 }
 
 std::optional<CaptureParams> HwParamsMonitor::parseHwParams(const std::string &content) {
