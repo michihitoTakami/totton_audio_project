@@ -1,155 +1,56 @@
-# jetson-pcm-receiver
+# Jetson RTP Receiver (GStreamer)
 
-Jetson 向けの PCM over TCP 受信ブリッジです。Raspberry Pi 側の送信アプリから PCM を受信し、ALSA Loopback の playback 側へ書き込みます（初期実装は S16_LE / 2ch / 48kHz を想定）。
+`jetson_pcm_receiver` の TCP/C++ 実装は廃止され、Jetson 側は GStreamer ベースの RTP 受信に一本化しました。受信パイプラインは Magic Box Web サーバの `RtpReceiverManager`（`web/services/rtp_input.py`）が管理し、HTTP API から開始/停止・設定変更できます。
 
-## 前提パッケージ (Jetson / Ubuntu 系)
-
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential cmake pkg-config libasound2-dev libzmq3-dev
-```
-
-## ビルド方法
+## 受信の起動
 
 ```bash
-cmake -S jetson_pcm_receiver -B jetson_pcm_receiver/build -DCMAKE_BUILD_TYPE=Release
-cmake --build jetson_pcm_receiver/build -j$(nproc)
+# Web API 経由
+curl -X POST http://localhost:8000/api/rtp-input/start
+
+# 設定更新の例（44.1kHz/L24/RTCP付き）
+curl -X PUT http://localhost:8000/api/rtp-input/config \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "port": 46000,
+    "rtcp_port": 46001,
+    "rtcp_send_port": 46002,
+    "sample_rate": 44100,
+    "channels": 2,
+    "encoding": "L24",
+    "latency_ms": 100
+  }'
 ```
 
-> `CMAKE_BUILD_TYPE` を `Debug` に変えることでデバッグ向けビルドに切り替えられます。
+エンドポイント一覧:
+- `GET  /api/rtp-input/status` – 稼働状態と現在の設定
+- `POST /api/rtp-input/start` – パイプライン起動
+- `POST /api/rtp-input/stop` – 停止
+- `PUT  /api/rtp-input/config` – 設定更新（再起動は任意）
 
-## 実行方法
+## 既定設定 (環境変数)
 
-```bash
-./jetson_pcm_receiver/build/jetson_pcm_receiver \
-  --port 46001 \
-  --device loopback \          # hw:Loopback,0,0 のエイリアス
-  # --device loopback-playback # loopback alias (同上)
-  # --device alsa:hw:USB,0,0   # 物理デバイス例
-  # --device null              # テスト用nullシンク
-  --log-level info \        # error / warn / info / debug
-  --ring-buffer-frames 8192 # 0で無効（デフォルト 8192）
-  --ring-buffer-watermark 0 # 0で自動(75%)
-  --zmq-endpoint ipc:///tmp/jetson_pcm_receiver.sock \
-  --zmq-token "" \
-  --zmq-pub-interval 1000
-```
+`web/services/rtp_input.py` は以下の環境変数を読み込みます。未指定時はデフォルト値で起動します。
 
-- 受信ヘッダが `PCMA` / version 1 かつ 44.1kHz or 48kHz の {1,2,4,8,16} 倍、2ch、フォーマットが `S16_LE(1)` / `S24_3LE(2)` / `S32_LE(4)` の場合に再生します。
-- フォーマットやレートが未対応の場合はエラーログを出して接続を閉じます。
-- XRUN (`-EPIPE`) が発生した場合は `snd_pcm_prepare()` で復旧を試み、結果をログします。
-- 出力デバイスは `loopback`（デフォルト）/ `null` / `alsa:<pcm名>` / 生の ALSA 名を指定可能。
-- 指定デバイスが存在しない・フォーマット非対応の場合は起動時/接続時に詳細なエラーをログし、従来の Loopback 指定はそのまま動作します。
-- ジッタ吸収リングバッファ（デフォルト有効）。溢れた場合は古いフレームをドロップし、ウォーターマーク到達・ドロップ数をログします。
-- SIGINT/SIGTERM で停止要求を検出し、接続待受ループを抜けて終了します。
-- 多クライアント制御オプション:
-  - `--connection-mode single|takeover|priority`（デフォルト: `single`）
-    - `single`: 従来通り同時1接続。新規は拒否。
-    - `takeover`: 新規接続をペンディングし、現行を切断して切替。
-    - `priority`: 優先リストに含まれるクライアントのみ既存を奪取可能。
-  - `--priority-client <IP>`（複数指定可 / カンマ区切り可）
-    - `priority` モード時に奪取を許可する送信元 IP（数値表記一致のみ）
+| 変数 | 既定値 | 説明 |
+| ---- | ------ | ---- |
+| `MAGICBOX_RTP_PORT` | `46000` | RTP 受信ポート |
+| `MAGICBOX_RTP_RTCP_PORT` | `46001` | RTCP 受信ポート |
+| `MAGICBOX_RTP_RTCP_SEND_PORT` | `46002` | 送信側へ返す RTCP ポート |
+| `MAGICBOX_RTP_SAMPLE_RATE` | `44100` | サンプルレート |
+| `MAGICBOX_RTP_CHANNELS` | `2` | チャンネル数 |
+| `MAGICBOX_RTP_ENCODING` | `L24` | `L16` / `L24` / `L32` |
+| `MAGICBOX_RTP_LATENCY_MS` | `100` | jitterbuffer latency |
+| `MAGICBOX_RTP_DEVICE` | `hw:Loopback,0,0` | ALSA 出力デバイス |
+| `MAGICBOX_RTP_QUALITY` | `10` | `audioresample` quality (0-10) |
 
-### 運用指針 (Magic Box 連携)
-- 入力レート/フォーマットは Pi 送信側の `PCMA` ヘッダで伝達し、受信時に ALSA を開き直します。設定ファイルには固定値を持たせません。
-- 許容レート/フォーマットは `PcmFormatSet` に準拠（44.1k/48k 系 × {1,2,4,8,16}、2ch、`S16_LE` / `S24_3LE` / `S32_LE`）。外れたヘッダは拒否されます。
-- GPU デーモンの自動ネゴシエーション (`auto_negotiation`) もこの受信レートを入力として出力レート/アップサンプル比を決定します。Pi 側は上記許容範囲で送出してください。
+## パイプライン概要
 
-## Docker (Jetson)
-`docker/jetson_pcm_receiver/` に Jetson 向けの Dockerfile / Compose を用意しています。ビルドと起動は以下で行えます。
+- `udpsrc` → `rtpbin` → `rtpL16/24/32depay` → `audioconvert` → `audioresample quality=10` → `alsasink`
+- RTCP を port+1 (受信) / port+2 (送信) でやり取りし、送信側クロックに同期します。
+- 送信側 (Raspberry Pi) には `raspberry_pi/rtp_sender.py` を利用してください。
 
-```bash
-cd docker
-docker compose -f jetson_pcm_receiver/docker-compose.jetson.yml up -d --build
-docker compose -f jetson_pcm_receiver/docker-compose.jetson.yml logs -f
-```
+## 廃止されたもの
 
-必須:
-- JetPack 6.1 以降 / NVIDIA Container Runtime
-- `--device /dev/snd` を付与（Loopback/実デバイスを渡す）
-
-環境変数で CLI 相当の設定を上書き可能です（コンテナ内でパースされます）。
-- `JPR_PORT`, `JPR_DEVICE`, `JPR_LOG_LEVEL`
-- `JPR_CONNECTION_MODE`, `JPR_PRIORITY_CLIENTS`
-- `JPR_DISABLE_ZMQ`, `JPR_ZMQ_ENDPOINT`, `JPR_ZMQ_PUB_INTERVAL_MS`, `JPR_ZMQ_TOKEN`
-
-## ZeroMQ ステータス/制御 API
-
-- デフォルト: REP `ipc:///tmp/jetson_pcm_receiver.sock` / PUB `ipc:///tmp/jetson_pcm_receiver.sock.pub`
-- 無効化: `--disable-zmq`（デフォルトは有効）。ローカル IPC 以外を使う場合は `--zmq-token` を必ず設定してください。
-- PUB 間隔: `--zmq-pub-interval <ms>`（0 で無効）
-- リクエスト例（REQ/REP、token は任意・設定時は必須）
-  - ステータス取得:
-    - 送信: `{"cmd":"STATUS","token":"<token>"}`
-    - 応答: `{"status":"ok","data":{"listening":true,"bound_port":46001,"client_connected":false,"streaming":false,"ring_buffer_frames":8192,"watermark_frames":6144,"buffered_frames":0,"max_buffered_frames":0,"dropped_frames":0,"xrun_count":0,"last_header":null,"rep_endpoint":"...","pub_endpoint":"..."}}`
-  - キャッシュ/レイテンシ変更: `{"cmd":"SET_CACHE","token":"<token>","params":{"ring_buffer_frames":16384,"watermark_frames":0}}`
-    - `ring_buffer_frames=0` でリングバッファ無効、`watermark_frames=0` で自動 75%
-  - 再起動要求: `{"cmd":"RESTART","token":"<token>"}`
-- PUB でのステータス通知: `{"event":"status", ...上記 data と同等のフィールド...}` を周期送信
-- 取得できる主なフィールド:
-  - `listening` / `bound_port` / `client_connected` / `streaming`
-  - `last_header` (sample_rate, channels, format, version) 最後に受理したヘッダ
-  - `ring_buffer_frames`, `watermark_frames`, `buffered_frames`, `max_buffered_frames`, `dropped_frames`
-  - `xrun_count` (XRUN 検出回数)
-  - `connection_mode`, `priority_clients`
-
-## ディレクトリ構成
-
-- `src/` : エントリポイントとクラス実装の雛形
-- `include/` : `TcpServer` / `AlsaPlayback` / `PcmStreamHandler` のヘッダ
-- `CMakeLists.txt` : ALSA・pthread・BSD ソケット検出を行う単体プロジェクト
-
-## ALSA Loopback への疎通確認（簡易）
-
-### ヘッダのみ送って受理/拒否を確認
-PCM ペイロードなしでヘッダ検証だけ確認できます。
-
-```bash
-# 正常ヘッダ（48000Hz, 2ch, S16_LE=1）を送る例
-python - <<'PY'
-import socket, struct
-hdr = struct.pack("<4sIIHH", b"PCMA", 1, 48000, 2, 1)
-s = socket.create_connection(("127.0.0.1", 46001))
-s.sendall(hdr)
-s.close()
-PY
-
-# 不正ヘッダ（magic違い）で拒否を確認する例
-python - <<'PY'
-import socket, struct
-hdr = struct.pack("<4sIIHH", b"XXXX", 1, 48000, 2, 1)
-s = socket.create_connection(("127.0.0.1", 46001))
-s.sendall(hdr)
-s.close()
-PY
-```
-
-### ループバックで無音1秒を流す
-1. ループバックをロード（必要な場合）
-   `sudo modprobe snd-aloop`
-2. 受信側を起動
-   `./jetson_pcm_receiver/build/jetson_pcm_receiver --port 46001 --device hw:Loopback,0,0`
-3. 別ターミナルから 1 秒分の無音を送信
-   ```bash
-   python - <<'PY'
-   import socket, struct
-   hdr = struct.pack("<4sIIHH", b"PCMA", 1, 48000, 2, 1)  # S16_LE / 48k / 2ch
-   pcm = b"\x00\x00" * 2 * 48000  # 1秒分のステレオ無音 (4バイト/フレーム)
-   s = socket.create_connection(("127.0.0.1", 46001))
-   s.sendall(hdr + pcm)
-   s.close()
-   PY
-   ```
-4. Loopback capture 側で再生データを確認（例）
-   `arecord -D hw:Loopback,1,0 -f S16_LE -c 2 -r 48000 -d 2 /tmp/captured.wav`
-
-### nc を使った簡易疎通（ヘッダのみ）
-
-```bash
-{ printf "PCMA"; printf "\x01\x00\x00\x00"; printf "\x80\xBB\x00\x00"; printf "\x02\x00"; printf "\x01\x00"; } | nc 127.0.0.1 46001
-# 上記は version=1, rate=48000, channels=2, format=1(S16_LE)
-```
-
-### パラメータ調整メモ
-- ALSA period / buffer サイズの初期値は `DEFAULT_PERIOD_FRAMES=512`、`DEFAULT_BUFFER_FRAMES=2048`（`src/alsa_playback.cpp`）です。XRUN が多い場合はここを拡大してください。
-- フォーマットやチャンネル数を増やす際は `toPcmFormat()` と `bytesPerSample()` に対応を追加してください。
+- `jetson_pcm_receiver/src`, `include`, `tests`, `CMakeLists.txt` 配下の TCP 実装は削除済みです。
+- `docker/jetson_pcm_receiver/` のビルドフローも非推奨となりました。Jetson 本体のコンテナ内で Web サービスを起動する構成に移行してください。

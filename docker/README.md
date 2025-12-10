@@ -24,14 +24,8 @@ docker compose -f jetson/docker-compose.jetson.yml down
 ポイント:
 - JetPack 6.1 以降 + NVIDIA Container Runtime 必須
 - `--device /dev/snd` を必ず付与（Loopback/実デバイスをコンテナへ渡す）
-- 環境変数 `JPR_*` で CLI 相当の設定を上書き可能（ポート、デバイス、接続モード、ZeroMQ など）
-- TCP入力は `jetson-pcm-receiver` が受け、Magic Box には ALSA Loopback で渡す（Magic Box 側のTCP穴あけ不要）
-- サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build jetson-pcm-receiver` のようにサービス名を指定
-
-### 入力レート/フォーマットの扱い（TCPのみ）
-- Raspberry Pi 送信側が `PCMA` ヘッダで `sample_rate` / `channels` / `format` を通知し、Jetson 側 `jetson_pcm_receiver` がヘッダを検証して ALSA を開き直します。JSON で固定値を持たせるとミスマッチ時に無音になるため **config.docker.json では入力レート/フォーマットを設定しません**。
-- 受理するヘッダ: 44.1k / 48k 系の {×1,×2,×4,×8,×16}、チャンネル=2、フォーマット=`S16_LE(1)` / `S24_3LE(2)` / `S32_LE(4)`（`jetson_pcm_receiver` / `PcmFormatSet` に準拠）。
-- GPU パイプライン側の自動ネゴシエーションは受信した実レートを使って出力レート・アップサンプル比を決めます（固定値依存なし）。
+- RTP 受信は Magic Box コンテナ内の `rtp_input` サービスが担当し、API `/api/rtp-input/*` で開始/停止・設定変更できます。
+- サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build magicbox` のようにサービス名を指定
 
 ## Magic Box コンテナの事前ビルド（Jetson 本体で実行）
 `docker/jetson/Dockerfile.jetson` はホストでビルド済みのバイナリをコピーする前提です。コンテナを立ち上げる前に Jetson 上で以下を実行し、`build/gpu_upsampler_alsa` と `build/gpu_upsampler_daemon` を用意してください。
