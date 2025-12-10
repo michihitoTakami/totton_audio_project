@@ -187,6 +187,9 @@ class RtpReceiverManager:
         self,
         settings: RtpInputSettings | None = None,
         process_runner: ProcessRunner | None = None,
+        restart_delay_sec: float = 5.0,
+        restart_max_delay_sec: float = 30.0,
+        auto_restart: bool = True,
     ):
         self._settings = settings or load_default_settings()
         self._process: asyncio.subprocess.Process | None = None
@@ -197,6 +200,11 @@ class RtpReceiverManager:
         )
         self._monitor_task: asyncio.Task | None = None
         self._monitor_stop = asyncio.Event()
+        self._watchdog_task: asyncio.Task | None = None
+        self._watchdog_stop = asyncio.Event()
+        self._restart_delay = max(0.1, restart_delay_sec)
+        self._restart_max_delay = max(self._restart_delay, restart_max_delay_sec)
+        self._auto_restart = auto_restart
 
     @staticmethod
     async def _default_process_runner(cmd: Sequence[str]) -> asyncio.subprocess.Process:
@@ -225,18 +233,40 @@ class RtpReceiverManager:
     async def start(self) -> None:
         """パイプラインを起動（既に動作中なら何もしない）."""
         async with self._lock:
+            self._watchdog_stop.clear()
+            self._ensure_watchdog()
             if self._is_running():
                 return
-            await self._start_unlocked()
+            try:
+                await self._start_process_unlocked()
+            except Exception as exc:  # noqa: BLE001
+                # 自動再起動ループがバックグラウンドで再試行する
+                self._last_error = str(exc)
+                raise
 
     async def stop(self) -> None:
         """パイプラインを停止."""
         async with self._lock:
-            await self._stop_unlocked()
+            self._watchdog_stop.set()
+            await self._stop_unlocked(for_restart=False)
+        await self._stop_watchdog()
+        async with self._lock:
+            # 次回のstartで再利用できるようフラグのみクリア
+            self._watchdog_stop.clear()
 
     async def _start_unlocked(self) -> None:
         if self._is_running():
             return
+        await self._start_process_unlocked()
+
+    def _ensure_watchdog(self) -> None:
+        if self._watchdog_task and not self._watchdog_task.done():
+            return
+        self._watchdog_task = asyncio.create_task(
+            self._watchdog_loop(), name="rtp_process_watchdog"
+        )
+
+    async def _start_process_unlocked(self) -> None:
         cmd = build_gst_command(self._settings)
         try:
             self._process = await self._process_runner(cmd)
@@ -245,7 +275,7 @@ class RtpReceiverManager:
             self._last_error = str(exc)
             raise
 
-    async def _stop_unlocked(self) -> None:
+    async def _stop_unlocked(self, for_restart: bool = False) -> None:
         if not self._process:
             return
         proc = self._process
@@ -256,11 +286,76 @@ class RtpReceiverManager:
             return
         try:
             await asyncio.wait_for(proc.wait(), timeout=3)
+        except asyncio.CancelledError:
+            return
         except asyncio.TimeoutError:
             proc.kill()
 
+        if not for_restart:
+            # 再起動目的ではない停止時のみウォッチドッグ停止
+            self._watchdog_stop.set()
+
+    async def _stop_watchdog(self) -> None:
+        if not self._watchdog_task:
+            return
+        task = self._watchdog_task
+        self._watchdog_task = None
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+
+    async def _watchdog_loop(self) -> None:
+        """プロセス終了や起動失敗からの自動復旧ループ."""
+        backoff = self._restart_delay
+        while not self._watchdog_stop.is_set():
+            async with self._lock:
+                proc = self._process
+
+            # プロセスが無ければ自動起動を試みる
+            if proc is None:
+                if not self._auto_restart:
+                    await asyncio.sleep(0.2)
+                    continue
+                try:
+                    async with self._lock:
+                        await self._start_process_unlocked()
+                    backoff = self._restart_delay
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    self._last_error = f"autostart failed: {exc}"
+                    await asyncio.sleep(backoff)
+                    backoff = min(self._restart_max_delay, backoff * 2)
+                    continue
+
+            # プロセス終了を待機
+            try:
+                rc = await proc.wait()
+            except Exception as exc:  # noqa: BLE001
+                rc = None
+                self._last_error = f"rtp process wait failed: {exc}"
+
+            if self._watchdog_stop.is_set():
+                break
+
+            async with self._lock:
+                if self._process is proc:
+                    self._process = None
+
+            if self._watchdog_stop.is_set() or not self._auto_restart:
+                break
+
+            # 予期せぬ終了は自動再起動する
+            self._last_error = (
+                f"rtp process exited with code {rc}"
+                if rc is not None
+                else "rtp process exited"
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(self._restart_max_delay, backoff * 2)
+
     async def _restart_locked(self) -> None:
-        await self._stop_unlocked()
+        await self._stop_unlocked(for_restart=True)
         await self._start_unlocked()
 
     async def apply_config_and_restart(

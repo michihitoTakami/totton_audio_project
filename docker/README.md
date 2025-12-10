@@ -26,7 +26,7 @@ docker compose -f jetson/docker-compose.jetson.yml down
 - `--device /dev/snd` を必ず付与（Loopback/実デバイスをコンテナへ渡す）
 - RTP 受信は Magic Box コンテナ内の `rtp_input` サービスが担当し、デフォルトで自動起動します。無効化したい場合は `MAGICBOX_RTP_AUTOSTART=false` を指定してください。
 - 受信設定（ポート/レート/デバイス/品質）は環境変数で上書き可能です（例: `MAGICBOX_RTP_PORT`, `MAGICBOX_RTP_SAMPLE_RATE`, `MAGICBOX_RTP_DEVICE`, `MAGICBOX_RTP_QUALITY`）。詳細は Web API `/api/rtp-input/config` のスキーマに準拠します。
-- 起動後に gst-launch が立ち上がっているかを確認するには `docker compose -f jetson/docker-compose.jetson.yml exec magicbox pgrep -f rtpbin` を利用してください。
+- 起動後に gst-launch が立ち上がっているかを確認するには `docker compose -f jetson/docker-compose.jetson.yml exec magicbox pgrep -f rtpbin` を利用してください。RTPプロセスが異常終了した場合も自動でリトライします（ALSAデバイス未接続時はリトライし続けるのでデバイスのマウントを確認してください）。
 - サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build magicbox` のようにサービス名を指定
 - `restart: always` を指定済み。systemd で単体起動する場合も `Restart=always` を付け、片側クラッシュ時に自動復帰させてください。
 
