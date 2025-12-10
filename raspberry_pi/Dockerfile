@@ -26,6 +26,7 @@ RUN apt-get update \
         gstreamer1.0-plugins-good \
         gstreamer1.0-plugins-bad \
         gstreamer1.0-plugins-ugly \
+        libzmq3-dev \
         python3 \
         python3-pip \
         curl \
