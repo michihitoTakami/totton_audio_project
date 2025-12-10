@@ -2,7 +2,7 @@
 
 Raspberry Pi 上で ALSA キャプチャを GStreamer RTP (+RTCP) で Jetson へ送出するための最小構成です。TCP ベースの C++ 実装は廃止し、RTCP 同期付きの GStreamer パイプラインを正式ルートとしました。
 
-- 送信側: `raspberry_pi/rtp_sender.py`（gst-launch ラッパー）
+- 送信側: `raspberry_pi/rtp_sender.py`（gst-launch ラッパー、**デフォルトは BE (S24_3BE)**）
 - 連携: `raspberry_pi/rtp_receiver`（ZeroMQ ブリッジで統計/レイテンシ共有、任意）
 - 受信側: Jetson の `rtp_input` サービス（`web/services/rtp_input.py`）
 
@@ -28,7 +28,7 @@ python3 -m raspberry_pi.rtp_sender \
   --host 192.168.55.1 \
   --sample-rate 44100 \
   --channels 2 \
-  --format S24_3LE \
+  --format S24_3BE \
   --rtp-port 46000 \
   --rtcp-port 46001 \
   --rtcp-listen-port 46002 \
@@ -45,13 +45,13 @@ python3 -m raspberry_pi.rtp_sender \
 | 変数 | 既定値 | 説明 |
 | ---- | ------ | ---- |
 | `RTP_SENDER_DEVICE` | `hw:0,0` | ALSA キャプチャデバイス |
-| `RTP_SENDER_HOST` | `jetson` | Jetson RTP 受信先ホスト |
+| `RTP_SENDER_HOST` | `192.168.55.1` | Jetson RTP 受信先ホスト |
 | `RTP_SENDER_RTP_PORT` | `46000` | RTP 送信ポート |
 | `RTP_SENDER_RTCP_PORT` | `46001` | Jetson へ送る RTCP ポート |
 | `RTP_SENDER_RTCP_LISTEN_PORT` | `46002` | Jetson から受ける RTCP ポート |
 | `RTP_SENDER_SAMPLE_RATE` | `44100` | サンプルレート (Hz) |
 | `RTP_SENDER_CHANNELS` | `2` | チャンネル数 |
-| `RTP_SENDER_FORMAT` | `S24_3LE` | フォーマット (S16_LE/S24_3LE/S32_LE) |
+| `RTP_SENDER_FORMAT` | `S24_3BE` | フォーマット (S16_BE/S24_3BE/S32_BE 推奨) |
 | `RTP_SENDER_LATENCY_MS` | `100` | jitterbuffer latency (ms) |
 | `RTP_SENDER_PAYLOAD_TYPE` | `96` | RTP Payload Type |
 | `RTP_SENDER_DRY_RUN` | `false` | true でパイプライン出力のみ |
@@ -73,8 +73,8 @@ docker run --rm --device /dev/snd \
 docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender jetson-proxy
 ```
 
-- `raspberry_pi/docker-compose.yml` は RTCP 付き RTP 送出 (`rtp-sender`) と ZeroMQ ブリッジ (`rtp-bridge`) を分離しています。
-- `RTP_SENDER_*` を `.env` で上書きすると配信先・フォーマットを切り替えられます。
+- `raspberry_pi/docker-compose.yml` は RTCP 付き RTP 送出 (`rtp-sender`) と ZeroMQ ブリッジ (`rtp-bridge`) を分離しています。`rtp-bridge` は `tcp://0.0.0.0:60000` で待ち受け、Jetson から到達できます（ポート 60000 を開ける）。
+- `RTP_SENDER_*` を `.env` で上書きすると配信先・フォーマットを切り替えられます。デフォルトは BE (`S24_3BE`)。
 
 ## ZeroMQ ブリッジ (任意)
 
@@ -84,6 +84,10 @@ docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender jetso
 - `RTP_BRIDGE_LATENCY_PATH` (既定 `/tmp/rtp_receiver_latency_ms`): SET_LATENCY 受信時に書き戻し、送信側で適用
 
 Magic Box Web UI からのレイテンシ変更を Pi に伝える場合に使用します。
+
+> NOTE: デフォルトの待受エンドポイントは `tcp://0.0.0.0:60000` に変更しました。Jetson 側は `RTP_BRIDGE_ENDPOINT=tcp://raspberrypi.local:60000` などホスト名/IP を揃えてください。`docker-compose.yml` はポート 60000 を公開します。
+
+> 再起動ポリシー: `docker-compose.yml` では `restart: always` を指定しています。裸運用する場合も systemd で `Restart=always` を付け、片側クラッシュ時も自動復帰させてください。
 
 ## 参考: 生の GStreamer コマンド
 

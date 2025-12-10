@@ -23,7 +23,7 @@ args=(
   --payload-type "${RTP_SENDER_PAYLOAD_TYPE:-96}"
   --sample-rate "${RTP_SENDER_SAMPLE_RATE:-44100}"
   --channels "${RTP_SENDER_CHANNELS:-2}"
-  --format "${RTP_SENDER_FORMAT:-S24_3LE}"
+  --format "${RTP_SENDER_FORMAT:-S24_3BE}"
   --latency-ms "${RTP_SENDER_LATENCY_MS:-100}"
 )
 

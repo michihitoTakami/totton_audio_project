@@ -12,7 +12,7 @@ from ..models import RtpBridgeStatus, RtpLatencyRequest, RtpLatencyResponse
 from .rtp_input import DEFAULT_LATENCY_MS, DEFAULT_SAMPLE_RATE
 
 DEFAULT_RTP_BRIDGE_ENDPOINT = os.getenv(
-    "RTP_BRIDGE_ENDPOINT", "ipc:///tmp/rtp_receiver.sock"
+    "RTP_BRIDGE_ENDPOINT", "tcp://raspberrypi.local:60000"
 )
 DEFAULT_RTP_BRIDGE_TIMEOUT_MS = int(os.getenv("RTP_BRIDGE_TIMEOUT_MS", "1500"))
 
