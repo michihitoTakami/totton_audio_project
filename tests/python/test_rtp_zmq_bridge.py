@@ -1,9 +1,6 @@
 import zmq
 
-from jetson_pcm_receiver.rtp_receiver.zmq_bridge import (
-    RtpStatsStore,
-    RtpZmqBridge,
-)
+from raspberry_pi.rtp_receiver.zmq_bridge import RtpStatsStore, RtpZmqBridge
 
 
 def _client(endpoint: str, timeout_ms: int = 1000):
