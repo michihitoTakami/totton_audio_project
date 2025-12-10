@@ -2,7 +2,7 @@
 
 ## 概要
 
-このガイドでは、GPU Audio Upsamplerを ALSA/TCP 入力で動かし、マルチレート対応で DAC に出力する方法を説明します。システムは入力レートと DAC 性能に基づいて自動的に最適なアップサンプリング倍率（2x/4x/8x/16x）を選択します。
+このガイドでは、GStreamer RTP で Jetson に入力を届け、ALSA Loopback 経由で GPU パイプラインへ流す方法を説明します。PC 単体での開発時は、従来通り ALSA Loopback を使ったローカル入力も利用できます。システムは入力レートと DAC 性能に基づいて自動的に最適なアップサンプリング倍率（2x/4x/8x/16x）を選択します。
 
 ## システム要件
 
@@ -60,8 +60,20 @@ Starting ALSA output thread...
    ```
 2. `config.json` の `loopback.enabled` を `true` にすると、デーモンが capture 側 (`hw:Loopback,1,0`) から読み込みます。
 
-#### (Jetsonでのネットワーク入力) TCP PCM を使う場合
-Jetson では `jetson_pcm_receiver` を利用して TCP で受信した PCM を ALSA Loopback に流し、同じループバック capture を GPU パイプラインが読む構成が推奨です。詳細は `jetson_pcm_receiver/README.md` を参照してください。
+#### (Jetsonでのネットワーク入力) RTP を使う場合
+Jetson では `rtp_input` サービス（GStreamer）で RTP を受信し、ALSA Loopback playback に書き込みます。Magic Box Web API から起動できます。
+
+```bash
+# Jetson 上で RTP 受信を開始
+curl -X POST http://localhost:8000/api/rtp-input/start
+
+# 設定変更の例
+curl -X PUT http://localhost:8000/api/rtp-input/config \
+  -H 'Content-Type: application/json' \
+  -d '{"sample_rate":44100,"encoding":"L24","latency_ms":100}'
+```
+
+送信側 (Raspberry Pi) は `raspberry_pi/rtp_sender.py` または `docker-compose.yml` の `rtp-sender` サービスを使用してください。
 
 ## 動作確認
 
