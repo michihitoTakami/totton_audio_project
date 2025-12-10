@@ -38,6 +38,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libpipewire-0.3-0 \
     libsndfile1 \
+    # GStreamer runtime for RTP受信
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-alsa \
     # ZeroMQ runtime
     libzmq5 \
     # Systemd runtime (for sd_notify)

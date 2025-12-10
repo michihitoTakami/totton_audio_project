@@ -1,31 +1,4 @@
 services:
-  pcm-bridge:
-    build:
-      context: ..
-      dockerfile: raspberry_pi/Dockerfile
-    container_name: pcm-bridge
-    devices:
-      - /dev/snd:/dev/snd
-    group_add:
-      - "audio"
-    environment:
-      PCM_BRIDGE_DEVICE: ${PCM_BRIDGE_DEVICE:-hw:2,0}
-      PCM_BRIDGE_HOST: ${PCM_BRIDGE_HOST:-192.168.55.1}
-      PCM_BRIDGE_PORT: ${PCM_BRIDGE_PORT:-46001}
-      PCM_BRIDGE_RATE: ${PCM_BRIDGE_RATE:-48000}
-      PCM_BRIDGE_FORMAT: ${PCM_BRIDGE_FORMAT:-S16_LE}
-      PCM_BRIDGE_FRAMES: ${PCM_BRIDGE_FRAMES:-4096}
-      PCM_BRIDGE_LOG_LEVEL: ${PCM_BRIDGE_LOG_LEVEL:-warn}
-      PCM_BRIDGE_ITERATIONS: ${PCM_BRIDGE_ITERATIONS:--1}
-    restart: always
-    depends_on:
-      - jetson-proxy
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   jetson-proxy:
     image: nginx:1.27-alpine
     container_name: jetson-proxy

@@ -149,3 +149,17 @@ Jetson側TCPサーバが無くても、ローカルのALSA loopback + `nc` で�
    - `hexdump -C /tmp/pcm_dump.raw | head` で先頭16バイトが `50 43 4d 41` (`PCMA`) になっていることを確認。
    - ファイルサイズが再生に合わせて増えていくことを確認。
    - ブリッジは `Ctrl+C` で終了（SIGINTでクリーンに停止）。
+
+## GStreamer RTP 送出（推奨構成）
+
+TCP ブリッジの代替として GStreamer で RTP 送出する場合の参考コマンド。デフォルトポートは `46000/udp`、ビット深度 24bit、サンプルレート 44.1kHz 固定、`audioresample quality=10` でクロックドリフトを吸収します。
+
+```bash
+gst-launch-1.0 -e \
+  alsasrc device=hw:0,0 ! audioresample quality=10 ! audioconvert ! \
+  audio/x-raw,rate=44100,channels=2,format=S24LE ! \
+  rtpL24pay ! udpsink host=<jetson-ip> port=46000 sync=true async=false
+```
+
+- 16bit/32bit を送りたい場合は `rtpL16pay` / `rtpL32pay` と `format=S16LE/S32LE` に差し替えてください。
+- レイテンシ調整は Jetson 側（Magic Box コンテナ内 `/api/rtp-input/config` の `latency_ms`、デフォルト100ms）で行います。
