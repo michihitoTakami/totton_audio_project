@@ -42,6 +42,8 @@ def _load_stats(stats_path: Path, store: RtpStatsStore) -> None:
         jitter_ms=data.get("jitter_ms"),
         clock_drift_ppm=data.get("clock_drift_ppm"),
         sample_rate=data.get("sample_rate"),
+        latency_ms=data.get("latency_ms"),
+        running=data.get("running"),
     )
 
 

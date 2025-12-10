@@ -305,6 +305,33 @@ class RtpInputStatus(BaseModel):
     settings: RtpInputSettings
 
 
+class RtpBridgeStatus(BaseModel):
+    """ZeroMQ ブリッジ経由で返すRTP統計."""
+
+    running: bool = False
+    latency_ms: int = Field(default=100, ge=10, le=500)
+    sample_rate: int = Field(default=44100, ge=0)
+    packets_received: int = Field(default=0, ge=0)
+    packets_lost: int = Field(default=0, ge=0)
+    jitter_ms: float = Field(default=0.0, ge=0.0)
+    clock_drift_ppm: float = 0.0
+
+
+class RtpLatencyRequest(BaseModel):
+    """レイテンシ変更リクエスト."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    latency_ms: int = Field(ge=10, le=500)
+
+
+class RtpLatencyResponse(BaseModel):
+    """レイテンシ変更レスポンス."""
+
+    status: str = "ok"
+    latency_ms: int = Field(ge=10, le=500)
+
+
 class TcpInputSettings(BaseModel):
     """TCP input configuration settings."""
 

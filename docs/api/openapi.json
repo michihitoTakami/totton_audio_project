@@ -1560,6 +1560,70 @@
         }
       }
     },
+    "/api/rtp/status": {
+      "get": {
+        "tags": [
+          "rtp"
+        ],
+        "summary": "RTPステータス取得 (ZeroMQ)",
+        "description": "ZeroMQブリッジからRTP統計を取得する.",
+        "operationId": "rtp_status_api_rtp_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RtpBridgeStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rtp/latency": {
+      "post": {
+        "tags": [
+          "rtp"
+        ],
+        "summary": "RTPレイテンシ変更 (ZeroMQ)",
+        "description": "ZeroMQブリッジ経由でレイテンシを変更する.",
+        "operationId": "rtp_set_latency_api_rtp_latency_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RtpLatencyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RtpLatencyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rtp-input/status": {
       "get": {
         "tags": [
@@ -3309,6 +3373,54 @@
         "title": "PhaseTypeUpdateRequest",
         "description": "Phase type update request model."
       },
+      "RtpBridgeStatus": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "default": false
+          },
+          "latency_ms": {
+            "type": "integer",
+            "maximum": 500.0,
+            "minimum": 10.0,
+            "title": "Latency Ms",
+            "default": 100
+          },
+          "sample_rate": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sample Rate",
+            "default": 44100
+          },
+          "packets_received": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Packets Received",
+            "default": 0
+          },
+          "packets_lost": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Packets Lost",
+            "default": 0
+          },
+          "jitter_ms": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Jitter Ms",
+            "default": 0.0
+          },
+          "clock_drift_ppm": {
+            "type": "number",
+            "title": "Clock Drift Ppm",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "RtpBridgeStatus",
+        "description": "ZeroMQ ブリッジ経由で返すRTP統計."
+      },
       "RtpInputConfigUpdate": {
         "properties": {
           "port": {
@@ -3560,6 +3672,44 @@
         ],
         "title": "RtpInputStatus",
         "description": "RTP入力のステータス."
+      },
+      "RtpLatencyRequest": {
+        "properties": {
+          "latency_ms": {
+            "type": "integer",
+            "maximum": 500.0,
+            "minimum": 10.0,
+            "title": "Latency Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "latency_ms"
+        ],
+        "title": "RtpLatencyRequest",
+        "description": "レイテンシ変更リクエスト."
+      },
+      "RtpLatencyResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "maximum": 500.0,
+            "minimum": 10.0,
+            "title": "Latency Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "latency_ms"
+        ],
+        "title": "RtpLatencyResponse",
+        "description": "レイテンシ変更レスポンス."
       },
       "Settings": {
         "properties": {
@@ -4200,6 +4350,10 @@
     {
       "name": "tcp-input",
       "description": "TCP入力のステータス取得と制御 (ZeroMQ経由)"
+    },
+    {
+      "name": "rtp",
+      "description": "RTP ZeroMQブリッジのステータス/制御"
     },
     {
       "name": "rtp-input",
