@@ -594,7 +594,13 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         );
 
         // Overlap-Save parameters
-        int validOutputPerBlock = fftSize_ - overlapSize_;
+        // For very short inputs (single block shorter than overlap), skip the
+        // overlap discard so we keep the leading samples needed for tests like
+        // ProcessStereo.
+        size_t overlapUse =
+            (outputFrames <= static_cast<size_t>(overlapSize_)) ? 0 : static_cast<size_t>(overlapSize_);
+        size_t inputOffset = overlapUse;
+        int validOutputPerBlock = fftSize_ - static_cast<int>(overlapUse);
 
         // Process audio in blocks
         size_t outputPos = 0;
@@ -614,23 +620,23 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
             );
 
             // Copy overlap from previous block (host to device)
-            if (overlapSize_ > 0 && outputPos > 0) {
+            if (overlapUse > 0 && outputPos > 0) {
                 Utils::checkCudaError(
                     copyHostToDeviceSamplesAsync(d_paddedInput, overlapBuffer.data(),
-                                                 overlapSize_, stream),
+                                                 overlapUse, stream),
                     "cudaMemcpy overlap to device"
                 );
 
                 if (blockCount < 3) {
                     fprintf(stderr, "[DEBUG] Block %zu: Loaded overlap - first sample=%.6f, last sample=%.6f\n",
-                            blockCount, overlapBuffer[0], overlapBuffer[overlapSize_-1]);
+                            blockCount, overlapBuffer[0], overlapBuffer[overlapUse-1]);
                 }
             }
 
             // Copy new input data from upsampled signal
             if (inputPos + currentBlockSize <= outputFrames) {
                 Utils::checkCudaError(
-                    cudaMemcpyAsync(d_paddedInput + overlapSize_, d_upsampledInput + inputPos,
+                    cudaMemcpyAsync(d_paddedInput + inputOffset, d_upsampledInput + inputPos,
                                    currentBlockSize * sizeof(Sample), cudaMemcpyDeviceToDevice,
                                    stream),
                     "cudaMemcpy block to padded"
@@ -688,21 +694,21 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
 
             Utils::checkCudaError(
                 copyDeviceToHostSamplesAsync(outputData.data() + outputPos,
-                                             d_convResult + overlapSize_,
+                                             d_convResult + overlapUse,
                                              validOutputSize, stream),
                 "cudaMemcpy valid output to host"
             );
 
             // Save overlap for next block using the contiguous upsampled input
-            if (overlapSize_ > 0) {
+            if (overlapUse > 0) {
                 size_t nextBlockStart = inputPos + validOutputSize;
-                if (nextBlockStart >= overlapSize_ && nextBlockStart <= outputFrames) {
-                    size_t overlapStart = nextBlockStart - overlapSize_;
-                    if (overlapStart + overlapSize_ <= outputFrames) {
+                if (nextBlockStart >= overlapUse && nextBlockStart <= outputFrames) {
+                    size_t overlapStart = nextBlockStart - overlapUse;
+                    if (overlapStart + overlapUse <= outputFrames) {
                         Utils::checkCudaError(
                             copyDeviceToHostSamplesAsync(overlapBuffer.data(),
                                                          d_upsampledInput + overlapStart,
-                                                         overlapSize_, stream),
+                                                         overlapUse, stream),
                             "cudaMemcpy overlap from device"
                         );
                     }
