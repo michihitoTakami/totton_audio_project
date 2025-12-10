@@ -28,6 +28,8 @@ _MAX_LATENCY_MS = 500
 class RtpStats:
     """RTP 統計値."""
 
+    running: bool = False
+    latency_ms: int = 100
     packets_received: int = 0
     packets_lost: int = 0
     jitter_ms: float = 0.0
@@ -45,6 +47,8 @@ class RtpStatsStore:
     def update(
         self,
         *,
+        running: bool | None = None,
+        latency_ms: int | None = None,
         packets_received: int | None = None,
         packets_lost: int | None = None,
         jitter_ms: float | None = None,
@@ -53,6 +57,11 @@ class RtpStatsStore:
     ) -> None:
         """統計値を更新（指定された項目のみ上書き）。"""
         with self._lock:
+            if running is not None:
+                self._stats.running = bool(running)
+            if latency_ms is not None:
+                clamped = max(_MIN_LATENCY_MS, min(_MAX_LATENCY_MS, int(latency_ms)))
+                self._stats.latency_ms = clamped
             if packets_received is not None:
                 self._stats.packets_received = max(0, int(packets_received))
             if packets_lost is not None:
@@ -232,5 +241,8 @@ class RtpZmqBridge:
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to apply latency change")
             return {"status": "error", "message": f"failed to set latency: {exc}"}
+
+        # 状態にも反映しておくことで STATUS で現在値が確認できる
+        self._stats_store.update(latency_ms=latency, running=True)
 
         return {"status": "ok", "data": {"latency_ms": latency}}

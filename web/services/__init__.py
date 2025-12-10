@@ -34,6 +34,13 @@ from .eq import (
     validate_eq_profile_content,
 )
 from .tcp_input import parse_tcp_telemetry, TcpTelemetryPoller, TcpTelemetryStore
+from .rtp_bridge_client import (
+    get_rtp_bridge_client,
+    RtpBridgeClient,
+    RtpBridgeClientError,
+    RtpBridgeConnectionError,
+    RtpBridgeResponseError,
+)
 
 __all__ = [
     # alsa
@@ -72,4 +79,10 @@ __all__ = [
     "parse_tcp_telemetry",
     "TcpTelemetryPoller",
     "TcpTelemetryStore",
+    # rtp bridge
+    "get_rtp_bridge_client",
+    "RtpBridgeClient",
+    "RtpBridgeClientError",
+    "RtpBridgeConnectionError",
+    "RtpBridgeResponseError",
 ]

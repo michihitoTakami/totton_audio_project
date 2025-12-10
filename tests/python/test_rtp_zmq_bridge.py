@@ -16,6 +16,8 @@ def test_status_returns_latest_stats(tmp_path):
     endpoint = f"ipc://{tmp_path/'rtp_bridge_status.sock'}"
     stats = RtpStatsStore()
     stats.update(
+        running=True,
+        latency_ms=180,
         packets_received=123,
         packets_lost=4,
         jitter_ms=1.25,
@@ -34,6 +36,8 @@ def test_status_returns_latest_stats(tmp_path):
 
     assert reply["status"] == "ok"
     data = reply["data"]
+    assert data["running"] is True
+    assert data["latency_ms"] == 180
     assert data["packets_received"] == 123
     assert data["packets_lost"] == 4
     assert data["sample_rate"] == 48000
@@ -56,6 +60,9 @@ def test_set_latency_validates_and_applies(tmp_path):
 
             sock.send_json({"cmd": "SET_LATENCY", "params": {"latency_ms": 5}})
             ng_reply = sock.recv_json()
+
+            sock.send_json({"cmd": "STATUS"})
+            status_reply = sock.recv_json()
         finally:
             sock.close(0)
             ctx.term()
@@ -67,6 +74,10 @@ def test_set_latency_validates_and_applies(tmp_path):
     assert ng_reply["status"] == "error"
     assert "latency_ms" in ng_reply["message"]
     assert applied == [120]
+
+    assert status_reply["status"] == "ok"
+    assert status_reply["data"]["latency_ms"] == 120
+    assert status_reply["data"]["running"] is True
 
 
 def test_unknown_command_returns_error(tmp_path):
