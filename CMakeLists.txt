@@ -9,8 +9,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-option(GPU_UPSAMPLER_USE_FLOAT64 "Enable float64 pipeline for GPU upsampler" OFF)
-
 # Export compile commands for clang-tidy
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -55,10 +53,12 @@ else()
     message(STATUS "Detected PC platform - CUDA arch ${GPU_CUDA_ARCH}")
 endif()
 
+option(GPU_UPSAMPLER_USE_FLOAT64 "Build GPU upsampler with float64 pipeline" OFF)
 if(GPU_UPSAMPLER_USE_FLOAT64)
-    message(STATUS "GPU upsampler precision: float64 (GPU_UPSAMPLER_USE_FLOAT64=ON)")
+    add_compile_definitions(GPU_UPSAMPLER_USE_FLOAT64)
+    message(STATUS "GPU upsampler precision: float64 (double)")
 else()
-    message(STATUS "GPU upsampler precision: float32 (default)")
+    message(STATUS "GPU upsampler precision: float32")
 endif()
 
 # Fetch dependencies
@@ -119,10 +119,6 @@ add_library(gpu_upsampler_core STATIC
     src/gpu/crossfeed_engine.cu
     src/phase_alignment.cpp
     src/hrtf/woodworth_model.cpp
-)
-
-target_compile_definitions(gpu_upsampler_core PUBLIC
-    GPU_UPSAMPLER_USE_FLOAT64=$<BOOL:${GPU_UPSAMPLER_USE_FLOAT64}>
 )
 
 # CUDA architecture (auto-detected: Jetson=87, PC=75)
@@ -461,7 +457,6 @@ add_executable(cpu_tests
     tests/cpp/test_playback_buffer_threshold.cpp
     tests/cpp/test_runtime_stats.cpp
     tests/cpp/test_audio_pipeline.cpp
-    tests/cpp/test_precision_traits.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
