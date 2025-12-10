@@ -21,12 +21,14 @@ TEST(RtpPipelineBuilder, BuildsL24Pipeline) {
     auto args = RtpPipelineBuilder::build(cfg, params);
     const std::string cmd = RtpPipelineBuilder::toCommandString(args);
 
-    EXPECT_NE(cmd.find("audio/x-raw,rate=96000,channels=2,format=S24LE"), std::string::npos);
+    EXPECT_NE(cmd.find("audio/x-raw,rate=96000,channels=2,format=S24BE"), std::string::npos);
     EXPECT_NE(cmd.find("rtpL24pay"), std::string::npos);
     EXPECT_NE(cmd.find("clock-rate=96000"), std::string::npos);
     EXPECT_NE(cmd.find("port=47000"), std::string::npos);
     EXPECT_NE(cmd.find("port=47001"), std::string::npos);
     EXPECT_NE(cmd.find("port=47002"), std::string::npos);
+    EXPECT_NE(cmd.find("latency=100"), std::string::npos);
+    EXPECT_NE(cmd.find("do-timestamp=true"), std::string::npos);
 }
 
 TEST(RtpPipelineBuilder, UsesEncodingForFormat) {

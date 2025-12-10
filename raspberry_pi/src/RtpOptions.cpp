@@ -107,6 +107,15 @@ bool applyEnvOverrides(RtpOptions &opt, ParseRtpOptionsResult &result,
         }
         opt.logLevel = parseLogLevel(logLevel);
     }
+    if (const char *latency = getenvFn("RTP_SENDER_LATENCY_MS")) {
+        const std::string buffer{latency};
+        char *end = nullptr;
+        long parsed = std::strtol(buffer.c_str(), &end, 10);
+        if (!end || *end != '\0' || parsed < 0 || parsed > 5000) {
+            return fail("RTP_SENDER_LATENCY_MS must be 0-5000");
+        }
+        opt.latencyMs = static_cast<int>(parsed);
+    }
     if (const char *dryRun = getenvFn("RTP_SENDER_DRY_RUN")) {
         const std::string value{dryRun};
         if (value == "1" || toLower(value) == "true") {
@@ -201,6 +210,16 @@ ParseRtpOptionsResult parseRtpOptions(int argc, char **argv, std::string_view pr
                 return result;
             }
             opt.pollIntervalMs = static_cast<int>(parsed);
+        } else if (arg == "--latency-ms" && i + 1 < argc) {
+            const std::string buffer{argv[++i]};
+            char *end = nullptr;
+            long parsed = std::strtol(buffer.c_str(), &end, 10);
+            if (!end || *end != '\0' || parsed < 0 || parsed > 5000) {
+                result.hasError = true;
+                result.errorMessage = "latency-ms must be between 0 and 5000";
+                return result;
+            }
+            opt.latencyMs = static_cast<int>(parsed);
         } else if (arg == "--rate-notify-url" && i + 1 < argc) {
             opt.rateNotifyUrl = argv[++i];
         } else if (arg == "--dry-run") {
@@ -221,6 +240,7 @@ void printRtpHelp(std::string_view programName) {
               << " [--device hw:0,0] [--host 127.0.0.1] [--rtp-port 46000] [--rtcp-port 46001]"
               << " [--rtcp-listen-port 46002] [--payload-type 96]"
               << " [--format S16_LE|S24_3LE|S32_LE] [--poll-ms 250] [--rate-notify-url URL]"
+              << " [--latency-ms 100]"
               << " [--log-level warn] [--dry-run] [--help] [--version]" << std::endl
               << std::endl
               << "RTP sender options:" << std::endl
@@ -234,6 +254,8 @@ void printRtpHelp(std::string_view programName) {
                  "uses ALSA hw_params"
               << std::endl
               << "  --poll-ms               hw_params polling interval (50-5000 ms)" << std::endl
+              << "  --latency-ms            Sender-side rtpbin latency/jitter buffer (0-5000 ms)"
+              << std::endl
               << "  --rate-notify-url       Optional URL to POST rate changes" << std::endl
               << "  --log-level             debug | info | warn | error" << std::endl
               << "  --dry-run               Do not spawn gst-launch; log pipeline only" << std::endl
@@ -242,8 +264,8 @@ void printRtpHelp(std::string_view programName) {
               << std::endl
               << "Environment overrides: RTP_SENDER_DEVICE, RTP_SENDER_HOST, RTP_SENDER_RTP_PORT, "
                  "RTP_SENDER_RTCP_PORT, RTP_SENDER_RTCP_LISTEN_PORT, RTP_SENDER_PAYLOAD_TYPE, "
-                 "RTP_SENDER_FORMAT, RTP_SENDER_POLL_MS, RTP_SENDER_NOTIFY_URL, "
-                 "RTP_SENDER_LOG_LEVEL, RTP_SENDER_DRY_RUN"
+                 "RTP_SENDER_FORMAT, RTP_SENDER_POLL_MS, RTP_SENDER_LATENCY_MS, "
+                 "RTP_SENDER_NOTIFY_URL, RTP_SENDER_LOG_LEVEL, RTP_SENDER_DRY_RUN"
               << std::endl;
 }
 
