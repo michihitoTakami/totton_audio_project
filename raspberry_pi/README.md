@@ -98,10 +98,10 @@ Jetsonの80番ポートにNginxでリバースプロキシを挟み、同一LAN�
 
 ```bash
 # Raspberry Pi上で実行
-docker compose -f raspberry_pi/docker-compose.yml up -d --build
+docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender jetson-proxy
 
 # ログ確認
-docker compose -f raspberry_pi/docker-compose.yml logs -f pcm-bridge
+docker compose -f raspberry_pi/docker-compose.yml logs -f rtp-sender
 docker compose -f raspberry_pi/docker-compose.yml logs -f jetson-proxy
 
 # 停止
@@ -122,6 +122,18 @@ docker compose -f raspberry_pi/docker-compose.yml down
 - `PCM_BRIDGE_FRAMES` (既定: `4096`)
 - `PCM_BRIDGE_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, 既定: `warn`)
 - `PCM_BRIDGE_ITERATIONS` (`-1` で無限送信)
+- `PCM_BRIDGE_MODE` (`run` | `help` | `version` | `rtp`) — `rtp` を指定すると GStreamer RTP 送出モードで起動
+- `RTP_SENDER_DEVICE` (既定: `hw:0,0`)
+- `RTP_SENDER_HOST` (既定: `jetson`)
+- `RTP_SENDER_RTP_PORT` (既定: `46000`)
+- `RTP_SENDER_RTCP_PORT` (既定: `46001`)
+- `RTP_SENDER_RTCP_LISTEN_PORT` (既定: `46002`)
+- `RTP_SENDER_PAYLOAD_TYPE` (既定: `96`)
+- `RTP_SENDER_POLL_MS` (既定: `250`)
+- `RTP_SENDER_LOG_LEVEL` (既定: `warn`)
+- `RTP_SENDER_FORMAT` (`S16_LE` | `S24_3LE` | `S32_LE` を固定したい場合)
+- `RTP_SENDER_NOTIFY_URL` (レート変更時に HTTP POST を送る先)
+- `RTP_SENDER_DRY_RUN` (`true`/`1` でパイプライン起動せず文字列だけ確認)
 
 ## 手動テスト（null sink/loopback + nc）
 
@@ -167,3 +179,47 @@ gst-launch-1.0 -e rtpbin name=rtpbin ntp-sync=true buffer-mode=sync \
 
 - 16bit/32bit を送りたい場合は `rtpL16pay` / `rtpL32pay` と `format=S16LE/S32LE` に差し替えてください（pt は 96 のままで共有して問題ありません）。
 - レイテンシ調整は Jetson 側（Magic Box コンテナ内 `/api/rtp-input/config` の `latency_ms`、デフォルト100ms）で行います。
+
+## rpi_rtp_sender（RTP送出・自動レート追従）
+
+- ALSAデバイスの `hw_params` (`/proc/asound/cardX/pcmYc/sub0/hw_params`) をポーリングし、現在のサンプルレート/フォーマット/チャネル数を検出します。
+- レート・フォーマットの変化を検知すると、GStreamer RTP送出パイプラインを EOS→再生成して `clock-rate` を更新します。
+- 対応フォーマット: `S16_LE` / `S24_3LE` / `S32_LE`（24bitは `rtpL24pay`）
+- 対応レート: 44.1k/48k系の全10レート（44.1/48/88.2/96/176.4/192/352.8/384/705.6/768 kHz）
+- 既定ポート: RTP 46000/UDP, RTCP to Jetson 46001/UDP, RTCP from Jetson 46002/UDP
+- `--rate-notify-url` を指定すると、レート変更検知時に `curl -X POST rate=<Hz>&channels=<n>&format=<enum>` を送信します（Jetson側監視との簡易連携用）。
+
+### 使い方
+
+```bash
+# ビルド（例）
+cmake -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release
+cmake --build raspberry_pi/build --target rpi_rtp_sender
+
+# Dry-run でパイプライン文字列のみ確認
+./raspberry_pi/build/src/rpi_rtp_sender --device hw:0,0 --host 192.168.55.1 --dry-run
+
+# 実行（自動レート追従）
+./raspberry_pi/build/src/rpi_rtp_sender \
+  --device hw:0,0 \
+  --host 192.168.55.1 \
+  --rtp-port 46000 \
+  --rtcp-port 46001 \
+  --rtcp-listen-port 46002 \
+  --poll-ms 200 \
+  --log-level info
+```
+
+主なCLI/環境変数:
+
+- `--device` / `RTP_SENDER_DEVICE` : ALSAデバイス（例 `hw:0,0`）
+- `--host` / `RTP_SENDER_HOST` : Jetson RTP受信側ホスト名/IP
+- `--rtp-port` / `RTP_SENDER_RTP_PORT` : RTP送信ポート
+- `--rtcp-port` / `RTP_SENDER_RTCP_PORT` : Jetsonへ送るRTCPポート
+- `--rtcp-listen-port` / `RTP_SENDER_RTCP_LISTEN_PORT` : Jetsonから受けるRTCPポート
+- `--payload-type` / `RTP_SENDER_PAYLOAD_TYPE` : RTP PT（既定96）
+- `--format` / `RTP_SENDER_FORMAT` : フォーマットを固定したい場合に指定
+- `--poll-ms` / `RTP_SENDER_POLL_MS` : hw_paramsポーリング間隔（既定250ms）
+- `--rate-notify-url` / `RTP_SENDER_NOTIFY_URL` : レート変更通知先URL（任意）
+- `--log-level` / `RTP_SENDER_LOG_LEVEL`
+- `--dry-run` / `RTP_SENDER_DRY_RUN`

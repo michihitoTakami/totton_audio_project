@@ -1,4 +1,30 @@
 services:
+  rtp-sender:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rpi-rtp-sender
+    devices:
+      - "/dev/snd:/dev/snd"
+    group_add:
+      - "audio"
+    environment:
+      PCM_BRIDGE_MODE: rtp
+      RTP_SENDER_DEVICE: ${RTP_SENDER_DEVICE:-hw:0,0}
+      RTP_SENDER_HOST: ${RTP_SENDER_HOST:-jetson}
+      RTP_SENDER_RTP_PORT: ${RTP_SENDER_RTP_PORT:-46000}
+      RTP_SENDER_RTCP_PORT: ${RTP_SENDER_RTCP_PORT:-46001}
+      RTP_SENDER_RTCP_LISTEN_PORT: ${RTP_SENDER_RTCP_LISTEN_PORT:-46002}
+      RTP_SENDER_PAYLOAD_TYPE: ${RTP_SENDER_PAYLOAD_TYPE:-96}
+      RTP_SENDER_POLL_MS: ${RTP_SENDER_POLL_MS:-250}
+      RTP_SENDER_LOG_LEVEL: ${RTP_SENDER_LOG_LEVEL:-info}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   jetson-proxy:
     image: nginx:1.27-alpine
     container_name: jetson-proxy

@@ -57,4 +57,24 @@ if(BUILD_TESTING)
     )
 
     gtest_discover_tests(rpi_capture_tests)
+
+    add_executable(rpi_rtp_tests
+        tests/test_rtp_options.cpp
+        tests/test_hw_params_monitor.cpp
+        tests/test_rtp_pipeline_builder.cpp
+    )
+
+    target_link_libraries(rpi_rtp_tests
+        PRIVATE
+            GTest::gtest_main
+            rpi_pcm_bridge
+            ALSA::ALSA
+    )
+
+    target_include_directories(rpi_rtp_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+    )
+
+    gtest_discover_tests(rpi_rtp_tests)
 endif()
