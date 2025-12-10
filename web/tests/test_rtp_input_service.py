@@ -48,24 +48,44 @@ def test_config_update_merges_and_validates():
 
 
 class _DummyProcess:
-    def __init__(self):
+    def __init__(self, wait_result: int = 0):
         self.returncode = None
         self.pid = 1234
         self._terminated = False
+        self._wait_result = wait_result
+        self._wait_future: asyncio.Future[int] | None = None
 
     def terminate(self):
         self._terminated = True
+        if self._wait_future and not self._wait_future.done():
+            self._wait_future.set_result(self._wait_result)
 
     async def wait(self):
-        self.returncode = 0
-        return 0
+        if self._wait_future is None:
+            # Immediate exit if no external trigger
+            self.returncode = self._wait_result
+            return self._wait_result
+        self.returncode = await self._wait_future
+        return self.returncode
 
     def kill(self):
         self.returncode = -9
+        if self._wait_future and not self._wait_future.done():
+            self._wait_future.set_result(-9)
+
+    def finish(self, code: int = 0):
+        if self._wait_future and not self._wait_future.done():
+            self._wait_future.set_result(code)
+
+    def enable_deferred_wait(self):
+        if self._wait_future is None:
+            self._wait_future = asyncio.get_event_loop().create_future()
 
 
 async def _dummy_runner(_cmd):
-    return _DummyProcess()
+    proc = _DummyProcess()
+    proc.enable_deferred_wait()
+    return proc
 
 
 def test_start_stop_uses_runner():
@@ -87,7 +107,9 @@ def test_rate_monitor_restarts_on_change():
 
     async def _runner(_cmd):
         calls.append("start")
-        return _DummyProcess()
+        proc = _DummyProcess()
+        proc.enable_deferred_wait()
+        return proc
 
     rates = [44100, 44100, 48000, 48000]
     idx = 0
@@ -121,7 +143,9 @@ def test_rate_monitor_continues_when_restart_fails():
     async def _runner(_cmd):
         calls.append("start")
         if len(calls) == 1:
-            return _DummyProcess()
+            proc = _DummyProcess()
+            proc.enable_deferred_wait()
+            return proc
         raise RuntimeError("boom")
 
     rates = [44100, 48000, 48000]
@@ -149,12 +173,17 @@ def test_rate_monitor_continues_when_restart_fails():
     assert status.running is False
     assert status.settings.sample_rate == 48000
     assert calls.count("start") == 2
-    assert status.last_error and "restart failed" in status.last_error
+    assert status.last_error and (
+        "restart failed" in status.last_error
+        or "rtp process exited" in status.last_error
+    )
 
 
 def test_rate_monitor_does_not_autostart_when_stopped():
     async def _runner(_cmd):
-        return _DummyProcess()
+        proc = _DummyProcess()
+        proc.enable_deferred_wait()
+        return proc
 
     rates = [44100, 96000, 96000]
     idx = 0
@@ -183,7 +212,9 @@ def test_rate_monitor_does_not_autostart_when_stopped():
 
 def test_rate_probe_timeout_does_not_hang():
     async def _runner(_cmd):
-        return _DummyProcess()
+        proc = _DummyProcess()
+        proc.enable_deferred_wait()
+        return proc
 
     async def _probe_hang():
         await asyncio.sleep(0.1)  # longer than timeout
@@ -240,3 +271,63 @@ def test_drift_estimator_tracks_ppm():
 
     assert 40 <= stats.drift_ppm <= 60
     assert stats.average_jitter_ms < 0.2
+
+
+def test_auto_restart_when_process_exits():
+    calls: list[_DummyProcess] = []
+
+    async def _runner(_cmd):
+        proc = _DummyProcess()
+        proc.enable_deferred_wait()
+        calls.append(proc)
+        return proc
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(),
+        process_runner=_runner,
+        restart_delay_sec=0.01,
+        restart_max_delay_sec=0.05,
+    )
+
+    async def _run():
+        await manager.start()
+        # 1回目のプロセスを終了させる
+        calls[0].finish(1)
+        await asyncio.sleep(0.2)
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    # 再起動が行われ、2回以上startされている
+    assert len(calls) >= 2
+    assert status.running is True
+    assert status.pid == calls[-1].pid
+
+
+def test_start_retries_after_initial_failure():
+    attempts = 0
+
+    async def _runner(_cmd):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("alsa-missing")
+        proc = _DummyProcess()
+        proc.enable_deferred_wait()
+        return proc
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(),
+        process_runner=_runner,
+        restart_delay_sec=0.01,
+        restart_max_delay_sec=0.05,
+    )
+
+    async def _run():
+        with pytest.raises(RuntimeError):
+            await manager.start()
+        await asyncio.sleep(0.05)
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    assert attempts >= 2  # 自動リトライが発生
+    assert status.running is True

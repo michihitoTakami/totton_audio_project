@@ -4,6 +4,8 @@ FastAPI-based control interface for the GPU audio upsampler daemon.
 """
 
 from contextlib import asynccontextmanager
+import logging
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -33,6 +35,7 @@ from .services.tcp_input import (
     TcpTelemetryStore,
     parse_tcp_telemetry,
 )
+from .services.rtp_input import get_rtp_receiver_manager
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
@@ -90,6 +93,7 @@ tags_metadata = [
 
 
 _tcp_telemetry_store = TcpTelemetryStore()
+_logger = logging.getLogger(__name__)
 
 
 async def _fetch_tcp_telemetry() -> TcpInputTelemetry | None:
@@ -118,14 +122,45 @@ _tcp_telemetry_poller = TcpTelemetryPoller(
 )
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    """環境変数を真偽値として解釈する."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_rtp_manager(app: FastAPI):
+    """DIのオーバーライドを考慮してRTPマネージャを取得."""
+    override = app.dependency_overrides.get(get_rtp_receiver_manager)
+    if override:
+        return override()
+    return get_rtp_receiver_manager()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""
     # Startup
     await _tcp_telemetry_poller.start()
+    rtp_manager = _resolve_rtp_manager(app)
+    rtp_autostart = _env_flag("MAGICBOX_RTP_AUTOSTART", True)
+    if rtp_autostart:
+        try:
+            await rtp_manager.start()
+            _logger.info("RTP input autostarted (MAGICBOX_RTP_AUTOSTART=true)")
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("RTP autostart failed: %s", exc)
+    else:
+        _logger.info("RTP autostart disabled via MAGICBOX_RTP_AUTOSTART")
+
     yield
     # Shutdown
     await _tcp_telemetry_poller.stop()
+    try:
+        await rtp_manager.shutdown()
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("RTP shutdown encountered an error: %s", exc)
 
 
 app = FastAPI(

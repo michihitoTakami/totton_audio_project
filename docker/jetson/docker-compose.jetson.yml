@@ -56,6 +56,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - MAGICBOX_RTP_AUTOSTART=true
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
 
     # Real-time priority (requires CAP_SYS_NICE)
