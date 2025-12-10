@@ -3,7 +3,11 @@ import asyncio
 import pytest
 
 from web.models import RtpInputConfigUpdate, RtpInputSettings
-from web.services.rtp_input import build_gst_command, RtpReceiverManager
+from web.services.rtp_input import (
+    RtpDriftEstimator,
+    RtpReceiverManager,
+    build_gst_command,
+)
 
 
 def test_build_gst_command_supports_encodings():
@@ -76,3 +80,52 @@ def test_start_stop_uses_runner():
     asyncio.run(manager.stop())
     status_after = asyncio.run(manager.status())
     assert status_after.running is False
+
+
+def test_rate_monitor_restarts_on_change():
+    calls: list[str] = []
+
+    async def _runner(_cmd):
+        calls.append("start")
+        return _DummyProcess()
+
+    rates = [44100, 44100, 48000, 48000]
+    idx = 0
+
+    async def _probe():
+        nonlocal idx
+        rate = rates[min(idx, len(rates) - 1)]
+        idx += 1
+        return rate
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start()
+        await manager.start_rate_monitor(_probe, interval_sec=0.01)
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    assert status.settings.sample_rate == 48000
+    # 最初の起動とレート変更後の再起動で2回
+    assert calls.count("start") >= 2
+
+
+def test_drift_estimator_tracks_ppm():
+    estimator = RtpDriftEstimator(sample_rate=48000, window=32)
+    base_ts = 0
+    base_arrival = 0.0
+    estimator.observe(base_ts, 0)
+
+    # 10ms 区間で +50ppm の遅れを持つ到着を5回記録
+    for _ in range(5):
+        base_ts += 480  # 10ms worth of samples
+        base_arrival += 0.0100005  # 50ppm drift
+        stats = estimator.observe(base_ts, int(base_arrival * 1e9))
+
+    assert 40 <= stats.drift_ppm <= 60
+    assert stats.average_jitter_ms < 0.2
