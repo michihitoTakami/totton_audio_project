@@ -26,6 +26,9 @@ RUN apt-get update \
         gstreamer1.0-plugins-good \
         gstreamer1.0-plugins-bad \
         gstreamer1.0-plugins-ugly \
+        libzmq3-dev \
+        python3 \
+        python3-pip \
         curl \
         ca-certificates \
         bash \
@@ -36,6 +39,10 @@ COPY --from=builder /app/raspberry_pi/build/src/rpi_pcm_bridge /usr/local/bin/rp
 COPY --from=builder /app/raspberry_pi/build/src/rpi_rtp_sender /usr/local/bin/rpi_rtp_sender
 COPY raspberry_pi/docker/entrypoint.sh /usr/local/bin/pcm-bridge-entrypoint.sh
 RUN chmod +x /usr/local/bin/pcm-bridge-entrypoint.sh
+RUN pip3 install --no-cache-dir pyzmq
+COPY raspberry_pi/rtp_receiver /opt/pcm-bridge/raspberry_pi/rtp_receiver
+COPY raspberry_pi/__init__.py /opt/pcm-bridge/raspberry_pi/__init__.py
+ENV PYTHONPATH=/opt/pcm-bridge:${PYTHONPATH}
 
 ENV PCM_BRIDGE_DEVICE=hw:0,0 \
     PCM_BRIDGE_HOST=127.0.0.1 \

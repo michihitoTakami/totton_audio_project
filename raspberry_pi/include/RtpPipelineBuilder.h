@@ -15,6 +15,7 @@ struct RtpPipelineConfig {
     std::uint16_t rtcpListenPort{46002};
     int payloadType{96};
     std::string device;
+    std::optional<int> latencyMs;
 };
 
 class RtpPipelineBuilder {

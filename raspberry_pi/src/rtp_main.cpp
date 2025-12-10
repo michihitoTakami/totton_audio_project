@@ -9,10 +9,13 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <spawn.h>
 #include <string>
 #include <sys/wait.h>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -22,6 +25,12 @@ extern char **environ;
 namespace {
 
 std::atomic<bool> gStopRequested{false};
+
+constexpr int MIN_LATENCY_MS = 10;
+constexpr int MAX_LATENCY_MS = 500;
+constexpr int DEFAULT_LATENCY_MS = 100;
+constexpr char DEFAULT_STATS_PATH[] = "/var/run/rtp-bridge/rtp_receiver_stats.json";
+constexpr char DEFAULT_LATENCY_PATH[] = "/var/run/rtp-bridge/rtp_receiver_latency_ms";
 
 void handleSignal(int /*signum*/) {
     gStopRequested.store(true);
@@ -105,6 +114,46 @@ std::string formatToString(AlsaCapture::SampleFormat fmt) {
     return "S24_3LE";
 }
 
+int clampLatencyMs(int value) {
+    if (value < MIN_LATENCY_MS) {
+        return MIN_LATENCY_MS;
+    }
+    if (value > MAX_LATENCY_MS) {
+        return MAX_LATENCY_MS;
+    }
+    return value;
+}
+
+std::optional<int> loadLatencyMs(const std::string &path) {
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) {
+        return std::nullopt;
+    }
+    int value = 0;
+    ifs >> value;
+    if (!ifs.good()) {
+        return std::nullopt;
+    }
+    return clampLatencyMs(value);
+}
+
+void writeStatsFile(const std::string &path, const CaptureParams &params, int latencyMs) {
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    std::ofstream ofs(path, std::ios::trunc);
+    if (!ofs.is_open()) {
+        return;
+    }
+    ofs << "{";
+    ofs << R"("packets_received":0,)";
+    ofs << R"("packets_lost":0,)";
+    ofs << R"("jitter_ms":0.0,)";
+    ofs << R"("clock_drift_ppm":0.0,)";
+    ofs << R"("sample_rate":)" << params.sampleRate << ",";
+    ofs << R"("latency_ms":)" << latencyMs;
+    ofs << "}";
+}
+
 void notifyRateChange(const RtpOptions &opt, const CaptureParams &params) {
     if (opt.rateNotifyUrl.empty()) {
         return;
@@ -154,6 +203,19 @@ int main(int argc, char **argv) {
     cfg.payloadType = opt.payloadType;
     cfg.device = opt.device;
 
+    const std::string statsPath = std::getenv("RTP_BRIDGE_STATS_PATH")
+                                      ? std::getenv("RTP_BRIDGE_STATS_PATH")
+                                      : DEFAULT_STATS_PATH;
+    const std::string latencyPath = std::getenv("RTP_BRIDGE_LATENCY_PATH")
+                                        ? std::getenv("RTP_BRIDGE_LATENCY_PATH")
+                                        : DEFAULT_LATENCY_PATH;
+
+    int latencyMs = DEFAULT_LATENCY_MS;
+    if (auto lat = loadLatencyMs(latencyPath)) {
+        latencyMs = *lat;
+    }
+    cfg.latencyMs = latencyMs;
+
     auto pipelineArgs = RtpPipelineBuilder::build(cfg, *currentParams);
     const std::string pipelineStr = RtpPipelineBuilder::toCommandString(pipelineArgs);
     logInfo("[rpi_rtp_sender] Starting pipeline: " + pipelineStr);
@@ -168,6 +230,7 @@ int main(int argc, char **argv) {
     }
 
     notifyRateChange(opt, *currentParams);
+    writeStatsFile(statsPath, *currentParams, latencyMs);
 
     const std::chrono::milliseconds pollInterval{opt.pollIntervalMs};
     while (!gStopRequested.load()) {
@@ -202,7 +265,27 @@ int main(int argc, char **argv) {
                 return 1;
             }
             notifyRateChange(opt, *params);
+            writeStatsFile(statsPath, *params, latencyMs);
             *currentParams = *params;
+        }
+
+        // Latency file watcher
+        if (auto lat = loadLatencyMs(latencyPath)) {
+            if (*lat != latencyMs) {
+                latencyMs = *lat;
+                logInfo("[rpi_rtp_sender] Applying latency change to " + std::to_string(latencyMs) +
+                        " ms");
+                stopProcess(pid);
+                cfg.latencyMs = latencyMs;
+                pipelineArgs = RtpPipelineBuilder::build(cfg, *currentParams);
+                const std::string cmdString = RtpPipelineBuilder::toCommandString(pipelineArgs);
+                logInfo("[rpi_rtp_sender] Rebuilt pipeline with latency: " + cmdString);
+                if (!spawnProcess(pipelineArgs, pid)) {
+                    logError("[rpi_rtp_sender] Failed to restart after latency change");
+                    return 1;
+                }
+                writeStatsFile(statsPath, *currentParams, latencyMs);
+            }
         }
     }
 

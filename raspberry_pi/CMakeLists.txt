@@ -24,6 +24,7 @@ find_package(Threads REQUIRED)
 
 add_subdirectory(src)
 
+option(BUILD_TESTING "Enable CTest-based unit tests" OFF)
 include(CTest)
 if(BUILD_TESTING)
     include(FetchContent)
