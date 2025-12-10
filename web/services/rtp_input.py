@@ -25,6 +25,7 @@ DEFAULT_RTCP_PORT = DEFAULT_PORT + 1
 DEFAULT_RTCP_SEND_PORT = DEFAULT_PORT + 2
 DEFAULT_SENDER_HOST = "raspberrypi.local"
 DEFAULT_MONITOR_INTERVAL_SEC = 1.0
+DEFAULT_RATE_PROBE_TIMEOUT_SEC = 1.0
 
 # Issue #762 要件に合わせたサポートレート（44.1k/48k系を網羅）
 SUPPORTED_SAMPLE_RATES = {
@@ -271,7 +272,12 @@ class RtpReceiverManager:
         """設定更新を反映し、稼働中なら最小ダウンタイムで再起動."""
         async with self._lock:
             new_settings = self._update_settings(update)
-            await self._restart_locked()
+            try:
+                await self._restart_locked()
+            except Exception as exc:  # noqa: BLE001
+                # API 経由で利用されるのでエラーは通知するが、last_error も残す
+                self._last_error = f"restart failed: {exc}"
+                raise
             return new_settings
 
     async def apply_config(self, update: RtpInputConfigUpdate) -> RtpInputSettings:
@@ -294,13 +300,15 @@ class RtpReceiverManager:
         self,
         rate_probe: Callable[[], Awaitable[int]],
         interval_sec: float = DEFAULT_MONITOR_INTERVAL_SEC,
+        timeout_sec: float = DEFAULT_RATE_PROBE_TIMEOUT_SEC,
     ) -> None:
         """サンプルレート変化を監視し、変化時に自動再構築する."""
         if self._monitor_task and not self._monitor_task.done():
-            return
+            # パラメータ変更時は一度止めて作り直す
+            await self.stop_rate_monitor()
         self._monitor_stop.clear()
         self._monitor_task = asyncio.create_task(
-            self._monitor_loop(rate_probe, interval_sec),
+            self._monitor_loop(rate_probe, interval_sec, timeout_sec),
             name="rtp_rate_monitor",
         )
 
@@ -318,10 +326,11 @@ class RtpReceiverManager:
         self,
         rate_probe: Callable[[], Awaitable[int]],
         interval_sec: float,
+        timeout_sec: float,
     ) -> None:
         while not self._monitor_stop.is_set():
             try:
-                new_rate = await rate_probe()
+                new_rate = await asyncio.wait_for(rate_probe(), timeout=timeout_sec)
             except Exception as exc:  # noqa: BLE001
                 # 監視エラーはログに残しつつ継続
                 self._last_error = f"rate_probe error: {exc}"

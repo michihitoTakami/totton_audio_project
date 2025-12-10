@@ -181,6 +181,51 @@ def test_rate_monitor_does_not_autostart_when_stopped():
     assert status.settings.sample_rate == 96000
 
 
+def test_rate_probe_timeout_does_not_hang():
+    async def _runner(_cmd):
+        return _DummyProcess()
+
+    async def _probe_hang():
+        await asyncio.sleep(0.1)  # longer than timeout
+        return 48000
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    async def _run():
+        await manager.start()
+        await manager.start_rate_monitor(
+            _probe_hang, interval_sec=0.01, timeout_sec=0.02
+        )
+        await asyncio.sleep(0.05)
+        await manager.stop_rate_monitor()
+        return await manager.status()
+
+    status = asyncio.run(_run())
+    # タイムアウト後もフリーズせず last_error が設定され、動作は継続
+    assert status.running is True
+    assert status.last_error and "rate_probe error" in status.last_error
+
+
+def test_apply_config_and_restart_records_error_on_failure():
+    async def _runner(_cmd):
+        raise RuntimeError("fail-start")
+
+    manager = RtpReceiverManager(
+        settings=RtpInputSettings(sample_rate=44100), process_runner=_runner
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            manager.apply_config_and_restart(
+                RtpInputConfigUpdate(sample_rate=48000, latency_ms=200)
+            )
+        )
+    status = asyncio.run(manager.status())
+    assert status.last_error and "restart failed" in status.last_error
+
+
 def test_drift_estimator_tracks_ppm():
     estimator = RtpDriftEstimator(sample_rate=48000, window=32)
     base_ts = 0
