@@ -134,6 +134,11 @@ docker compose -f raspberry_pi/docker-compose.yml down
 - `RTP_SENDER_FORMAT` (`S16_LE` | `S24_3LE` | `S32_LE` を固定したい場合)
 - `RTP_SENDER_NOTIFY_URL` (レート変更時に HTTP POST を送る先)
 - `RTP_SENDER_DRY_RUN` (`true`/`1` でパイプライン起動せず文字列だけ確認)
+- `RTP_BRIDGE_ENDPOINT` (ZeroMQ REP 待ち受け。既定: `ipc:///tmp/rtp_receiver.sock`)
+- `RTP_BRIDGE_STATS_PATH` (STATUS 参照用に監視する JSON パス。既定: `/tmp/rtp_receiver_stats.json`)
+- `RTP_BRIDGE_LATENCY_PATH` (SET_LATENCY 受信時に書き出すパス。既定: `/tmp/rtp_receiver_latency_ms`)
+- `RTP_BRIDGE_TIMEOUT_MS` (ZeroMQ send/recv タイムアウト。既定: `5000`)
+- `RTP_BRIDGE_POLL_INTERVAL_SEC` (統計ファイルのポーリング間隔。既定: `1.0`)
 
 ## 手動テスト（null sink/loopback + nc）
 
