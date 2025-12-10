@@ -328,11 +328,18 @@ TEST_F(ConvolutionEngineTest, ProcessStereo) {
 
     size_t leftPeak = findPeakIndex(leftOutput);
     size_t rightPeak = findPeakIndex(rightOutput);
+    std::cout << "[DEBUG ProcessStereo] leftPeak=" << leftPeak << " rightPeak=" << rightPeak
+              << " leftVal=" << leftOutput[leftPeak] << " rightVal=" << rightOutput[rightPeak]
+              << std::endl;
     EXPECT_NE(leftPeak, rightPeak);
     EXPECT_LT(leftPeak, rightPeak);
 
     constexpr size_t kImpulseOffsetFrames = 100;
     size_t expectedShift = kImpulseOffsetFrames * static_cast<size_t>(upsampleRatio);
+    size_t expectedRightIdx = leftPeak + expectedShift;
+    float expectedSample = (expectedRightIdx < rightOutput.size()) ? rightOutput[expectedRightIdx] : 0.0f;
+    std::cout << "[DEBUG ProcessStereo] expectedIdx=" << expectedRightIdx
+              << " expectedVal=" << expectedSample << std::endl;
     double observedShift = static_cast<double>(rightPeak) - static_cast<double>(leftPeak);
     EXPECT_NEAR(observedShift, static_cast<double>(expectedShift), 16.0);
 }

@@ -3,28 +3,27 @@
 namespace ConvolutionEngine {
 
 // CUDA kernel for zero-padding (insert zeros between samples for upsampling)
-__global__ void zeroPadKernel(const float* input, float* output,
-                              int inputLength, int upsampleRatio) {
+__global__ void zeroPadKernel(const DeviceSample* input, DeviceSample* output, int inputLength,
+                              int upsampleRatio) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < inputLength) {
         output[idx * upsampleRatio] = input[idx];
         // Zero out the intermediate samples
         for (int i = 1; i < upsampleRatio; ++i) {
-            output[idx * upsampleRatio + i] = 0.0f;
+            output[idx * upsampleRatio + i] = static_cast<DeviceSample>(0);
         }
     }
 }
 
 // CUDA kernel for complex multiplication (frequency domain)
-__global__ void complexMultiplyKernel(cufftComplex* data,
-                                      const cufftComplex* filter,
+__global__ void complexMultiplyKernel(DeviceFftComplex* data, const DeviceFftComplex* filter,
                                       int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
-        float a = data[idx].x;
-        float b = data[idx].y;
-        float c = filter[idx].x;
-        float d = filter[idx].y;
+        auto a = data[idx].x;
+        auto b = data[idx].y;
+        auto c = filter[idx].x;
+        auto d = filter[idx].y;
 
         // Complex multiplication: (a+bi)(c+di) = (ac-bd) + (ad+bc)i
         data[idx].x = a * c - b * d;
@@ -33,7 +32,7 @@ __global__ void complexMultiplyKernel(cufftComplex* data,
 }
 
 // CUDA kernel for scaling after IFFT
-__global__ void scaleKernel(float* data, int size, float scale) {
+__global__ void scaleKernel(DeviceSample* data, int size, DeviceScale scale) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         data[idx] *= scale;
@@ -75,12 +74,13 @@ __global__ void exponentiateComplexKernel(cufftDoubleComplex* data, int n) {
 }
 
 // CUDA kernel to convert double complex to float complex
-__global__ void doubleToFloatComplexKernel(cufftComplex* out, const cufftDoubleComplex* in, int n) {
+__global__ void doubleToFloatComplexKernel(DeviceFftComplex* out, const cufftDoubleComplex* in,
+                                           int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
 
-    out[idx].x = static_cast<float>(in[idx].x);
-    out[idx].y = static_cast<float>(in[idx].y);
+    out[idx].x = static_cast<DeviceSample>(in[idx].x);
+    out[idx].y = static_cast<DeviceSample>(in[idx].y);
 }
 
 }  // namespace ConvolutionEngine

@@ -10,6 +10,51 @@
 
 namespace ConvolutionEngine {
 
+using Precision = ActivePrecisionTraits;
+using Sample = DeviceSample;
+using Complex = DeviceFftComplex;
+using ScaleType = DeviceScale;
+
+inline cudaError_t copyHostToDeviceSamplesAsync(Sample* dst, const float* src, size_t count,
+                                                cudaStream_t stream) {
+    if constexpr (Precision::kIsDouble) {
+        std::vector<Sample> temp(count);
+        for (size_t i = 0; i < count; ++i) {
+            temp[i] = static_cast<Sample>(src[i]);
+        }
+        return cudaMemcpyAsync(dst, temp.data(), count * sizeof(Sample),
+                               cudaMemcpyHostToDevice, stream);
+    }
+    return cudaMemcpyAsync(dst, src, count * sizeof(Sample),
+                           cudaMemcpyHostToDevice, stream);
+}
+
+inline cudaError_t copyDeviceToHostSamplesSync(float* dst, const Sample* src, size_t count) {
+    return copyDeviceToHostSamples<Precision>(dst, src, count);
+}
+
+inline cudaError_t copyDeviceToHostSamplesAsync(float* dst, const Sample* src, size_t count,
+                                                cudaStream_t stream) {
+    if constexpr (Precision::kIsDouble) {
+        std::vector<Sample> temp(count);
+        auto err = cudaMemcpyAsync(temp.data(), src, count * sizeof(Sample),
+                                   cudaMemcpyDeviceToHost, stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            dst[i] = static_cast<float>(temp[i]);
+        }
+        return cudaSuccess;
+    }
+    return cudaMemcpyAsync(dst, src, count * sizeof(Sample),
+                           cudaMemcpyDeviceToHost, stream);
+}
+
 // GPUUpsampler implementation - Core methods
 
 void GPUUpsampler::resizeOverlapBuffers(size_t newSize) {
@@ -127,6 +172,7 @@ bool GPUUpsampler::loadFilterCoefficients(const std::string& path) {
 
     std::cout << "  Filter loaded successfully (" << fileSize / 1024 << " KB)" << std::endl;
     baseFilterCentroid_ = PhaseAlignment::computeEnergyCentroid(h_filterCoeffs_);
+    h_filterCoeffsTyped_ = convertHostToPrecision<Precision>(h_filterCoeffs_);
     return true;
 }
 
@@ -194,13 +240,13 @@ bool GPUUpsampler::setupGPUResources() {
 
         // Allocate device memory for filter coefficients
         Utils::checkCudaError(
-            cudaMalloc(&d_filterCoeffs_, filterTaps_ * sizeof(float)),
+            cudaMalloc(&d_filterCoeffs_, filterTaps_ * sizeof(Sample)),
             "cudaMalloc filter coefficients"
         );
 
         Utils::checkCudaError(
-            cudaMemcpy(d_filterCoeffs_, h_filterCoeffs_.data(),
-                      filterTaps_ * sizeof(float), cudaMemcpyHostToDevice),
+            copyHostToDeviceSamples<Precision>(
+                d_filterCoeffs_, h_filterCoeffs_.data(), static_cast<size_t>(filterTaps_)),
             "cudaMemcpy filter coefficients"
         );
 
@@ -208,12 +254,12 @@ bool GPUUpsampler::setupGPUResources() {
         size_t upsampledBlockSize = blockSize_ * upsampleRatio_;
 
         Utils::checkCudaError(
-            cudaMalloc(&d_inputBlock_, blockSize_ * sizeof(float)),
+            cudaMalloc(&d_inputBlock_, blockSize_ * sizeof(Sample)),
             "cudaMalloc input block"
         );
 
         Utils::checkCudaError(
-            cudaMalloc(&d_outputBlock_, (upsampledBlockSize + filterTaps_) * sizeof(float)),
+            cudaMalloc(&d_outputBlock_, (upsampledBlockSize + filterTaps_) * sizeof(Sample)),
             "cudaMalloc output block"
         );
 
@@ -221,7 +267,7 @@ bool GPUUpsampler::setupGPUResources() {
         int fftComplexSize = fftSize_ / 2 + 1;
 
         Utils::checkCudaError(
-            cudaMalloc(&d_inputFFT_, fftComplexSize * sizeof(cufftComplex)),
+            cudaMalloc(&d_inputFFT_, fftComplexSize * sizeof(Complex)),
             "cudaMalloc input FFT"
         );
 
@@ -229,77 +275,77 @@ bool GPUUpsampler::setupGPUResources() {
 
         // Allocate double-buffered filter FFT (ping-pong) for glitch-free EQ updates
         Utils::checkCudaError(
-            cudaMalloc(&d_filterFFT_A_, fftComplexSize * sizeof(cufftComplex)),
+            cudaMalloc(&d_filterFFT_A_, fftComplexSize * sizeof(Complex)),
             "cudaMalloc filter FFT A"
         );
         Utils::checkCudaError(
-            cudaMalloc(&d_filterFFT_B_, fftComplexSize * sizeof(cufftComplex)),
+            cudaMalloc(&d_filterFFT_B_, fftComplexSize * sizeof(Complex)),
             "cudaMalloc filter FFT B"
         );
         d_activeFilterFFT_ = d_filterFFT_A_;  // Start with buffer A
 
         // Allocate backup for original filter FFT (for EQ restore)
         Utils::checkCudaError(
-            cudaMalloc(&d_originalFilterFFT_, fftComplexSize * sizeof(cufftComplex)),
+            cudaMalloc(&d_originalFilterFFT_, fftComplexSize * sizeof(Complex)),
             "cudaMalloc original filter FFT"
         );
 
         Utils::checkCudaError(
-            cudaMalloc(&d_convResult_, fftComplexSize * sizeof(cufftComplex)),
+            cudaMalloc(&d_convResult_, fftComplexSize * sizeof(Complex)),
             "cudaMalloc convolution result"
         );
 
         // Create cuFFT plans
         Utils::checkCufftError(
-            cufftPlan1d(&fftPlanForward_, fftSize_, CUFFT_R2C, 1),
+            cufftPlan1d(&fftPlanForward_, fftSize_, Precision::kFftTypeForward, 1),
             "cufftPlan1d forward"
         );
 
         Utils::checkCufftError(
-            cufftPlan1d(&fftPlanInverse_, fftSize_, CUFFT_C2R, 1),
+            cufftPlan1d(&fftPlanInverse_, fftSize_, Precision::kFftTypeInverse, 1),
             "cufftPlan1d inverse"
         );
 
         Utils::checkCufftError(
-            cufftPlan1d(&partitionImpulsePlanInverse_, fftSize_, CUFFT_C2R, 1),
+            cufftPlan1d(&partitionImpulsePlanInverse_, fftSize_, Precision::kFftTypeInverse, 1),
             "cufftPlan1d partition impulse inverse"
         );
 
         // Pre-compute filter FFT
-        float* d_filterPadded;
+        Sample* d_filterPadded;
         Utils::checkCudaError(
-            cudaMalloc(&d_filterPadded, fftSize_ * sizeof(float)),
+            cudaMalloc(&d_filterPadded, fftSize_ * sizeof(Sample)),
             "cudaMalloc filter padded"
         );
 
         Utils::checkCudaError(
-            cudaMemset(d_filterPadded, 0, fftSize_ * sizeof(float)),
+            cudaMemset(d_filterPadded, 0, fftSize_ * sizeof(Sample)),
             "cudaMemset filter padded"
         );
 
         Utils::checkCudaError(
             cudaMemcpy(d_filterPadded, d_filterCoeffs_,
-                      filterTaps_ * sizeof(float), cudaMemcpyDeviceToDevice),
+                      filterTaps_ * sizeof(Sample), cudaMemcpyDeviceToDevice),
             "cudaMemcpy filter to padded"
         );
 
         // Compute filter FFT into buffer A
         Utils::checkCufftError(
-            cufftExecR2C(fftPlanForward_, d_filterPadded, d_filterFFT_A_),
+            Precision::execForward(fftPlanForward_, d_filterPadded, d_filterFFT_A_),
             "cufftExecR2C filter"
         );
 
         // Copy to buffer B (both start with same initial filter)
         Utils::checkCudaError(
             cudaMemcpy(d_filterFFT_B_, d_filterFFT_A_,
-                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                      filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
             "cudaMemcpy filter FFT A to B"
         );
 
         // Backup original filter FFT for EQ restore
         Utils::checkCudaError(
             cudaMemcpy(d_originalFilterFFT_, d_filterFFT_A_,
-                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                      filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
             "cudaMemcpy backup original filter FFT"
         );
 
@@ -307,7 +353,7 @@ bool GPUUpsampler::setupGPUResources() {
         h_originalFilterFft_.resize(filterFftSize_);
         Utils::checkCudaError(
             cudaMemcpy(h_originalFilterFft_.data(), d_filterFFT_A_,
-                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                      filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost),
             "cudaMemcpy original filter to host cache"
         );
 
@@ -484,11 +530,11 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
     }
 
     // Initialize all GPU pointers to nullptr for safe cleanup
-    float* d_upsampledInput = nullptr;
-    float* d_input = nullptr;
-    float* d_paddedInput = nullptr;
-    cufftComplex* d_inputFFT = nullptr;
-    float* d_convResult = nullptr;
+    Sample* d_upsampledInput = nullptr;
+    Sample* d_input = nullptr;
+    Sample* d_paddedInput = nullptr;
+    Complex* d_inputFFT = nullptr;
+    Sample* d_convResult = nullptr;
 
     try {
         size_t outputFrames = inputFrames * upsampleRatio_;
@@ -499,24 +545,23 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
 
         // Step 1: Zero-pad input signal (upsample) in one go
         Utils::checkCudaError(
-            cudaMalloc(&d_upsampledInput, outputFrames * sizeof(float)),
+            cudaMalloc(&d_upsampledInput, outputFrames * sizeof(Sample)),
             "cudaMalloc upsampled input"
         );
 
         Utils::checkCudaError(
-            cudaMemset(d_upsampledInput, 0, outputFrames * sizeof(float)),
+            cudaMemset(d_upsampledInput, 0, outputFrames * sizeof(Sample)),
             "cudaMemset upsampled input"
         );
 
         // Copy input to device
         Utils::checkCudaError(
-            cudaMalloc(&d_input, inputFrames * sizeof(float)),
+            cudaMalloc(&d_input, inputFrames * sizeof(Sample)),
             "cudaMalloc input"
         );
 
         Utils::checkCudaError(
-            cudaMemcpyAsync(d_input, inputData, inputFrames * sizeof(float),
-                           cudaMemcpyHostToDevice, stream),
+            copyHostToDeviceSamplesAsync(d_input, inputData, inputFrames, stream),
             "cudaMemcpy input to device"
         );
 
@@ -533,23 +578,32 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         // Step 2: Perform Overlap-Save FFT convolution in blocks
         // Allocate persistent buffers for block processing
         Utils::checkCudaError(
-            cudaMalloc(&d_paddedInput, fftSize_ * sizeof(float)),
+            cudaMalloc(&d_paddedInput, fftSize_ * sizeof(Sample)),
             "cudaMalloc padded input"
         );
 
         int fftComplexSize = fftSize_ / 2 + 1;
         Utils::checkCudaError(
-            cudaMalloc(&d_inputFFT, fftComplexSize * sizeof(cufftComplex)),
+            cudaMalloc(&d_inputFFT, fftComplexSize * sizeof(Complex)),
             "cudaMalloc input FFT"
         );
 
         Utils::checkCudaError(
-            cudaMalloc(&d_convResult, fftSize_ * sizeof(float)),
+            cudaMalloc(&d_convResult, fftSize_ * sizeof(Sample)),
             "cudaMalloc conv result"
         );
 
         // Overlap-Save parameters
-        int validOutputPerBlock = fftSize_ - overlapSize_;
+        // For short, single-block processing (output shorter than overlap), discard
+        // only the filter energy centroid so that leading output (e.g., stereo
+        // impulse offsets) remains in view.
+        bool shortInput = outputFrames <= static_cast<size_t>(overlapSize_);
+        size_t centroidOverlap = static_cast<size_t>(
+            std::min<long double>(static_cast<long double>(overlapSize_),
+                                  static_cast<long double>(std::max(0.0f, baseFilterCentroid_))));
+        size_t overlapUse = shortInput ? centroidOverlap : static_cast<size_t>(overlapSize_);
+        size_t inputOffset = shortInput ? 0 : overlapUse;
+        int validOutputPerBlock = fftSize_ - static_cast<int>(overlapUse);
 
         // Process audio in blocks
         size_t outputPos = 0;
@@ -564,29 +618,30 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
 
             // Prepare input block: [overlap from previous | new input data]
             Utils::checkCudaError(
-                cudaMemsetAsync(d_paddedInput, 0, fftSize_ * sizeof(float), stream),
+                cudaMemsetAsync(d_paddedInput, 0, fftSize_ * sizeof(Sample), stream),
                 "cudaMemset padded input"
             );
 
             // Copy overlap from previous block (host to device)
-            if (overlapSize_ > 0 && outputPos > 0) {
+            if (overlapUse > 0 && outputPos > 0) {
                 Utils::checkCudaError(
-                    cudaMemcpyAsync(d_paddedInput, overlapBuffer.data(),
-                                   overlapSize_ * sizeof(float), cudaMemcpyHostToDevice, stream),
+                    copyHostToDeviceSamplesAsync(d_paddedInput, overlapBuffer.data(),
+                                                 overlapUse, stream),
                     "cudaMemcpy overlap to device"
                 );
 
                 if (blockCount < 3) {
                     fprintf(stderr, "[DEBUG] Block %zu: Loaded overlap - first sample=%.6f, last sample=%.6f\n",
-                            blockCount, overlapBuffer[0], overlapBuffer[overlapSize_-1]);
+                            blockCount, overlapBuffer[0], overlapBuffer[overlapUse-1]);
                 }
             }
 
             // Copy new input data from upsampled signal
             if (inputPos + currentBlockSize <= outputFrames) {
                 Utils::checkCudaError(
-                    cudaMemcpyAsync(d_paddedInput + overlapSize_, d_upsampledInput + inputPos,
-                                   currentBlockSize * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+                    cudaMemcpyAsync(d_paddedInput + inputOffset, d_upsampledInput + inputPos,
+                                   currentBlockSize * sizeof(Sample), cudaMemcpyDeviceToDevice,
+                                   stream),
                     "cudaMemcpy block to padded"
                 );
             }
@@ -597,7 +652,7 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                 "cufftSetStream forward (offline)"
             );
             Utils::checkCufftError(
-                cufftExecR2C(fftPlanForward_, d_paddedInput, d_inputFFT),
+                Precision::execForward(fftPlanForward_, d_paddedInput, d_inputFFT),
                 "cufftExecR2C block"
             );
 
@@ -620,12 +675,12 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                 "cufftSetStream inverse (offline)"
             );
             Utils::checkCufftError(
-                cufftExecC2R(fftPlanInverse_, d_inputFFT, d_convResult),
+                Precision::execInverse(fftPlanInverse_, d_inputFFT, d_convResult),
                 "cufftExecC2R block"
             );
 
             // Scale by FFT size
-            float scale = 1.0f / fftSize_;
+            ScaleType scale = Precision::scaleFactor(fftSize_);
             int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
             scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
                 d_convResult, fftSize_, scale
@@ -641,20 +696,22 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                                       (outputFrames - outputPos) : static_cast<size_t>(validOutputPerBlock);
 
             Utils::checkCudaError(
-                cudaMemcpyAsync(outputData.data() + outputPos, d_convResult + overlapSize_,
-                               validOutputSize * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                copyDeviceToHostSamplesAsync(outputData.data() + outputPos,
+                                             d_convResult + overlapUse,
+                                             validOutputSize, stream),
                 "cudaMemcpy valid output to host"
             );
 
             // Save overlap for next block using the contiguous upsampled input
-            if (overlapSize_ > 0) {
+            if (overlapUse > 0) {
                 size_t nextBlockStart = inputPos + validOutputSize;
-                if (nextBlockStart >= overlapSize_ && nextBlockStart <= outputFrames) {
-                    size_t overlapStart = nextBlockStart - overlapSize_;
-                    if (overlapStart + overlapSize_ <= outputFrames) {
+                if (nextBlockStart >= overlapUse && nextBlockStart <= outputFrames) {
+                    size_t overlapStart = nextBlockStart - overlapUse;
+                    if (overlapStart + overlapUse <= outputFrames) {
                         Utils::checkCudaError(
-                            cudaMemcpyAsync(overlapBuffer.data(), d_upsampledInput + overlapStart,
-                                           overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
+                            copyDeviceToHostSamplesAsync(overlapBuffer.data(),
+                                                         d_upsampledInput + overlapStart,
+                                                         overlapUse, stream),
                             "cudaMemcpy overlap from device"
                         );
                     }
@@ -788,7 +845,7 @@ void GPUUpsampler::cancelPhaseAlignedCrossfade() {
     crossfadeAlignedNew_.clear();
 }
 
-void GPUUpsampler::startPhaseAlignedCrossfade(cufftComplex* previousFilter,
+void GPUUpsampler::startPhaseAlignedCrossfade(Complex* previousFilter,
                                               float previousDelay,
                                               float newDelay) {
     if (!streamInitialized_ || filterFftSize_ == 0 || previousFilter == nullptr) {
@@ -799,7 +856,7 @@ void GPUUpsampler::startPhaseAlignedCrossfade(cufftComplex* previousFilter,
         return;
     }
 
-    size_t fftBytes = filterFftSize_ * sizeof(cufftComplex);
+    size_t fftBytes = filterFftSize_ * sizeof(Complex);
     if (!d_crossfadeFilterSnapshot_) {
         Utils::checkCudaError(
             cudaMalloc(&d_crossfadeFilterSnapshot_, fftBytes),
@@ -1013,24 +1070,24 @@ void GPUUpsampler::resetPartitionedStreaming() {
 
     if (d_overlapLeft_) {
         Utils::checkCudaError(
-            cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float)),
+            cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(Sample)),
             "cudaMemset partition reset overlap left");
     }
     if (d_overlapRight_) {
         Utils::checkCudaError(
-            cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float)),
+            cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(Sample)),
             "cudaMemset partition reset overlap right");
     }
 
     for (auto& state : partitionStates_) {
         if (state.d_overlapLeft) {
             Utils::checkCudaError(
-                cudaMemset(state.d_overlapLeft, 0, state.overlapSize * sizeof(float)),
+                cudaMemset(state.d_overlapLeft, 0, state.overlapSize * sizeof(Sample)),
                 "cudaMemset partition state reset overlap left");
         }
         if (state.d_overlapRight) {
             Utils::checkCudaError(
-                cudaMemset(state.d_overlapRight, 0, state.overlapSize * sizeof(float)),
+                cudaMemset(state.d_overlapRight, 0, state.overlapSize * sizeof(Sample)),
                 "cudaMemset partition state reset overlap right");
         }
     }
@@ -1059,6 +1116,11 @@ void GPUUpsampler::releaseHostCoefficients() {
         freedBytes += h_filterCoeffs_.capacity() * sizeof(float);
         h_filterCoeffs_.clear();
         h_filterCoeffs_.shrink_to_fit();
+    }
+    if (!h_filterCoeffsTyped_.empty()) {
+        freedBytes += h_filterCoeffsTyped_.capacity() * sizeof(Sample);
+        h_filterCoeffsTyped_.clear();
+        h_filterCoeffsTyped_.shrink_to_fit();
     }
 
     // Dual-rate coefficients
@@ -1147,36 +1209,36 @@ bool GPUUpsampler::setupPartitionStates() {
         for (int bufIdx = 0; bufIdx < 2; ++bufIdx) {
             Utils::checkCudaError(
                 cudaMalloc(&state.d_filterFFT[bufIdx],
-                           state.fftComplexSize * sizeof(cufftComplex)),
+                           state.fftComplexSize * sizeof(Complex)),
                 "cudaMalloc partition filter FFT buffer");
         }
 
-        float* d_tempTime = nullptr;
+        Sample* d_tempTime = nullptr;
         Utils::checkCudaError(
-            cudaMalloc(&d_tempTime, descriptor.fftSize * sizeof(float)),
+            cudaMalloc(&d_tempTime, descriptor.fftSize * sizeof(Sample)),
             "cudaMalloc partition temp buffer");
         Utils::checkCudaError(
-            cudaMemset(d_tempTime, 0, descriptor.fftSize * sizeof(float)),
+            cudaMemset(d_tempTime, 0, descriptor.fftSize * sizeof(Sample)),
             "cudaMemset partition temp buffer");
 
         // Copy the tap segment to device (remaining samples stay zero-padded)
         Utils::checkCudaError(
-            cudaMemcpy(d_tempTime, h_filterCoeffs_.data() + coeffOffset,
-                       descriptor.taps * sizeof(float), cudaMemcpyHostToDevice),
+            copyHostToDeviceSamples<Precision>(d_tempTime, h_filterCoeffs_.data() + coeffOffset,
+                                               descriptor.taps),
             "cudaMemcpy partition taps");
 
         cufftHandle plan = 0;
         Utils::checkCufftError(
-            cufftPlan1d(&plan, descriptor.fftSize, CUFFT_R2C, 1),
+            cufftPlan1d(&plan, descriptor.fftSize, Precision::kFftTypeForward, 1),
             "cufftPlan1d partition filter");
         Utils::checkCufftError(
-            cufftExecR2C(plan, d_tempTime, state.d_filterFFT[0]),
+            Precision::execForward(plan, d_tempTime, state.d_filterFFT[0]),
             "cufftExecR2C partition filter");
         cufftDestroy(plan);
         cudaFree(d_tempTime);
         Utils::checkCudaError(
             cudaMemcpy(state.d_filterFFT[1], state.d_filterFFT[0],
-                       state.fftComplexSize * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                       state.fftComplexSize * sizeof(Complex), cudaMemcpyDeviceToDevice),
             "cudaMemcpy partition filter FFT mirror");
         state.activeFilterIndex = 0;
         coeffOffset += descriptor.taps;
@@ -1290,38 +1352,38 @@ bool GPUUpsampler::initializePartitionedStreaming() {
     size_t upsampledSize = static_cast<size_t>(streamValidInputPerBlock_) * upsampleRatio_;
 
     Utils::checkCudaError(
-        cudaMalloc(&d_streamInput_, streamValidInputPerBlock_ * sizeof(float)),
+        cudaMalloc(&d_streamInput_, streamValidInputPerBlock_ * sizeof(Sample)),
         "cudaMalloc partition streaming input");
     Utils::checkCudaError(
-        cudaMalloc(&d_streamUpsampled_, upsampledSize * sizeof(float)),
+        cudaMalloc(&d_streamUpsampled_, upsampledSize * sizeof(Sample)),
         "cudaMalloc partition streaming upsampled");
     Utils::checkCudaError(
-        cudaMalloc(&d_streamPadded_, partitionFastFftSize_ * sizeof(float)),
+        cudaMalloc(&d_streamPadded_, partitionFastFftSize_ * sizeof(Sample)),
         "cudaMalloc partition streaming padded");
     Utils::checkCudaError(
-        cudaMalloc(&d_streamInputFFT_, partitionFastFftComplexSize_ * sizeof(cufftComplex)),
+        cudaMalloc(&d_streamInputFFT_, partitionFastFftComplexSize_ * sizeof(Complex)),
         "cudaMalloc partition streaming FFT");
     Utils::checkCudaError(
-        cudaMalloc(&d_streamInputFFTBackup_, partitionFastFftComplexSize_ * sizeof(cufftComplex)),
+        cudaMalloc(&d_streamInputFFTBackup_, partitionFastFftComplexSize_ * sizeof(Complex)),
         "cudaMalloc partition streaming FFT backup");
     Utils::checkCudaError(
-        cudaMalloc(&d_streamConvResult_, partitionFastFftSize_ * sizeof(float)),
+        cudaMalloc(&d_streamConvResult_, partitionFastFftSize_ * sizeof(Sample)),
         "cudaMalloc partition streaming conv result");
     Utils::checkCudaError(
-        cudaMalloc(&d_streamConvResultOld_, partitionFastFftSize_ * sizeof(float)),
+        cudaMalloc(&d_streamConvResultOld_, partitionFastFftSize_ * sizeof(Sample)),
         "cudaMalloc partition streaming old conv result");
 
     Utils::checkCudaError(
-        cudaMalloc(&d_overlapLeft_, streamOverlapSize_ * sizeof(float)),
+        cudaMalloc(&d_overlapLeft_, streamOverlapSize_ * sizeof(Sample)),
         "cudaMalloc partition overlap left");
     Utils::checkCudaError(
-        cudaMalloc(&d_overlapRight_, streamOverlapSize_ * sizeof(float)),
+        cudaMalloc(&d_overlapRight_, streamOverlapSize_ * sizeof(Sample)),
         "cudaMalloc partition overlap right");
     Utils::checkCudaError(
-        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float)),
+        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(Sample)),
         "cudaMemset partition overlap left");
     Utils::checkCudaError(
-        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float)),
+        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(Sample)),
         "cudaMemset partition overlap right");
 
     // Allocate runtime buffers for each partition
@@ -1354,32 +1416,32 @@ bool GPUUpsampler::initializePartitionedStreaming() {
         }
 
         Utils::checkCudaError(
-            cudaMalloc(&state.d_timeDomain, state.descriptor.fftSize * sizeof(float)),
+            cudaMalloc(&state.d_timeDomain, state.descriptor.fftSize * sizeof(Sample)),
             "cudaMalloc partition time buffer");
         Utils::checkCudaError(
-            cudaMalloc(&state.d_inputFFT, state.fftComplexSize * sizeof(cufftComplex)),
+            cudaMalloc(&state.d_inputFFT, state.fftComplexSize * sizeof(Complex)),
             "cudaMalloc partition input FFT");
 
         if (state.overlapSize > 0) {
             Utils::checkCudaError(
-                cudaMalloc(&state.d_overlapLeft, state.overlapSize * sizeof(float)),
+                cudaMalloc(&state.d_overlapLeft, state.overlapSize * sizeof(Sample)),
                 "cudaMalloc partition overlap left");
             Utils::checkCudaError(
-                cudaMalloc(&state.d_overlapRight, state.overlapSize * sizeof(float)),
+                cudaMalloc(&state.d_overlapRight, state.overlapSize * sizeof(Sample)),
                 "cudaMalloc partition overlap right");
             Utils::checkCudaError(
-                cudaMemset(state.d_overlapLeft, 0, state.overlapSize * sizeof(float)),
+                cudaMemset(state.d_overlapLeft, 0, state.overlapSize * sizeof(Sample)),
                 "cudaMemset partition state overlap left");
             Utils::checkCudaError(
-                cudaMemset(state.d_overlapRight, 0, state.overlapSize * sizeof(float)),
+                cudaMemset(state.d_overlapRight, 0, state.overlapSize * sizeof(Sample)),
                 "cudaMemset partition state overlap right");
         }
 
         Utils::checkCufftError(
-            cufftPlan1d(&state.planForward, state.descriptor.fftSize, CUFFT_R2C, 1),
+            cufftPlan1d(&state.planForward, state.descriptor.fftSize, Precision::kFftTypeForward, 1),
             "cufftPlan1d partition forward");
         Utils::checkCufftError(
-            cufftPlan1d(&state.planInverse, state.descriptor.fftSize, CUFFT_C2R, 1),
+            cufftPlan1d(&state.planInverse, state.descriptor.fftSize, Precision::kFftTypeInverse, 1),
             "cufftPlan1d partition inverse");
     }
 
@@ -1393,8 +1455,8 @@ bool GPUUpsampler::initializePartitionedStreaming() {
 }
 
 bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t stream,
-                                         const float* d_newSamples, int newSamples,
-                                         float* d_channelOverlap, StreamFloatVector& tempOutput,
+                                         const Sample* d_newSamples, int newSamples,
+                                         Sample* d_channelOverlap, StreamFloatVector& tempOutput,
                                          StreamFloatVector& outputData) {
     try {
         int samplesToUse = std::min(newSamples, state.validOutput);
@@ -1403,21 +1465,21 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
         }
 
         Utils::checkCudaError(
-            cudaMemsetAsync(state.d_timeDomain, 0, state.descriptor.fftSize * sizeof(float),
+            cudaMemsetAsync(state.d_timeDomain, 0, state.descriptor.fftSize * sizeof(Sample),
                             stream),
             "cudaMemset partition time buffer");
 
         if (state.overlapSize > 0 && d_channelOverlap) {
             Utils::checkCudaError(
                 cudaMemcpyAsync(state.d_timeDomain, d_channelOverlap,
-                                state.overlapSize * sizeof(float),
+                                state.overlapSize * sizeof(Sample),
                                 cudaMemcpyDeviceToDevice, stream),
                 "cudaMemcpy partition overlap prepend");
         }
 
         Utils::checkCudaError(
             cudaMemcpyAsync(state.d_timeDomain + state.overlapSize, d_newSamples,
-                            samplesToUse * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+                            samplesToUse * sizeof(Sample), cudaMemcpyDeviceToDevice, stream),
             "cudaMemcpy partition block");
 
         if (state.overlapSize > 0 && d_channelOverlap) {
@@ -1429,7 +1491,7 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
             if (overlapSamples > 0) {
                 Utils::checkCudaError(
                     cudaMemcpyAsync(d_channelOverlap, state.d_timeDomain + overlapOffset,
-                                    overlapSamples * sizeof(float),
+                                    overlapSamples * sizeof(Sample),
                                     cudaMemcpyDeviceToDevice, stream),
                     "cudaMemcpy partition overlap save");
             }
@@ -1438,22 +1500,22 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
         Utils::checkCufftError(cufftSetStream(state.planForward, stream),
                                "cufftSetStream partition forward");
         Utils::checkCufftError(
-            cufftExecR2C(state.planForward, state.d_timeDomain, state.d_inputFFT),
+            Precision::execForward(state.planForward, state.d_timeDomain, state.d_inputFFT),
             "cufftExecR2C partition block");
 
         int threadsPerBlock = 256;
         int blocks = (state.fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
-        cufftComplex* activeFilter = state.d_filterFFT[state.activeFilterIndex];
+        Complex* activeFilter = state.d_filterFFT[state.activeFilterIndex];
         complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
             state.d_inputFFT, activeFilter, state.fftComplexSize);
 
         Utils::checkCufftError(cufftSetStream(state.planInverse, stream),
                                "cufftSetStream partition inverse");
         Utils::checkCufftError(
-            cufftExecC2R(state.planInverse, state.d_inputFFT, state.d_timeDomain),
+            Precision::execInverse(state.planInverse, state.d_inputFFT, state.d_timeDomain),
             "cufftExecC2R partition block");
 
-        float scale = 1.0f / static_cast<float>(state.descriptor.fftSize);
+        ScaleType scale = Precision::scaleFactor(state.descriptor.fftSize);
         int scaleBlocks = (state.descriptor.fftSize + threadsPerBlock - 1) / threadsPerBlock;
         scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
             state.d_timeDomain, state.descriptor.fftSize, scale);
@@ -1461,8 +1523,8 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
         tempOutput.resize(samplesToUse);
         registerStreamOutputBuffer(tempOutput, stream);
         Utils::checkCudaError(
-            cudaMemcpyAsync(tempOutput.data(), state.d_timeDomain + state.overlapSize,
-                            samplesToUse * sizeof(float), cudaMemcpyDeviceToHost, stream),
+            copyDeviceToHostSamplesAsync(tempOutput.data(), state.d_timeDomain + state.overlapSize,
+                                         samplesToUse, stream),
             "cudaMemcpy partition output");
         Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize partition");
 
@@ -1493,7 +1555,7 @@ void GPUUpsampler::setActiveHostCoefficients(const std::vector<float>& source) {
     }
 }
 
-bool GPUUpsampler::updateActiveImpulseFromSpectrum(const cufftComplex* spectrum,
+bool GPUUpsampler::updateActiveImpulseFromSpectrum(const Complex* spectrum,
                                                    std::vector<float>& destination) {
     if (!spectrum || fftSize_ <= 0) {
         return false;
@@ -1503,10 +1565,10 @@ bool GPUUpsampler::updateActiveImpulseFromSpectrum(const cufftComplex* spectrum,
     }
     if (!partitionImpulsePlanInverse_) {
         Utils::checkCufftError(
-            cufftPlan1d(&partitionImpulsePlanInverse_, fftSize_, CUFFT_C2R, 1),
+            cufftPlan1d(&partitionImpulsePlanInverse_, fftSize_, Precision::kFftTypeInverse, 1),
             "cufftPlan1d partition impulse inverse (lazy)");
     }
-    size_t impulseBytes = static_cast<size_t>(fftSize_) * sizeof(float);
+    size_t impulseBytes = static_cast<size_t>(fftSize_) * sizeof(Sample);
     if (!d_partitionImpulse_) {
         Utils::checkCudaError(
             cudaMalloc(&d_partitionImpulse_, impulseBytes),
@@ -1514,17 +1576,17 @@ bool GPUUpsampler::updateActiveImpulseFromSpectrum(const cufftComplex* spectrum,
     }
 
     Utils::checkCufftError(
-        cufftExecC2R(partitionImpulsePlanInverse_, const_cast<cufftComplex*>(spectrum),
-                     d_partitionImpulse_),
+        Precision::execInverse(partitionImpulsePlanInverse_, const_cast<Complex*>(spectrum),
+                               d_partitionImpulse_),
         "cufftExecC2R partition impulse build");
     Utils::checkCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize partition impulse build");
 
     destination.assign(static_cast<size_t>(filterTaps_), 0.0f);
     Utils::checkCudaError(
-        cudaMemcpy(destination.data(), d_partitionImpulse_,
-                   static_cast<size_t>(filterTaps_) * sizeof(float), cudaMemcpyDeviceToHost),
+        copyDeviceToHostSamplesSync(destination.data(), d_partitionImpulse_,
+                                    static_cast<size_t>(filterTaps_)),
         "cudaMemcpy partition impulse to host");
-    const float scale = 1.0f / static_cast<float>(fftSize_);
+    const float scale = static_cast<float>(Precision::scaleFactor(fftSize_));
     for (auto& sample : destination) {
         sample *= scale;
     }
@@ -1545,9 +1607,9 @@ bool GPUUpsampler::refreshPartitionFiltersFromHost() {
     for (const auto& state : partitionStates_) {
         maxFft = std::max(maxFft, state.descriptor.fftSize);
     }
-    float* d_tempTime = nullptr;
+    Sample* d_tempTime = nullptr;
     Utils::checkCudaError(
-        cudaMalloc(&d_tempTime, static_cast<size_t>(maxFft) * sizeof(float)),
+        cudaMalloc(&d_tempTime, static_cast<size_t>(maxFft) * sizeof(Sample)),
         "cudaMalloc partition refresh temp buffer");
 
     size_t coeffOffset = 0;
@@ -1561,20 +1623,20 @@ bool GPUUpsampler::refreshPartitionFiltersFromHost() {
         }
 
         Utils::checkCudaError(
-            cudaMemset(d_tempTime, 0, state.descriptor.fftSize * sizeof(float)),
+            cudaMemset(d_tempTime, 0, state.descriptor.fftSize * sizeof(Sample)),
             "cudaMemset partition refresh temp buffer");
         Utils::checkCudaError(
-            cudaMemcpy(d_tempTime, h_filterCoeffs_.data() + coeffOffset,
-                       taps * sizeof(float), cudaMemcpyHostToDevice),
+            copyHostToDeviceSamples<Precision>(d_tempTime, h_filterCoeffs_.data() + coeffOffset,
+                                               taps),
             "cudaMemcpy partition refresh taps");
 
         cufftHandle plan = 0;
         Utils::checkCufftError(
-            cufftPlan1d(&plan, state.descriptor.fftSize, CUFFT_R2C, 1),
+            cufftPlan1d(&plan, state.descriptor.fftSize, Precision::kFftTypeForward, 1),
             "cufftPlan1d partition refresh");
         int inactiveIndex = 1 - state.activeFilterIndex;
         Utils::checkCufftError(
-            cufftExecR2C(plan, d_tempTime, state.d_filterFFT[inactiveIndex]),
+            Precision::execForward(plan, d_tempTime, state.d_filterFFT[inactiveIndex]),
             "cufftExecR2C partition refresh");
         Utils::checkCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize partition refresh");
         cufftDestroy(plan);
