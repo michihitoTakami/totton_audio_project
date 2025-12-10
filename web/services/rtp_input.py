@@ -150,7 +150,6 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"caps={caps}",
         "!",
         "rtpbin.recv_rtp_sink_0",
-        "!",
         "rtpbin.recv_rtp_src_0",
         "!",
         depay,
