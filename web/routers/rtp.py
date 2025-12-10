@@ -1,9 +1,13 @@
 """RTP ZeroMQ bridge endpoints."""
 
+import asyncio
+from typing import Callable, TypeVar
+
 from fastapi import APIRouter, HTTPException
 
 from ..models import RtpBridgeStatus, RtpLatencyRequest, RtpLatencyResponse
 from ..services.rtp_bridge_client import (
+    RtpBridgeClient,
     RtpBridgeClientError,
     RtpBridgeConnectionError,
     RtpBridgeResponseError,
@@ -11,6 +15,8 @@ from ..services.rtp_bridge_client import (
 )
 
 router = APIRouter(prefix="/api/rtp", tags=["rtp"])
+
+T = TypeVar("T")
 
 
 def _handle_error(exc: RtpBridgeClientError) -> HTTPException:
@@ -21,6 +27,16 @@ def _handle_error(exc: RtpBridgeClientError) -> HTTPException:
     return HTTPException(status_code=502, detail=str(exc))
 
 
+async def _run_blocking(func: Callable[[RtpBridgeClient], T]) -> T:
+    """BlockingsなZeroMQクライアント呼び出しをワーカースレッドで実行."""
+
+    def _call() -> T:
+        with get_rtp_bridge_client() as client:
+            return func(client)
+
+    return await asyncio.to_thread(_call)
+
+
 @router.get(
     "/status",
     response_model=RtpBridgeStatus,
@@ -29,8 +45,7 @@ def _handle_error(exc: RtpBridgeClientError) -> HTTPException:
 async def rtp_status():
     """ZeroMQブリッジからRTP統計を取得する."""
     try:
-        with get_rtp_bridge_client() as client:
-            return client.status()
+        return await _run_blocking(lambda client: client.status())
     except RtpBridgeClientError as exc:
         raise _handle_error(exc) from exc
 
@@ -43,8 +58,9 @@ async def rtp_status():
 async def rtp_set_latency(request: RtpLatencyRequest):
     """ZeroMQブリッジ経由でレイテンシを変更する."""
     try:
-        with get_rtp_bridge_client() as client:
-            return client.set_latency(request.latency_ms)
+        return await _run_blocking(
+            lambda client: client.set_latency(request.latency_ms)
+        )
     except RtpBridgeClientError as exc:
         raise _handle_error(exc) from exc
 
