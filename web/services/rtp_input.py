@@ -42,9 +42,9 @@ SUPPORTED_SAMPLE_RATES = {
 }
 
 _ENCODING_TO_DEPAY_AND_FORMAT = {
-    "L16": ("rtpL16depay", "S16LE"),
-    "L24": ("rtpL24depay", "S24LE"),
-    "L32": ("rtpL32depay", "S32LE"),
+    "L16": ("rtpL16depay", "S16BE"),
+    "L24": ("rtpL24depay", "S24BE"),
+    "L32": ("rtpL32depay", "S32BE"),
 }
 
 ProcessRunner = Callable[[Sequence[str]], Awaitable[asyncio.subprocess.Process]]
@@ -122,31 +122,22 @@ def load_default_settings() -> RtpInputSettings:
 
 
 def build_gst_command(settings: RtpInputSettings) -> list[str]:
-    """設定からgst-launch-1.0コマンドを構築 (RTCP付きで送信クロックへ同期)."""
+    """設定からgst-launch-1.0コマンドを構築 (シンプルなRTP受信)."""
     depay, raw_format = _ENCODING_TO_DEPAY_AND_FORMAT.get(
-        settings.encoding, ("rtpL24depay", "S24LE")
+        settings.encoding, ("rtpL24depay", "S24BE")
     )
     caps = (
         f"application/x-rtp,media=audio,clock-rate={settings.sample_rate},"
-        f"encoding-name={settings.encoding},channels={settings.channels}"
+        f"encoding-name={settings.encoding},payload=96,channels={settings.channels}"
     )
 
-    # RTP/RTCP (rtpbin) を用い、送信側のタイムスタンプに同期。RTCPは port+1(受信) / port+2(送信) を使用。
+    # シンプルなRTP受信パイプライン（rtpbin不使用）
     return [
         "gst-launch-1.0",
         "-e",
-        "rtpbin",
-        "name=rtpbin",
-        f"latency={settings.latency_ms}",
-        "ntp-sync=true",
-        "buffer-mode=sync",
-        # RTP (payload)
         "udpsrc",
         f"port={settings.port}",
         f"caps={caps}",
-        "!",
-        "rtpbin.recv_rtp_sink_0",
-        "rtpbin.recv_rtp_src_0",
         "!",
         depay,
         "!",
@@ -155,10 +146,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "audioresample",
         f"quality={settings.resample_quality}",
         "!",
-        "audio/x-raw",
-        f"format={raw_format}",
-        f"rate={settings.sample_rate}",
-        f"channels={settings.channels}",
+        f"audio/x-raw,format={raw_format},rate={settings.sample_rate},channels={settings.channels}",
         "!",
         "queue",
         "max-size-time=200000000",  # 200ms safety buffer
@@ -166,20 +154,6 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "alsasink",
         f"device={settings.device}",
         "sync=true",
-        "provide-clock=true",
-        # RTCP (recv)
-        "udpsrc",
-        f"port={settings.rtcp_port}",
-        "!",
-        "rtpbin.recv_rtcp_sink_0",
-        # RTCP (send back to sender host)
-        "rtpbin.send_rtcp_src_0",
-        "!",
-        "udpsink",
-        f"host={settings.sender_host}",
-        f"port={settings.rtcp_send_port}",
-        "sync=false",
-        "async=false",
     ]
 
 
