@@ -20,7 +20,6 @@ std::vector<std::string> RtpPipelineBuilder::build(const RtpPipelineConfig &conf
             "rtpbin",
             "name=rtpbin",
             "ntp-sync=true",
-            "buffer-mode=sync",
             "alsasrc",
             "device=" + config.device,
             "!",
@@ -73,9 +72,9 @@ std::string RtpPipelineBuilder::payloaderForFormat(AlsaCapture::SampleFormat fmt
     case AlsaCapture::SampleFormat::S16_LE:
         return "rtpL16pay";
     case AlsaCapture::SampleFormat::S24_3LE:
-        return "rtpL24pay";
     case AlsaCapture::SampleFormat::S32_LE:
-        return "rtpL32pay";
+        // rtpL32pay は存在しないため、S32_LE も S24LE に変換して送信
+        return "rtpL24pay";
     }
     return "rtpL24pay";
 }
@@ -85,9 +84,9 @@ std::string RtpPipelineBuilder::encodingName(AlsaCapture::SampleFormat fmt) {
     case AlsaCapture::SampleFormat::S16_LE:
         return "L16";
     case AlsaCapture::SampleFormat::S24_3LE:
-        return "L24";
     case AlsaCapture::SampleFormat::S32_LE:
-        return "L32";
+        // S32_LE も S24LE に変換して送信
+        return "L24";
     }
     return "L24";
 }
@@ -95,11 +94,12 @@ std::string RtpPipelineBuilder::encodingName(AlsaCapture::SampleFormat fmt) {
 std::string RtpPipelineBuilder::rawFormat(AlsaCapture::SampleFormat fmt) {
     switch (fmt) {
     case AlsaCapture::SampleFormat::S16_LE:
-        return "S16LE";
+        // rtpL16pay は S16BE (ネットワークバイトオーダー) を要求
+        return "S16BE";
     case AlsaCapture::SampleFormat::S24_3LE:
-        return "S24LE";
     case AlsaCapture::SampleFormat::S32_LE:
-        return "S32LE";
+        // rtpL24pay は S24BE (ネットワークバイトオーダー) を要求
+        return "S24BE";
     }
-    return "S24LE";
+    return "S24BE";
 }

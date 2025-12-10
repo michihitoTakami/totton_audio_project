@@ -13,6 +13,17 @@
 
 namespace {
 
+// Docker環境では /proc/asound を /host_proc_asound にマウントする
+const char *getProcAsoundPath() {
+    // /host_proc_asound が存在すればそちらを使用（Docker環境）
+    std::error_code ec;
+    if (std::filesystem::exists("/host_proc_asound", ec) && !ec) {
+        return "/host_proc_asound";
+    }
+    // 通常環境
+    return "/proc/asound";
+}
+
 const std::array<unsigned int, 10> kAllowedRates = {44100,  48000,  88200,  96000,  176400,
                                                     192000, 352800, 384000, 705600, 768000};
 
@@ -53,7 +64,8 @@ std::optional<std::string> HwParamsMonitor::resolveHwParamsPath() const {
         // device名にカード/デバイス番号が含まれないケース (例: default, plughw)
         // -> /proc/asound 以下を走査して最初に見つかった capture hw_params を返す。
         std::error_code ec;
-        for (const auto &cardDir : std::filesystem::directory_iterator("/proc/asound", ec)) {
+        const std::string procAsound = getProcAsoundPath();
+        for (const auto &cardDir : std::filesystem::directory_iterator(procAsound, ec)) {
             if (ec) {
                 break;
             }
@@ -80,26 +92,37 @@ std::optional<std::string> HwParamsMonitor::resolveHwParamsPath() const {
     const std::string cardStr = afterPrefix.substr(0, commaPos);
     const std::string devStr = afterPrefix.substr(commaPos + 1);
 
-    for (char c : cardStr) {
-        if (!std::isdigit(static_cast<unsigned char>(c))) {
-            return std::nullopt;
-        }
-    }
     for (char c : devStr) {
         if (!std::isdigit(static_cast<unsigned char>(c))) {
             return std::nullopt;
         }
     }
 
-    const std::string primaryPath =
-        "/proc/asound/card" + cardStr + "/pcm" + devStr + "c/sub0/hw_params";
+    const std::string procAsound = getProcAsoundPath();
+
+    // cardStr が数字かどうかを判定
+    bool cardIsNumeric =
+        !cardStr.empty() &&
+        std::all_of(cardStr.begin(), cardStr.end(),
+                    [](unsigned char c) { return std::isdigit(c); });
+
+    std::string cardPath;
+    if (cardIsNumeric) {
+        // 数字の場合: /proc/asound/card0 形式
+        cardPath = procAsound + "/card" + cardStr;
+    } else {
+        // 名前の場合: /proc/asound/UAC2Gadget はシンボリックリンク
+        cardPath = procAsound + "/" + cardStr;
+    }
+
+    const std::string primaryPath = cardPath + "/pcm" + devStr + "c/sub0/hw_params";
     std::error_code ec;
     if (std::filesystem::exists(primaryPath, ec)) {
         return primaryPath;
     }
 
     // sub0 が存在しない場合のフォールバック: sub1 など最初に見つかったものを返す
-    const std::filesystem::path base = "/proc/asound/card" + cardStr;
+    const std::filesystem::path base = cardPath;
     for (const auto &pcmDir : std::filesystem::directory_iterator(base, ec)) {
         if (ec) {
             break;

@@ -2,8 +2,12 @@ server {
     listen 80;
     server_name _;
 
+    # DNS解決を動的に行う（起動時に解決できなくてもOK）
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    set $upstream_jetson ${JETSON_HOST}:${JETSON_PORT};
+
     location / {
-        proxy_pass http://${JETSON_HOST}:${JETSON_PORT};
+        proxy_pass http://$upstream_jetson;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

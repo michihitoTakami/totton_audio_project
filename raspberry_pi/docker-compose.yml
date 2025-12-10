@@ -1,17 +1,19 @@
 services:
   rtp-sender:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: raspberry_pi/Dockerfile
     container_name: rpi-rtp-sender
     devices:
       - "/dev/snd:/dev/snd"
+    volumes:
+      - "/proc/asound:/host_proc_asound:ro"
     group_add:
       - "audio"
     environment:
       PCM_BRIDGE_MODE: rtp
-      RTP_SENDER_DEVICE: ${RTP_SENDER_DEVICE:-hw:0,0}
-      RTP_SENDER_HOST: ${RTP_SENDER_HOST:-jetson}
+      RTP_SENDER_DEVICE: ${RTP_SENDER_DEVICE:-hw:UAC2Gadget,0}
+      RTP_SENDER_HOST: ${RTP_SENDER_HOST:-192.168.55.1}
       RTP_SENDER_RTP_PORT: ${RTP_SENDER_RTP_PORT:-46000}
       RTP_SENDER_RTCP_PORT: ${RTP_SENDER_RTCP_PORT:-46001}
       RTP_SENDER_RTCP_LISTEN_PORT: ${RTP_SENDER_RTCP_LISTEN_PORT:-46002}
@@ -31,7 +33,7 @@ services:
     ports:
       - "80:80"
     environment:
-      JETSON_HOST: ${JETSON_HOST:-jetson}
+      JETSON_HOST: ${JETSON_HOST:-192.168.55.1}
       JETSON_PORT: ${JETSON_PORT:-80}
     volumes:
       - ./docker/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro

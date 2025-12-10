@@ -141,8 +141,13 @@ int main(int argc, char **argv) {
     HwParamsMonitor monitor(opt.device);
     auto currentParams = monitor.readCurrent();
     if (!currentParams) {
-        logError("[rpi_rtp_sender] Failed to read ALSA hw_params from " + monitor.describe());
-        return 1;
+        // UAC2 Gadget など、誰かがキャプチャを開始するまで closed のデバイスがある
+        // デフォルト値で起動し、後でパラメータ変更を検知して再起動する
+        logWarn("[rpi_rtp_sender] hw_params not available yet, using defaults (S32_LE, 48000Hz, 2ch)");
+        currentParams = CaptureParams{};
+        currentParams->sampleRate = 48000;
+        currentParams->channels = 2;
+        currentParams->format = AlsaCapture::SampleFormat::S32_LE;
     }
     *currentParams = applyOverrides(*currentParams, opt.formatOverride);
 
