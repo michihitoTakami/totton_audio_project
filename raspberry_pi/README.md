@@ -104,6 +104,12 @@ docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender jetso
 docker compose -f raspberry_pi/docker-compose.yml logs -f rtp-sender
 docker compose -f raspberry_pi/docker-compose.yml logs -f jetson-proxy
 
+# ZeroMQ ブリッジも同時に起動する場合
+docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender rtp-bridge jetson-proxy
+
+# ブリッジだけ再起動
+docker compose -f raspberry_pi/docker-compose.yml restart rtp-bridge
+
 # 停止
 docker compose -f raspberry_pi/docker-compose.yml down
 ```

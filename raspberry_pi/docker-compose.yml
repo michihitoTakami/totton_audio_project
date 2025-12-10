@@ -18,12 +18,17 @@ services:
       RTP_SENDER_PAYLOAD_TYPE: ${RTP_SENDER_PAYLOAD_TYPE:-96}
       RTP_SENDER_POLL_MS: ${RTP_SENDER_POLL_MS:-250}
       RTP_SENDER_LOG_LEVEL: ${RTP_SENDER_LOG_LEVEL:-info}
+      RTP_BRIDGE_ENDPOINT: ${RTP_BRIDGE_ENDPOINT:-ipc:///var/run/rtp-bridge/rtp_receiver.sock}
+      RTP_BRIDGE_STATS_PATH: ${RTP_BRIDGE_STATS_PATH:-/var/run/rtp-bridge/rtp_receiver_stats.json}
+      RTP_BRIDGE_LATENCY_PATH: ${RTP_BRIDGE_LATENCY_PATH:-/var/run/rtp-bridge/rtp_receiver_latency_ms}
     restart: unless-stopped
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    volumes:
+      - rtp-bridge-ipc:/var/run/rtp-bridge
 
   jetson-proxy:
     image: nginx:1.27-alpine
@@ -41,3 +46,29 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  rtp-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rpi-rtp-bridge
+    entrypoint: ["python3", "-m", "raspberry_pi.rtp_receiver"]
+    environment:
+      RTP_BRIDGE_ENDPOINT: ${RTP_BRIDGE_ENDPOINT:-ipc:///var/run/rtp-bridge/rtp_receiver.sock}
+      RTP_BRIDGE_STATS_PATH: ${RTP_BRIDGE_STATS_PATH:-/var/run/rtp-bridge/rtp_receiver_stats.json}
+      RTP_BRIDGE_LATENCY_PATH: ${RTP_BRIDGE_LATENCY_PATH:-/var/run/rtp-bridge/rtp_receiver_latency_ms}
+      RTP_BRIDGE_TIMEOUT_MS: ${RTP_BRIDGE_TIMEOUT_MS:-5000}
+      RTP_BRIDGE_POLL_INTERVAL_SEC: ${RTP_BRIDGE_POLL_INTERVAL_SEC:-1.0}
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /opt/pcm-bridge
+    volumes:
+      - rtp-bridge-ipc:/var/run/rtp-bridge
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  rtp-bridge-ipc:
