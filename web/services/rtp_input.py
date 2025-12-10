@@ -144,7 +144,6 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "name=rtpbin",
         f"latency={settings.latency_ms}",
         "ntp-sync=true",
-        "buffer-mode=sync",
         # RTP (payload)
         "udpsrc",
         f"port={settings.port}",
