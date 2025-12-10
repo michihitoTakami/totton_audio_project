@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Iterable, List, Tuple
 
-_DEFAULT_DEVICE = "hw:0,0"
+_DEFAULT_DEVICE = "hw:2,0"
 _DEFAULT_HOST = "192.168.55.1"
 _DEFAULT_RTP_PORT = 46000
 _DEFAULT_RTCP_PORT = 46001
@@ -98,7 +98,6 @@ def build_gst_command(cfg: RtpSenderConfig) -> List[str]:
         "rtpbin",
         "name=rtpbin",
         "ntp-sync=true",
-        "buffer-mode=sync",
     ]
     if cfg.latency_ms is not None:
         args.append(f"latency={cfg.latency_ms}")
