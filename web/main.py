@@ -30,6 +30,7 @@ from .routers import (
     rtp_input_router,
 )
 from .services import get_daemon_client
+from .services.daemon_client import DaemonError
 from .services.tcp_input import (
     TcpTelemetryPoller,
     TcpTelemetryStore,
@@ -112,6 +113,11 @@ async def _fetch_tcp_telemetry() -> TcpInputTelemetry | None:
                 return parse_tcp_telemetry(telemetry_payload)
         return None
     if response.error:
+        if isinstance(response.error, DaemonError) and response.error.error_code in {
+            "IPC_INVALID_COMMAND"
+        }:
+            _logger.info("TCP telemetry not supported by daemon; skipping polling")
+            return None
         # 例外はポーラー側で握りつぶし、storeにエラーを記録させる
         raise response.error
     return None
