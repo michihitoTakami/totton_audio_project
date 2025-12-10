@@ -150,16 +150,20 @@ Jetson側TCPサーバが無くても、ローカルのALSA loopback + `nc` で�
    - ファイルサイズが再生に合わせて増えていくことを確認。
    - ブリッジは `Ctrl+C` で終了（SIGINTでクリーンに停止）。
 
-## GStreamer RTP 送出（推奨構成）
+## GStreamer RTP 送出（RTCP付きでクロック同期）
 
-TCP ブリッジの代替として GStreamer で RTP 送出する場合の参考コマンド。デフォルトポートは `46000/udp`、ビット深度 24bit、サンプルレート 44.1kHz 固定、`audioresample quality=10` でクロックドリフトを吸収します。
+デフォルトポート: `46000/udp` (RTP), `46001/udp` (RTCP to Jetson), `46002/udp` (RTCP from Jetson)。送受信とも RTCP を流し、Jetson 側が送信側クロックに同期します。サンプルレート初期値は 44.1kHz 固定、`audioresample quality=10` で微小ドリフトを吸収します。
+
+送信（Raspberry Pi 側）例:
 
 ```bash
-gst-launch-1.0 -e \
+gst-launch-1.0 -e rtpbin name=rtpbin ntp-sync=true buffer-mode=sync \
   alsasrc device=hw:0,0 ! audioresample quality=10 ! audioconvert ! \
-  audio/x-raw,rate=44100,channels=2,format=S24LE ! \
-  rtpL24pay ! udpsink host=<jetson-ip> port=46000 sync=true async=false
+  audio/x-raw,rate=44100,channels=2,format=S24LE ! rtpL24pay pt=96 ! rtpbin.send_rtp_sink_0 \
+  rtpbin.send_rtp_src_0 ! udpsink host=<jetson-ip> port=46000 sync=true async=false \
+  rtpbin.send_rtcp_src_0 ! udpsink host=<jetson-ip> port=46001 sync=false async=false \
+  udpsrc port=46002 ! rtpbin.recv_rtcp_sink_0
 ```
 
-- 16bit/32bit を送りたい場合は `rtpL16pay` / `rtpL32pay` と `format=S16LE/S32LE` に差し替えてください。
+- 16bit/32bit を送りたい場合は `rtpL16pay` / `rtpL32pay` と `format=S16LE/S32LE` に差し替えてください（pt は 96 のままで共有して問題ありません）。
 - レイテンシ調整は Jetson 側（Magic Box コンテナ内 `/api/rtp-input/config` の `latency_ms`、デフォルト100ms）で行います。

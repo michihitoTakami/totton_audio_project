@@ -19,6 +19,9 @@ DEFAULT_CHANNELS = 2
 DEFAULT_ENCODING = "L24"
 DEFAULT_DEVICE = "hw:Loopback,0,0"
 DEFAULT_QUALITY = 10
+DEFAULT_RTCP_PORT = DEFAULT_PORT + 1
+DEFAULT_RTCP_SEND_PORT = DEFAULT_PORT + 2
+DEFAULT_SENDER_HOST = "raspberrypi.local"
 
 _ENCODING_TO_DEPAY_AND_FORMAT = {
     "L16": ("rtpL16depay", "S16LE"),
@@ -63,8 +66,9 @@ def load_default_settings() -> RtpInputSettings:
     encoding = _env_str(
         "MAGICBOX_RTP_ENCODING", DEFAULT_ENCODING, _ENCODING_TO_DEPAY_AND_FORMAT.keys()
     )
+    base_port = _env_int("MAGICBOX_RTP_PORT", DEFAULT_PORT, minimum=1024, maximum=65535)
     return RtpInputSettings(
-        port=_env_int("MAGICBOX_RTP_PORT", DEFAULT_PORT, minimum=1024, maximum=65535),
+        port=base_port,
         sample_rate=_env_int(
             "MAGICBOX_RTP_SAMPLE_RATE",
             DEFAULT_SAMPLE_RATE,
@@ -82,11 +86,21 @@ def load_default_settings() -> RtpInputSettings:
         resample_quality=_env_int(
             "MAGICBOX_RTP_QUALITY", DEFAULT_QUALITY, minimum=0, maximum=10
         ),
+        rtcp_port=_env_int(
+            "MAGICBOX_RTP_RTCP_PORT", DEFAULT_RTCP_PORT, minimum=1024, maximum=65535
+        ),
+        rtcp_send_port=_env_int(
+            "MAGICBOX_RTP_RTCP_SEND_PORT",
+            DEFAULT_RTCP_SEND_PORT,
+            minimum=1024,
+            maximum=65535,
+        ),
+        sender_host=os.getenv("MAGICBOX_RTP_SENDER_HOST", DEFAULT_SENDER_HOST),
     )
 
 
 def build_gst_command(settings: RtpInputSettings) -> list[str]:
-    """設定からgst-launch-1.0コマンドを構築."""
+    """設定からgst-launch-1.0コマンドを構築 (RTCP付きで送信クロックへ同期)."""
     depay, raw_format = _ENCODING_TO_DEPAY_AND_FORMAT.get(
         settings.encoding, ("rtpL24depay", "S24LE")
     )
@@ -95,16 +109,22 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"encoding-name={settings.encoding},channels={settings.channels}"
     )
 
-    # jitterbufferのlatency(ms)は指定値を利用。audioresample qualityはデフォルト10。
+    # RTP/RTCP (rtpbin) を用い、送信側のタイムスタンプに同期。RTCPは port+1(受信) / port+2(送信) を使用。
     return [
         "gst-launch-1.0",
         "-e",
+        "rtpbin",
+        "name=rtpbin",
+        f"latency={settings.latency_ms}",
+        "ntp-sync=true",
+        "buffer-mode=sync",
+        # RTP (payload)
         "udpsrc",
         f"port={settings.port}",
         f"caps={caps}",
         "!",
-        "rtpjitterbuffer",
-        f"latency={settings.latency_ms}",
+        "rtpbin.recv_rtp_sink_0",
+        "rtpbin.",
         "!",
         depay,
         "!",
@@ -125,6 +145,19 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"device={settings.device}",
         "sync=true",
         "provide-clock=true",
+        # RTCP (recv)
+        "udpsrc",
+        f"port={settings.rtcp_port}",
+        "!",
+        "rtpbin.recv_rtcp_sink_0",
+        # RTCP (send back to sender host)
+        "rtpbin.send_rtcp_src_0",
+        "!",
+        "udpsink",
+        f"host={settings.sender_host}",
+        f"port={settings.rtcp_send_port}",
+        "sync=false",
+        "async=false",
     ]
 
 

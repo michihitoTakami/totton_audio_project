@@ -16,15 +16,28 @@ def test_build_gst_command_supports_encodings():
     assert "rtpL24depay" in l24
     assert "rtpL32depay" in l32
     assert any("latency=100" in part for part in l24)
+    assert "rtpbin" in l24
+    assert any("rtcp" in part for part in l24)
 
 
 def test_config_update_merges_and_validates():
     manager = RtpReceiverManager(settings=RtpInputSettings())
     updated = asyncio.run(
-        manager.apply_config(RtpInputConfigUpdate(port=46000, latency_ms=250))
+        manager.apply_config(
+            RtpInputConfigUpdate(
+                port=46000,
+                latency_ms=250,
+                rtcp_port=46010,
+                rtcp_send_port=46011,
+                sender_host="192.168.0.10",
+            )
+        )
     )
     assert updated.port == 46000
     assert updated.latency_ms == 250
+    assert updated.rtcp_port == 46010
+    assert updated.rtcp_send_port == 46011
+    assert updated.sender_host == "192.168.0.10"
 
     with pytest.raises(Exception):
         asyncio.run(manager.apply_config(RtpInputConfigUpdate(latency_ms=1)))

@@ -276,6 +276,9 @@ class RtpInputSettings(BaseModel):
     encoding: RtpEncoding = "L24"
     device: str = "hw:Loopback,0,0"
     resample_quality: int = Field(default=10, ge=0, le=10)
+    rtcp_port: Port = 46001
+    rtcp_send_port: Port = 46002
+    sender_host: str = "raspberrypi.local"
 
 
 class RtpInputConfigUpdate(BaseModel):
@@ -288,6 +291,9 @@ class RtpInputConfigUpdate(BaseModel):
     encoding: RtpEncoding | None = None
     device: Optional[str] = None
     resample_quality: int | None = Field(default=None, ge=0, le=10)
+    rtcp_port: Port | None = None
+    rtcp_send_port: Port | None = None
+    sender_host: Optional[str] = None
 
 
 class RtpInputStatus(BaseModel):

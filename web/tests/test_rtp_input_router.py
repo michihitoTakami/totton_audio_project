@@ -61,12 +61,22 @@ def test_rtp_config_update(monkeypatch):
     client = TestClient(app)
 
     resp = client.put(
-        "/api/rtp-input/config", json={"latency_ms": 150, "encoding": "L32"}
+        "/api/rtp-input/config",
+        json={
+            "latency_ms": 150,
+            "encoding": "L32",
+            "rtcp_port": 47001,
+            "rtcp_send_port": 47002,
+            "sender_host": "192.168.55.1",
+        },
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["latency_ms"] == 150
     assert body["encoding"] == "L32"
+    assert body["rtcp_port"] == 47001
+    assert body["rtcp_send_port"] == 47002
+    assert body["sender_host"] == "192.168.55.1"
 
     # cleanup override
     app.dependency_overrides.clear()

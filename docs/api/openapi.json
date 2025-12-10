@@ -3402,6 +3402,43 @@
               }
             ],
             "title": "Resample Quality"
+          },
+          "rtcp_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rtcp Port"
+          },
+          "rtcp_send_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rtcp Send Port"
+          },
+          "sender_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender Host"
           }
         },
         "type": "object",
@@ -3459,6 +3496,25 @@
             "minimum": 0.0,
             "title": "Resample Quality",
             "default": 10
+          },
+          "rtcp_port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Rtcp Port",
+            "default": 46001
+          },
+          "rtcp_send_port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Rtcp Send Port",
+            "default": 46002
+          },
+          "sender_host": {
+            "type": "string",
+            "title": "Sender Host",
+            "default": "raspberrypi.local"
           }
         },
         "type": "object",
