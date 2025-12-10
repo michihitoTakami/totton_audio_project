@@ -153,13 +153,17 @@ fi
 # Raspberry Pi capture app tests
 if $RUN_RPI; then
     echo -e "${YELLOW}=== Running Raspberry Pi capture tests ===${NC}"
-    "$CMAKE_BIN" -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | tail -20
-    "$CMAKE_BIN" --build raspberry_pi/build --target rpi_capture_tests -j8 2>&1 | tail -20
-    if "$CTEST_BIN" --test-dir raspberry_pi/build --output-on-failure; then
-        echo -e "${GREEN}Raspberry Pi capture tests passed!${NC}"
+    if [ ! -f raspberry_pi/CMakeLists.txt ]; then
+        echo -e "${YELLOW}Skipping (raspberry_pi/CMakeLists.txt not found; legacy C++ app removed).${NC}"
     else
-        echo -e "${RED}Raspberry Pi capture tests failed!${NC}"
-        TESTS_PASSED=false
+        "$CMAKE_BIN" -S raspberry_pi -B raspberry_pi/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | tail -20
+        "$CMAKE_BIN" --build raspberry_pi/build --target rpi_capture_tests -j8 2>&1 | tail -20
+        if "$CTEST_BIN" --test-dir raspberry_pi/build --output-on-failure; then
+            echo -e "${GREEN}Raspberry Pi capture tests passed!${NC}"
+        else
+            echo -e "${RED}Raspberry Pi capture tests failed!${NC}"
+            TESTS_PASSED=false
+        fi
     fi
     echo ""
 fi
@@ -167,14 +171,18 @@ fi
 # Run jetson_pcm_receiver tests (standalone CMake project)
 if $RUN_JETSON_PCM; then
     echo -e "${YELLOW}=== Running jetson_pcm_receiver tests ===${NC}"
-    JETSON_BUILD_DIR="jetson_pcm_receiver/build"
-    "$CMAKE_BIN" -S jetson_pcm_receiver -B "$JETSON_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
-    "$CMAKE_BIN" --build "$JETSON_BUILD_DIR" --target jetson_pcm_receiver_tests -j8 2>&1 | tail -20
-    if "$CTEST_BIN" --test-dir "$JETSON_BUILD_DIR" --output-on-failure; then
-        echo -e "${GREEN}jetson_pcm_receiver tests passed!${NC}"
+    if [ ! -f jetson_pcm_receiver/CMakeLists.txt ]; then
+        echo -e "${YELLOW}Skipping (jetson_pcm_receiver/CMakeLists.txt not found; legacy TCP app removed).${NC}"
     else
-        echo -e "${RED}jetson_pcm_receiver tests failed!${NC}"
-        TESTS_PASSED=false
+        JETSON_BUILD_DIR="jetson_pcm_receiver/build"
+        "$CMAKE_BIN" -S jetson_pcm_receiver -B "$JETSON_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
+        "$CMAKE_BIN" --build "$JETSON_BUILD_DIR" --target jetson_pcm_receiver_tests -j8 2>&1 | tail -20
+        if "$CTEST_BIN" --test-dir "$JETSON_BUILD_DIR" --output-on-failure; then
+            echo -e "${GREEN}jetson_pcm_receiver tests passed!${NC}"
+        else
+            echo -e "${RED}jetson_pcm_receiver tests failed!${NC}"
+            TESTS_PASSED=false
+        fi
     fi
     echo ""
 fi
