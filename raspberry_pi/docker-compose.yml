@@ -22,7 +22,7 @@ services:
       RTP_BRIDGE_ENDPOINT: ${RTP_BRIDGE_ENDPOINT:-tcp://0.0.0.0:60000}
       RTP_BRIDGE_STATS_PATH: ${RTP_BRIDGE_STATS_PATH:-/var/run/rtp-bridge/rtp_receiver_stats.json}
       RTP_BRIDGE_LATENCY_PATH: ${RTP_BRIDGE_LATENCY_PATH:-/var/run/rtp-bridge/rtp_receiver_latency_ms}
-    restart: unless-stopped
+    restart: always
     logging:
       driver: "json-file"
       options:
@@ -66,7 +66,7 @@ services:
       - "60000:60000"
     volumes:
       - rtp-bridge-ipc:/var/run/rtp-bridge
-    restart: unless-stopped
+    restart: always
     logging:
       driver: "json-file"
       options:

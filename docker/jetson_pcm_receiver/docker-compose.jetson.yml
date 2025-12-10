@@ -5,7 +5,7 @@ services:
       context: ../..
       dockerfile: docker/jetson_pcm_receiver/Dockerfile.jetson
     container_name: jetson-pcm-receiver
-    restart: unless-stopped
+    restart: always
     runtime: nvidia
     devices:
       - /dev/snd:/dev/snd

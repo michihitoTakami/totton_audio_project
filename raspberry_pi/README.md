@@ -87,7 +87,7 @@ Magic Box Web UI からのレイテンシ変更を Pi に伝える場合に使�
 
 > NOTE: デフォルトの待受エンドポイントは `tcp://0.0.0.0:60000` に変更しました。Jetson 側は `RTP_BRIDGE_ENDPOINT=tcp://raspberrypi.local:60000` などホスト名/IP を揃えてください。`docker-compose.yml` はポート 60000 を公開します。
 
-> 再起動ポリシー: `docker-compose.yml` では `restart: unless-stopped` を指定しています。裸運用する場合は systemd で `Restart=always` を付け、片側クラッシュ時も自動復帰させてください。
+> 再起動ポリシー: `docker-compose.yml` では `restart: always` を指定しています。裸運用する場合も systemd で `Restart=always` を付け、片側クラッシュ時も自動復帰させてください。
 
 ## 参考: 生の GStreamer コマンド
 

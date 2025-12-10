@@ -24,7 +24,7 @@ services:
       dockerfile: docker/jetson/Dockerfile.jetson
     container_name: magicbox
     command: all
-    restart: unless-stopped
+    restart: always
 
     # NVIDIA runtime for GPU access
     runtime: nvidia
