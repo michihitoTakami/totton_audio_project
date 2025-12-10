@@ -33,9 +33,11 @@ services:
     devices:
       - /dev/snd:/dev/snd
 
-    # Web UI + RTP受信 (UDP 46000)
+    # Web UI + RTP受信 (UDP 46000, RTCP 46001/46002)
     ports:
       - "46000:46000/udp"
+      - "46001:46001/udp"
+      - "46002:46002/udp"
       - "80:80"
 
     # Shared memory for audio buffers

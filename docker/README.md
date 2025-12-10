@@ -6,7 +6,11 @@
 ローカル検証用 (`docker/local`) と Raspberry Pi 用 (`docker/raspi`) は不要になったため削除しました。
 
 ## Jetson Compose（magicboxのみ）
-Jetson 上で Magic Box を起動する構成です。RTP受信は Magic Box コンテナ内の FastAPI エンドポイント (`/api/rtp-input/*`) から開始・停止・設定変更できます。
+Jetson 上で Magic Box を起動する構成です。RTP受信は Magic Box コンテナ内の FastAPI エンドポイント (`/api/rtp-input/*`) から開始・停止・設定変更できます。RTP/RTCP のデフォルトポートは以下です:
+
+- RTP: 46000/udp
+- RTCP (Jetson受信): 46001/udp
+- RTCP (Jetson送信): 46002/udp
 
 ```bash
 cd docker
