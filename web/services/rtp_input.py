@@ -136,6 +136,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
     )
 
     # RTP/RTCP (rtpbin) を用い、送信側のタイムスタンプに同期。RTCPは port+1(受信) / port+2(送信) を使用。
+    # rtpbin.* のsinkとsrcは別チェーンに明示的に '!' で接続する。
     return [
         "gst-launch-1.0",
         "-e",
@@ -143,12 +144,14 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "name=rtpbin",
         f"latency={settings.latency_ms}",
         "ntp-sync=true",
+        "buffer-mode=sync",
         # RTP (payload)
         "udpsrc",
         f"port={settings.port}",
         f"caps={caps}",
         "!",
         "rtpbin.recv_rtp_sink_0",
+        "!",
         "rtpbin.recv_rtp_src_0",
         "!",
         depay,
