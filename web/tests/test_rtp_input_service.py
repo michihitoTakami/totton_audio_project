@@ -23,8 +23,8 @@ def test_build_gst_command_supports_encodings():
     assert "rtpbin" in l24
     assert any("rtcp" in part for part in l24)
     l24_str = " ".join(l24)
-    # sink -> depay までのチェーンに二重の '!' が入っていないことを確認
-    assert "! rtpbin.recv_rtp_src_0" not in l24_str
+    # sink -> src を '!' で連結している
+    assert "! rtpbin.recv_rtp_src_0 !" in l24_str
 
 
 def test_config_update_merges_and_validates():
