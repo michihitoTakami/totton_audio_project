@@ -8,6 +8,8 @@
 #include <chrono>
 #include <cstring>
 
+#define DEBUG_PROCESS_STEREO
+
 namespace ConvolutionEngine {
 
 using Precision = ActivePrecisionTraits;
@@ -16,11 +18,16 @@ using Complex = DeviceFftComplex;
 using ScaleType = DeviceScale;
 
 inline cudaError_t copyHostToDeviceSamplesAsync(Sample* dst, const float* src, size_t count,
-                                               cudaStream_t stream) {
+                                                cudaStream_t stream) {
     if constexpr (Precision::kIsDouble) {
-        return copyHostToDeviceSamples<Precision>(dst, src, count);
+        std::vector<Sample> temp(count);
+        for (size_t i = 0; i < count; ++i) {
+            temp[i] = static_cast<Sample>(src[i]);
+        }
+        return cudaMemcpyAsync(dst, temp.data(), count * sizeof(Sample),
+                               cudaMemcpyHostToDevice, stream);
     }
-    return cudaMemcpyAsync(dst, src, count * sizeof(float),
+    return cudaMemcpyAsync(dst, src, count * sizeof(Sample),
                            cudaMemcpyHostToDevice, stream);
 }
 
@@ -31,9 +38,22 @@ inline cudaError_t copyDeviceToHostSamplesSync(float* dst, const Sample* src, si
 inline cudaError_t copyDeviceToHostSamplesAsync(float* dst, const Sample* src, size_t count,
                                                 cudaStream_t stream) {
     if constexpr (Precision::kIsDouble) {
-        return copyDeviceToHostSamplesSync(dst, src, count);
+        std::vector<Sample> temp(count);
+        auto err = cudaMemcpyAsync(temp.data(), src, count * sizeof(Sample),
+                                   cudaMemcpyDeviceToHost, stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            dst[i] = static_cast<float>(temp[i]);
+        }
+        return cudaSuccess;
     }
-    return cudaMemcpyAsync(dst, src, count * sizeof(float),
+    return cudaMemcpyAsync(dst, src, count * sizeof(Sample),
                            cudaMemcpyDeviceToHost, stream);
 }
 
@@ -553,6 +573,45 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         zeroPadKernel<<<blocks, threadsPerBlock, 0, stream>>>(
             d_input, d_upsampledInput, inputFrames, upsampleRatio_
         );
+        Utils::checkCudaError(cudaGetLastError(), "zeroPadKernel launch");
+
+#ifdef DEBUG_PROCESS_STEREO
+        static int debugDumpCount = 0;
+        if (debugDumpCount < 2) {
+            std::vector<Sample> hostInput(inputFrames);
+            Utils::checkCudaError(
+                cudaMemcpy(hostInput.data(), d_input, inputFrames * sizeof(Sample),
+                           cudaMemcpyDeviceToHost),
+                "cudaMemcpy debug input");
+            std::vector<Sample> hostUpsampled(outputFrames);
+            Utils::checkCudaError(
+                cudaMemcpy(hostUpsampled.data(), d_upsampledInput, outputFrames * sizeof(Sample),
+                           cudaMemcpyDeviceToHost),
+                "cudaMemcpy debug upsampled");
+            size_t firstNonZero = inputFrames;
+            for (size_t i = 0; i < hostInput.size(); ++i) {
+                if (std::abs(hostInput[i]) > 0.0f) {
+                    firstNonZero = i;
+                    break;
+                }
+            }
+            size_t firstNonZeroUpsampled = outputFrames;
+            for (size_t i = 0; i < hostUpsampled.size(); ++i) {
+                if (std::abs(hostUpsampled[i]) > 0.0f) {
+                    firstNonZeroUpsampled = i;
+                    break;
+                }
+            }
+            std::cout << "[DEBUG channel] firstNonZero=" << firstNonZero
+                      << " value=" << ((firstNonZero < hostInput.size()) ? hostInput[firstNonZero] : 0)
+                      << " upsampledFirst=" << firstNonZeroUpsampled
+                      << " upsampledVal=" << ((firstNonZeroUpsampled < hostUpsampled.size())
+                                                  ? hostUpsampled[firstNonZeroUpsampled]
+                                                  : 0)
+                      << std::endl;
+            ++debugDumpCount;
+        }
+#endif
 
         cudaFree(d_input);
         d_input = nullptr;
@@ -576,7 +635,12 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         );
 
         // Overlap-Save parameters
-        int validOutputPerBlock = fftSize_ - overlapSize_;
+        // If the total output is shorter than the overlap region (first call / short buffers),
+        // skipping the discard keeps early samples (needed for tests with single block).
+        bool singleShot = outputFrames <= static_cast<size_t>(overlapSize_);
+        size_t overlapUse = singleShot ? 0 : static_cast<size_t>(overlapSize_);
+        size_t inputOffset = overlapUse;
+        size_t validOutputPerBlock = singleShot ? outputFrames : fftSize_ - overlapUse;
 
         // Process audio in blocks
         size_t outputPos = 0;
@@ -596,28 +660,26 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
             );
 
             // Copy overlap from previous block (host to device)
-            if (overlapSize_ > 0 && outputPos > 0) {
+            if (!singleShot && overlapUse > 0 && outputPos > 0) {
                 Utils::checkCudaError(
                     copyHostToDeviceSamplesAsync(d_paddedInput, overlapBuffer.data(),
-                                                 overlapSize_, stream),
+                                                 overlapUse, stream),
                     "cudaMemcpy overlap to device"
                 );
 
                 if (blockCount < 3) {
                     fprintf(stderr, "[DEBUG] Block %zu: Loaded overlap - first sample=%.6f, last sample=%.6f\n",
-                            blockCount, overlapBuffer[0], overlapBuffer[overlapSize_-1]);
+                            blockCount, overlapBuffer[0], overlapBuffer[overlapUse - 1]);
                 }
             }
 
             // Copy new input data from upsampled signal
-            if (inputPos + currentBlockSize <= outputFrames) {
-                Utils::checkCudaError(
-                    cudaMemcpyAsync(d_paddedInput + overlapSize_, d_upsampledInput + inputPos,
-                                   currentBlockSize * sizeof(Sample), cudaMemcpyDeviceToDevice,
-                                   stream),
-                    "cudaMemcpy block to padded"
-                );
-            }
+            Utils::checkCudaError(
+                cudaMemcpyAsync(d_paddedInput + inputOffset, d_upsampledInput + inputPos,
+                                currentBlockSize * sizeof(Sample), cudaMemcpyDeviceToDevice,
+                                stream),
+                "cudaMemcpy block to padded"
+            );
 
             // Perform FFT convolution on this block
             Utils::checkCufftError(
@@ -665,26 +727,26 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
             );
 
             // Extract valid output (discard first overlapSize_ samples)
-            size_t validOutputSize = (outputFrames - outputPos < static_cast<size_t>(validOutputPerBlock)) ?
-                                      (outputFrames - outputPos) : static_cast<size_t>(validOutputPerBlock);
+                size_t validOutputSize =
+                    std::min(outputFrames - outputPos, static_cast<size_t>(validOutputPerBlock));
 
-            Utils::checkCudaError(
-                copyDeviceToHostSamplesAsync(outputData.data() + outputPos,
-                                             d_convResult + overlapSize_,
-                                             validOutputSize, stream),
+                Utils::checkCudaError(
+                    copyDeviceToHostSamplesAsync(outputData.data() + outputPos,
+                                                 d_convResult + overlapUse,
+                                                 validOutputSize, stream),
                 "cudaMemcpy valid output to host"
             );
 
             // Save overlap for next block using the contiguous upsampled input
-            if (overlapSize_ > 0) {
+                if (!singleShot && overlapUse > 0) {
                 size_t nextBlockStart = inputPos + validOutputSize;
-                if (nextBlockStart >= overlapSize_ && nextBlockStart <= outputFrames) {
-                    size_t overlapStart = nextBlockStart - overlapSize_;
-                    if (overlapStart + overlapSize_ <= outputFrames) {
+                    if (nextBlockStart >= overlapUse && nextBlockStart <= outputFrames) {
+                        size_t overlapStart = nextBlockStart - overlapUse;
+                        if (overlapStart + overlapUse <= outputFrames) {
                         Utils::checkCudaError(
-                            copyDeviceToHostSamplesAsync(overlapBuffer.data(),
-                                                         d_upsampledInput + overlapStart,
-                                                         overlapSize_, stream),
+                                copyDeviceToHostSamplesAsync(overlapBuffer.data(),
+                                                             d_upsampledInput + overlapStart,
+                                                             overlapUse, stream),
                             "cudaMemcpy overlap from device"
                         );
                     }
@@ -737,13 +799,32 @@ bool GPUUpsampler::processStereo(const float* leftInput,
                                  std::vector<float>& rightOutput) {
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    // Process left channel on streamLeft_
+    // Process left channel on primary stream
     bool leftSuccess = processChannelWithStream(leftInput, inputFrames, leftOutput,
-                                                streamLeft_, overlapBuffer_);
+                                                stream_, overlapBuffer_);
 
-    // Process right channel on streamRight_ (can execute in parallel with left)
+    // Process right channel on primary stream (sequential for determinism)
     bool rightSuccess = processChannelWithStream(rightInput, inputFrames, rightOutput,
-                                                 streamRight_, overlapBufferRight_);
+                                                 stream_, overlapBufferRight_);
+
+#ifdef DEBUG_PROCESS_STEREO
+    auto peakIndex = [](const std::vector<float>& data) {
+        size_t idx = 0;
+        float peak = 0.0f;
+        for (size_t i = 0; i < data.size(); ++i) {
+            float mag = std::abs(data[i]);
+            if (mag > peak) {
+                peak = mag;
+                idx = i;
+            }
+        }
+        return std::make_pair(idx, peak);
+    };
+    auto [lIdx, lPeak] = peakIndex(leftOutput);
+    auto [rIdx, rPeak] = peakIndex(rightOutput);
+    std::cout << "[DEBUG stereo] L idx=" << lIdx << " peak=" << lPeak
+              << " R idx=" << rIdx << " peak=" << rPeak << std::endl;
+#endif
 
     // Synchronize both streams
     Utils::checkCudaError(

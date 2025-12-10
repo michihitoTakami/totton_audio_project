@@ -14,8 +14,12 @@ using ScaleType = DeviceScale;
 inline cudaError_t copyHostToDeviceStreaming(Sample* dst, const float* src, size_t count,
                                              cudaStream_t stream) {
     if constexpr (Precision::kIsDouble) {
-        // Synchronous copy with conversion
-        return copyHostToDeviceSamples<Precision>(dst, src, count);
+        std::vector<Sample> temp(count);
+        for (size_t i = 0; i < count; ++i) {
+            temp[i] = static_cast<Sample>(src[i]);
+        }
+        return cudaMemcpyAsync(dst, temp.data(), count * sizeof(Sample),
+                               cudaMemcpyHostToDevice, stream);
     }
     return cudaMemcpyAsync(dst, src, count * sizeof(Sample), cudaMemcpyHostToDevice, stream);
 }
@@ -23,7 +27,20 @@ inline cudaError_t copyHostToDeviceStreaming(Sample* dst, const float* src, size
 inline cudaError_t copyDeviceToHostStreaming(float* dst, const Sample* src, size_t count,
                                              cudaStream_t stream) {
     if constexpr (Precision::kIsDouble) {
-        return copyDeviceToHostSamples<Precision>(dst, src, count);
+        std::vector<Sample> temp(count);
+        auto err = cudaMemcpyAsync(temp.data(), src, count * sizeof(Sample),
+                                   cudaMemcpyDeviceToHost, stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            dst[i] = static_cast<float>(temp[i]);
+        }
+        return cudaSuccess;
     }
     return cudaMemcpyAsync(dst, src, count * sizeof(Sample), cudaMemcpyDeviceToHost, stream);
 }

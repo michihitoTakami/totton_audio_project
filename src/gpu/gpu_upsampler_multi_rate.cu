@@ -435,7 +435,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     // Copy to the original filter FFT for EQ restoration (device)
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy to originalFilterFFT"
     );
 
@@ -443,14 +443,14 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     h_originalFilterFft_.resize(filterFftSize_);
     Utils::checkCudaError(
         cudaMemcpy(h_originalFilterFft_.data(), d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost),
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
         "cudaMemcpy to h_originalFilterFft_"
     );
 
     // Also copy to the A buffer for ping-pong
     Utils::checkCudaError(
         cudaMemcpy(d_filterFFT_A_, d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
+                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy to filterFFT_A"
     );
     d_activeFilterFFT_ = d_filterFFT_A_;
