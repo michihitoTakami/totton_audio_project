@@ -7,7 +7,7 @@
 ローカル検証用 (`docker/local`) と Raspberry Pi 用 (`docker/raspi`) は不要になったため削除しました。
 
 ## Jetson Compose（magicboxのみ）
-Jetson 上で Magic Box を起動する構成です。RTP受信は Magic Box コンテナ内の FastAPI エンドポイント (`/api/rtp-input/*`) から開始・停止・設定変更できます。RTP/RTCP のデフォルトポートは以下です:
+Jetson 上で Magic Box を起動する構成です。コンテナ起動直後から RTP 受信が自動で開始されるため、API を叩かなくても音が入ります（環境変数で無効化可能）。RTP/RTCP のデフォルトポートは以下です:
 
 - RTP: 46000/udp
 - RTCP (Jetson受信): 46001/udp
@@ -24,7 +24,9 @@ docker compose -f jetson/docker-compose.jetson.yml down
 ポイント:
 - JetPack 6.1 以降 + NVIDIA Container Runtime 必須
 - `--device /dev/snd` を必ず付与（Loopback/実デバイスをコンテナへ渡す）
-- RTP 受信は Magic Box コンテナ内の `rtp_input` サービスが担当し、API `/api/rtp-input/*` で開始/停止・設定変更できます。
+- RTP 受信は Magic Box コンテナ内の `rtp_input` サービスが担当し、デフォルトで自動起動します。無効化したい場合は `MAGICBOX_RTP_AUTOSTART=false` を指定してください。
+- 受信設定（ポート/レート/デバイス/品質）は環境変数で上書き可能です（例: `MAGICBOX_RTP_PORT`, `MAGICBOX_RTP_SAMPLE_RATE`, `MAGICBOX_RTP_DEVICE`, `MAGICBOX_RTP_QUALITY`）。詳細は Web API `/api/rtp-input/config` のスキーマに準拠します。
+- 起動後に gst-launch が立ち上がっているかを確認するには `docker compose -f jetson/docker-compose.jetson.yml exec magicbox pgrep -f rtpbin` を利用してください。
 - サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build magicbox` のようにサービス名を指定
 - `restart: always` を指定済み。systemd で単体起動する場合も `Restart=always` を付け、片側クラッシュ時に自動復帰させてください。
 

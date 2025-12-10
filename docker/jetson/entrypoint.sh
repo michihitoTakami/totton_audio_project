@@ -19,6 +19,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
 DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
 RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
+: "${MAGICBOX_RTP_AUTOSTART:=true}"
 
 # Colors for logging
 RED='\033[0;31m'
@@ -144,6 +145,7 @@ start_daemon() {
 # Start both services (production mode)
 start_all() {
     log_info "Starting Magic Box in production mode..."
+    log_info "RTP autostart flag: ${MAGICBOX_RTP_AUTOSTART}"
 
     # Start daemon in background
     log_info "Starting Audio Daemon in background..."
