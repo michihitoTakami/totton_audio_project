@@ -143,7 +143,8 @@ int main(int argc, char **argv) {
     if (!currentParams) {
         // UAC2 Gadget など、誰かがキャプチャを開始するまで closed のデバイスがある
         // デフォルト値で起動し、後でパラメータ変更を検知して再起動する
-        logWarn("[rpi_rtp_sender] hw_params not available yet, using defaults (S32_LE, 48000Hz, 2ch)");
+        logWarn(
+            "[rpi_rtp_sender] hw_params not available yet, using defaults (S32_LE, 48000Hz, 2ch)");
         currentParams = CaptureParams{};
         currentParams->sampleRate = 48000;
         currentParams->channels = 2;
@@ -158,6 +159,7 @@ int main(int argc, char **argv) {
     cfg.rtcpListenPort = opt.rtcpListenPort;
     cfg.payloadType = opt.payloadType;
     cfg.device = opt.device;
+    cfg.latencyMs = opt.latencyMs;
 
     auto pipelineArgs = RtpPipelineBuilder::build(cfg, *currentParams);
     const std::string pipelineStr = RtpPipelineBuilder::toCommandString(pipelineArgs);

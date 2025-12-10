@@ -20,6 +20,7 @@ struct RtpOptions {
     std::optional<AlsaCapture::SampleFormat> formatOverride{};
     LogLevel logLevel{LogLevel::Warn};
     int pollIntervalMs{250};
+    int latencyMs{100};
     std::string rateNotifyUrl{};
     bool dryRun{false};
 };
