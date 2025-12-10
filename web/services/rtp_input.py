@@ -130,6 +130,9 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
     depay, raw_format = _ENCODING_TO_DEPAY_AND_FORMAT.get(
         settings.encoding, ("rtpL24depay", "S24BE")
     )
+    # ALSAに渡す直前はLE/S32で揃え、フォーマット不一致による not-linked を防ぐ
+    sink_format = "S32LE"
+
     caps = (
         f"application/x-rtp,media=audio,clock-rate={settings.sample_rate},"
         f"encoding-name={settings.encoding},payload=96,channels={settings.channels}"
@@ -161,14 +164,14 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"quality={settings.resample_quality}",
         "!",
         # フォーマットは変換可能な範囲でシンクに合わせる
-        f"audio/x-raw,format={raw_format},rate={settings.sample_rate},channels={settings.channels}",
+        f"audio/x-raw,format={sink_format},rate={settings.sample_rate},channels={settings.channels}",
         "!",
         "queue",
         "max-size-time=200000000",  # 200ms safety buffer
         "!",
         "alsasink",
         f"device={settings.device}",
-        "sync=true",
+        "sync=false",
         # RTCP (recv)
         "udpsrc",
         f"port={settings.rtcp_port}",
