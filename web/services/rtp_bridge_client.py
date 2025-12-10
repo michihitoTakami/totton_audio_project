@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ValidationError
 import zmq
@@ -41,7 +41,7 @@ class RtpBridgeClient:
     def __enter__(self) -> "RtpBridgeClient":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:  # noqa: ANN001
         self.close()
         return False
 
