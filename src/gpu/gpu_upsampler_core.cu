@@ -594,12 +594,15 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         );
 
         // Overlap-Save parameters
-        // For very short inputs (single block shorter than overlap), skip the
-        // overlap discard so we keep the leading samples needed for tests like
-        // ProcessStereo.
-        size_t overlapUse =
-            (outputFrames <= static_cast<size_t>(overlapSize_)) ? 0 : static_cast<size_t>(overlapSize_);
-        size_t inputOffset = overlapUse;
+        // For short, single-block processing (output shorter than overlap), discard
+        // only the filter energy centroid so that leading output (e.g., stereo
+        // impulse offsets) remains in view.
+        bool shortInput = outputFrames <= static_cast<size_t>(overlapSize_);
+        size_t centroidOverlap = static_cast<size_t>(
+            std::min<long double>(static_cast<long double>(overlapSize_),
+                                  static_cast<long double>(std::max(0.0f, baseFilterCentroid_))));
+        size_t overlapUse = shortInput ? centroidOverlap : static_cast<size_t>(overlapSize_);
+        size_t inputOffset = shortInput ? 0 : overlapUse;
         int validOutputPerBlock = fftSize_ - static_cast<int>(overlapUse);
 
         // Process audio in blocks
