@@ -18,16 +18,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/pcm-bridge
-COPY raspberry_pi/rtp_receiver /opt/pcm-bridge/raspberry_pi/rtp_receiver
-COPY raspberry_pi/rtp_sender.py /opt/pcm-bridge/raspberry_pi/rtp_sender.py
-COPY raspberry_pi/__init__.py /opt/pcm-bridge/raspberry_pi/__init__.py
-COPY raspberry_pi/docker/entrypoint.sh /usr/local/bin/pcm-bridge-entrypoint.sh
+COPY rtp_receiver /opt/pcm-bridge/raspberry_pi/rtp_receiver
+COPY rtp_sender.py /opt/pcm-bridge/raspberry_pi/rtp_sender.py
+COPY __init__.py /opt/pcm-bridge/raspberry_pi/__init__.py
+COPY docker/entrypoint.sh /usr/local/bin/pcm-bridge-entrypoint.sh
 RUN chmod +x /usr/local/bin/pcm-bridge-entrypoint.sh
-RUN pip3 install --no-cache-dir pyzmq
+RUN pip3 install --no-cache-dir --break-system-packages pyzmq
 
 ENV PYTHONPATH=/opt/pcm-bridge:${PYTHONPATH}
 
-ENV RTP_SENDER_DEVICE=hw:0,0 \
+ENV RTP_SENDER_DEVICE=hw:2,0 \
     RTP_SENDER_HOST=192.168.55.1 \
     RTP_SENDER_RTP_PORT=46000 \
     RTP_SENDER_RTCP_PORT=46001 \
