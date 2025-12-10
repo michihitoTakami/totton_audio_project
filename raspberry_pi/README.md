@@ -98,10 +98,10 @@ Jetsonの80番ポートにNginxでリバースプロキシを挟み、同一LAN�
 
 ```bash
 # Raspberry Pi上で実行
-docker compose -f raspberry_pi/docker-compose.yml up -d --build
+docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender jetson-proxy
 
 # ログ確認
-docker compose -f raspberry_pi/docker-compose.yml logs -f pcm-bridge
+docker compose -f raspberry_pi/docker-compose.yml logs -f rtp-sender
 docker compose -f raspberry_pi/docker-compose.yml logs -f jetson-proxy
 
 # 停止
@@ -122,6 +122,18 @@ docker compose -f raspberry_pi/docker-compose.yml down
 - `PCM_BRIDGE_FRAMES` (既定: `4096`)
 - `PCM_BRIDGE_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, 既定: `warn`)
 - `PCM_BRIDGE_ITERATIONS` (`-1` で無限送信)
+- `PCM_BRIDGE_MODE` (`run` | `help` | `version` | `rtp`) — `rtp` を指定すると GStreamer RTP 送出モードで起動
+- `RTP_SENDER_DEVICE` (既定: `hw:0,0`)
+- `RTP_SENDER_HOST` (既定: `jetson`)
+- `RTP_SENDER_RTP_PORT` (既定: `46000`)
+- `RTP_SENDER_RTCP_PORT` (既定: `46001`)
+- `RTP_SENDER_RTCP_LISTEN_PORT` (既定: `46002`)
+- `RTP_SENDER_PAYLOAD_TYPE` (既定: `96`)
+- `RTP_SENDER_POLL_MS` (既定: `250`)
+- `RTP_SENDER_LOG_LEVEL` (既定: `warn`)
+- `RTP_SENDER_FORMAT` (`S16_LE` | `S24_3LE` | `S32_LE` を固定したい場合)
+- `RTP_SENDER_NOTIFY_URL` (レート変更時に HTTP POST を送る先)
+- `RTP_SENDER_DRY_RUN` (`true`/`1` でパイプライン起動せず文字列だけ確認)
 
 ## 手動テスト（null sink/loopback + nc）
 
