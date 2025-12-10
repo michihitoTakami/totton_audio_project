@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import logging
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Iterable, Sequence
@@ -49,6 +51,7 @@ _ENCODING_TO_DEPAY_AND_FORMAT = {
 }
 
 ProcessRunner = Callable[[Sequence[str]], Awaitable[asyncio.subprocess.Process]]
+_logger = logging.getLogger(__name__)
 
 
 def _env_int(
@@ -190,6 +193,7 @@ class RtpReceiverManager:
         restart_delay_sec: float = 5.0,
         restart_max_delay_sec: float = 30.0,
         auto_restart: bool = True,
+        log_min_interval_sec: float = 30.0,
     ):
         self._settings = settings or load_default_settings()
         self._process: asyncio.subprocess.Process | None = None
@@ -205,6 +209,9 @@ class RtpReceiverManager:
         self._restart_delay = max(0.1, restart_delay_sec)
         self._restart_max_delay = max(self._restart_delay, restart_max_delay_sec)
         self._auto_restart = auto_restart
+        self._log_interval = max(1.0, log_min_interval_sec)
+        self._log_next_ts = 0.0
+        self._log_last_msg: str | None = None
 
     @staticmethod
     async def _default_process_runner(cmd: Sequence[str]) -> asyncio.subprocess.Process:
@@ -324,6 +331,7 @@ class RtpReceiverManager:
                     continue
                 except Exception as exc:  # noqa: BLE001
                     self._last_error = f"autostart failed: {exc}"
+                    self._warn_throttled(self._last_error)
                     await asyncio.sleep(backoff)
                     backoff = min(self._restart_max_delay, backoff * 2)
                     continue
@@ -351,12 +359,21 @@ class RtpReceiverManager:
                 if rc is not None
                 else "rtp process exited"
             )
+            self._warn_throttled(self._last_error)
             await asyncio.sleep(backoff)
             backoff = min(self._restart_max_delay, backoff * 2)
 
     async def _restart_locked(self) -> None:
         await self._stop_unlocked(for_restart=True)
         await self._start_unlocked()
+
+    def _warn_throttled(self, message: str) -> None:
+        """連続失敗時にログスパムしないよう一定間隔でのみ出力."""
+        now = time.monotonic()
+        if message != self._log_last_msg or now >= self._log_next_ts:
+            _logger.warning(message)
+            self._log_last_msg = message
+            self._log_next_ts = now + self._log_interval
 
     async def apply_config_and_restart(
         self, update: RtpInputConfigUpdate
