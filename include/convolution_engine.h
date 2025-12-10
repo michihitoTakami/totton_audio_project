@@ -4,6 +4,7 @@
 #include "config_loader.h"  // PhaseType enum
 #include "gpu/partition_plan.h"
 #include "gpu/pinned_allocator.h"
+#include "gpu/precision_traits.h"
 #include "phase_alignment.h"
 
 #include <cuda_runtime.h>
@@ -236,8 +237,7 @@ class GPUUpsampler {
     void resetStreaming();
 
     // Configure partitioned convolution (Issue #351)
-    void setPartitionedConvolutionConfig(
-        const AppConfig::PartitionedConvolutionConfig& config);
+    void setPartitionedConvolutionConfig(const AppConfig::PartitionedConvolutionConfig& config);
     bool isPartitionedConvolutionEnabled() const {
         return partitionPlan_.enabled;
     }
@@ -404,7 +404,7 @@ class GPUUpsampler {
     // Call this after all GPU transfers are complete (FFT pre-computation done)
     void releaseHostCoefficients();
 
-    void startPhaseAlignedCrossfade(cufftComplex* previousFilter, float previousDelay,
+    void startPhaseAlignedCrossfade(DeviceFftComplex* previousFilter, float previousDelay,
                                     float newDelay);
     void cancelPhaseAlignedCrossfade();
     void applyPhaseAlignedCrossfade(StreamFloatVector& newOutput,
@@ -421,8 +421,9 @@ class GPUUpsampler {
     PhaseType phaseType_ = PhaseType::Minimum;  // Filter phase type (default: Minimum)
 
     // Filter coefficients (single-rate mode)
-    std::vector<float> h_filterCoeffs_;  // Host
-    float* d_filterCoeffs_;              // Device
+    std::vector<float> h_filterCoeffs_;              // Host (float32 source file)
+    std::vector<DeviceSample> h_filterCoeffsTyped_;  // Host in active precision
+    DeviceSample* d_filterCoeffs_;                   // Device
 
     // Dual-rate support
     bool dualRateEnabled_;          // True if dual-rate mode is active
@@ -430,11 +431,11 @@ class GPUUpsampler {
 
     // 44.1kHz family coefficients
     std::vector<float> h_filterCoeffs44k_;  // Host coefficients for 44.1kHz family
-    cufftComplex* d_filterFFT_44k_;         // Pre-computed FFT for 44.1kHz family
+    DeviceFftComplex* d_filterFFT_44k_;     // Pre-computed FFT for 44.1kHz family
 
     // 48kHz family coefficients
     std::vector<float> h_filterCoeffs48k_;  // Host coefficients for 48kHz family
-    cufftComplex* d_filterFFT_48k_;         // Pre-computed FFT for 48kHz family
+    DeviceFftComplex* d_filterFFT_48k_;     // Pre-computed FFT for 48kHz family
 
     // Quad-phase support (2 rate families × 2 phase types)
     bool quadPhaseEnabled_;  // True if quad-phase mode is active
@@ -442,8 +443,8 @@ class GPUUpsampler {
     // Linear phase coefficients (44.1kHz and 48kHz)
     std::vector<float> h_filterCoeffs44k_linear_;  // Host coefficients for 44.1kHz linear phase
     std::vector<float> h_filterCoeffs48k_linear_;  // Host coefficients for 48kHz linear phase
-    cufftComplex* d_filterFFT_44k_linear_;         // Pre-computed FFT for 44.1kHz linear phase
-    cufftComplex* d_filterFFT_48k_linear_;         // Pre-computed FFT for 48kHz linear phase
+    DeviceFftComplex* d_filterFFT_44k_linear_;     // Pre-computed FFT for 44.1kHz linear phase
+    DeviceFftComplex* d_filterFFT_48k_linear_;     // Pre-computed FFT for 48kHz linear phase
 
     // Multi-rate support (8 configurations)
     bool multiRateEnabled_;      // True if multi-rate mode is active
@@ -451,34 +452,35 @@ class GPUUpsampler {
     int currentMultiRateIndex_;  // Index into MULTI_RATE_CONFIGS
     std::vector<float>
         h_filterCoeffsMulti_[MULTI_RATE_CONFIG_COUNT];  // Host coefficients for all 8 configs
-    cufftComplex*
+    DeviceFftComplex*
         d_filterFFT_Multi_[MULTI_RATE_CONFIG_COUNT];  // Pre-computed FFT for all 8 configs
 
     // Double-buffered filter FFT (ping-pong) for glitch-free EQ updates
-    cufftComplex* d_filterFFT_A_;              // Filter FFT buffer A
-    cufftComplex* d_filterFFT_B_;              // Filter FFT buffer B
-    cufftComplex* d_activeFilterFFT_;          // Currently active filter (points to A or B)
-    cufftComplex* d_originalFilterFFT_;        // Original filter FFT (without EQ, for restoration)
-    cufftComplex* d_crossfadeFilterSnapshot_;  // Snapshot of previous filter during phase crossfade
-    size_t filterFftSize_;                     // Size of filter FFT arrays
-    bool eqApplied_;                           // True if EQ has been applied
+    DeviceFftComplex* d_filterFFT_A_;        // Filter FFT buffer A
+    DeviceFftComplex* d_filterFFT_B_;        // Filter FFT buffer B
+    DeviceFftComplex* d_activeFilterFFT_;    // Currently active filter (points to A or B)
+    DeviceFftComplex* d_originalFilterFFT_;  // Original filter FFT (without EQ, for restoration)
+    DeviceFftComplex*
+        d_crossfadeFilterSnapshot_;  // Snapshot of previous filter during phase crossfade
+    size_t filterFftSize_;           // Size of filter FFT arrays
+    bool eqApplied_;                 // True if EQ has been applied
 
     // Working buffers
-    float* d_inputBlock_;         // Device input block
-    float* d_outputBlock_;        // Device output block (upsampled)
-    cufftComplex* d_inputFFT_;    // FFT of input
-    cufftComplex* d_convResult_;  // Convolution result in frequency domain
+    DeviceSample* d_inputBlock_;      // Device input block
+    DeviceSample* d_outputBlock_;     // Device output block (upsampled)
+    DeviceFftComplex* d_inputFFT_;    // FFT of input
+    DeviceFftComplex* d_convResult_;  // Convolution result in frequency domain
 
     // cuFFT plans
     cufftHandle fftPlanForward_;
     cufftHandle fftPlanInverse_;
 
     // EQ-specific resources (persistent to avoid allocation during real-time EQ switching)
-    cufftHandle eqPlanD2Z_;                          // Double-precision R2C for EQ
-    cufftHandle eqPlanZ2D_;                          // Double-precision C2R for EQ
-    cufftDoubleReal* d_eqLogMag_;                    // GPU buffer for log magnitude (reused)
-    cufftDoubleComplex* d_eqComplexSpec_;            // GPU buffer for complex spectrum (reused)
-    std::vector<cufftComplex> h_originalFilterFft_;  // Host cache of original filter FFT
+    cufftHandle eqPlanD2Z_;                              // Double-precision R2C for EQ
+    cufftHandle eqPlanZ2D_;                              // Double-precision C2R for EQ
+    cufftDoubleReal* d_eqLogMag_;                        // GPU buffer for log magnitude (reused)
+    cufftDoubleComplex* d_eqComplexSpec_;                // GPU buffer for complex spectrum (reused)
+    std::vector<DeviceFftComplex> h_originalFilterFft_;  // Host cache of original filter FFT
 
     // Statistics
     Stats stats_;
@@ -495,17 +497,17 @@ class GPUUpsampler {
     int streamOverlapSize_;            // Adjusted overlap per block for streaming alignment
 
     // Streaming GPU buffers (pre-allocated to avoid malloc/free in callbacks)
-    float* d_streamInput_;                  // Device buffer for accumulated input
-    float* d_streamUpsampled_;              // Device buffer for upsampled input
-    float* d_streamPadded_;                 // Device buffer for [overlap | new] concatenation
-    cufftComplex* d_streamInputFFT_;        // FFT of padded input
-    float* d_streamConvResult_;             // Convolution result
-    cufftComplex* d_streamInputFFTBackup_;  // Backup for phase-aware crossfade
-    float* d_streamConvResultOld_;          // Old filter convolution result during crossfade
+    DeviceSample* d_streamInput_;               // Device buffer for accumulated input
+    DeviceSample* d_streamUpsampled_;           // Device buffer for upsampled input
+    DeviceSample* d_streamPadded_;              // Device buffer for [overlap | new] concatenation
+    DeviceFftComplex* d_streamInputFFT_;        // FFT of padded input
+    DeviceSample* d_streamConvResult_;          // Convolution result
+    DeviceFftComplex* d_streamInputFFTBackup_;  // Backup for phase-aware crossfade
+    DeviceSample* d_streamConvResultOld_;       // Old filter convolution result during crossfade
 
     // Device-resident overlap buffers (eliminates H↔D transfers in real-time path)
-    float* d_overlapLeft_;   // GPU overlap buffer for left channel
-    float* d_overlapRight_;  // GPU overlap buffer for right channel
+    DeviceSample* d_overlapLeft_;   // GPU overlap buffer for left channel
+    DeviceSample* d_overlapRight_;  // GPU overlap buffer for right channel
 
     // Host pinned buffers (long-lived buffers use manual register/unregister;
     // temporary outputs use ScopedHostPin inside implementations)
@@ -534,14 +536,14 @@ class GPUUpsampler {
         int overlapSize = 0;
         size_t fftComplexSize = 0;
         int64_t sampleOffset = 0;
-        cufftComplex* d_filterFFT[2] = {nullptr, nullptr};
+        DeviceFftComplex* d_filterFFT[2] = {nullptr, nullptr};
         int activeFilterIndex = 0;
 
         // Runtime buffers (allocated when streaming is enabled)
-        float* d_timeDomain = nullptr;
-        cufftComplex* d_inputFFT = nullptr;
-        float* d_overlapLeft = nullptr;
-        float* d_overlapRight = nullptr;
+        DeviceSample* d_timeDomain = nullptr;
+        DeviceFftComplex* d_inputFFT = nullptr;
+        DeviceSample* d_overlapLeft = nullptr;
+        DeviceSample* d_overlapRight = nullptr;
         cufftHandle planForward = 0;
         cufftHandle planInverse = 0;
     };
@@ -553,9 +555,9 @@ class GPUUpsampler {
     size_t maxPartitionValidOutput_ = 0;
     int partitionFastFftSize_ = 0;
     int partitionFastFftComplexSize_ = 0;
-    float* d_tailAccumulator_ = nullptr;
-    float* d_tailMixBuffer_ = nullptr;
-    float* d_upsampledHistory_ = nullptr;
+    DeviceSample* d_tailAccumulator_ = nullptr;
+    DeviceSample* d_tailMixBuffer_ = nullptr;
+    DeviceSample* d_upsampledHistory_ = nullptr;
     size_t tailAccumulatorSize_ = 0;
     size_t historyBufferSize_ = 0;
     int64_t tailBaseSample_ = 0;
@@ -574,11 +576,11 @@ class GPUUpsampler {
                                        StreamFloatVector& streamInputBuffer,
                                        size_t& streamInputAccumulated);
     bool processPartitionBlock(PartitionState& state, cudaStream_t stream,
-                               const float* d_newSamples, int newSamples,
-                               float* d_channelOverlap, StreamFloatVector& tempOutput,
+                               const DeviceSample* d_newSamples, int newSamples,
+                               DeviceSample* d_channelOverlap, StreamFloatVector& tempOutput,
                                StreamFloatVector& outputData);
     void setActiveHostCoefficients(const std::vector<float>& source);
-    bool updateActiveImpulseFromSpectrum(const cufftComplex* spectrum,
+    bool updateActiveImpulseFromSpectrum(const DeviceFftComplex* spectrum,
                                          std::vector<float>& destination);
     bool refreshPartitionFiltersFromHost();
     bool refreshPartitionFiltersFromActiveSpectrum();
@@ -588,7 +590,7 @@ class GPUUpsampler {
         int samplesRemaining = 0;
         int totalSamples = 0;
         int samplesProcessed = 0;
-        cufftComplex* previousFilter = nullptr;
+        DeviceFftComplex* previousFilter = nullptr;
         float previousDelay = 0.0f;
         float newDelay = 0.0f;
         bool delayNew = true;
@@ -614,7 +616,7 @@ class GPUUpsampler {
     void removePinnedHostBuffer(void* ptr);
     void unregisterHostBuffers();
     cufftHandle partitionImpulsePlanInverse_ = 0;
-    float* d_partitionImpulse_ = nullptr;
+    DeviceSample* d_partitionImpulse_ = nullptr;
 };
 
 // Utility functions

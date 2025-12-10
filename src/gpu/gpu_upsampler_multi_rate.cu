@@ -6,6 +6,10 @@
 
 namespace ConvolutionEngine {
 
+using Precision = ActivePrecisionTraits;
+using Sample = DeviceSample;
+using Complex = DeviceFftComplex;
+
 // GPUUpsampler implementation - Multi-Rate methods
 
 bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
@@ -81,31 +85,31 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
 
     // Allocate GPU buffers for both families
     Utils::checkCudaError(
-        cudaMalloc(&d_filterFFT_44k_, filterFftSize_ * sizeof(cufftComplex)),
+        cudaMalloc(&d_filterFFT_44k_, filterFftSize_ * sizeof(Complex)),
         "cudaMalloc d_filterFFT_44k_"
     );
     Utils::checkCudaError(
-        cudaMalloc(&d_filterFFT_48k_, filterFftSize_ * sizeof(cufftComplex)),
+        cudaMalloc(&d_filterFFT_48k_, filterFftSize_ * sizeof(Complex)),
         "cudaMalloc d_filterFFT_48k_"
     );
 
     // Compute FFT for 44.1kHz coefficients
     {
-        float* d_temp;
+        Sample* d_temp;
         Utils::checkCudaError(
-            cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+            cudaMalloc(&d_temp, fftSize_ * sizeof(Sample)),
             "cudaMalloc temp for 44k FFT"
         );
         Utils::checkCudaError(
-            cudaMemset(d_temp, 0, fftSize_ * sizeof(float)),
+            cudaMemset(d_temp, 0, fftSize_ * sizeof(Sample)),
             "cudaMemset temp"
         );
         Utils::checkCudaError(
-            cudaMemcpy(d_temp, h_filterCoeffs44k_.data(), filterTaps_ * sizeof(float), cudaMemcpyHostToDevice),
+            copyHostToDeviceSamples<Precision>(d_temp, h_filterCoeffs44k_.data(), filterTaps_),
             "cudaMemcpy 44k coeffs to device"
         );
         Utils::checkCufftError(
-            cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_44k_),
+            Precision::execForward(fftPlanForward_, d_temp, d_filterFFT_44k_),
             "cufftExecR2C for 44k"
         );
         cudaFree(d_temp);
@@ -113,21 +117,21 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
 
     // Compute FFT for 48kHz coefficients
     {
-        float* d_temp;
+        Sample* d_temp;
         Utils::checkCudaError(
-            cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+            cudaMalloc(&d_temp, fftSize_ * sizeof(Sample)),
             "cudaMalloc temp for 48k FFT"
         );
         Utils::checkCudaError(
-            cudaMemset(d_temp, 0, fftSize_ * sizeof(float)),
+            cudaMemset(d_temp, 0, fftSize_ * sizeof(Sample)),
             "cudaMemset temp"
         );
         Utils::checkCudaError(
-            cudaMemcpy(d_temp, h_filterCoeffs48k_.data(), filterTaps_ * sizeof(float), cudaMemcpyHostToDevice),
+            copyHostToDeviceSamples<Precision>(d_temp, h_filterCoeffs48k_.data(), filterTaps_),
             "cudaMemcpy 48k coeffs to device"
         );
         Utils::checkCufftError(
-            cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_48k_),
+            Precision::execForward(fftPlanForward_, d_temp, d_filterFFT_48k_),
             "cufftExecR2C for 48k"
         );
         cudaFree(d_temp);
@@ -139,14 +143,14 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
     // Copy to the original filter FFT for EQ restoration
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy to originalFilterFFT"
     );
 
     // Also copy to the A/B buffers for ping-pong
     Utils::checkCudaError(
         cudaMemcpy(d_filterFFT_A_, d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy to filterFFT_A"
     );
     d_activeFilterFFT_ = d_filterFFT_A_;
@@ -183,10 +187,10 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
               << std::endl;
 
     float previousDelay = getCurrentGroupDelay();
-    cufftComplex* previousFilter = d_activeFilterFFT_;
+    Complex* previousFilter = d_activeFilterFFT_;
 
     // Select the source FFT for the target family (considering phase type in quad-phase mode)
-    cufftComplex* sourceFFT;
+    Complex* sourceFFT;
     if (quadPhaseEnabled_) {
         // Quad-phase mode: select based on both family and phase type
         if (targetFamily == RateFamily::RATE_44K) {
@@ -200,11 +204,11 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     }
 
     // Use double-buffering for glitch-free switching
-    cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
+    Complex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
 
     Utils::checkCudaError(
         cudaMemcpyAsync(backBuffer, sourceFFT,
-                        filterFftSize_ * sizeof(cufftComplex),
+                        filterFftSize_ * sizeof(Complex),
                         cudaMemcpyDeviceToDevice, stream_),
         "cudaMemcpyAsync rate family switch"
     );
@@ -232,7 +236,7 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     // Update original filter FFT for EQ restoration (device)
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, sourceFFT,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy update originalFilterFFT"
     );
 
@@ -240,7 +244,7 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     h_originalFilterFft_.resize(filterFftSize_);
     Utils::checkCudaError(
         cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost),
         "cudaMemcpy update h_originalFilterFft_"
     );
 
@@ -397,26 +401,26 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
 
         // Allocate GPU buffer for this config's FFT
         Utils::checkCudaError(
-            cudaMalloc(&d_filterFFT_Multi_[i], filterFftSize_ * sizeof(cufftComplex)),
+            cudaMalloc(&d_filterFFT_Multi_[i], filterFftSize_ * sizeof(Complex)),
             "cudaMalloc d_filterFFT_Multi_"
         );
 
         // Compute FFT
-        float* d_temp;
+        Sample* d_temp;
         Utils::checkCudaError(
-            cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+            cudaMalloc(&d_temp, fftSize_ * sizeof(Sample)),
             "cudaMalloc temp for multi-rate FFT"
         );
         Utils::checkCudaError(
-            cudaMemset(d_temp, 0, fftSize_ * sizeof(float)),
+            cudaMemset(d_temp, 0, fftSize_ * sizeof(Sample)),
             "cudaMemset temp"
         );
         Utils::checkCudaError(
-            cudaMemcpy(d_temp, coeffs.data(), coeffs.size() * sizeof(float), cudaMemcpyHostToDevice),
+            copyHostToDeviceSamples<Precision>(d_temp, coeffs.data(), coeffs.size()),
             "cudaMemcpy coeffs to device"
         );
         Utils::checkCufftError(
-            cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_Multi_[i]),
+            Precision::execForward(fftPlanForward_, d_temp, d_filterFFT_Multi_[i]),
             "cufftExecR2C for multi-rate"
         );
         cudaFree(d_temp);
@@ -431,7 +435,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     // Copy to the original filter FFT for EQ restoration (device)
     Utils::checkCudaError(
         cudaMemcpy(d_originalFilterFFT_, d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy to originalFilterFFT"
     );
 
@@ -439,14 +443,14 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     h_originalFilterFft_.resize(filterFftSize_);
     Utils::checkCudaError(
         cudaMemcpy(h_originalFilterFft_.data(), d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost),
         "cudaMemcpy to h_originalFilterFft_"
     );
 
     // Also copy to the A buffer for ping-pong
     Utils::checkCudaError(
         cudaMemcpy(d_filterFFT_A_, d_activeFilterFFT_,
-                   filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                   filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
         "cudaMemcpy to filterFFT_A"
     );
     d_activeFilterFFT_ = d_filterFFT_A_;
@@ -486,7 +490,7 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
 
     // Save current state for phase crossfade and rollback on error
     float previousDelay = getCurrentGroupDelay();
-    cufftComplex* previousFilter = d_activeFilterFFT_;
+    Complex* previousFilter = d_activeFilterFFT_;
 
     int savedMultiRateIndex = currentMultiRateIndex_;
     int savedInputRate = currentInputRate_;
@@ -499,14 +503,14 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     }
 
     // Select the source FFT for the target configuration
-    cufftComplex* sourceFFT = d_filterFFT_Multi_[targetIndex];
+    Complex* sourceFFT = d_filterFFT_Multi_[targetIndex];
 
     // Use double-buffering for glitch-free switching
-    cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
+    Complex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
 
     // Copy filter FFT with error handling
     cudaError_t err = cudaMemcpyAsync(backBuffer, sourceFFT,
-                                      filterFftSize_ * sizeof(cufftComplex),
+                                      filterFftSize_ * sizeof(Complex),
                                       cudaMemcpyDeviceToDevice, stream_);
     if (err != cudaSuccess) {
         std::cerr << "Error: Failed to copy filter FFT: " << cudaGetErrorString(err) << std::endl;
@@ -525,7 +529,7 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
 
     // Update original filter FFT for EQ restoration (device)
     err = cudaMemcpy(d_originalFilterFFT_, sourceFFT,
-                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice);
+                     filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice);
     if (err != cudaSuccess) {
         std::cerr << "Error: Failed to update original filter FFT: " << cudaGetErrorString(err) << std::endl;
         // Rollback: restore previous filter
@@ -536,7 +540,7 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     // Update host cache of original filter FFT for EQ computation
     h_originalFilterFft_.resize(filterFftSize_);
     err = cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
-                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost);
+                     filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         std::cerr << "Error: Failed to update host filter FFT cache: " << cudaGetErrorString(err) << std::endl;
         // Rollback: restore previous state
@@ -687,61 +691,61 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     }
 
     // Allocate minimum phase FFT buffers (for dual-rate)
-    Utils::checkCudaError(cudaMalloc(&d_filterFFT_44k_, filterFftSize_ * sizeof(cufftComplex)),
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_44k_, filterFftSize_ * sizeof(Complex)),
                           "cudaMalloc d_filterFFT_44k_");
-    Utils::checkCudaError(cudaMalloc(&d_filterFFT_48k_, filterFftSize_ * sizeof(cufftComplex)),
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_48k_, filterFftSize_ * sizeof(Complex)),
                           "cudaMalloc d_filterFFT_48k_");
 
     // Allocate linear phase FFT buffers
-    Utils::checkCudaError(cudaMalloc(&d_filterFFT_44k_linear_, filterFftSize_ * sizeof(cufftComplex)),
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_44k_linear_, filterFftSize_ * sizeof(Complex)),
                           "cudaMalloc d_filterFFT_44k_linear_");
-    Utils::checkCudaError(cudaMalloc(&d_filterFFT_48k_linear_, filterFftSize_ * sizeof(cufftComplex)),
+    Utils::checkCudaError(cudaMalloc(&d_filterFFT_48k_linear_, filterFftSize_ * sizeof(Complex)),
                           "cudaMalloc d_filterFFT_48k_linear_");
 
     std::cout << "Pre-computing FFT for all 4 filter configurations..." << std::endl;
 
     // Allocate temporary buffer for FFT computation
-    float* d_temp;
-    Utils::checkCudaError(cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
+    Sample* d_temp;
+    Utils::checkCudaError(cudaMalloc(&d_temp, fftSize_ * sizeof(Sample)),
                           "cudaMalloc d_temp for quad-phase FFT");
 
     // 44.1kHz minimum phase
-    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 44k min");
-    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs44k_.data(),
-                                     h_filterCoeffs44k_.size() * sizeof(float), cudaMemcpyHostToDevice),
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(Sample)), "cudaMemset d_temp 44k min");
+    Utils::checkCudaError(copyHostToDeviceSamples<Precision>(d_temp, h_filterCoeffs44k_.data(),
+                                                             h_filterCoeffs44k_.size()),
                           "cudaMemcpy filter 44k min");
-    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_44k_),
+    Utils::checkCufftError(Precision::execForward(fftPlanForward_, d_temp, d_filterFFT_44k_),
                            "cufftExecR2C filter 44k min");
 
     // 48kHz minimum phase
-    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 48k min");
-    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs48k_.data(),
-                                     h_filterCoeffs48k_.size() * sizeof(float), cudaMemcpyHostToDevice),
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(Sample)), "cudaMemset d_temp 48k min");
+    Utils::checkCudaError(copyHostToDeviceSamples<Precision>(d_temp, h_filterCoeffs48k_.data(),
+                                                             h_filterCoeffs48k_.size()),
                           "cudaMemcpy filter 48k min");
-    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_48k_),
+    Utils::checkCufftError(Precision::execForward(fftPlanForward_, d_temp, d_filterFFT_48k_),
                            "cufftExecR2C filter 48k min");
 
     // 44.1kHz linear phase
-    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 44k linear");
-    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs44k_linear_.data(),
-                                     h_filterCoeffs44k_linear_.size() * sizeof(float), cudaMemcpyHostToDevice),
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(Sample)), "cudaMemset d_temp 44k linear");
+    Utils::checkCudaError(copyHostToDeviceSamples<Precision>(d_temp, h_filterCoeffs44k_linear_.data(),
+                                                             h_filterCoeffs44k_linear_.size()),
                           "cudaMemcpy filter 44k linear");
-    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_44k_linear_),
+    Utils::checkCufftError(Precision::execForward(fftPlanForward_, d_temp, d_filterFFT_44k_linear_),
                            "cufftExecR2C filter 44k linear");
 
     // 48kHz linear phase
-    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(float)), "cudaMemset d_temp 48k linear");
-    Utils::checkCudaError(cudaMemcpy(d_temp, h_filterCoeffs48k_linear_.data(),
-                                     h_filterCoeffs48k_linear_.size() * sizeof(float), cudaMemcpyHostToDevice),
+    Utils::checkCudaError(cudaMemset(d_temp, 0, fftSize_ * sizeof(Sample)), "cudaMemset d_temp 48k linear");
+    Utils::checkCudaError(copyHostToDeviceSamples<Precision>(d_temp, h_filterCoeffs48k_linear_.data(),
+                                                             h_filterCoeffs48k_linear_.size()),
                           "cudaMemcpy filter 48k linear");
-    Utils::checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_filterFFT_48k_linear_),
+    Utils::checkCufftError(Precision::execForward(fftPlanForward_, d_temp, d_filterFFT_48k_linear_),
                            "cufftExecR2C filter 48k linear");
 
     cudaFree(d_temp);
     cudaDeviceSynchronize();
 
     // Set active filter based on initial family and phase type
-    cufftComplex* initialFilter;
+    Complex* initialFilter;
     if (initialFamily == RateFamily::RATE_44K) {
         initialFilter =
             (initialPhase == PhaseType::Minimum) ? d_filterFFT_44k_ : d_filterFFT_44k_linear_;
@@ -756,18 +760,18 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
 
     // Copy to original and active filter buffers
     Utils::checkCudaError(cudaMemcpy(d_originalFilterFFT_, initialFilter,
-                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                                     filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
                           "cudaMemcpy to originalFilterFFT");
 
     Utils::checkCudaError(cudaMemcpy(d_filterFFT_A_, initialFilter,
-                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                                     filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
                           "cudaMemcpy to filterFFT_A");
     d_activeFilterFFT_ = d_filterFFT_A_;
 
     // Update host cache of original filter FFT for EQ computation
     h_originalFilterFft_.resize(filterFftSize_);
     Utils::checkCudaError(cudaMemcpy(h_originalFilterFft_.data(), initialFilter,
-                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                                     filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost),
                           "cudaMemcpy to h_originalFilterFft_");
 
     // Release CPU-side coefficient memory after GPU transfer (Jetson optimization)
@@ -796,10 +800,10 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
               << " -> " << (targetPhase == PhaseType::Minimum ? "Minimum" : "Linear") << std::endl;
 
     float previousDelay = getCurrentGroupDelay();
-    cufftComplex* previousFilter = d_activeFilterFFT_;
+    Complex* previousFilter = d_activeFilterFFT_;
 
     // Select the source FFT based on current rate family and target phase
-    cufftComplex* sourceFFT;
+    Complex* sourceFFT;
     if (currentRateFamily_ == RateFamily::RATE_44K) {
         sourceFFT = (targetPhase == PhaseType::Minimum) ? d_filterFFT_44k_ : d_filterFFT_44k_linear_;
         setActiveHostCoefficients(
@@ -811,10 +815,10 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
     }
 
     // Use double-buffering for glitch-free switching
-    cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
+    Complex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
 
     Utils::checkCudaError(cudaMemcpyAsync(backBuffer, sourceFFT,
-                                          filterFftSize_ * sizeof(cufftComplex),
+                                          filterFftSize_ * sizeof(Complex),
                                           cudaMemcpyDeviceToDevice, stream_),
                           "cudaMemcpyAsync phase type switch");
 
@@ -826,12 +830,12 @@ bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
 
     // Update original filter FFT for EQ restoration
     Utils::checkCudaError(cudaMemcpy(d_originalFilterFFT_, sourceFFT,
-                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                                     filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
                           "cudaMemcpy update originalFilterFFT");
 
     // Update host cache of original filter FFT for EQ computation
     Utils::checkCudaError(cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
-                                     filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                                     filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost),
                           "cudaMemcpy update h_originalFilterFft_");
 
     refreshPartitionFiltersFromHost();

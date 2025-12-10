@@ -7,6 +7,8 @@
 
 namespace ConvolutionEngine {
 
+using Complex = DeviceFftComplex;
+
 // GPUUpsampler implementation - EQ Support methods
 
 void GPUUpsampler::restoreOriginalFilter() {
@@ -16,12 +18,13 @@ void GPUUpsampler::restoreOriginalFilter() {
 
     try {
         // Ping-pong: write to back buffer, then swap
-        cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
-                                    ? d_filterFFT_B_ : d_filterFFT_A_;
+        Complex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
+                                  ? d_filterFFT_B_
+                                  : d_filterFFT_A_;
 
         Utils::checkCudaError(
             cudaMemcpy(backBuffer, d_originalFilterFFT_,
-                      filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToDevice),
+                      filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice),
             "cudaMemcpy restore original filter to back buffer"
         );
 
@@ -88,7 +91,7 @@ bool GPUUpsampler::applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude) 
         // For linear phase: multiply magnitude, preserve phase
         // H_new = |H_original| * |H_eq| * exp(j * arg(H_original))
         //       = H_original * |H_eq|  (since |H| * exp(j*arg(H)) = H)
-        std::vector<cufftComplex> newFilter(halfN);
+        std::vector<Complex> newFilter(halfN);
         for (size_t i = 0; i < halfN; ++i) {
             float scale = static_cast<float>(normalizedMagnitude[i]);
             newFilter[i].x = h_originalFilterFft_[i].x * scale;
@@ -96,12 +99,13 @@ bool GPUUpsampler::applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude) 
         }
 
         // Ping-pong: write to back buffer, then swap
-        cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
-                                    ? d_filterFFT_B_ : d_filterFFT_A_;
+        Complex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
+                                  ? d_filterFFT_B_
+                                  : d_filterFFT_A_;
 
         Utils::checkCudaError(
             cudaMemcpy(backBuffer, newFilter.data(),
-                      halfN * sizeof(cufftComplex), cudaMemcpyHostToDevice),
+                      halfN * sizeof(Complex), cudaMemcpyHostToDevice),
             "cudaMemcpy EQ filter to back buffer"
         );
 
@@ -214,8 +218,9 @@ bool GPUUpsampler::applyEqMagnitudeMinPhase(const std::vector<double>& eqMagnitu
         exponentiateComplexKernel<<<numBlocks, blockSize>>>(d_eqComplexSpec_, halfN);
 
         // Step 8: Convert to float and upload to back buffer (ping-pong)
-        cufftComplex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
-                                    ? d_filterFFT_B_ : d_filterFFT_A_;
+        Complex* backBuffer = (d_activeFilterFFT_ == d_filterFFT_A_)
+                                  ? d_filterFFT_B_
+                                  : d_filterFFT_A_;
 
         doubleToFloatComplexKernel<<<numBlocks, blockSize>>>(backBuffer, d_eqComplexSpec_, halfN);
 
