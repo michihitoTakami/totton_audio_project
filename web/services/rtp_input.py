@@ -124,7 +124,7 @@ def load_default_settings() -> RtpInputSettings:
 
 def build_gst_command(settings: RtpInputSettings) -> list[str]:
     """設定からgst-launch-1.0コマンドを構築 (RTCP同期付き)."""
-    depay, _raw_format = _ENCODING_TO_DEPAY_AND_FORMAT.get(
+    depay, raw_format = _ENCODING_TO_DEPAY_AND_FORMAT.get(
         settings.encoding, ("rtpL24depay", "S24BE")
     )
     caps = (
@@ -140,7 +140,6 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "name=rtpbin",
         f"latency={settings.latency_ms}",
         "ntp-sync=true",
-        "rtcp-sync=true",
         # RTP (payload)
         "udpsrc",
         f"port={settings.port}",
@@ -157,7 +156,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"quality={settings.resample_quality}",
         "!",
         # フォーマットは変換可能な範囲でシンクに合わせる
-        f"audio/x-raw,rate={settings.sample_rate},channels={settings.channels}",
+        f"audio/x-raw,format={raw_format},rate={settings.sample_rate},channels={settings.channels}",
         "!",
         "queue",
         "max-size-time=200000000",  # 200ms safety buffer

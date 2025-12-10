@@ -18,7 +18,7 @@ import zmq
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ENDPOINT = "ipc:///tmp/rtp_receiver.sock"
+DEFAULT_ENDPOINT = "tcp://0.0.0.0:60000"
 DEFAULT_TIMEOUT_MS = 5000
 _MIN_LATENCY_MS = 10
 _MAX_LATENCY_MS = 500

@@ -26,6 +26,7 @@ docker compose -f jetson/docker-compose.jetson.yml down
 - `--device /dev/snd` を必ず付与（Loopback/実デバイスをコンテナへ渡す）
 - RTP 受信は Magic Box コンテナ内の `rtp_input` サービスが担当し、API `/api/rtp-input/*` で開始/停止・設定変更できます。
 - サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build magicbox` のようにサービス名を指定
+- `restart: unless-stopped` を指定済み。systemd で単体起動する場合は `Restart=always` を付け、片側クラッシュ時に自動復帰させてください。
 
 ## Magic Box コンテナの事前ビルド（Jetson 本体で実行）
 `docker/jetson/Dockerfile.jetson` はホストでビルド済みのバイナリをコピーする前提です。コンテナを立ち上げる前に Jetson 上で以下を実行し、`build/gpu_upsampler_alsa` と `build/gpu_upsampler_daemon` を用意してください。

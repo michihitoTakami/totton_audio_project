@@ -10,16 +10,16 @@ services:
       - "audio"
     environment:
       RTP_SENDER_DEVICE: ${RTP_SENDER_DEVICE:-hw:0,0}
-      RTP_SENDER_HOST: ${RTP_SENDER_HOST:-jetson}
+      RTP_SENDER_HOST: ${RTP_SENDER_HOST:-192.168.55.1}
       RTP_SENDER_RTP_PORT: ${RTP_SENDER_RTP_PORT:-46000}
       RTP_SENDER_RTCP_PORT: ${RTP_SENDER_RTCP_PORT:-46001}
       RTP_SENDER_RTCP_LISTEN_PORT: ${RTP_SENDER_RTCP_LISTEN_PORT:-46002}
       RTP_SENDER_PAYLOAD_TYPE: ${RTP_SENDER_PAYLOAD_TYPE:-96}
       RTP_SENDER_SAMPLE_RATE: ${RTP_SENDER_SAMPLE_RATE:-44100}
       RTP_SENDER_CHANNELS: ${RTP_SENDER_CHANNELS:-2}
-      RTP_SENDER_FORMAT: ${RTP_SENDER_FORMAT:-S24_3LE}
+      RTP_SENDER_FORMAT: ${RTP_SENDER_FORMAT:-S24_3BE}
       RTP_SENDER_LATENCY_MS: ${RTP_SENDER_LATENCY_MS:-100}
-      RTP_BRIDGE_ENDPOINT: ${RTP_BRIDGE_ENDPOINT:-ipc:///var/run/rtp-bridge/rtp_receiver.sock}
+      RTP_BRIDGE_ENDPOINT: ${RTP_BRIDGE_ENDPOINT:-tcp://0.0.0.0:60000}
       RTP_BRIDGE_STATS_PATH: ${RTP_BRIDGE_STATS_PATH:-/var/run/rtp-bridge/rtp_receiver_stats.json}
       RTP_BRIDGE_LATENCY_PATH: ${RTP_BRIDGE_LATENCY_PATH:-/var/run/rtp-bridge/rtp_receiver_latency_ms}
     restart: unless-stopped
@@ -55,13 +55,15 @@ services:
     container_name: rpi-rtp-bridge
     entrypoint: ["python3", "-m", "raspberry_pi.rtp_receiver"]
     environment:
-      RTP_BRIDGE_ENDPOINT: ${RTP_BRIDGE_ENDPOINT:-ipc:///var/run/rtp-bridge/rtp_receiver.sock}
+      RTP_BRIDGE_ENDPOINT: ${RTP_BRIDGE_ENDPOINT:-tcp://0.0.0.0:60000}
       RTP_BRIDGE_STATS_PATH: ${RTP_BRIDGE_STATS_PATH:-/var/run/rtp-bridge/rtp_receiver_stats.json}
       RTP_BRIDGE_LATENCY_PATH: ${RTP_BRIDGE_LATENCY_PATH:-/var/run/rtp-bridge/rtp_receiver_latency_ms}
       RTP_BRIDGE_TIMEOUT_MS: ${RTP_BRIDGE_TIMEOUT_MS:-5000}
       RTP_BRIDGE_POLL_INTERVAL_SEC: ${RTP_BRIDGE_POLL_INTERVAL_SEC:-1.0}
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /opt/pcm-bridge
+    ports:
+      - "60000:60000"
     volumes:
       - rtp-bridge-ipc:/var/run/rtp-bridge
     restart: unless-stopped

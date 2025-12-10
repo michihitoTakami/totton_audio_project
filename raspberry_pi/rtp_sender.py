@@ -14,20 +14,25 @@ from dataclasses import dataclass
 from typing import Iterable, List, Tuple
 
 _DEFAULT_DEVICE = "hw:0,0"
-_DEFAULT_HOST = "jetson"
+_DEFAULT_HOST = "192.168.55.1"
 _DEFAULT_RTP_PORT = 46000
 _DEFAULT_RTCP_PORT = 46001
 _DEFAULT_RTCP_LISTEN_PORT = 46002
 _DEFAULT_PAYLOAD_TYPE = 96
 _DEFAULT_SAMPLE_RATE = 44100
 _DEFAULT_CHANNELS = 2
-_DEFAULT_FORMAT = "S24_3LE"
+_DEFAULT_FORMAT = "S24_3BE"
 _DEFAULT_LATENCY_MS = 100
 
 _FORMAT_MAP: dict[str, Tuple[str, str, str]] = {
+    # Little-endian variants (互換維持)
     "S16_LE": ("rtpL16pay", "L16", "S16LE"),
     "S24_3LE": ("rtpL24pay", "L24", "S24LE"),
     "S32_LE": ("rtpL32pay", "L32", "S32LE"),
+    # Big-endian variants (GStreamer RTP の推奨パス)
+    "S16_BE": ("rtpL16pay", "L16", "S16BE"),
+    "S24_3BE": ("rtpL24pay", "L24", "S24BE"),
+    "S32_BE": ("rtpL32pay", "L32", "S32BE"),
 }
 
 
