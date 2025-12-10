@@ -33,8 +33,11 @@ services:
     devices:
       - /dev/snd:/dev/snd
 
-    # Web UI (TCP入力はjetson-pcm-receiver側で受ける)
+    # Web UI + RTP受信 (UDP 46000, RTCP 46001/46002)
     ports:
+      - "46000:46000/udp"
+      - "46001:46001/udp"
+      - "46002:46002/udp"
       - "80:80"
 
     # Shared memory for audio buffers
@@ -73,34 +76,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ==========================================================================
-  # PCM over TCP receiver → ALSA Loopback bridge
-  # ==========================================================================
-  jetson-pcm-receiver:
-    image: jetson-pcm-receiver:latest
-    build:
-      context: ../..
-      dockerfile: docker/jetson_pcm_receiver/Dockerfile.jetson
-    container_name: jetson-pcm-receiver
-    restart: unless-stopped
-    runtime: nvidia
-    devices:
-      - /dev/snd:/dev/snd
-    ports:
-      - "46001:46001/tcp"
-    # 環境変数で CLI 相当の設定を上書き可能（例: JPR_PORT=46001）
-    environment: {}
-    healthcheck:
-      test: ["CMD", "pgrep", "jetson-pcm-receiver"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
 volumes:
   magicbox-config:

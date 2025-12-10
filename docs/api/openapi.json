@@ -1560,6 +1560,114 @@
         }
       }
     },
+    "/api/rtp-input/status": {
+      "get": {
+        "tags": [
+          "rtp-input"
+        ],
+        "summary": "RTP入力ステータス取得",
+        "description": "RTP入力の稼働状況を返す.",
+        "operationId": "rtp_input_status_api_rtp_input_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RtpInputStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rtp-input/start": {
+      "post": {
+        "tags": [
+          "rtp-input"
+        ],
+        "summary": "RTP入力を開始",
+        "description": "GStreamerベースのRTP受信を開始する.",
+        "operationId": "rtp_input_start_api_rtp_input_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rtp-input/stop": {
+      "post": {
+        "tags": [
+          "rtp-input"
+        ],
+        "summary": "RTP入力を停止",
+        "description": "RTP受信を停止する.",
+        "operationId": "rtp_input_stop_api_rtp_input_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rtp-input/config": {
+      "put": {
+        "tags": [
+          "rtp-input"
+        ],
+        "summary": "RTP入力設定を更新",
+        "description": "RTP入力設定を更新する（再起動は自動では行わない）。",
+        "operationId": "rtp_input_config_update_api_rtp_input_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RtpInputConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RtpInputSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -3201,6 +3309,258 @@
         "title": "PhaseTypeUpdateRequest",
         "description": "Phase type update request model."
       },
+      "RtpInputConfigUpdate": {
+        "properties": {
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "sample_rate": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 768000.0,
+                "minimum": 8000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Rate"
+          },
+          "channels": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channels"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5000.0,
+                "minimum": 10.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "encoding": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "L16",
+                  "L24",
+                  "L32"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encoding"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device"
+          },
+          "resample_quality": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 10.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resample Quality"
+          },
+          "rtcp_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rtcp Port"
+          },
+          "rtcp_send_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rtcp Send Port"
+          },
+          "sender_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender Host"
+          }
+        },
+        "type": "object",
+        "title": "RtpInputConfigUpdate",
+        "description": "RTP入力設定の更新リクエスト."
+      },
+      "RtpInputSettings": {
+        "properties": {
+          "port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Port",
+            "default": 46000
+          },
+          "sample_rate": {
+            "type": "integer",
+            "maximum": 768000.0,
+            "minimum": 8000.0,
+            "title": "Sample Rate",
+            "default": 44100
+          },
+          "channels": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Channels",
+            "default": 2
+          },
+          "latency_ms": {
+            "type": "integer",
+            "maximum": 5000.0,
+            "minimum": 10.0,
+            "title": "Latency Ms",
+            "default": 100
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "L16",
+              "L24",
+              "L32"
+            ],
+            "title": "Encoding",
+            "default": "L24"
+          },
+          "device": {
+            "type": "string",
+            "title": "Device",
+            "default": "hw:Loopback,0,0"
+          },
+          "resample_quality": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Resample Quality",
+            "default": 10
+          },
+          "rtcp_port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Rtcp Port",
+            "default": 46001
+          },
+          "rtcp_send_port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Rtcp Send Port",
+            "default": 46002
+          },
+          "sender_host": {
+            "type": "string",
+            "title": "Sender Host",
+            "default": "raspberrypi.local"
+          }
+        },
+        "type": "object",
+        "title": "RtpInputSettings",
+        "description": "RTP入力の受信設定."
+      },
+      "RtpInputStatus": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/RtpInputSettings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "running",
+          "settings"
+        ],
+        "title": "RtpInputStatus",
+        "description": "RTP入力のステータス."
+      },
       "Settings": {
         "properties": {
           "alsa_device": {
@@ -3840,6 +4200,10 @@
     {
       "name": "tcp-input",
       "description": "TCP入力のステータス取得と制御 (ZeroMQ経由)"
+    },
+    {
+      "name": "rtp-input",
+      "description": "RTP入力のステータス取得と制御 (GStreamer)"
     }
   ]
 }

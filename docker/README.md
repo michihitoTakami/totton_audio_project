@@ -1,12 +1,16 @@
 # Docker 概要
 
-- `jetson_pcm_receiver/` : Jetson 向け PCM 受信ブリッジの Dockerfile 置き場（Compose は `jetson/docker-compose.jetson.yml` に統合）
-- `jetson/` : Magic Box (Web + Daemon) + jetson-pcm-receiver をまとめた Compose
+- `jetson/` : Magic Box (Web + Daemon) コンテナ。RTP受信（GStreamer）は同一コンテナ内で実行する。
+- `jetson_pcm_receiver/` : 旧TCPブリッジのDockerfile置き場（Composeからは除去済み、ビルド非推奨）
 
 ローカル検証用 (`docker/local`) と Raspberry Pi 用 (`docker/raspi`) は不要になったため削除しました。
 
-## Jetson 統合 Compose（magicbox + jetson-pcm-receiver）
-Jetson 上で Magic Box と jetson-pcm-receiver を同時に起動する構成です。詳細は `jetson_pcm_receiver/README.md` も参照してください。
+## Jetson Compose（magicboxのみ）
+Jetson 上で Magic Box を起動する構成です。RTP受信は Magic Box コンテナ内の FastAPI エンドポイント (`/api/rtp-input/*`) から開始・停止・設定変更できます。RTP/RTCP のデフォルトポートは以下です:
+
+- RTP: 46000/udp
+- RTCP (Jetson受信): 46001/udp
+- RTCP (Jetson送信): 46002/udp
 
 ```bash
 cd docker

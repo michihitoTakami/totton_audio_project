@@ -258,6 +258,53 @@ class TcpInputTelemetry(BaseModel):
     pub_endpoint: Optional[str] = None
 
 
+# ============================================================================
+# RTP Input Models
+# ============================================================================
+
+
+RtpEncoding = Literal["L16", "L24", "L32"]
+
+
+class RtpInputSettings(BaseModel):
+    """RTP入力の受信設定."""
+
+    port: Port = 46000
+    sample_rate: int = Field(default=44100, ge=8000, le=768000)
+    channels: int = Field(default=2, ge=1, le=8)
+    latency_ms: int = Field(default=100, ge=10, le=5000)
+    encoding: RtpEncoding = "L24"
+    device: str = "hw:Loopback,0,0"
+    resample_quality: int = Field(default=10, ge=0, le=10)
+    rtcp_port: Port = 46001
+    rtcp_send_port: Port = 46002
+    sender_host: str = "raspberrypi.local"
+
+
+class RtpInputConfigUpdate(BaseModel):
+    """RTP入力設定の更新リクエスト."""
+
+    port: Port | None = None
+    sample_rate: int | None = Field(default=None, ge=8000, le=768000)
+    channels: int | None = Field(default=None, ge=1, le=8)
+    latency_ms: int | None = Field(default=None, ge=10, le=5000)
+    encoding: RtpEncoding | None = None
+    device: Optional[str] = None
+    resample_quality: int | None = Field(default=None, ge=0, le=10)
+    rtcp_port: Port | None = None
+    rtcp_send_port: Port | None = None
+    sender_host: Optional[str] = None
+
+
+class RtpInputStatus(BaseModel):
+    """RTP入力のステータス."""
+
+    running: bool
+    pid: Optional[int] = None
+    last_error: Optional[str] = None
+    settings: RtpInputSettings
+
+
 class TcpInputSettings(BaseModel):
     """TCP input configuration settings."""
 

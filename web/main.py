@@ -24,6 +24,7 @@ from .routers import (
     partitioned_router,
     status_router,
     tcp_input_router,
+    rtp_input_router,
 )
 from .services import get_daemon_client
 from .services.tcp_input import (
@@ -75,6 +76,10 @@ tags_metadata = [
     {
         "name": "tcp-input",
         "description": "TCP入力のステータス取得と制御 (ZeroMQ経由)",
+    },
+    {
+        "name": "rtp-input",
+        "description": "RTP入力のステータス取得と制御 (GStreamer)",
     },
 ]
 
@@ -161,6 +166,7 @@ app.include_router(crossfeed_router)
 app.include_router(partitioned_router)
 app.include_router(output_mode_router)
 app.include_router(tcp_input_router)
+app.include_router(rtp_input_router)
 
 
 # Legacy restart endpoint (forwards to daemon restart)
