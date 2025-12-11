@@ -8,9 +8,13 @@ TCPベースのC++実装を置き換える常用パスとして利用します�
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import subprocess
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, List, Tuple
 
 _DEFAULT_DEVICE = "hw:2,0"
@@ -23,6 +27,8 @@ _DEFAULT_SAMPLE_RATE = 44100
 _DEFAULT_CHANNELS = 2
 _DEFAULT_FORMAT = "S24_3BE"
 _DEFAULT_LATENCY_MS = 100
+_DEFAULT_STATS_PATH = Path("/tmp/rtp_receiver_stats.json")
+_DEFAULT_RATE_POLL_INTERVAL_SEC = 2.0
 
 _FORMAT_MAP: dict[str, Tuple[str, str, str]] = {
     # Little-endian variants (互換維持)
@@ -50,6 +56,9 @@ class RtpSenderConfig:
     channels: int = _DEFAULT_CHANNELS
     audio_format: str = _DEFAULT_FORMAT
     latency_ms: int | None = _DEFAULT_LATENCY_MS
+    auto_sample_rate: bool = True
+    stats_path: Path | None = _DEFAULT_STATS_PATH
+    rate_poll_interval_sec: float = _DEFAULT_RATE_POLL_INTERVAL_SEC
     dry_run: bool = False
 
     def validate(self) -> None:
@@ -79,6 +88,128 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_str(name: str, default: str) -> str:
     return os.getenv(name, default)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_path(name: str, default: Path | None) -> Path | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def _hw_params_path(device: str) -> Path | None:
+    """デバイス文字列 (hw:2,0 / plughw:2,0) から hw_params パスを組み立て."""
+    match = re.match(r"^(?:plughw:|hw:)(?P<card>\\d+),(?P<pcm>\\d+)", device)
+    if not match:
+        return None
+    card = match.group("card")
+    pcm = match.group("pcm")
+    return Path(f"/proc/asound/card{card}/pcm{pcm}c/sub0/hw_params")
+
+
+def _parse_hw_params_rate(text: str) -> int | None:
+    for line in text.splitlines():
+        if line.startswith("rate:"):
+            for token in line.split():
+                if token.isdigit():
+                    return int(token)
+    return None
+
+
+def _probe_hw_params_rate(device: str) -> int | None:
+    path = _hw_params_path(device)
+    if path is None or not path.exists():
+        return None
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    if "closed" in text:
+        return None
+    return _parse_hw_params_rate(text)
+
+
+def _parse_arecord_rate(stdout: str) -> int | None:
+    for line in stdout.splitlines():
+        if line.strip().startswith("RATE"):
+            numbers = [int(token) for token in line.split() if token.isdigit()]
+            if numbers:
+                return numbers[-1]
+    return None
+
+
+def _probe_arecord_rate(device: str, channels: int) -> int | None:
+    """alsa-utils がある場合に arecord --dump-hw-params からレートを推測."""
+    cmd = [
+        "arecord",
+        "-D",
+        device,
+        "-c",
+        str(channels),
+        "-f",
+        "S16_LE",
+        "-d",
+        "0",
+        "--dump-hw-params",
+    ]
+    try:
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except FileNotFoundError:
+        return None
+
+    if result.returncode != 0:
+        return None
+    return _parse_arecord_rate(result.stdout)
+
+
+def _detect_sample_rate(device: str, channels: int, fallback: int) -> int:
+    for probe in (
+        lambda: _probe_hw_params_rate(device),
+        lambda: _probe_arecord_rate(device, channels),
+    ):
+        rate = probe()
+        if rate:
+            return rate
+    return fallback
+
+
+def _persist_stats(path: Path, sample_rate: int, latency_ms: int | None) -> None:
+    """ZeroMQ ブリッジ用にサンプルレート等をJSONで書き出す."""
+    payload = {
+        "running": True,
+        "sample_rate": sample_rate,
+        "latency_ms": latency_ms if latency_ms is not None else 0,
+        "packets_received": 0,
+        "packets_lost": 0,
+        "jitter_ms": 0.0,
+        "clock_drift_ppm": 0.0,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload))
+    except OSError:
+        # ファイル書き込みに失敗しても送出自体は継続する
+        pass
 
 
 def build_gst_command(cfg: RtpSenderConfig) -> List[str]:
@@ -196,6 +327,34 @@ def _parse_args(argv: list[str] | None = None) -> RtpSenderConfig:
         help="RTP jitterbuffer latency (ms)",
     )
     parser.add_argument(
+        "--stats-path",
+        type=Path,
+        default=_env_path("RTP_BRIDGE_STATS_PATH", _DEFAULT_STATS_PATH),
+        help="Write RTP stats JSON for ZeroMQ bridge (optional)",
+    )
+    parser.add_argument(
+        "--auto-sample-rate",
+        dest="auto_sample_rate",
+        action="store_true",
+        default=_env_bool("RTP_SENDER_AUTO_SAMPLE_RATE", True),
+        help="Detect ALSA capture rate automatically (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-auto-sample-rate",
+        dest="auto_sample_rate",
+        action="store_false",
+        help="Disable automatic sample rate detection",
+    )
+    parser.add_argument(
+        "--rate-poll-interval",
+        dest="rate_poll_interval_sec",
+        type=float,
+        default=_env_float(
+            "RTP_SENDER_RATE_POLL_INTERVAL_SEC", _DEFAULT_RATE_POLL_INTERVAL_SEC
+        ),
+        help="Polling interval (seconds) to detect rate changes",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=os.getenv("RTP_SENDER_DRY_RUN", "false").lower()
@@ -219,24 +378,89 @@ def _parse_args(argv: list[str] | None = None) -> RtpSenderConfig:
         channels=args.channels,
         audio_format=args.audio_format,
         latency_ms=latency_ms,
+        auto_sample_rate=args.auto_sample_rate,
+        stats_path=args.stats_path,
+        rate_poll_interval_sec=max(0.5, args.rate_poll_interval_sec),
         dry_run=args.dry_run,
     )
 
 
-def main(argv: list[str] | None = None) -> None:
-    cfg = _parse_args(argv)
+def _launch_pipeline(cfg: RtpSenderConfig) -> subprocess.Popen:
     args = build_gst_command(cfg)
     cmd_str = command_to_string(args)
+    print(f"[rtp_sender] launching pipeline (rate={cfg.sample_rate} Hz):\n{cmd_str}")
+    return subprocess.Popen(args)
+
+
+def main(argv: list[str] | None = None) -> None:
+    cfg = _parse_args(argv)
+    if cfg.auto_sample_rate:
+        detected_rate = _detect_sample_rate(cfg.device, cfg.channels, cfg.sample_rate)
+        if detected_rate != cfg.sample_rate:
+            print(
+                f"[rtp_sender] detected sample rate {detected_rate} Hz "
+                f"(requested {cfg.sample_rate} Hz)"
+            )
+            cfg.sample_rate = detected_rate
+        else:
+            print(f"[rtp_sender] sample rate {cfg.sample_rate} Hz (auto-detected)")
+
+    if cfg.stats_path:
+        _persist_stats(cfg.stats_path, cfg.sample_rate, cfg.latency_ms)
 
     if cfg.dry_run:
-        print(cmd_str)
+        args = build_gst_command(cfg)
+        print(command_to_string(args))
         return
 
-    print(f"[rtp_sender] launching pipeline:\n{cmd_str}")
-    # Run gst-launch and forward exit code
-    result = subprocess.run(args, check=False)
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)
+    # 自動追従が無効なら従来通り1回だけ実行
+    if not cfg.auto_sample_rate:
+        proc = _launch_pipeline(cfg)
+        rc = proc.wait()
+        if rc != 0:
+            raise SystemExit(rc)
+        return
+
+    # 自動追従: レート変化を検知したらパイプラインを再起動
+    current_rate = cfg.sample_rate
+    while True:
+        proc = _launch_pipeline(cfg)
+        try:
+            while True:
+                try:
+                    rc = proc.wait(timeout=cfg.rate_poll_interval_sec)
+                    if rc != 0:
+                        raise SystemExit(rc)
+                    return
+                except subprocess.TimeoutExpired:
+                    new_rate = _detect_sample_rate(
+                        cfg.device, cfg.channels, current_rate
+                    )
+                    if new_rate != current_rate:
+                        print(
+                            "[rtp_sender] detected rate change: "
+                            f"{current_rate} -> {new_rate} Hz (restarting)"
+                        )
+                        current_rate = new_rate
+                        cfg.sample_rate = new_rate
+                        if cfg.stats_path:
+                            _persist_stats(
+                                cfg.stats_path, cfg.sample_rate, cfg.latency_ms
+                            )
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        break  # restart with new rate
+                    time.sleep(cfg.rate_poll_interval_sec)
+        except KeyboardInterrupt:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return
 
 
 if __name__ == "__main__":

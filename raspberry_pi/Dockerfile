@@ -3,6 +3,7 @@ FROM debian:12-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libasound2 \
+        alsa-utils \
         gstreamer1.0-alsa \
         gstreamer1.0-tools \
         gstreamer1.0-plugins-base \
@@ -36,7 +37,10 @@ ENV RTP_SENDER_DEVICE=hw:2,0 \
     RTP_SENDER_SAMPLE_RATE=44100 \
     RTP_SENDER_CHANNELS=2 \
     RTP_SENDER_FORMAT=S24_3BE \
-    RTP_SENDER_LATENCY_MS=100
+    RTP_SENDER_LATENCY_MS=100 \
+    RTP_SENDER_AUTO_SAMPLE_RATE=true \
+    RTP_SENDER_RATE_POLL_INTERVAL_SEC=2.0 \
+    RTP_BRIDGE_STATS_PATH=/tmp/rtp_receiver_stats.json
 
 ENTRYPOINT ["/usr/local/bin/pcm-bridge-entrypoint.sh"]
 CMD []

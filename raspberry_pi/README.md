@@ -38,6 +38,7 @@ python3 -m raspberry_pi.rtp_sender \
 - 対応フォーマット: `S16_LE`, `S24_3LE`, `S32_LE`（payload は L16/L24/L32）
 - 対応レート: 44.1k/48k 系の代表レート（44100/48000/88200/96000/176400/192000/352800/384000/705600/768000）
 - `audioresample quality=10` でクロックドリフトを吸収し、RTCP で Jetson へフィードバックします。
+- ALSA の実サンプルレートを自動検出し、caps/clock-rate に反映。検出結果は ZeroMQ ブリッジ用の JSON にも書き出します。レート変化を検知するとパイプラインを自動再起動して追従します。
 - `--dry-run` または `RTP_SENDER_DRY_RUN=true` でパイプライン文字列だけを出力します。
 
 ### 主な環境変数
@@ -49,12 +50,15 @@ python3 -m raspberry_pi.rtp_sender \
 | `RTP_SENDER_RTP_PORT` | `46000` | RTP 送信ポート |
 | `RTP_SENDER_RTCP_PORT` | `46001` | Jetson へ送る RTCP ポート |
 | `RTP_SENDER_RTCP_LISTEN_PORT` | `46002` | Jetson から受ける RTCP ポート |
-| `RTP_SENDER_SAMPLE_RATE` | `44100` | サンプルレート (Hz) |
+| `RTP_SENDER_SAMPLE_RATE` | `44100` | サンプルレート (Hz, 自動検出のフォールバック) |
+| `RTP_SENDER_AUTO_SAMPLE_RATE` | `true` | ALSA からレートを検出し caps/clock-rate に適用 |
+| `RTP_SENDER_RATE_POLL_INTERVAL_SEC` | `2.0` | レート変化検知のポーリング間隔 (秒) |
 | `RTP_SENDER_CHANNELS` | `2` | チャンネル数 |
 | `RTP_SENDER_FORMAT` | `S24_3BE` | フォーマット (S16_BE/S24_3BE/S32_BE 推奨) |
 | `RTP_SENDER_LATENCY_MS` | `100` | jitterbuffer latency (ms) |
 | `RTP_SENDER_PAYLOAD_TYPE` | `96` | RTP Payload Type |
 | `RTP_SENDER_DRY_RUN` | `false` | true でパイプライン出力のみ |
+| `RTP_BRIDGE_STATS_PATH` | `/tmp/rtp_receiver_stats.json` | ZeroMQ STATUS 用に検出レート等を書き出すパス |
 
 ## Docker / Compose (Raspberry Pi 上)
 
@@ -65,7 +69,6 @@ docker build -f raspberry_pi/Dockerfile -t rpi-rtp-sender .
 # 単体コンテナ例
 docker run --rm --device /dev/snd \
   -e RTP_SENDER_HOST=192.168.55.1 \
-  -e RTP_SENDER_SAMPLE_RATE=44100 \
   -e RTP_SENDER_FORMAT=S24_3LE \
   rpi-rtp-sender
 
@@ -74,7 +77,7 @@ docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender jetso
 ```
 
 - `raspberry_pi/docker-compose.yml` は RTCP 付き RTP 送出 (`rtp-sender`) と ZeroMQ ブリッジ (`rtp-bridge`) を分離しています。`rtp-bridge` は `tcp://0.0.0.0:60000` で待ち受け、Jetson から到達できます（ポート 60000 を開ける）。
-- `RTP_SENDER_*` を `.env` で上書きすると配信先・フォーマットを切り替えられます。デフォルトは BE (`S24_3BE`)。
+- `RTP_SENDER_*` を `.env` で上書きすると配信先・フォーマットを切り替えられます。デフォルトは BE (`S24_3BE`)。サンプルレートは自動検出が有効で、`RTP_BRIDGE_STATS_PATH` に検出値を書き出します。
 
 ## ZeroMQ ブリッジ (任意)
 
