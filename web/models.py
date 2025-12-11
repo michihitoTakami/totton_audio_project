@@ -275,7 +275,7 @@ class RtpInputSettings(BaseModel):
     latency_ms: int = Field(default=100, ge=10, le=5000)
     encoding: RtpEncoding = "L24"
     device: str = "hw:Loopback,0,0"
-    resample_quality: int = Field(default=10, ge=0, le=10)
+    resample_quality: int = Field(default=8, ge=0, le=10)
     rtcp_port: Port = 46001
     rtcp_send_port: Port = 46002
     sender_host: str = "raspberrypi.local"

@@ -19,12 +19,14 @@ def test_build_gst_command_supports_encodings():
     assert "rtpL16depay" in l16
     assert "rtpL24depay" in l24
     assert "rtpL32depay" in l32
-    assert any("latency=100" in part for part in l24)
+    assert any("latency=200" in part for part in l24)
+    assert any("quality=8" in part for part in l24)
+    assert "max-size-time=300000000" in l24
     assert "rtpbin" in l24
     assert any("rtcp" in part for part in l24)
     l24_str = " ".join(l24)
     # sink -> src を '!' で連結している
-    assert "! rtpbin.recv_rtp_src_0 !" in l24_str
+    assert "rtpbin.recv_rtp_src_0 !" in l24_str
 
 
 def test_config_update_merges_and_validates():

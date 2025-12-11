@@ -22,7 +22,7 @@ DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_CHANNELS = 2
 DEFAULT_ENCODING = "L24"
 DEFAULT_DEVICE = "hw:Loopback,0,0"
-DEFAULT_QUALITY = 10
+DEFAULT_QUALITY = 8
 DEFAULT_RTCP_PORT = DEFAULT_PORT + 1
 DEFAULT_RTCP_SEND_PORT = DEFAULT_PORT + 2
 DEFAULT_SENDER_HOST = "raspberrypi.local"
@@ -145,7 +145,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "-e",
         "rtpbin",
         "name=rtpbin",
-        f"latency={settings.latency_ms}",
+        f"latency={settings.latency_ms * 2}",  # add extra headroom to avoid underruns
         "ntp-sync=true",
         # RTP (payload)
         "udpsrc",
@@ -153,7 +153,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"caps={caps}",
         "!",
         "rtpbin.recv_rtp_sink_0",
-        "rtpbin.",
+        "rtpbin.recv_rtp_src_0",
         "!",
         depay,
         "!",
@@ -166,7 +166,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"audio/x-raw,format={sink_format},rate={settings.sample_rate},channels={settings.channels}",
         "!",
         "queue",
-        "max-size-time=200000000",  # 200ms safety buffer
+        "max-size-time=300000000",  # 300ms safety buffer (latency trade-off)
         "!",
         "alsasink",
         f"device={settings.device}",

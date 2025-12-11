@@ -3607,7 +3607,7 @@
             "maximum": 10.0,
             "minimum": 0.0,
             "title": "Resample Quality",
-            "default": 10
+            "default": 8
           },
           "rtcp_port": {
             "type": "integer",
