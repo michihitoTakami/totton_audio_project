@@ -39,6 +39,7 @@ ENV RTP_SENDER_DEVICE=hw:2,0 \
     RTP_SENDER_FORMAT=S24_3BE \
     RTP_SENDER_LATENCY_MS=100 \
     RTP_SENDER_AUTO_SAMPLE_RATE=true \
+    RTP_SENDER_RATE_POLL_INTERVAL_SEC=2.0 \
     RTP_BRIDGE_STATS_PATH=/tmp/rtp_receiver_stats.json
 
 ENTRYPOINT ["/usr/local/bin/pcm-bridge-entrypoint.sh"]

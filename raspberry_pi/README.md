@@ -38,7 +38,7 @@ python3 -m raspberry_pi.rtp_sender \
 - 対応フォーマット: `S16_LE`, `S24_3LE`, `S32_LE`（payload は L16/L24/L32）
 - 対応レート: 44.1k/48k 系の代表レート（44100/48000/88200/96000/176400/192000/352800/384000/705600/768000）
 - `audioresample quality=10` でクロックドリフトを吸収し、RTCP で Jetson へフィードバックします。
-- ALSA の実サンプルレートを自動検出し、caps/clock-rate に反映。検出結果は ZeroMQ ブリッジ用の JSON にも書き出します。
+- ALSA の実サンプルレートを自動検出し、caps/clock-rate に反映。検出結果は ZeroMQ ブリッジ用の JSON にも書き出します。レート変化を検知するとパイプラインを自動再起動して追従します。
 - `--dry-run` または `RTP_SENDER_DRY_RUN=true` でパイプライン文字列だけを出力します。
 
 ### 主な環境変数
@@ -52,6 +52,7 @@ python3 -m raspberry_pi.rtp_sender \
 | `RTP_SENDER_RTCP_LISTEN_PORT` | `46002` | Jetson から受ける RTCP ポート |
 | `RTP_SENDER_SAMPLE_RATE` | `44100` | サンプルレート (Hz, 自動検出のフォールバック) |
 | `RTP_SENDER_AUTO_SAMPLE_RATE` | `true` | ALSA からレートを検出し caps/clock-rate に適用 |
+| `RTP_SENDER_RATE_POLL_INTERVAL_SEC` | `2.0` | レート変化検知のポーリング間隔 (秒) |
 | `RTP_SENDER_CHANNELS` | `2` | チャンネル数 |
 | `RTP_SENDER_FORMAT` | `S24_3BE` | フォーマット (S16_BE/S24_3BE/S32_BE 推奨) |
 | `RTP_SENDER_LATENCY_MS` | `100` | jitterbuffer latency (ms) |

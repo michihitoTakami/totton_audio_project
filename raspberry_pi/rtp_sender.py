@@ -12,6 +12,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -27,6 +28,7 @@ _DEFAULT_CHANNELS = 2
 _DEFAULT_FORMAT = "S24_3BE"
 _DEFAULT_LATENCY_MS = 100
 _DEFAULT_STATS_PATH = Path("/tmp/rtp_receiver_stats.json")
+_DEFAULT_RATE_POLL_INTERVAL_SEC = 2.0
 
 _FORMAT_MAP: dict[str, Tuple[str, str, str]] = {
     # Little-endian variants (互換維持)
@@ -56,6 +58,7 @@ class RtpSenderConfig:
     latency_ms: int | None = _DEFAULT_LATENCY_MS
     auto_sample_rate: bool = True
     stats_path: Path | None = _DEFAULT_STATS_PATH
+    rate_poll_interval_sec: float = _DEFAULT_RATE_POLL_INTERVAL_SEC
     dry_run: bool = False
 
     def validate(self) -> None:
@@ -85,6 +88,16 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_str(name: str, default: str) -> str:
     return os.getenv(name, default)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -333,6 +346,15 @@ def _parse_args(argv: list[str] | None = None) -> RtpSenderConfig:
         help="Disable automatic sample rate detection",
     )
     parser.add_argument(
+        "--rate-poll-interval",
+        dest="rate_poll_interval_sec",
+        type=float,
+        default=_env_float(
+            "RTP_SENDER_RATE_POLL_INTERVAL_SEC", _DEFAULT_RATE_POLL_INTERVAL_SEC
+        ),
+        help="Polling interval (seconds) to detect rate changes",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=os.getenv("RTP_SENDER_DRY_RUN", "false").lower()
@@ -358,8 +380,16 @@ def _parse_args(argv: list[str] | None = None) -> RtpSenderConfig:
         latency_ms=latency_ms,
         auto_sample_rate=args.auto_sample_rate,
         stats_path=args.stats_path,
+        rate_poll_interval_sec=max(0.5, args.rate_poll_interval_sec),
         dry_run=args.dry_run,
     )
+
+
+def _launch_pipeline(cfg: RtpSenderConfig) -> subprocess.Popen:
+    args = build_gst_command(cfg)
+    cmd_str = command_to_string(args)
+    print(f"[rtp_sender] launching pipeline (rate={cfg.sample_rate} Hz):\n{cmd_str}")
+    return subprocess.Popen(args)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -378,18 +408,59 @@ def main(argv: list[str] | None = None) -> None:
     if cfg.stats_path:
         _persist_stats(cfg.stats_path, cfg.sample_rate, cfg.latency_ms)
 
-    args = build_gst_command(cfg)
-    cmd_str = command_to_string(args)
-
     if cfg.dry_run:
-        print(cmd_str)
+        args = build_gst_command(cfg)
+        print(command_to_string(args))
         return
 
-    print(f"[rtp_sender] launching pipeline:\n{cmd_str}")
-    # Run gst-launch and forward exit code
-    result = subprocess.run(args, check=False)
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)
+    # 自動追従が無効なら従来通り1回だけ実行
+    if not cfg.auto_sample_rate:
+        proc = _launch_pipeline(cfg)
+        rc = proc.wait()
+        if rc != 0:
+            raise SystemExit(rc)
+        return
+
+    # 自動追従: レート変化を検知したらパイプラインを再起動
+    current_rate = cfg.sample_rate
+    while True:
+        proc = _launch_pipeline(cfg)
+        try:
+            while True:
+                try:
+                    rc = proc.wait(timeout=cfg.rate_poll_interval_sec)
+                    if rc != 0:
+                        raise SystemExit(rc)
+                    return
+                except subprocess.TimeoutExpired:
+                    new_rate = _detect_sample_rate(
+                        cfg.device, cfg.channels, current_rate
+                    )
+                    if new_rate != current_rate:
+                        print(
+                            "[rtp_sender] detected rate change: "
+                            f"{current_rate} -> {new_rate} Hz (restarting)"
+                        )
+                        current_rate = new_rate
+                        cfg.sample_rate = new_rate
+                        if cfg.stats_path:
+                            _persist_stats(
+                                cfg.stats_path, cfg.sample_rate, cfg.latency_ms
+                            )
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        break  # restart with new rate
+                    time.sleep(cfg.rate_poll_interval_sec)
+        except KeyboardInterrupt:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return
 
 
 if __name__ == "__main__":
