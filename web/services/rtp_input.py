@@ -166,7 +166,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"audio/x-raw,format={sink_format},rate={settings.sample_rate},channels={settings.channels}",
         "!",
         "queue",
-        "max-size-time=500000000",  # 500ms safety buffer
+        "max-size-time=300000000",  # 300ms safety buffer (latency trade-off)
         "!",
         "alsasink",
         f"device={settings.device}",

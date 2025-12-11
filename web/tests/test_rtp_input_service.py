@@ -21,7 +21,7 @@ def test_build_gst_command_supports_encodings():
     assert "rtpL32depay" in l32
     assert any("latency=200" in part for part in l24)
     assert any("quality=8" in part for part in l24)
-    assert "max-size-time=500000000" in l24
+    assert "max-size-time=300000000" in l24
     assert "rtpbin" in l24
     assert any("rtcp" in part for part in l24)
     l24_str = " ".join(l24)
