@@ -11,6 +11,23 @@ if [[ "$MODE" != "rtp" ]]; then
   echo "[entrypoint] MODE=$MODE はサポート外です。rtp を使用してください。" >&2
 fi
 
+CHRT_PRIO=${RTP_SENDER_CHRT_PRIO:-20}
+NICE_LEVEL=${RTP_SENDER_NICE_LEVEL:--11}
+launcher=()
+
+# RT優先度が使えそうならchrtを優先し、だめならniceにフォールバック
+if command -v chrt >/dev/null 2>&1 && [[ "${CHRT_PRIO}" =~ ^[0-9]+$ ]] && (( CHRT_PRIO > 0 )); then
+  if chrt -f "${CHRT_PRIO}" true 2>/dev/null; then
+    launcher=(chrt -f "${CHRT_PRIO}")
+  fi
+fi
+
+if [[ ${#launcher[@]} -eq 0 ]] && command -v nice >/dev/null 2>&1 && [[ "${NICE_LEVEL}" =~ ^-?[0-9]+$ ]]; then
+  if nice -n "${NICE_LEVEL}" true 2>/dev/null; then
+    launcher=(nice -n "${NICE_LEVEL}")
+  fi
+fi
+
 args=(
   python3
   -m
@@ -37,4 +54,4 @@ if [[ -n "${RTP_SENDER_EXTRA_ARGS:-}" ]]; then
   args+=("${extra_args[@]}")
 fi
 
-exec "${args[@]}"
+exec "${launcher[@]}" "${args[@]}"

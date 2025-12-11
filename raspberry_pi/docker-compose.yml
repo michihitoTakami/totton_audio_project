@@ -4,6 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: rpi-rtp-sender
+    cap_add:
+      - "SYS_NICE"
+    ulimits:
+      rtprio: 95
+      memlock: -1
     devices:
       - "/dev/snd:/dev/snd"
     group_add:
