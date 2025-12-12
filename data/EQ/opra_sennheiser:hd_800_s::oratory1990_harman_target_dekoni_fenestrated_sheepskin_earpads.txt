@@ -1,0 +1,17 @@
+# OPRA: sennheiser:hd_800_s::oratory1990_harman_target_dekoni_fenestrated_sheepskin_earpads
+# Author: oratory1990
+# Details: Harman Target • Dekoni Fenestrated Sheepskin Earpads
+# License: CC BY-SA 4.0
+# Source: https://github.com/opra-project/OPRA
+
+Preamp: -13.3 dB
+Filter 1: ON LS Fc 40.0 Hz Gain 8.0 dB Q 0.60
+Filter 2: ON LS Fc 105.0 Hz Gain 5.5 dB Q 0.71
+Filter 3: ON PK Fc 1100.0 Hz Gain -1.6 dB Q 1.10
+Filter 4: ON PK Fc 2050.0 Hz Gain 6.5 dB Q 1.00
+Filter 5: ON PK Fc 2850.0 Hz Gain -5.8 dB Q 2.00
+Filter 6: ON PK Fc 3800.0 Hz Gain 2.5 dB Q 1.40
+Filter 7: ON PK Fc 4800.0 Hz Gain -4.1 dB Q 4.00
+Filter 8: ON PK Fc 6680.0 Hz Gain -3.0 dB Q 5.00
+Filter 9: ON PK Fc 8500.0 Hz Gain -3.3 dB Q 8.00
+Filter 10: ON HS Fc 9500.0 Hz Gain -6.0 dB Q 0.70

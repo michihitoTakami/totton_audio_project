@@ -24,9 +24,7 @@ services:
       dockerfile: docker/jetson/Dockerfile.jetson
     container_name: magicbox
     command: all
-    # Restart policy: controlled by systemd service (magicbox-docker.service)
-    # Use 'no' to let systemd handle restart timing based on audio device readiness
-    restart: no
+    restart: always
 
     # NVIDIA runtime for GPU access
     runtime: nvidia
@@ -67,6 +65,8 @@ services:
       - MAGICBOX_WAIT_AUDIO_SECS=8
       - MAGICBOX_WAIT_LOOPBACK=true
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
+      # - MAGICBOX_RTP_RTCP_SEND_ENABLED=0
+      # - MAGICBOX_RTP_USE_RTPBIN=0
 
     # Real-time priority (requires CAP_SYS_NICE)
     cap_add:
