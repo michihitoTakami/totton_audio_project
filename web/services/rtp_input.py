@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import logging
+import socket
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -28,6 +29,20 @@ DEFAULT_RTCP_SEND_PORT = DEFAULT_PORT + 2
 DEFAULT_SENDER_HOST = "raspberrypi.local"
 DEFAULT_MONITOR_INTERVAL_SEC = 1.0
 DEFAULT_RATE_PROBE_TIMEOUT_SEC = 1.0
+DEFAULT_RTCP_SEND_ENABLED = os.getenv(
+    "MAGICBOX_RTP_RTCP_SEND_ENABLED", "1"
+).strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+DEFAULT_RTCP_SEND_RESOLVE_TIMEOUT_SEC = float(
+    os.getenv("MAGICBOX_RTP_RTCP_SEND_RESOLVE_TIMEOUT_SEC", "0.4")
+)
+DEFAULT_RTCP_SEND_REACHABILITY_TIMEOUT_SEC = float(
+    os.getenv("MAGICBOX_RTP_RTCP_SEND_REACHABILITY_TIMEOUT_SEC", "0.4")
+)
 
 # Issue #762 要件に合わせたサポートレート（44.1k/48k系を網羅）
 SUPPORTED_SAMPLE_RATES = {
@@ -140,7 +155,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
 
     # RTP/RTCP (rtpbin) を用い、送信側のタイムスタンプに同期。RTCPは port+1(受信) / port+2(送信) を使用。
     # rtpbin.* のsinkとsrcは別チェーンに明示的に '!' で接続する。
-    return [
+    cmd: list[str] = [
         "gst-launch-1.0",
         "-e",
         "rtpbin",
@@ -176,15 +191,24 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"port={settings.rtcp_port}",
         "!",
         "rtpbin.recv_rtcp_sink_0",
-        # RTCP (send back to sender host)
-        "rtpbin.send_rtcp_src_0",
-        "!",
-        "udpsink",
-        f"host={settings.sender_host}",
-        f"port={settings.rtcp_send_port}",
-        "sync=false",
-        "async=false",
     ]
+
+    # RTCP (send back to sender host)
+    # sender_host を解決できない環境だと、udpsink の起動でパイプライン全体が失敗し、
+    # 音（RTP受信→ALSAsink）も出なくなることがある。
+    # sender_host が空ならRTCP送信チェーンを作らない（受信は継続する）。
+    if str(getattr(settings, "sender_host", "")).strip():
+        cmd += [
+            "rtpbin.send_rtcp_src_0",
+            "!",
+            "udpsink",
+            f"host={settings.sender_host}",
+            f"port={settings.rtcp_send_port}",
+            "sync=false",
+            "async=false",
+        ]
+
+    return cmd
 
 
 class RtpReceiverManager:
@@ -216,6 +240,13 @@ class RtpReceiverManager:
         self._log_interval = max(1.0, log_min_interval_sec)
         self._log_next_ts = 0.0
         self._log_last_msg: str | None = None
+        self._rtcp_send_enabled = DEFAULT_RTCP_SEND_ENABLED
+        self._rtcp_send_resolve_timeout_sec = max(
+            0.05, float(DEFAULT_RTCP_SEND_RESOLVE_TIMEOUT_SEC)
+        )
+        self._rtcp_send_reachability_timeout_sec = max(
+            0.05, float(DEFAULT_RTCP_SEND_REACHABILITY_TIMEOUT_SEC)
+        )
 
     @staticmethod
     async def _default_process_runner(cmd: Sequence[str]) -> asyncio.subprocess.Process:
@@ -278,13 +309,117 @@ class RtpReceiverManager:
         )
 
     async def _start_process_unlocked(self) -> None:
-        cmd = build_gst_command(self._settings)
+        effective_settings = self._settings
+        if not self._rtcp_send_enabled:
+            # 明示的に無効化された場合は RTCP 送信を組み立てない
+            effective_settings = effective_settings.model_copy(
+                update={"sender_host": ""}
+            )
+        else:
+            # sender_host が解決できない場合でも音が出るよう、RTCP送信だけ黙って無効化する
+            sender_host = str(getattr(effective_settings, "sender_host", "")).strip()
+            if sender_host:
+                if not await self._host_resolves(sender_host):
+                    _logger.warning(
+                        "RTP: sender_host '%s' を解決できないため RTCP 送信を無効化して起動します",
+                        sender_host,
+                    )
+                    effective_settings = effective_settings.model_copy(
+                        update={"sender_host": ""}
+                    )
+                else:
+                    # ルーティングが無い/片方向ネットワーク等で sendto() が ENETUNREACH になると、
+                    # RTCP送信エレメントがエラーを上げてパイプライン全体が停止し得る。
+                    # 「1秒程度鳴って途切れる」は、最初のRTCP送信タイミング(約1秒)で落ちる症状と整合するため、
+                    # 起動前に到達性を簡易チェックし、失敗時はRTCP送信チェーンを無効化して音を継続する。
+                    rtcp_send_port = int(
+                        getattr(effective_settings, "rtcp_send_port", 0) or 0
+                    )
+                    if rtcp_send_port > 0 and not await self._rtcp_target_reachable(
+                        sender_host, rtcp_send_port
+                    ):
+                        _logger.warning(
+                            "RTP: sender_host '%s:%d' へ到達できないため RTCP 送信を無効化して起動します",
+                            sender_host,
+                            rtcp_send_port,
+                        )
+                        effective_settings = effective_settings.model_copy(
+                            update={"sender_host": ""}
+                        )
+
+        cmd = build_gst_command(effective_settings)
         try:
             self._process = await self._process_runner(cmd)
             self._last_error = None
         except Exception as exc:  # noqa: BLE001
             self._last_error = str(exc)
             raise
+
+    async def _host_resolves(self, host: str) -> bool:
+        """host が短時間で名前解決できるかを確認（失敗しても例外は投げない）."""
+        host = str(host).strip()
+        if not host:
+            return False
+        # 数値IPは即OK扱い（解決不要）
+        try:
+            socket.inet_pton(socket.AF_INET, host)
+            return True
+        except OSError:
+            pass
+        try:
+            socket.inet_pton(socket.AF_INET6, host)
+            return True
+        except OSError:
+            pass
+
+        loop = asyncio.get_running_loop()
+        try:
+            await asyncio.wait_for(
+                loop.getaddrinfo(host, None, type=socket.SOCK_DGRAM),
+                timeout=self._rtcp_send_resolve_timeout_sec,
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def _rtcp_target_reachable(self, host: str, port: int) -> bool:
+        """RTCP送信先にOSのルーティング上到達できそうか（UDP connect の結果）で判定."""
+        host = str(host).strip()
+        if not host or port <= 0:
+            return False
+
+        loop = asyncio.get_running_loop()
+
+        try:
+            infos = await asyncio.wait_for(
+                loop.getaddrinfo(host, port, type=socket.SOCK_DGRAM),
+                timeout=self._rtcp_send_resolve_timeout_sec,
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+        # getaddrinfo の先頭候補で判定（十分に軽量＆保守的）
+        family, socktype, proto, _, sockaddr = infos[0]
+
+        def _check() -> bool:
+            s = socket.socket(family, socktype, proto)
+            try:
+                s.settimeout(self._rtcp_send_reachability_timeout_sec)
+                # UDP connect はルート探索を行い、ルート無しだと即座に例外になることが多い
+                s.connect(sockaddr)
+                return True
+            except OSError:
+                return False
+            finally:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+
+        try:
+            return await asyncio.to_thread(_check)
+        except Exception:  # noqa: BLE001
+            return False
 
     async def _stop_unlocked(self, for_restart: bool = False) -> None:
         if not self._process:
