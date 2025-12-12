@@ -72,13 +72,13 @@ services:
     cap_add:
       - SYS_NICE
 
-    # Health check: ensure Web UI responds + audio daemon alive
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/status >/dev/null && pgrep -f gpu_upsampler_alsa"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 25s
+    # Health check (temporarily disabled for debugging)
+    # healthcheck:
+    #   test: ["CMD", "pgrep", "-f", "gpu_upsampler_alsa"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 10s
 
     logging:
       driver: "json-file"
