@@ -20,6 +20,10 @@ CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
 DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
 RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
 : "${MAGICBOX_RTP_AUTOSTART:=true}"
+: "${MAGICBOX_WAIT_AUDIO_SECS:=8}"
+: "${MAGICBOX_WAIT_LOOPBACK:=true}"
+: "${MAGICBOX_AUDIO_CARD_HINT:=AUDIO}"
+: "${MAGICBOX_LOOPBACK_CARD_HINT:=Loopback}"
 
 # Colors for logging
 RED='\033[0;31m'
@@ -119,11 +123,49 @@ check_nvidia() {
 
 # Check audio devices
 check_audio() {
+    wait_for_audio_devices
     if [ ! -d "/dev/snd" ]; then
         log_warn "Audio devices not mounted. Run with: --device /dev/snd"
     else
         log_info "Audio devices available"
     fi
+}
+
+wait_for_audio_devices() {
+    local deadline=$((SECONDS + MAGICBOX_WAIT_AUDIO_SECS))
+    local loop_required
+    loop_required="$(echo "$MAGICBOX_WAIT_LOOPBACK" | tr '[:upper:]' '[:lower:]')"
+
+    while (( SECONDS <= deadline )); do
+        local cards=""
+        if [ -f /proc/asound/cards ]; then
+            cards="$(cat /proc/asound/cards)"
+        fi
+
+        local audio_ready=""
+        local loop_ready=""
+
+        if echo "$cards" | grep -q "${MAGICBOX_AUDIO_CARD_HINT}"; then
+            audio_ready="yes"
+        fi
+
+        if [[ "$loop_required" == "true" || "$loop_required" == "1" ]]; then
+            if echo "$cards" | grep -q "${MAGICBOX_LOOPBACK_CARD_HINT}"; then
+                loop_ready="yes"
+            fi
+        else
+            loop_ready="yes"
+        fi
+
+        if [ -d "/dev/snd" ] && [ -n "$audio_ready" ] && [ -n "$loop_ready" ]; then
+            log_info "Audio devices ready (cards: $(echo "$cards" | tr -s ' ' | tr '\n' '; '))"
+            return 0
+        fi
+
+        sleep 1
+    done
+
+    log_warn "Audio devices not fully ready after ${MAGICBOX_WAIT_AUDIO_SECS}s; continuing anyway"
 }
 
 # Start Web UI (FastAPI)
