@@ -57,22 +57,19 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - MAGICBOX_RTP_AUTOSTART=true
-      # Wait for ALSA devices to appear after cold boot
-      - MAGICBOX_WAIT_AUDIO_SECS=8
-      - MAGICBOX_WAIT_LOOPBACK=true
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
 
     # Real-time priority (requires CAP_SYS_NICE)
     cap_add:
       - SYS_NICE
 
-    # Health check: ensure Web UI responds + audio daemon alive
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/status >/dev/null && pgrep -f gpu_upsampler_alsa"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 25s
+    # Health check (temporarily disabled for debugging)
+    # healthcheck:
+    #   test: ["CMD", "pgrep", "-f", "gpu_upsampler_alsa"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 10s
 
     logging:
       driver: "json-file"
