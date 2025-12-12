@@ -3626,7 +3626,7 @@
           "sender_host": {
             "type": "string",
             "title": "Sender Host",
-            "default": "raspberrypi.local"
+            "default": "192.168.55.100"
           }
         },
         "type": "object",
