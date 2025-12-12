@@ -24,7 +24,9 @@ services:
       dockerfile: docker/jetson/Dockerfile.jetson
     container_name: magicbox
     command: all
-    restart: always
+    # Restart policy: controlled by systemd service (magicbox-docker.service)
+    # Use 'no' to let systemd handle restart timing based on audio device readiness
+    restart: no
 
     # NVIDIA runtime for GPU access
     runtime: nvidia
@@ -57,6 +59,13 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - MAGICBOX_RTP_AUTOSTART=true
+      # USB直結構成では mDNS(raspberrypi.local) が見えないことがあるため、IPで固定
+      - MAGICBOX_RTP_SENDER_HOST=192.168.55.100
+      # ZeroMQ ブリッジを使う場合（任意）
+      - RTP_BRIDGE_ENDPOINT=tcp://192.168.55.100:60000
+      # Wait for ALSA devices to appear after cold boot
+      - MAGICBOX_WAIT_AUDIO_SECS=8
+      - MAGICBOX_WAIT_LOOPBACK=true
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
 
     # Real-time priority (requires CAP_SYS_NICE)

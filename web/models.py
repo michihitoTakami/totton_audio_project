@@ -278,7 +278,8 @@ class RtpInputSettings(BaseModel):
     resample_quality: int = Field(default=8, ge=0, le=10)
     rtcp_port: Port = 46001
     rtcp_send_port: Port = 46002
-    sender_host: str = "raspberrypi.local"
+    # USB直結(192.168.55.0/24)をデフォルト想定にする（mDNSが見えない構成が多い）
+    sender_host: str = "192.168.55.100"
 
 
 class RtpInputConfigUpdate(BaseModel):
