@@ -87,6 +87,20 @@ cmake -B build -DCMAKE_CUDA_ARCHITECTURES="75;87"
 cmake -B build -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.0/bin/nvcc
 ```
 
+### Float64ビルド（実験的）
+
+- GPUパイプラインをdouble精度でビルドするオプション。内部のアップサンプリングとEQ計算は64bitで行い、ホスト/ALSAへ渡す直前に安全にfloat32へダウンコンバート（クリップ付き）します。係数バイナリは既存のfloat32のまま読み込み時にdoubleへ展開されます。
+- VRAM/ホストピン止めメモリ使用量と計算コストはfloat32比でおよそ2倍になる点に注意してください。
+
+```bash
+# Release + float64
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DGPU_UPSAMPLER_USE_FLOAT64=ON
+cmake --build build -j$(nproc)
+
+# 簡易テスト（推奨）
+cmake --build build --target cpu_tests gpu_tests -- -j$(nproc)
+```
+
 ## 生成されるバイナリ
 
 ### 実行ファイル

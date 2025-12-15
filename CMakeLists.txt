@@ -53,6 +53,14 @@ else()
     message(STATUS "Detected PC platform - CUDA arch ${GPU_CUDA_ARCH}")
 endif()
 
+option(GPU_UPSAMPLER_USE_FLOAT64 "Build GPU upsampler with float64 pipeline" OFF)
+if(GPU_UPSAMPLER_USE_FLOAT64)
+    add_compile_definitions(GPU_UPSAMPLER_USE_FLOAT64)
+    message(STATUS "GPU upsampler precision: float64 (double)")
+else()
+    message(STATUS "GPU upsampler precision: float32")
+endif()
+
 # Fetch dependencies
 include(FetchContent)
 
@@ -450,6 +458,7 @@ add_executable(cpu_tests
     tests/cpp/test_alsa_write_loop.cpp
     tests/cpp/test_runtime_stats.cpp
     tests/cpp/test_audio_pipeline.cpp
+    tests/cpp/test_precision_traits.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp

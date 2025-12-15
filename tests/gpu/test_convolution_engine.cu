@@ -7,11 +7,13 @@
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <system_error>
 #include "convolution_engine.h"
+#include "gpu/convolution_kernels.h"
 
 using namespace ConvolutionEngine;
 
@@ -173,6 +175,65 @@ TEST_F(ConvolutionEngineTest, ConstructorDestructor) {
     SUCCEED();
 }
 
+TEST_F(ConvolutionEngineTest, DownconvertKernelClampsToFloatRange) {
+    const int kCount = 4;
+    std::vector<DeviceSample> input(kCount);
+    input[0] = static_cast<DeviceSample>(0.5);
+    input[1] = static_cast<DeviceSample>(-0.5);
+    input[2] = static_cast<DeviceSample>(2.5);
+    input[3] = static_cast<DeviceSample>(-3.0);
+
+    DeviceSample* d_input = nullptr;
+    float* d_output = nullptr;
+    ASSERT_EQ(cudaSuccess,
+              cudaMalloc(&d_input, static_cast<size_t>(kCount) * sizeof(DeviceSample)));
+    ASSERT_EQ(cudaSuccess,
+              cudaMalloc(&d_output, static_cast<size_t>(kCount) * sizeof(float)));
+    ASSERT_EQ(cudaSuccess,
+              cudaMemcpy(d_input, input.data(),
+                         static_cast<size_t>(kCount) * sizeof(DeviceSample),
+                         cudaMemcpyHostToDevice));
+
+    downconvertToFloatKernel<<<1, kCount>>>(d_input, d_output, kCount, -1.0f, 1.0f);
+    ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
+
+    std::vector<float> output(kCount, 0.0f);
+    ASSERT_EQ(cudaSuccess,
+              cudaMemcpy(output.data(), d_output,
+                         static_cast<size_t>(kCount) * sizeof(float),
+                         cudaMemcpyDeviceToHost));
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+
+    EXPECT_FLOAT_EQ(output[0], 0.5f);
+    EXPECT_FLOAT_EQ(output[1], -0.5f);
+    EXPECT_FLOAT_EQ(output[2], 1.0f);
+    EXPECT_FLOAT_EQ(output[3], -1.0f);
+}
+
+TEST_F(ConvolutionEngineTest, Float64BuildLoadsFloatCoefficients) {
+    if (!ActivePrecisionTraits::kIsDouble) {
+        GTEST_SKIP() << "Requires GPU_UPSAMPLER_USE_FLOAT64 build";
+    }
+
+    TempCoeffDir tempDir;
+    if (!tempDir.isValid()) {
+        GTEST_SKIP() << tempDir.error();
+    }
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initialize(tempDir.getMinPhasePath("44k"), 16, 512));
+
+    std::vector<float> input(512, 0.5f);
+    std::vector<float> output;
+    ASSERT_TRUE(upsampler.processChannel(input.data(), input.size(), output));
+    ASSERT_FALSE(output.empty());
+    for (float v : output) {
+        EXPECT_TRUE(std::isfinite(v));
+    }
+}
+
 // Test initialization with valid coefficients
 TEST_F(ConvolutionEngineTest, InitializeWithCoefficients) {
     GPUUpsampler upsampler;
@@ -328,11 +389,18 @@ TEST_F(ConvolutionEngineTest, ProcessStereo) {
 
     size_t leftPeak = findPeakIndex(leftOutput);
     size_t rightPeak = findPeakIndex(rightOutput);
+    std::cout << "[DEBUG ProcessStereo] leftPeak=" << leftPeak << " rightPeak=" << rightPeak
+              << " leftVal=" << leftOutput[leftPeak] << " rightVal=" << rightOutput[rightPeak]
+              << std::endl;
     EXPECT_NE(leftPeak, rightPeak);
     EXPECT_LT(leftPeak, rightPeak);
 
     constexpr size_t kImpulseOffsetFrames = 100;
     size_t expectedShift = kImpulseOffsetFrames * static_cast<size_t>(upsampleRatio);
+    size_t expectedRightIdx = leftPeak + expectedShift;
+    float expectedSample = (expectedRightIdx < rightOutput.size()) ? rightOutput[expectedRightIdx] : 0.0f;
+    std::cout << "[DEBUG ProcessStereo] expectedIdx=" << expectedRightIdx
+              << " expectedVal=" << expectedSample << std::endl;
     double observedShift = static_cast<double>(rightPeak) - static_cast<double>(leftPeak);
     EXPECT_NEAR(observedShift, static_cast<double>(expectedShift), 16.0);
 }

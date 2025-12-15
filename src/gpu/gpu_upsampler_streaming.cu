@@ -6,6 +6,24 @@
 
 namespace ConvolutionEngine {
 
+using Precision = ActivePrecisionTraits;
+using Sample = DeviceSample;
+using Complex = DeviceFftComplex;
+using ScaleType = DeviceScale;
+
+inline cudaError_t copyHostToDeviceStreaming(Sample* dst, const float* src, size_t count,
+                                             cudaStream_t stream) {
+    if constexpr (Precision::kIsDouble) {
+        std::vector<Sample> temp(count);
+        for (size_t i = 0; i < count; ++i) {
+            temp[i] = static_cast<Sample>(src[i]);
+        }
+        return cudaMemcpyAsync(dst, temp.data(), count * sizeof(Sample),
+                               cudaMemcpyHostToDevice, stream);
+    }
+    return cudaMemcpyAsync(dst, src, count * sizeof(Sample), cudaMemcpyHostToDevice, stream);
+}
+
 // GPUUpsampler implementation - Streaming methods
 
 bool GPUUpsampler::initializeStreaming() {
@@ -52,55 +70,55 @@ bool GPUUpsampler::initializeStreaming() {
     int fftComplexSize = fftSize_ / 2 + 1;
 
     Utils::checkCudaError(
-        cudaMalloc(&d_streamInput_, streamValidInputPerBlock_ * sizeof(float)),
+        cudaMalloc(&d_streamInput_, streamValidInputPerBlock_ * sizeof(Sample)),
         "cudaMalloc streaming input buffer"
     );
 
     Utils::checkCudaError(
-        cudaMalloc(&d_streamUpsampled_, upsampledSize * sizeof(float)),
+        cudaMalloc(&d_streamUpsampled_, upsampledSize * sizeof(Sample)),
         "cudaMalloc streaming upsampled buffer"
     );
 
     Utils::checkCudaError(
-        cudaMalloc(&d_streamPadded_, fftSize_ * sizeof(float)),
+        cudaMalloc(&d_streamPadded_, fftSize_ * sizeof(Sample)),
         "cudaMalloc streaming padded buffer"
     );
 
     Utils::checkCudaError(
-        cudaMalloc(&d_streamInputFFT_, fftComplexSize * sizeof(cufftComplex)),
+        cudaMalloc(&d_streamInputFFT_, fftComplexSize * sizeof(Complex)),
         "cudaMalloc streaming FFT buffer"
     );
     Utils::checkCudaError(
-        cudaMalloc(&d_streamInputFFTBackup_, fftComplexSize * sizeof(cufftComplex)),
+        cudaMalloc(&d_streamInputFFTBackup_, fftComplexSize * sizeof(Complex)),
         "cudaMalloc streaming FFT backup buffer"
     );
 
     Utils::checkCudaError(
-        cudaMalloc(&d_streamConvResult_, fftSize_ * sizeof(float)),
+        cudaMalloc(&d_streamConvResult_, fftSize_ * sizeof(Sample)),
         "cudaMalloc streaming conv result buffer"
     );
     Utils::checkCudaError(
-        cudaMalloc(&d_streamConvResultOld_, fftSize_ * sizeof(float)),
+        cudaMalloc(&d_streamConvResultOld_, fftSize_ * sizeof(Sample)),
         "cudaMalloc streaming old conv result buffer"
     );
 
     // Allocate device-resident overlap buffers
     Utils::checkCudaError(
-        cudaMalloc(&d_overlapLeft_, streamOverlapSize_ * sizeof(float)),
+        cudaMalloc(&d_overlapLeft_, streamOverlapSize_ * sizeof(Sample)),
         "cudaMalloc device overlap buffer (left)"
     );
     Utils::checkCudaError(
-        cudaMalloc(&d_overlapRight_, streamOverlapSize_ * sizeof(float)),
+        cudaMalloc(&d_overlapRight_, streamOverlapSize_ * sizeof(Sample)),
         "cudaMalloc device overlap buffer (right)"
     );
 
     // Zero-initialize device overlap buffers
     Utils::checkCudaError(
-        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float)),
+        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(Sample)),
         "cudaMemset device overlap buffer (left)"
     );
     Utils::checkCudaError(
-        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float)),
+        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(Sample)),
         "cudaMemset device overlap buffer (right)"
     );
 
@@ -124,10 +142,10 @@ void GPUUpsampler::resetStreaming() {
 
     // Reset device-resident overlap buffers
     if (d_overlapLeft_) {
-        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(float));
+        cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(Sample));
     }
     if (d_overlapRight_) {
-        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(float));
+        cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(Sample));
     }
     fprintf(stderr, "[Streaming] Reset: device overlap buffers cleared\n");
 }
@@ -243,8 +261,8 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
         // Step 3a: Transfer input to GPU
         Utils::checkCudaError(
-            cudaMemcpyAsync(d_streamInput_, streamInputBuffer.data(), samplesToProcess * sizeof(float),
-                           cudaMemcpyHostToDevice, stream),
+            copyHostToDeviceStreaming(d_streamInput_, streamInputBuffer.data(), samplesToProcess,
+                                      stream),
             "cudaMemcpy streaming input to device"
         );
 
@@ -260,19 +278,19 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
         // Prepare input: [overlap | new samples]
         Utils::checkCudaError(
-            cudaMemsetAsync(d_streamPadded_, 0, fftSize_ * sizeof(float), stream),
+            cudaMemsetAsync(d_streamPadded_, 0, fftSize_ * sizeof(Sample), stream),
             "cudaMemset streaming padded"
         );
 
         // Select device-resident overlap buffer
-        float* d_overlap = (stream == streamLeft_) ? d_overlapLeft_ :
-                           (stream == streamRight_) ? d_overlapRight_ : d_overlapLeft_;
+        Sample* d_overlap = (stream == streamLeft_) ? d_overlapLeft_ :
+                            (stream == streamRight_) ? d_overlapRight_ : d_overlapLeft_;
 
         // Copy overlap from previous block (D2D)
         if (adjustedOverlapSize > 0) {
             Utils::checkCudaError(
                 cudaMemcpyAsync(d_streamPadded_, d_overlap,
-                               adjustedOverlapSize * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+                               adjustedOverlapSize * sizeof(Sample), cudaMemcpyDeviceToDevice, stream),
                 "cudaMemcpy streaming overlap D2D"
             );
         }
@@ -280,7 +298,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         // Copy new samples
         Utils::checkCudaError(
             cudaMemcpyAsync(d_streamPadded_ + adjustedOverlapSize, d_streamUpsampled_,
-                           validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToDevice, stream),
+                           validOutputPerBlock_ * sizeof(Sample), cudaMemcpyDeviceToDevice, stream),
             "cudaMemcpy streaming block to padded"
         );
 
@@ -291,7 +309,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         );
 
         Utils::checkCufftError(
-            cufftExecR2C(fftPlanForward_, d_streamPadded_, d_streamInputFFT_),
+            Precision::execForward(fftPlanForward_, d_streamPadded_, d_streamInputFFT_),
             "cufftExecR2C streaming"
         );
 
@@ -300,7 +318,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         if (crossfadeEnabled) {
             Utils::checkCudaError(
                 cudaMemcpyAsync(d_streamInputFFTBackup_, d_streamInputFFT_,
-                                fftComplexSize * sizeof(cufftComplex),
+                                fftComplexSize * sizeof(Complex),
                                 cudaMemcpyDeviceToDevice, stream),
                 "cudaMemcpy backup FFT for crossfade"
             );
@@ -318,12 +336,12 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         );
 
         Utils::checkCufftError(
-            cufftExecC2R(fftPlanInverse_, d_streamInputFFT_, d_streamConvResult_),
+            Precision::execInverse(fftPlanInverse_, d_streamInputFFT_, d_streamConvResult_),
             "cufftExecC2R streaming"
         );
 
         // Scale
-        float scale = 1.0f / fftSize_;
+        ScaleType scale = Precision::scaleFactor(fftSize_);
         int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
         scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
             d_streamConvResult_, fftSize_, scale
@@ -333,15 +351,15 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         outputData.resize(validOutputPerBlock_);
         registerStreamOutputBuffer(outputData, stream);
         Utils::checkCudaError(
-            cudaMemcpyAsync(outputData.data(), d_streamConvResult_ + adjustedOverlapSize,
-                           validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-            "cudaMemcpy streaming output to host"
+            downconvertToHost(outputData.data(), d_streamConvResult_ + adjustedOverlapSize,
+                              validOutputPerBlock_, stream),
+            "downconvert streaming output to host"
         );
 
         if (crossfadeEnabled) {
             Utils::checkCudaError(
                 cudaMemcpyAsync(d_streamInputFFT_, d_streamInputFFTBackup_,
-                                fftComplexSize * sizeof(cufftComplex),
+                                fftComplexSize * sizeof(Complex),
                                 cudaMemcpyDeviceToDevice, stream),
                 "cudaMemcpy restore FFT for crossfade"
             );
@@ -353,7 +371,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             );
 
             Utils::checkCufftError(
-                cufftExecC2R(fftPlanInverse_, d_streamInputFFT_, d_streamConvResultOld_),
+                Precision::execInverse(fftPlanInverse_, d_streamInputFFT_, d_streamConvResultOld_),
                 "cufftExecC2R crossfade old filter"
             );
 
@@ -364,9 +382,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
             crossfadeOldOutput_.resize(validOutputPerBlock_);
             Utils::checkCudaError(
-                cudaMemcpyAsync(crossfadeOldOutput_.data(), d_streamConvResultOld_ + adjustedOverlapSize,
-                                validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-                "cudaMemcpy crossfade old output"
+                downconvertToHost(crossfadeOldOutput_.data(),
+                                  d_streamConvResultOld_ + adjustedOverlapSize,
+                                  validOutputPerBlock_, stream),
+                "downconvert crossfade old output"
             );
         }
 
@@ -376,7 +395,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                 int overlapStart = validOutputPerBlock_ - adjustedOverlapSize;
                 Utils::checkCudaError(
                     cudaMemcpyAsync(d_overlap, d_streamUpsampled_ + overlapStart,
-                                    adjustedOverlapSize * sizeof(float),
+                                    adjustedOverlapSize * sizeof(Sample),
                                     cudaMemcpyDeviceToDevice, stream),
                     "cudaMemcpy streaming overlap tail"
                 );
@@ -384,7 +403,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                 // Fallback: insufficient samples in this block, preserve previous overlap
                 Utils::checkCudaError(
                     cudaMemcpyAsync(d_overlap, d_streamPadded_ + validOutputPerBlock_,
-                                    adjustedOverlapSize * sizeof(float),
+                                    adjustedOverlapSize * sizeof(Sample),
                                     cudaMemcpyDeviceToDevice, stream),
                     "cudaMemcpy streaming overlap fallback"
                 );
@@ -467,8 +486,8 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         size_t samplesToProcess = streamValidInputPerBlock_;
 
         Utils::checkCudaError(
-            cudaMemcpyAsync(d_streamInput_, streamInputBuffer.data(),
-                            samplesToProcess * sizeof(float), cudaMemcpyHostToDevice, stream),
+            copyHostToDeviceStreaming(d_streamInput_, streamInputBuffer.data(),
+                                      samplesToProcess, stream),
             "cudaMemcpy partition stream input");
 
         int threadsPerBlock = 256;
@@ -483,7 +502,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
 
         StreamFloatVector partitionTemp;
         for (auto& state : partitionStates_) {
-            float* overlap =
+            Sample* overlap =
                 (stream == streamLeft_) ? state.d_overlapLeft
                                         : (stream == streamRight_) ? state.d_overlapRight
                                                                    : state.d_overlapLeft;
