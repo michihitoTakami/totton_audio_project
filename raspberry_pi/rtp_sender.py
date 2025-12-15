@@ -254,7 +254,8 @@ def build_gst_command(cfg: RtpSenderConfig) -> List[str]:
         "name=rtpbin",
         "ntp-sync=true",
         # Align with README recommended pipeline (stabilize clock sync)
-        "buffer-mode=sync",
+        # Valid values: none(0), slave(1), buffer(2), synced(4)
+        "buffer-mode=synced",
     ]
     if cfg.latency_ms is not None:
         args.append(f"latency={cfg.latency_ms}")
