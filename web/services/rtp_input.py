@@ -173,6 +173,9 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "!",
         depay,
         "!",
+        # depay の出力フォーマットを明示して、交渉の揺れでノイズが出るケースを避ける
+        f"audio/x-raw,format={raw_format},rate={settings.sample_rate},channels={settings.channels}",
+        "!",
         "audioconvert",
         "!",
         "audioresample",

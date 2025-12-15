@@ -30,6 +30,14 @@ _DEFAULT_LATENCY_MS = 100
 _DEFAULT_STATS_PATH = Path("/tmp/rtp_receiver_stats.json")
 _DEFAULT_RATE_POLL_INTERVAL_SEC = 2.0
 
+# 送信側パイプライン安定化のデフォルト値
+# - alsasrc はデフォルト値依存だと period/avail がギリギリになりやすいため明示する
+# - queue はオーディオ変換/リサンプルの遅延を吸収する
+_DEFAULT_ALSA_BUFFER_TIME_US = 200_000  # 200ms
+_DEFAULT_ALSA_LATENCY_TIME_US = 20_000  # 20ms
+_DEFAULT_QUEUE_TIME_NS = 100_000_000  # 100ms
+_DEFAULT_UDP_BUFFER_SIZE_BYTES = 1_048_576  # 1MiB (SO_SNDBUF)
+
 _FORMAT_MAP: dict[str, Tuple[str, str, str]] = {
     # Little-endian variants (互換維持)
     "S16_LE": ("rtpL16pay", "L16", "S16LE"),
@@ -56,6 +64,10 @@ class RtpSenderConfig:
     channels: int = _DEFAULT_CHANNELS
     audio_format: str = _DEFAULT_FORMAT
     latency_ms: int | None = _DEFAULT_LATENCY_MS
+    alsa_buffer_time_us: int = _DEFAULT_ALSA_BUFFER_TIME_US
+    alsa_latency_time_us: int = _DEFAULT_ALSA_LATENCY_TIME_US
+    queue_time_ns: int = _DEFAULT_QUEUE_TIME_NS
+    udp_buffer_size_bytes: int = _DEFAULT_UDP_BUFFER_SIZE_BYTES
     auto_sample_rate: bool = True
     stats_path: Path | None = _DEFAULT_STATS_PATH
     rate_poll_interval_sec: float = _DEFAULT_RATE_POLL_INTERVAL_SEC
@@ -77,6 +89,18 @@ class RtpSenderConfig:
             raise ValueError(f"Invalid channels: {self.channels}")
         if self.payload_type <= 0 or self.payload_type > 127:
             raise ValueError(f"Invalid payload_type: {self.payload_type}")
+        if self.alsa_buffer_time_us <= 0:
+            raise ValueError(f"Invalid alsa_buffer_time_us: {self.alsa_buffer_time_us}")
+        if self.alsa_latency_time_us <= 0:
+            raise ValueError(
+                f"Invalid alsa_latency_time_us: {self.alsa_latency_time_us}"
+            )
+        if self.queue_time_ns <= 0:
+            raise ValueError(f"Invalid queue_time_ns: {self.queue_time_ns}")
+        if self.udp_buffer_size_bytes <= 0:
+            raise ValueError(
+                f"Invalid udp_buffer_size_bytes: {self.udp_buffer_size_bytes}"
+            )
 
 
 def _env_int(name: str, default: int) -> int:
@@ -229,6 +253,8 @@ def build_gst_command(cfg: RtpSenderConfig) -> List[str]:
         "rtpbin",
         "name=rtpbin",
         "ntp-sync=true",
+        # Align with README recommended pipeline (stabilize clock sync)
+        "buffer-mode=sync",
     ]
     if cfg.latency_ms is not None:
         args.append(f"latency={cfg.latency_ms}")
@@ -236,11 +262,21 @@ def build_gst_command(cfg: RtpSenderConfig) -> List[str]:
     tail: List[str] = [
         "alsasrc",
         f"device={cfg.device}",
+        # alsasrc のデフォルト依存だと period/avail がギリギリになりやすいので明示
+        f"buffer-time={cfg.alsa_buffer_time_us}",
+        f"latency-time={cfg.alsa_latency_time_us}",
+        # ライブソースとしてタイムスタンプを付与（送出側の同期を安定化）
+        "do-timestamp=true",
         "!",
         "audioresample",
         "quality=10",
         "!",
         "audioconvert",
+        "!",
+        "queue",
+        f"max-size-time={cfg.queue_time_ns}",
+        "max-size-bytes=0",
+        "max-size-buffers=0",
         "!",
         raw_caps,
         "!",
@@ -255,6 +291,7 @@ def build_gst_command(cfg: RtpSenderConfig) -> List[str]:
         "udpsink",
         f"host={cfg.host}",
         f"port={cfg.rtp_port}",
+        f"buffer-size={cfg.udp_buffer_size_bytes}",
         "sync=true",
         "async=false",
         "rtpbin.send_rtcp_src_0",
@@ -262,6 +299,7 @@ def build_gst_command(cfg: RtpSenderConfig) -> List[str]:
         "udpsink",
         f"host={cfg.host}",
         f"port={cfg.rtcp_port}",
+        f"buffer-size={cfg.udp_buffer_size_bytes}",
         "sync=false",
         "async=false",
         "udpsrc",
@@ -327,6 +365,36 @@ def _parse_args(argv: list[str] | None = None) -> RtpSenderConfig:
         help="RTP jitterbuffer latency (ms)",
     )
     parser.add_argument(
+        "--alsa-buffer-time-us",
+        type=int,
+        default=_env_int(
+            "RTP_SENDER_ALSA_BUFFER_TIME_US", _DEFAULT_ALSA_BUFFER_TIME_US
+        ),
+        help="alsasrc buffer-time (microseconds)",
+    )
+    parser.add_argument(
+        "--alsa-latency-time-us",
+        type=int,
+        default=_env_int(
+            "RTP_SENDER_ALSA_LATENCY_TIME_US", _DEFAULT_ALSA_LATENCY_TIME_US
+        ),
+        help="alsasrc latency-time (microseconds)",
+    )
+    parser.add_argument(
+        "--queue-time-ns",
+        type=int,
+        default=_env_int("RTP_SENDER_QUEUE_TIME_NS", _DEFAULT_QUEUE_TIME_NS),
+        help="queue max-size-time (nanoseconds)",
+    )
+    parser.add_argument(
+        "--udp-buffer-size-bytes",
+        type=int,
+        default=_env_int(
+            "RTP_SENDER_UDP_BUFFER_SIZE_BYTES", _DEFAULT_UDP_BUFFER_SIZE_BYTES
+        ),
+        help="udpsink SO_SNDBUF (bytes)",
+    )
+    parser.add_argument(
         "--stats-path",
         type=Path,
         default=_env_path("RTP_BRIDGE_STATS_PATH", _DEFAULT_STATS_PATH),
@@ -378,6 +446,10 @@ def _parse_args(argv: list[str] | None = None) -> RtpSenderConfig:
         channels=args.channels,
         audio_format=args.audio_format,
         latency_ms=latency_ms,
+        alsa_buffer_time_us=max(1, int(args.alsa_buffer_time_us)),
+        alsa_latency_time_us=max(1, int(args.alsa_latency_time_us)),
+        queue_time_ns=max(1, int(args.queue_time_ns)),
+        udp_buffer_size_bytes=max(1, int(args.udp_buffer_size_bytes)),
         auto_sample_rate=args.auto_sample_rate,
         stats_path=args.stats_path,
         rate_poll_interval_sec=max(0.5, args.rate_poll_interval_sec),
