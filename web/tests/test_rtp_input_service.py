@@ -19,6 +19,10 @@ def test_build_gst_command_supports_encodings():
     assert "rtpL16depay" in l16
     assert "rtpL24depay" in l24
     assert "rtpL32depay" in l32
+    # depay直後のraw capsを明示して交渉揺れを抑制する
+    assert any(part.startswith("audio/x-raw,format=S16BE,") for part in l16)
+    assert any(part.startswith("audio/x-raw,format=S24BE,") for part in l24)
+    assert any(part.startswith("audio/x-raw,format=S32BE,") for part in l32)
     assert any("latency=200" in part for part in l24)
     assert any("quality=8" in part for part in l24)
     assert "max-size-time=300000000" in l24

@@ -128,3 +128,57 @@ def test_auto_sample_rate_false_runs_once(monkeypatch) -> None:
 
     assert calls["launch"] == 1
     assert calls["detect"] == 0
+
+
+def test_build_gst_command_includes_stability_buffers_by_default() -> None:
+    cfg = rtp_sender.RtpSenderConfig(
+        device="hw:0,0",
+        host="192.168.55.1",
+        sample_rate=44100,
+        channels=2,
+        audio_format="S24_3BE",
+        payload_type=96,
+        rtp_port=46000,
+        rtcp_port=46001,
+        rtcp_listen_port=46002,
+    )
+    cmd = rtp_sender.build_gst_command(cfg)
+
+    # rtpbin: clock sync stabilization
+    assert "rtpbin" in cmd
+    assert "buffer-mode=sync" in cmd
+
+    # alsasrc: explicit buffering to avoid period/avail brinkmanship
+    assert any(part.startswith("buffer-time=") for part in cmd)
+    assert any(part.startswith("latency-time=") for part in cmd)
+    assert "do-timestamp=true" in cmd
+
+    # queue: absorb conversion/resample jitter
+    assert "queue" in cmd
+    assert any(part.startswith("max-size-time=") for part in cmd)
+
+    # udpsink: enlarge kernel send buffer
+    assert sum(1 for part in cmd if part.startswith("buffer-size=")) >= 2
+
+
+def test_build_gst_command_respects_overrides() -> None:
+    cfg = rtp_sender.RtpSenderConfig(
+        device="hw:0,0",
+        host="192.168.55.1",
+        sample_rate=48000,
+        channels=2,
+        audio_format="S24_3BE",
+        payload_type=96,
+        rtp_port=46000,
+        rtcp_port=46001,
+        rtcp_listen_port=46002,
+        alsa_buffer_time_us=123_000,
+        alsa_latency_time_us=7_000,
+        queue_time_ns=42_000_000,
+        udp_buffer_size_bytes=262_144,
+    )
+    cmd = rtp_sender.build_gst_command(cfg)
+    assert f"buffer-time={cfg.alsa_buffer_time_us}" in cmd
+    assert f"latency-time={cfg.alsa_latency_time_us}" in cmd
+    assert f"max-size-time={cfg.queue_time_ns}" in cmd
+    assert cmd.count(f"buffer-size={cfg.udp_buffer_size_bytes}") >= 2
