@@ -11,6 +11,7 @@ Magic Box Projectの開発環境構築とセットアップに関するドキュ
 | [テスト実行](test.md) | テストの実行方法 | 開発者 |
 | [PC開発環境](pc_development.md) | ALSA/TCP入力の詳細設定 | 開発者（実機動作） |
 | [Web UI](web_ui.md) | Web UIサーバーの起動・設定 | 開発者 |
+| [Jetson snd-aloop セットアップ](jetson_snd_aloop.md) | snd-aloop 自動ロード手順・docker-compose統合 | Jetson環境 |
 | [Raspberry Pi ブリッジ](pi_bridge.md) | PiをUAC2+TCPブリッジとして初期化 | Jetson + Pi構成 |
 
 ## 環境別ガイド

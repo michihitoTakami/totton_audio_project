@@ -1,3 +1,19 @@
+# Docker Compose for Jetson PCM Receiver (RTP Input Unit)
+#
+# Receives RTP audio stream from Raspberry Pi 5 and outputs to ALSA Loopback.
+#
+# ⚠️ IMPORTANT: snd-aloop (ALSA Loopback) setup required on Jetson host BEFORE running.
+#
+# Execute on Jetson host (ONCE ONLY):
+#   sudo ./scripts/setup_snd_aloop.sh
+#
+# Verify:
+#   lsmod | grep snd_aloop
+#   arecord -l | grep Loopback
+#
+# For detailed setup instructions, see:
+#   docs/setup/jetson_snd_aloop.md
+
 services:
   jetson-pcm-receiver:
     image: jetson-pcm-receiver:latest
@@ -7,8 +23,14 @@ services:
     container_name: jetson-pcm-receiver
     restart: always
     runtime: nvidia
+
+    # ⚠️ Audio device access (requires snd-aloop loaded on host)
     devices:
       - /dev/snd:/dev/snd
+
+    # Add to audio group for ALSA device access
+    group_add:
+      - audio
     ports:
       - "46001:46001/tcp"
     environment:

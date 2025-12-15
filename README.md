@@ -249,13 +249,38 @@ cmake --build build -j$(nproc)
 ./build/crossfeed_tests
 ```
 
-### 4. デーモン起動
+### 4. デーモン起動（PC開発環境）
 
 ```bash
 ./scripts/daemon.sh start
 
 # サウンド設定で出力デバイスを「GPU Upsampler」に選択
 ```
+
+### 5. Jetson環境セットアップ
+
+Jetson Orin Nano での実行には、ホスト側で `snd-aloop` (ALSA Loopback) カーネルモジュールをロードする必要があります。
+
+**重要**: コンテナ内では `modprobe` が実行できないため、Jetsonホストで以下を実行してください:
+
+```bash
+# 方法1: 自動セットアップスクリプト（推奨）
+sudo ./scripts/setup_snd_aloop.sh
+
+# または systemd サービスで永続化
+sudo ./scripts/setup_snd_aloop.sh systemd
+
+# 方法2: 手動ロード（テスト用）
+sudo modprobe snd_aloop
+
+# 確認
+lsmod | grep snd_aloop        # モジュール確認
+arecord -l | grep Loopback    # ALSAで認識確認
+```
+
+Jetson再起動後も `snd-aloop` が自動ロードされます。
+
+**詳細は [Jetson snd-aloop セットアップガイド](docs/setup/jetson_snd_aloop.md) を参照してください。**
 
 ---
 

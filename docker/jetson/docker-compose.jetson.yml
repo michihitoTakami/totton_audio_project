@@ -2,6 +2,18 @@
 #
 # Production deployment configuration.
 #
+# ⚠️ IMPORTANT: snd-aloop (ALSA Loopback) setup required on Jetson host BEFORE running this compose file.
+#
+# Execute on Jetson host (ONCE ONLY):
+#   sudo ./scripts/setup_snd_aloop.sh
+#
+# Verify:
+#   lsmod | grep snd_aloop
+#   arecord -l | grep Loopback
+#
+# For detailed setup instructions, see:
+#   docs/setup/jetson_snd_aloop.md
+#
 # Usage:
 #   cd docker
 #   docker compose -f jetson/docker-compose.jetson.yml up -d --build
@@ -29,9 +41,17 @@ services:
     # NVIDIA runtime for GPU access
     runtime: nvidia
 
-    # Audio device access
+    # ⚠️ Audio device access (requires snd-aloop loaded on host)
+    # snd-aloop MUST be loaded on Jetson host before container starts:
+    #   sudo modprobe snd_aloop
+    # or use:
+    #   sudo ./scripts/setup_snd_aloop.sh
     devices:
       - /dev/snd:/dev/snd
+
+    # Add to audio group for ALSA device access
+    group_add:
+      - audio
 
     # Web UI + RTP受信 (UDP 46000, RTCP 46001/46002)
     ports:
