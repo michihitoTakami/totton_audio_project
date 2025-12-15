@@ -146,7 +146,7 @@ def test_build_gst_command_includes_stability_buffers_by_default() -> None:
 
     # rtpbin: clock sync stabilization
     assert "rtpbin" in cmd
-    assert "buffer-mode=sync" in cmd
+    assert "buffer-mode=synced" in cmd
 
     # alsasrc: explicit buffering to avoid period/avail brinkmanship
     assert any(part.startswith("buffer-time=") for part in cmd)

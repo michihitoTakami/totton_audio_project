@@ -97,7 +97,7 @@ Magic Box Web UI からのレイテンシ変更を Pi に伝える場合に使�
 Python ラッパーの出力と同等の gst-launch 例です。
 
 ```bash
-gst-launch-1.0 -e rtpbin name=rtpbin ntp-sync=true buffer-mode=sync latency=100 \
+gst-launch-1.0 -e rtpbin name=rtpbin ntp-sync=true buffer-mode=synced latency=100 \
   alsasrc device=hw:0,0 ! audioresample quality=10 ! audioconvert ! \
   audio/x-raw,rate=44100,channels=2,format=S24BE ! rtpL24pay pt=96 ! \
   application/x-rtp,media=audio,clock-rate=44100,encoding-name=L24,payload=96,channels=2 ! \
