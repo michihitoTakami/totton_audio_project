@@ -128,13 +128,15 @@ PC  ──USB──>  DAC  ─┤ I2S (BCLK, LRCK, DATA) ├──>  Magic Box (
 
 #### Jetson Orin Nano I2S ピンアウト
 
-| ピン | 機能 |
-|------|------|
-| GPIO | I2S_BCLK |
-| GPIO | I2S_LRCK |
-| GPIO | I2S_DIN |
+Jetson Orin Nano DevKit（キャリアボード）の **J12（40pin）** は、I2S0系の信号を利用できる。詳細は `docs/jetson/i2s/i2s_migration_spec_820.md` を参照。
 
-**注意**: 具体的なピン番号はキャリアボードに依存
+| 信号 | J12 物理ピン | 備考 |
+|---|---:|---|
+| I2S0_SCLK（BCLK） | 12 | |
+| I2S0_FS（LRCLK） | 35 | |
+| I2S0_DIN | 38 | Pi→Jetson（MVP）で使用 |
+| I2S0_DOUT | 40 | MVPでは未使用 |
+| GND | 39 | 推奨（DATA隣） |
 
 ---
 
