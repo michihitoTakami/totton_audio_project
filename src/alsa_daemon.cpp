@@ -327,6 +327,65 @@ static std::vector<float> g_output_buffer_left;
 static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
 
+// Producer backpressure (loopback/TCP input) to prevent output buffer overflows.
+// Rationale:
+// - If upstream input is not paced in real-time (e.g., software loopback or bursty network),
+//   the GPU pipeline can enqueue output faster than ALSA can consume it.
+// - The current overflow handling drops frames, which introduces discontinuities ("ジッ/プチ").
+// - By throttling producers when the output queue is near full, we keep continuity and let
+//   backpressure propagate upstream.
+static std::chrono::steady_clock::time_point g_last_producer_throttle_warn{
+    std::chrono::steady_clock::now() - std::chrono::seconds(10)};
+
+static size_t get_queued_output_frames_locked() {
+    // Caller must hold g_buffer_mutex.
+    if (g_output_buffer_left.size() <= g_output_read_pos) {
+        return 0;
+    }
+    return g_output_buffer_left.size() - g_output_read_pos;
+}
+
+static void throttle_input_if_output_queue_full() {
+    size_t capacity = get_max_output_buffer_frames();
+    if (capacity == 0) {
+        return;
+    }
+
+    // Hysteresis to avoid wake/sleep oscillation.
+    // High watermark: start throttling
+    // Low watermark: resume processing
+    size_t high = std::max<size_t>(1, (capacity * 9) / 10);
+    size_t low = std::min(high, std::max<size_t>(1, (capacity * 7) / 10));
+
+    std::unique_lock<std::mutex> lock(g_buffer_mutex);
+    size_t queued = get_queued_output_frames_locked();
+    if (queued < high) {
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - g_last_producer_throttle_warn > std::chrono::seconds(5)) {
+        int outputRate = g_current_output_rate.load(std::memory_order_acquire);
+        if (outputRate <= 0) {
+            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
+        }
+        double queuedSec = static_cast<double>(queued) / static_cast<double>(outputRate);
+        double capSec = static_cast<double>(capacity) / static_cast<double>(outputRate);
+        LOG_WARN(
+            "Throttling input: output queue near full (queued={} frames / {:.3f}s, cap={} frames / "
+            "{:.3f}s)",
+            queued, queuedSec, capacity, capSec);
+        g_last_producer_throttle_warn = now;
+    }
+
+    // Wait briefly for playback to drain the queue.
+    // Note: ALSA thread notifies after consuming frames.
+    g_buffer_cv.wait_for(lock, std::chrono::milliseconds(200), [low] {
+        return !g_running.load(std::memory_order_acquire) ||
+               get_queued_output_frames_locked() <= low;
+    });
+}
+
 // Streaming input accumulation buffers
 static StreamFloatVector g_stream_input_left;
 static StreamFloatVector g_stream_input_right;
@@ -1316,6 +1375,10 @@ static void loopback_capture_thread(std::string device, snd_pcm_format_t format,
     std::vector<float> floatBuffer;
 
     while (g_running.load(std::memory_order_acquire)) {
+        // Apply backpressure before pulling more input.
+        // This prevents software loopback / bursty upstream from running ahead of ALSA playback.
+        throttle_input_if_output_queue_full();
+
         void* rawBuffer = nullptr;
         if (format == SND_PCM_FORMAT_S16_LE) {
             rawBuffer = buffer16.data();
@@ -1523,6 +1586,10 @@ void alsa_output_thread() {
             renderResult.wroteSilence = true;
             std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
         }
+
+        // Wake any producers that are throttling on "space available".
+        // renderOutput() advances g_output_read_pos under its own lock; notifying here is safe.
+        g_buffer_cv.notify_all();
 
         // Apply pending soft mute parameter restoration once transition completes
         maybe_restore_soft_mute_params();
