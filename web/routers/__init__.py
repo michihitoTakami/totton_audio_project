@@ -7,7 +7,6 @@ from .eq import router as eq_router
 from .opra import router as opra_router
 from .partitioned import router as partitioned_router
 from .status import router as status_router
-from .tcp_input import router as tcp_input_router
 from .output_mode import router as output_mode_router
 from .rtp_input import router as rtp_input_router
 from .rtp import router as rtp_router
@@ -22,6 +21,5 @@ __all__ = [
     "partitioned_router",
     "rtp_router",
     "rtp_input_router",
-    "tcp_input_router",
     "status_router",
 ]

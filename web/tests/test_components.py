@@ -200,13 +200,6 @@ class TestDashboardStatusCards:
         assert response.status_code == 200
         assert 'class="status-text"' in response.text
 
-    def test_tcp_status_card_present(self, client):
-        """TCP status card should exist with navigation link."""
-        response = client.get("/")
-        assert response.status_code == 200
-        assert 'data-testid="tcp-status-card"' in response.text
-        assert "/tcp-input" in response.text
-
 
 class TestComponentCodeQuality:
     """Test component code quality and best practices."""
