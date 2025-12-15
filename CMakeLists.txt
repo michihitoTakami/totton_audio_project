@@ -167,7 +167,7 @@ target_compile_options(gpu_upsampler PRIVATE
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
-    src/partition_runtime_utils.cpp
+    src/core/partition_runtime_utils.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
@@ -231,7 +231,7 @@ target_compile_options(test_eq PRIVATE
 
 # Error Codes Library (used by zeromq_interface and other components)
 add_library(error_codes STATIC
-    src/error_codes.cpp
+    src/core/error_codes.cpp
 )
 target_include_directories(error_codes PUBLIC
     ${CMAKE_SOURCE_DIR}/include
@@ -264,7 +264,7 @@ endif()
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/zeromq_interface.cpp
-    src/base64.cpp
+    src/core/base64.cpp
 )
 target_link_libraries(zeromq_interface PUBLIC
     error_codes
@@ -367,7 +367,7 @@ target_compile_options(fallback_manager PRIVATE
 add_library(eq_support STATIC
     src/eq_parser.cpp
     src/eq_to_fir.cpp
-    src/config_loader.cpp
+    src/core/config_loader.cpp
 )
 target_link_libraries(eq_support PUBLIC
     nlohmann_json::nlohmann_json

@@ -1,7 +1,7 @@
 #ifndef GPU_PARTITION_PLAN_H
 #define GPU_PARTITION_PLAN_H
 
-#include "config_loader.h"
+#include "core/config_loader.h"
 
 #include <string>
 #include <vector>
@@ -30,5 +30,3 @@ PartitionPlan buildPartitionPlan(int totalTaps, int upsampleRatio,
 }  // namespace ConvolutionEngine
 
 #endif  // GPU_PARTITION_PLAN_H
-
-

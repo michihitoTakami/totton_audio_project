@@ -1,6 +1,6 @@
 #pragma once
 
-#include "config_loader.h"
+#include "core/config_loader.h"
 #include "daemon/api/events.h"
 #include "soft_mute.h"
 

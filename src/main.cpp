@@ -1,7 +1,7 @@
 #include "audio_io.h"
-#include "config_loader.h"
 #include "convolution_engine.h"
-#include "filter_metadata.h"
+#include "core/config_loader.h"
+#include "core/filter_metadata.h"
 
 #include <chrono>
 #include <filesystem>

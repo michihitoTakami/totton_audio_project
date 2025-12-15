@@ -3,7 +3,7 @@
  * @brief Unit tests for error codes and JSON error response building.
  */
 
-#include "error_codes.h"
+#include "core/error_codes.h"
 #include "zeromq_interface.h"
 
 #include <gtest/gtest.h>

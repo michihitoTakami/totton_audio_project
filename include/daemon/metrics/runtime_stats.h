@@ -1,6 +1,6 @@
 #pragma once
 
-#include "config_loader.h"
+#include "core/config_loader.h"
 #include "daemon/pcm/dac_manager.h"
 #include "fallback_manager.h"
 #include "filter_headroom.h"

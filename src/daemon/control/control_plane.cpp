@@ -1,8 +1,8 @@
 #include "daemon/control/control_plane.h"
 
 #include "audio_utils.h"
-#include "base64.h"
 #include "convolution_engine.h"
+#include "core/base64.h"
 #include "crossfeed_engine.h"
 #include "daemon/api/events.h"
 #include "eq_parser.h"
