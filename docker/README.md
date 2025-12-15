@@ -31,12 +31,12 @@ docker compose -f jetson/docker-compose.jetson.yml down
 - `restart: always` を指定済み。systemd で単体起動する場合も `Restart=always` を付け、片側クラッシュ時に自動復帰させてください。
 
 ## Magic Box コンテナの事前ビルド（Jetson 本体で実行）
-`docker/jetson/Dockerfile.jetson` はホストでビルド済みのバイナリをコピーする前提です。コンテナを立ち上げる前に Jetson 上で以下を実行し、`build/gpu_upsampler_alsa` と `build/gpu_upsampler_daemon` を用意してください。
+`docker/jetson/Dockerfile.jetson` はホストでビルド済みのバイナリをコピーする前提です。コンテナを立ち上げる前に Jetson 上で以下を実行し、`build/gpu_upsampler_alsa` を用意してください。
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=87
 cmake --build build -j$(nproc)
-ls -l build/gpu_upsampler_alsa build/gpu_upsampler_daemon
+ls -l build/gpu_upsampler_alsa
 ```
 
 ビルド手順の詳細は `../docs/setup/build.md` を参照してください。
