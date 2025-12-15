@@ -447,6 +447,7 @@ add_executable(cpu_tests
     tests/cpp/test_partition_plan.cpp
     tests/cpp/test_phase_alignment.cpp
     tests/cpp/test_playback_buffer_threshold.cpp
+    tests/cpp/test_alsa_write_loop.cpp
     tests/cpp/test_runtime_stats.cpp
     tests/cpp/test_audio_pipeline.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
