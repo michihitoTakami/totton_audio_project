@@ -50,6 +50,12 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     runtime_stats::updateUpsamplerPeak(0.4f);
     runtime_stats::updatePostCrossfeedPeak(0.6f);
     runtime_stats::updatePostGainPeak(0.8f);
+    runtime_stats::recordRenderedSilenceBlock();
+    runtime_stats::addRenderedSilenceFrames(128);
+    runtime_stats::recordUpsamplerNeedMoreBlock(true);
+    runtime_stats::recordUpsamplerNeedMoreBlock(false);
+    runtime_stats::recordUpsamplerErrorBlock(true);
+    runtime_stats::recordUpsamplerErrorBlock(false);
 
     auto deps = makeDeps(config, headroom, headroomGain, outputGain, limiterGain, effectiveGain,
                          fallbackActive, inputRate);
@@ -71,6 +77,12 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     EXPECT_FLOAT_EQ(stats["peaks"]["upsampler"]["linear"].get<float>(), 0.4f);
     EXPECT_FLOAT_EQ(stats["peaks"]["post_mix"]["linear"].get<float>(), 0.6f);
     EXPECT_FLOAT_EQ(stats["peaks"]["post_gain"]["linear"].get<float>(), 0.8f);
+    EXPECT_EQ(stats["buffer"]["rendered_silence_blocks"], 1u);
+    EXPECT_EQ(stats["buffer"]["rendered_silence_frames"], 128u);
+    EXPECT_EQ(stats["upsampler_streaming"]["need_more_blocks_left"], 1u);
+    EXPECT_EQ(stats["upsampler_streaming"]["need_more_blocks_right"], 1u);
+    EXPECT_EQ(stats["upsampler_streaming"]["error_blocks_left"], 1u);
+    EXPECT_EQ(stats["upsampler_streaming"]["error_blocks_right"], 1u);
 }
 
 TEST(RuntimeStatsTest, WriteStatsFileCreatesJson) {
@@ -106,6 +118,12 @@ TEST(RuntimeStatsTest, WriteStatsFileCreatesJson) {
     EXPECT_EQ(data["buffer"]["capacity_frames"], 1024u);
     EXPECT_EQ(data["buffer"]["dropped_frames"], 5u);
     EXPECT_EQ(data["fallback"]["active"], true);
+    EXPECT_EQ(data["buffer"]["rendered_silence_blocks"], 0u);
+    EXPECT_EQ(data["buffer"]["rendered_silence_frames"], 0u);
+    EXPECT_EQ(data["upsampler_streaming"]["need_more_blocks_left"], 0u);
+    EXPECT_EQ(data["upsampler_streaming"]["need_more_blocks_right"], 0u);
+    EXPECT_EQ(data["upsampler_streaming"]["error_blocks_left"], 0u);
+    EXPECT_EQ(data["upsampler_streaming"]["error_blocks_right"], 0u);
 
     std::filesystem::remove(tmpFile, ec);
 }
