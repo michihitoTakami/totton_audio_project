@@ -11,19 +11,6 @@ using Sample = DeviceSample;
 using Complex = DeviceFftComplex;
 using ScaleType = DeviceScale;
 
-inline cudaError_t copyHostToDeviceStreaming(Sample* dst, const float* src, size_t count,
-                                             cudaStream_t stream) {
-    if constexpr (Precision::kIsDouble) {
-        std::vector<Sample> temp(count);
-        for (size_t i = 0; i < count; ++i) {
-            temp[i] = static_cast<Sample>(src[i]);
-        }
-        return cudaMemcpyAsync(dst, temp.data(), count * sizeof(Sample),
-                               cudaMemcpyHostToDevice, stream);
-    }
-    return cudaMemcpyAsync(dst, src, count * sizeof(Sample), cudaMemcpyHostToDevice, stream);
-}
-
 // GPUUpsampler implementation - Streaming methods
 
 bool GPUUpsampler::initializeStreaming() {
@@ -261,8 +248,8 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
         // Step 3a: Transfer input to GPU
         Utils::checkCudaError(
-            copyHostToDeviceStreaming(d_streamInput_, streamInputBuffer.data(), samplesToProcess,
-                                      stream),
+            copyHostToDeviceSamplesConvertedAsync(d_streamInput_, streamInputBuffer.data(),
+                                                  samplesToProcess, stream),
             "cudaMemcpy streaming input to device"
         );
 
@@ -486,8 +473,8 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         size_t samplesToProcess = streamValidInputPerBlock_;
 
         Utils::checkCudaError(
-            copyHostToDeviceStreaming(d_streamInput_, streamInputBuffer.data(),
-                                      samplesToProcess, stream),
+            copyHostToDeviceSamplesConvertedAsync(d_streamInput_, streamInputBuffer.data(),
+                                                  samplesToProcess, stream),
             "cudaMemcpy partition stream input");
 
         int threadsPerBlock = 256;

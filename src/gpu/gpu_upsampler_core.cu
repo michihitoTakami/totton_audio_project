@@ -15,20 +15,6 @@ using Sample = DeviceSample;
 using Complex = DeviceFftComplex;
 using ScaleType = DeviceScale;
 
-inline cudaError_t copyHostToDeviceSamplesAsync(Sample* dst, const float* src, size_t count,
-                                                cudaStream_t stream) {
-    if constexpr (Precision::kIsDouble) {
-        std::vector<Sample> temp(count);
-        for (size_t i = 0; i < count; ++i) {
-            temp[i] = static_cast<Sample>(src[i]);
-        }
-        return cudaMemcpyAsync(dst, temp.data(), count * sizeof(Sample),
-                               cudaMemcpyHostToDevice, stream);
-    }
-    return cudaMemcpyAsync(dst, src, count * sizeof(Sample),
-                           cudaMemcpyHostToDevice, stream);
-}
-
 inline cudaError_t copyDeviceToHostSamplesSync(float* dst, const Sample* src, size_t count) {
     return copyDeviceToHostSamples<Precision>(dst, src, count);
 }
@@ -53,6 +39,57 @@ inline cudaError_t copyDeviceToHostSamplesAsync(float* dst, const Sample* src, s
     }
     return cudaMemcpyAsync(dst, src, count * sizeof(Sample),
                            cudaMemcpyDeviceToHost, stream);
+}
+
+cudaError_t GPUUpsampler::copyHostToDeviceSamplesConvertedAsync(Sample* dst, const float* src,
+                                                                size_t count,
+                                                                cudaStream_t stream) {
+    if (count == 0) {
+        return cudaSuccess;
+    }
+
+    if constexpr (!Precision::kIsDouble) {
+        return cudaMemcpyAsync(dst, src, count * sizeof(float), cudaMemcpyHostToDevice, stream);
+    }
+
+    // Fast path: reuse per-stream float scratch (allocated to fftSize_ floats)
+    float* scratch = getOutputScratch(stream);
+    if (scratch && fftSize_ > 0 && count <= static_cast<size_t>(fftSize_)) {
+        auto err = cudaMemcpyAsync(scratch, src, count * sizeof(float), cudaMemcpyHostToDevice,
+                                   stream);
+        if (err != cudaSuccess) {
+            return err;
+        }
+
+        int threadsPerBlock = 256;
+        int blocks = static_cast<int>((count + threadsPerBlock - 1) / threadsPerBlock);
+        upconvertFromFloatKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+            scratch, dst, static_cast<int>(count));
+        return cudaGetLastError();
+    }
+
+    // Fallback: allocate a temporary device float buffer (offline / oversized transfers).
+    float* d_temp = nullptr;
+    auto err = cudaMalloc(&d_temp, count * sizeof(float));
+    if (err != cudaSuccess) {
+        return err;
+    }
+
+    err = cudaMemcpyAsync(d_temp, src, count * sizeof(float), cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+        cudaFree(d_temp);
+        return err;
+    }
+
+    int threadsPerBlock = 256;
+    int blocks = static_cast<int>((count + threadsPerBlock - 1) / threadsPerBlock);
+    upconvertFromFloatKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+        d_temp, dst, static_cast<int>(count));
+    err = cudaGetLastError();
+
+    // Note: cudaFree may synchronize; this path is not used in real-time streaming.
+    cudaFree(d_temp);
+    return err;
 }
 
 float* GPUUpsampler::getOutputScratch(cudaStream_t stream) {
@@ -648,7 +685,7 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         );
 
         Utils::checkCudaError(
-            copyHostToDeviceSamplesAsync(d_input, inputData, inputFrames, stream),
+            copyHostToDeviceSamplesConvertedAsync(d_input, inputData, inputFrames, stream),
             "cudaMemcpy input to device"
         );
 
@@ -712,8 +749,8 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
             // Copy overlap from previous block (host to device)
             if (overlapUse > 0 && outputPos > 0) {
                 Utils::checkCudaError(
-                    copyHostToDeviceSamplesAsync(d_paddedInput, overlapBuffer.data(),
-                                                 overlapUse, stream),
+                    copyHostToDeviceSamplesConvertedAsync(d_paddedInput, overlapBuffer.data(),
+                                                          overlapUse, stream),
                     "cudaMemcpy overlap to device"
                 );
 

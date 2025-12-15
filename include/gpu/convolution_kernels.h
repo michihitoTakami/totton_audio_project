@@ -19,6 +19,9 @@ __global__ void complexMultiplyKernel(DeviceFftComplex* data, const DeviceFftCom
 // CUDA kernel for scaling after IFFT
 __global__ void scaleKernel(DeviceSample* data, int size, DeviceScale scale);
 
+// CUDA kernel to upconvert float samples to active precision samples (float->double when enabled)
+__global__ void upconvertFromFloatKernel(const float* input, DeviceSample* output, int size);
+
 // CUDA kernel for cepstrum causality window with normalization
 // Applies: 1/N normalization (cuFFT doesn't normalize IFFT)
 // Plus causality: c[0] unchanged, c[1..N/2-1] *= 2, c[N/2] unchanged, c[N/2+1..N-1] = 0
