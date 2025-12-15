@@ -99,7 +99,7 @@ Python ラッパーの出力と同等の gst-launch 例です。
 ```bash
 gst-launch-1.0 -e rtpbin name=rtpbin ntp-sync=true buffer-mode=sync latency=100 \
   alsasrc device=hw:0,0 ! audioresample quality=10 ! audioconvert ! \
-  audio/x-raw,rate=44100,channels=2,format=S24LE ! rtpL24pay pt=96 ! \
+  audio/x-raw,rate=44100,channels=2,format=S24BE ! rtpL24pay pt=96 ! \
   application/x-rtp,media=audio,clock-rate=44100,encoding-name=L24,payload=96,channels=2 ! \
   rtpbin.send_rtp_sink_0 \
   rtpbin.send_rtp_src_0 ! udpsink host=<jetson-ip> port=46000 sync=true async=false \

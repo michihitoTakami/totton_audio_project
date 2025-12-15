@@ -112,6 +112,12 @@ gh pr create --title "#123 機能の説明" --body "..."
 - Validate with sample WAVs in `test_data/`
 - Run `scripts/verify_frequency_response.py` for filter changes
 
+## RTP Audio Streaming Notes
+
+- **RTP L16/L24/L32 はネットワークバイトオーダー（BE）**前提（送信・受信で `S24BE` 等に統一すること）
+- **payload type は 96 を使用**（送受で不一致だとcapsが噛み合わない）
+- 送信側（Pi）は `alsasrc` の `buffer-time/latency-time` を明示し、変換/リサンプル遅延を吸収するため **`queue` を必ず挟む**
+
 ## Key Technical Constraints
 
 1. **Minimum Phase FIR** - No pre-ringing allowed
