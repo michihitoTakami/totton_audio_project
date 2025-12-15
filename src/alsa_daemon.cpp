@@ -327,7 +327,7 @@ static std::vector<float> g_output_buffer_left;
 static std::vector<float> g_output_buffer_right;
 static size_t g_output_read_pos = 0;
 
-// Producer backpressure (loopback/TCP input) to prevent output buffer overflows.
+// Producer backpressure (loopback capture input) to prevent output buffer overflows.
 // Rationale:
 // - If upstream input is not paced in real-time (e.g., software loopback or bursty network),
 //   the GPU pipeline can enqueue output faster than ALSA can consume it.
