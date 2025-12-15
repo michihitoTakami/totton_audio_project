@@ -1481,6 +1481,40 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_ReinitializeStreaming) 
     EXPECT_TRUE(result || streamInputAccumulated > 0);
 }
 
+// Issue #839: 64bit (float64 pipeline) build produced near-silent output.
+// Root cause was passing a short-lived host conversion buffer to cudaMemcpyAsync.
+// This test ensures the streaming path produces a healthy amplitude for a delta filter.
+TEST_F(ConvolutionEngineTest, Issue839_StreamBlock_NotAttenuated) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    StreamFloatVector output;
+    StreamFloatVector streamInputBuffer;
+    size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+
+    const size_t frames = upsampler.getStreamValidInputPerBlock();
+    ASSERT_GT(frames, 0u);
+
+    std::vector<float> input(frames, 0.5f);
+    bool produced = upsampler.processStreamBlock(
+        input.data(), input.size(), output,
+        upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+    ASSERT_TRUE(produced);
+    ASSERT_FALSE(output.empty());
+
+    float maxAbs = 0.0f;
+    for (float v : output) {
+        maxAbs = std::max(maxAbs, std::abs(v));
+    }
+    // With a delta filter, the output should contain values close to the input amplitude.
+    EXPECT_GT(maxAbs, 0.1f);
+}
+
 // Test consecutive rate switches (44.1k → 88.2k → 176.4k → 352.8k)
 TEST_F(ConvolutionEngineTest, Issue219_ConsecutiveRateSwitches_44kFamily) {
     TempCoeffDir tempDir;

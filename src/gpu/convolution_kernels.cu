@@ -39,6 +39,13 @@ __global__ void scaleKernel(DeviceSample* data, int size, DeviceScale scale) {
     }
 }
 
+// CUDA kernel to upconvert float samples to active precision samples
+__global__ void upconvertFromFloatKernel(const float* input, DeviceSample* output, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    output[idx] = static_cast<DeviceSample>(input[idx]);
+}
+
 // CUDA kernel for cepstrum causality window with normalization
 // Applies: 1/N normalization (cuFFT doesn't normalize IFFT)
 // Plus causality: c[0] unchanged, c[1..N/2-1] *= 2, c[N/2] unchanged, c[N/2+1..N-1] = 0

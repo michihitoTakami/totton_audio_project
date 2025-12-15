@@ -405,6 +405,11 @@ class GPUUpsampler {
                                   cudaStream_t stream);
     cudaError_t downconvertToHostSync(float* hostDst, const DeviceSample* deviceSrc, size_t count);
 
+    // Host(float32) -> Device(active precision) transfer helper.
+    // In float64 builds, avoids passing short-lived host buffers to cudaMemcpyAsync.
+    cudaError_t copyHostToDeviceSamplesConvertedAsync(DeviceSample* dst, const float* src,
+                                                      size_t count, cudaStream_t stream);
+
     // Release CPU-side filter coefficient memory after GPU transfer
     // This saves ~100MB of RAM, especially important for Jetson Unified Memory
     // Call this after all GPU transfers are complete (FFT pre-computation done)
