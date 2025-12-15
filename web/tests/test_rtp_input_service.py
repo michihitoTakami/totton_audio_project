@@ -23,9 +23,9 @@ def test_build_gst_command_supports_encodings():
     assert any(part.startswith("audio/x-raw,format=S16BE,") for part in l16)
     assert any(part.startswith("audio/x-raw,format=S24BE,") for part in l24)
     assert any(part.startswith("audio/x-raw,format=S32BE,") for part in l32)
-    assert any("latency=200" in part for part in l24)
+    assert any(f"latency={base.latency_ms}" in part for part in l24)
     assert any("quality=8" in part for part in l24)
-    assert "max-size-time=300000000" in l24
+    assert "max-size-time=60000000" in l24
     assert "rtpbin" in l24
     assert any("rtcp" in part for part in l24)
     l24_str = " ".join(l24)
