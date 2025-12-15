@@ -107,7 +107,7 @@ cmake --build build --target cpu_tests gpu_tests -- -j$(nproc)
 
 | ファイル | 説明 |
 |---------|------|
-| `gpu_upsampler_alsa` | メインデーモン（TCP/ALSA入力→GPU処理→ALSA出力） |
+| `gpu_upsampler_alsa` | メインデーモン（ALSA Loopback入力→GPU処理→ALSA出力） |
 | `test_eq` | EQテストツール |
 
 ### テストバイナリ

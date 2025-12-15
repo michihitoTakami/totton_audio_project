@@ -159,7 +159,7 @@ Jetson Orin Nano DevKit（キャリアボード）の **J12（40pin）** は、I
 
 #### 設定例（廃止）
 
-> ⚠️ RTP/PipeWire経路は #690 で廃止し、TCP PCM入力に一本化しました。
+> ⚠️ RTP/PipeWire経路は #690 で廃止され、当時は TCP PCM入力に一本化されましたが、その後 TCP経路も廃止され、現在は GStreamer RTP入力に一本化されています。
 > 本節の設定は現在サポートされていません（歴史的記録のみ）。
 
 ---

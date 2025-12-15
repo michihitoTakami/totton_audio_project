@@ -16,14 +16,6 @@
         <span style="margin-right: 8px;">📊</span> {{ t.get('nav.dashboard') }}
     </a>
     <a
-        href="/tcp-input{{ lang_query }}"
-        class="nav-item {% if current_page == 'tcp-input' %}active{% endif %}"
-        aria-current="{% if current_page == 'tcp-input' %}page{% else %}false{% endif %}"
-        @click="closeMenu()"
-    >
-        <span style="margin-right: 8px;">🌐</span> {{ t.get('nav.tcp_input') }}
-    </a>
-    <a
         href="/eq{{ lang_query }}"
         class="nav-item {% if current_page == 'eq' %}active{% endif %}"
         aria-current="{% if current_page == 'eq' %}page{% else %}false{% endif %}"

@@ -16,7 +16,6 @@ Web UI は FastAPI ベースで、以下のページを提供:
 | Dashboard | `/` | 稼働状況のサマリー |
 | EQ Settings | `/eq` | EQ管理、OPRA検索、インポート |
 | System Settings | `/system` | デバイス・出力モード設定 |
-| TCP Input | `/tcp-input` | TCP入力の監視と制御 |
 
 ※ 旧 `/legacy` と `/admin` ページは廃止済みです。
 
@@ -52,7 +51,6 @@ sudo systemctl start gpu_upsampler_web
 http://127.0.0.1:11881/        # ダッシュボード
 http://127.0.0.1:11881/eq      # EQ設定
 http://127.0.0.1:11881/system  # システム設定
-http://127.0.0.1:11881/tcp-input  # TCP入力
 ```
 
 ### 外部アクセス (LAN内)

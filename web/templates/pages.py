@@ -78,23 +78,3 @@ def render_system(lang: str = "en", current_page: str = "system") -> str:
         current_page=current_page,
         lang=normalized_lang,
     )
-
-
-def render_tcp_input(lang: str = "en", current_page: str = "tcp-input") -> str:
-    """
-    Render the TCP Input page.
-
-    Args:
-        lang: Language code ("en" or "ja")
-        current_page: Current page name for sidebar highlighting
-
-    Returns:
-        Rendered HTML string
-    """
-    normalized_lang = normalize_lang(lang)
-    template = env.get_template("pages/tcp_input.html")
-    return template.render(
-        t=get_translations(normalized_lang),
-        current_page=current_page,
-        lang=normalized_lang,
-    )
