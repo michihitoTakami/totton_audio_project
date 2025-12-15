@@ -14,6 +14,7 @@
 #include "daemon/control/handlers/handler_registry.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/alsa_output.h"
+#include "daemon/output/alsa_write_loop.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/shutdown_manager.h"
 #include "daemon_constants.h"
@@ -578,8 +579,16 @@ static void flush_audio_caches_for_output_reset(const char* reason) {
     // Lock ordering note:
     // - AudioPipeline crossfeed path locks: g_crossfeed_mutex -> g_buffer_mutex
     // - We follow the same order to avoid deadlocks.
+    //
+    // Concurrency note:
+    // - AudioPipeline::process() holds g_input_process_mutex while calling the upsampler and
+    //   manipulating streaming buffers. Resetting streaming overlap concurrently can cause
+    //   glitches or undefined behavior, so we serialize against the input processing mutex.
+    std::unique_lock<std::mutex> input_lock(g_input_process_mutex);
+
+    std::unique_lock<std::mutex> cf_lock;
     if (g_crossfeed_enabled.load(std::memory_order_relaxed)) {
-        std::lock_guard<std::mutex> cf_lock(g_crossfeed_mutex);
+        cf_lock = std::unique_lock<std::mutex>(g_crossfeed_mutex);
         reset_crossfeed_stream_state_locked();
     }
 
@@ -1189,42 +1198,23 @@ static snd_pcm_sframes_t write_interleaved_frames_blocking(snd_pcm_t* pcm_handle
         return 0;
     }
 
-    snd_pcm_uframes_t totalWritten = 0;
-    while (totalWritten < frames && g_running.load(std::memory_order_acquire)) {
-        const int32_t* ptr = interleaved + static_cast<size_t>(totalWritten) * channels;
-        snd_pcm_uframes_t remaining = frames - totalWritten;
-        snd_pcm_sframes_t written = snd_pcm_writei(pcm_handle, ptr, remaining);
-
-        if (written > 0) {
-            totalWritten += static_cast<snd_pcm_uframes_t>(written);
-            continue;
-        }
-
-        if (written == 0 || written == -EAGAIN) {
-            // Non-blocking / not ready. Yield briefly.
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        // Error path
-        if (written == -EPIPE) {
-            // XRUN
+    return static_cast<snd_pcm_sframes_t>(daemon_output::alsa_write_loop::writeAllInterleaved(
+        interleaved, static_cast<size_t>(frames), channels,
+        [&](const int32_t* ptr, size_t requestedFrames) -> long {
+            return static_cast<long>(
+                snd_pcm_writei(pcm_handle, ptr, static_cast<snd_pcm_uframes_t>(requestedFrames)));
+        },
+        [&](long err) -> long { return static_cast<long>(snd_pcm_recover(pcm_handle, err, 0)); },
+        [&]() { std::this_thread::sleep_for(std::chrono::milliseconds(1)); },
+        [&]() { return g_running.load(std::memory_order_acquire); },
+        [&]() {
             if (g_fallback_manager) {
                 g_fallback_manager->notifyXrun();
             }
             gpu_upsampler::metrics::recordXrun();
             LOG_WARN("ALSA: XRUN detected");
-        }
-
-        snd_pcm_sframes_t rec = snd_pcm_recover(pcm_handle, written, 0);
-        if (rec < 0) {
-            return written;  // propagate original error
-        }
-
-        // Recovered; retry remaining frames
-    }
-
-    return static_cast<snd_pcm_sframes_t>(totalWritten);
+        },
+        static_cast<long>(EAGAIN), static_cast<long>(EPIPE)));
 }
 
 static snd_pcm_format_t parse_loopback_format(const std::string& formatStr) {
