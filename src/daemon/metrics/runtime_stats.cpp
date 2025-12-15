@@ -92,6 +92,14 @@ static std::atomic<size_t> s_clipCount{0};
 static std::atomic<size_t> s_totalSamples{0};
 static std::atomic<size_t> s_bufferDropped{0};
 
+static std::atomic<size_t> s_renderedSilenceBlocks{0};
+static std::atomic<size_t> s_renderedSilenceFrames{0};
+
+static std::atomic<size_t> s_upsamplerNeedMoreLeft{0};
+static std::atomic<size_t> s_upsamplerNeedMoreRight{0};
+static std::atomic<size_t> s_upsamplerErrorLeft{0};
+static std::atomic<size_t> s_upsamplerErrorRight{0};
+
 static std::atomic<float> s_peakInput{0.0f};
 static std::atomic<float> s_peakUpsampler{0.0f};
 static std::atomic<float> s_peakPostCrossfeed{0.0f};
@@ -101,6 +109,12 @@ void reset() {
     s_clipCount.store(0, std::memory_order_relaxed);
     s_totalSamples.store(0, std::memory_order_relaxed);
     s_bufferDropped.store(0, std::memory_order_relaxed);
+    s_renderedSilenceBlocks.store(0, std::memory_order_relaxed);
+    s_renderedSilenceFrames.store(0, std::memory_order_relaxed);
+    s_upsamplerNeedMoreLeft.store(0, std::memory_order_relaxed);
+    s_upsamplerNeedMoreRight.store(0, std::memory_order_relaxed);
+    s_upsamplerErrorLeft.store(0, std::memory_order_relaxed);
+    s_upsamplerErrorRight.store(0, std::memory_order_relaxed);
     s_peakInput.store(0.0f, std::memory_order_relaxed);
     s_peakUpsampler.store(0.0f, std::memory_order_relaxed);
     s_peakPostCrossfeed.store(0.0f, std::memory_order_relaxed);
@@ -117,6 +131,30 @@ void addSamples(std::size_t count) {
 
 void addDroppedFrames(std::size_t count) {
     s_bufferDropped.fetch_add(count, std::memory_order_relaxed);
+}
+
+void recordRenderedSilenceBlock() {
+    s_renderedSilenceBlocks.fetch_add(1, std::memory_order_relaxed);
+}
+
+void addRenderedSilenceFrames(std::size_t frames) {
+    s_renderedSilenceFrames.fetch_add(frames, std::memory_order_relaxed);
+}
+
+void recordUpsamplerNeedMoreBlock(bool leftChannel) {
+    if (leftChannel) {
+        s_upsamplerNeedMoreLeft.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    s_upsamplerNeedMoreRight.fetch_add(1, std::memory_order_relaxed);
+}
+
+void recordUpsamplerErrorBlock(bool leftChannel) {
+    if (leftChannel) {
+        s_upsamplerErrorLeft.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    s_upsamplerErrorRight.fetch_add(1, std::memory_order_relaxed);
 }
 
 void updateInputPeak(float peak) {
@@ -145,6 +183,30 @@ std::size_t totalSamples() {
 
 std::size_t droppedFrames() {
     return s_bufferDropped.load(std::memory_order_relaxed);
+}
+
+std::size_t renderedSilenceBlocks() {
+    return s_renderedSilenceBlocks.load(std::memory_order_relaxed);
+}
+
+std::size_t renderedSilenceFrames() {
+    return s_renderedSilenceFrames.load(std::memory_order_relaxed);
+}
+
+std::size_t upsamplerNeedMoreBlocksLeft() {
+    return s_upsamplerNeedMoreLeft.load(std::memory_order_relaxed);
+}
+
+std::size_t upsamplerNeedMoreBlocksRight() {
+    return s_upsamplerNeedMoreRight.load(std::memory_order_relaxed);
+}
+
+std::size_t upsamplerErrorBlocksLeft() {
+    return s_upsamplerErrorLeft.load(std::memory_order_relaxed);
+}
+
+std::size_t upsamplerErrorBlocksRight() {
+    return s_upsamplerErrorRight.load(std::memory_order_relaxed);
 }
 
 nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrames) {
@@ -204,7 +266,16 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
     buffer["max_seconds"] = DaemonConstants::MAX_OUTPUT_BUFFER_SECONDS;
     buffer["capacity_frames"] = static_cast<std::size_t>(bufferCapacityFrames);
     buffer["dropped_frames"] = droppedFrames();
+    buffer["rendered_silence_blocks"] = renderedSilenceBlocks();
+    buffer["rendered_silence_frames"] = renderedSilenceFrames();
     stats["buffer"] = buffer;
+
+    nlohmann::json upsampler;
+    upsampler["need_more_blocks_left"] = upsamplerNeedMoreBlocksLeft();
+    upsampler["need_more_blocks_right"] = upsamplerNeedMoreBlocksRight();
+    upsampler["error_blocks_left"] = upsamplerErrorBlocksLeft();
+    upsampler["error_blocks_right"] = upsamplerErrorBlocksRight();
+    stats["upsampler_streaming"] = upsampler;
 
     return stats;
 }

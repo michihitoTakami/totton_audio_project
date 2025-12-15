@@ -2,6 +2,7 @@
 
 #include "audio_utils.h"
 #include "daemon/metrics/runtime_stats.h"
+#include "logging/metrics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -81,6 +82,31 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     }
 
     if (!leftGenerated || !rightGenerated) {
+        // Streaming mode may legitimately return false when it needs to accumulate more samples
+        // before generating an output block. Treat "false + empty output" as "need more",
+        // and only fail hard when it returns false but still produced output (unexpected) or
+        // when one channel produced output while the other did not.
+        const bool leftEmpty = (outputLeft->empty());
+        const bool rightEmpty = (outputRight->empty());
+
+        if (!leftGenerated && leftEmpty) {
+            runtime_stats::recordUpsamplerNeedMoreBlock(true);
+        } else if (!leftGenerated) {
+            runtime_stats::recordUpsamplerErrorBlock(true);
+        }
+
+        if (!rightGenerated && rightEmpty) {
+            runtime_stats::recordUpsamplerNeedMoreBlock(false);
+        } else if (!rightGenerated) {
+            runtime_stats::recordUpsamplerErrorBlock(false);
+        }
+
+        // If neither channel produced output yet, keep accumulating input without treating it
+        // as a pipeline error.
+        if (leftEmpty && rightEmpty) {
+            return true;
+        }
+
         return false;
     }
 
@@ -177,6 +203,11 @@ RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& in
     }
 
     if (!hasAudio) {
+        // Output buffer underflow at daemon level (not necessarily ALSA XRUN).
+        // This is a strong candidate for "ジッ/プチ" artifacts due to discontinuity.
+        runtime_stats::recordRenderedSilenceBlock();
+        runtime_stats::addRenderedSilenceFrames(frames);
+        gpu_upsampler::metrics::recordBufferUnderflow();
         if (softMute && softMute->isTransitioning()) {
             softMute->process(floatScratch.data(), frames);
         }
