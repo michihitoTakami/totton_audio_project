@@ -16,28 +16,28 @@
         {% set status_icon = "⚙️" %}
         {% set status_title = t.get('dashboard.daemon') %}
         {% set status_class = "status.daemon_running ? 'status-ok' : 'status-error'" %}
-        {% set status_text = "status.daemon_running ? '{{ t.get('dashboard.status.running') }}' : '{{ t.get('dashboard.status.stopped') }}'" %}
+        {% set status_text = "status.daemon_running ? '" ~ t.get('dashboard.status.running') ~ "' : '" ~ t.get('dashboard.status.stopped') ~ "'" %}
         {% include 'components/status_card.html' %}
 
         <!-- EQ Status Card -->
         {% set status_icon = "🎚️" %}
         {% set status_title = t.get('dashboard.eq') %}
         {% set status_class = "status.eq_active ? 'status-ok' : 'status-off'" %}
-        {% set status_text = "status.eq_active ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% set status_text = "status.eq_active ? '" ~ t.get('dashboard.status.on') ~ "' : '" ~ t.get('dashboard.status.off') ~ "'" %}
         {% include 'components/status_card.html' %}
 
         <!-- Crossfeed Status Card -->
         {% set status_icon = "🎧" %}
         {% set status_title = t.get('dashboard.crossfeed') %}
         {% set status_class = "status.crossfeed_enabled ? 'status-ok' : 'status-off'" %}
-        {% set status_text = "status.crossfeed_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% set status_text = "status.crossfeed_enabled ? '" ~ t.get('dashboard.status.on') ~ "' : '" ~ t.get('dashboard.status.off') ~ "'" %}
         {% include 'components/status_card.html' %}
 
         <!-- Low Latency Mode Card -->
         {% set status_icon = "⚡" %}
         {% set status_title = t.get('dashboard.low_latency') %}
         {% set status_class = "status.low_latency_enabled ? 'status-ok' : 'status-off'" %}
-        {% set status_text = "status.low_latency_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% set status_text = "status.low_latency_enabled ? '" ~ t.get('dashboard.status.on') ~ "' : '" ~ t.get('dashboard.status.off') ~ "'" %}
         {% include 'components/status_card.html' %}
 
     </div>

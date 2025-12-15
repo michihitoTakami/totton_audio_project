@@ -28,19 +28,19 @@
             {% set status_icon = "⚙️" %}
             {% set status_title = t.get('system.health.daemon') %}
             {% set status_class = "health.daemon_running ? 'status-ok' : 'status-error'" %}
-            {% set status_text = "health.daemon_running ? '{{ t.get('system.daemon.running') }}' : '{{ t.get('system.daemon.stopped') }}'" %}
+            {% set status_text = "health.daemon_running ? '" ~ t.get('system.daemon.running') ~ "' : '" ~ t.get('system.daemon.stopped') ~ "'" %}
             {% include 'components/status_card.html' %}
 
             {% set status_icon = "🎚️" %}
             {% set status_title = t.get('system.health.input_rate') %}
             {% set status_class = "health.input_rate > 0 ? 'status-ok' : 'status-off'" %}
-            {% set status_text = "health.input_rate ? `${health.input_rate} Hz` : '{{ t.get('system.health.na') }}'" %}
+            {% set status_text = "health.input_rate ? `${health.input_rate} Hz` : '" ~ t.get('system.health.na') ~ "'" %}
             {% include 'components/status_card.html' %}
 
             {% set status_icon = "🎛️" %}
             {% set status_title = t.get('system.health.output_rate') %}
             {% set status_class = "health.output_rate > 0 ? 'status-ok' : 'status-off'" %}
-            {% set status_text = "health.output_rate ? `${health.output_rate} Hz` : '{{ t.get('system.health.na') }}'" %}
+            {% set status_text = "health.output_rate ? `${health.output_rate} Hz` : '" ~ t.get('system.health.na') ~ "'" %}
             {% include 'components/status_card.html' %}
         </div>
     </div>
