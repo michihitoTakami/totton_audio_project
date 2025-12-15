@@ -26,6 +26,10 @@ DEFAULT_DEVICE = "hw:Loopback,0,0"
 DEFAULT_QUALITY = 8
 DEFAULT_RTCP_PORT = DEFAULT_PORT + 1
 DEFAULT_RTCP_SEND_PORT = DEFAULT_PORT + 2
+# 低遅延用途（動画など）を意識し、デフォルトは抑えめにする。
+# 余裕が必要な場合は環境変数で増やす。
+DEFAULT_JITTERBUFFER_MULTIPLIER = 1
+DEFAULT_QUEUE_TIME_MS = 60
 # USB直結(192.168.55.0/24)をデフォルト想定にする（mDNSが見えない構成が多い）
 DEFAULT_SENDER_HOST = "192.168.55.100"
 DEFAULT_MONITOR_INTERVAL_SEC = 1.0
@@ -154,6 +158,22 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"encoding-name={settings.encoding},payload=96,channels={settings.channels}"
     )
 
+    # 受信ジッタ耐性 vs 低遅延 のトレードオフを環境変数で調整可能にする
+    jitterbuffer_multiplier = _env_int(
+        "MAGICBOX_RTP_JITTERBUFFER_MULTIPLIER",
+        DEFAULT_JITTERBUFFER_MULTIPLIER,
+        minimum=1,
+        maximum=4,
+    )
+    rtpbin_latency_ms = int(settings.latency_ms * jitterbuffer_multiplier)
+    queue_time_ms = _env_int(
+        "MAGICBOX_RTP_QUEUE_TIME_MS",
+        DEFAULT_QUEUE_TIME_MS,
+        minimum=10,
+        maximum=1000,
+    )
+    queue_time_ns = int(queue_time_ms * 1_000_000)
+
     # RTP/RTCP (rtpbin) を用い、送信側のタイムスタンプに同期。RTCPは port+1(受信) / port+2(送信) を使用。
     # rtpbin.* のsinkとsrcは別チェーンに明示的に '!' で接続する。
     cmd: list[str] = [
@@ -161,7 +181,7 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         "-e",
         "rtpbin",
         "name=rtpbin",
-        f"latency={settings.latency_ms * 2}",  # add extra headroom to avoid underruns
+        f"latency={rtpbin_latency_ms}",
         "ntp-sync=true",
         # RTP (payload)
         "udpsrc",
@@ -185,7 +205,10 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
         f"audio/x-raw,format={sink_format},rate={settings.sample_rate},channels={settings.channels}",
         "!",
         "queue",
-        "max-size-time=300000000",  # 300ms safety buffer (latency trade-off)
+        # 低遅延用途のデフォルトを優先（必要なら env で増やす）
+        f"max-size-time={queue_time_ns}",
+        "max-size-bytes=0",
+        "max-size-buffers=0",
         "!",
         "alsasink",
         f"device={settings.device}",
