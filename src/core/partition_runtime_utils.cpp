@@ -1,13 +1,12 @@
-#include "partition_runtime_utils.h"
+#include "core/partition_runtime_utils.h"
 
 #include <iostream>
 #include <string>
 
 namespace PartitionRuntime {
 
-void applyPartitionPolicy(const RuntimeRequest& request,
-                          ConvolutionEngine::GPUUpsampler& upsampler, AppConfig& config,
-                          const char* daemonTag) {
+void applyPartitionPolicy(const RuntimeRequest& request, ConvolutionEngine::GPUUpsampler& upsampler,
+                          AppConfig& config, const char* daemonTag) {
     const bool partitionActive = upsampler.isPartitionedConvolutionEnabled();
     const std::string tag = daemonTag ? daemonTag : "Daemon";
 
@@ -40,8 +39,8 @@ void applyPartitionPolicy(const RuntimeRequest& request,
     const auto& plan = upsampler.getPartitionPlan();
     const int outputRate = upsampler.getOutputSampleRate();
     std::cout << "[Partition][" << tag << "] Active: " << plan.describe(outputRate) << std::endl;
-    std::cout << "[Partition][" << tag << "] Stream block: "
-              << upsampler.getStreamValidInputPerBlock() << " input samples ("
+    std::cout << "[Partition][" << tag
+              << "] Stream block: " << upsampler.getStreamValidInputPerBlock() << " input samples ("
               << static_cast<size_t>(upsampler.getStreamValidInputPerBlock()) *
                      static_cast<size_t>(upsampler.getUpsampleRatio())
               << " output)" << std::endl;
@@ -56,5 +55,3 @@ void applyPartitionPolicy(const RuntimeRequest& request,
 }
 
 }  // namespace PartitionRuntime
-
-

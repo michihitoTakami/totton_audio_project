@@ -1,7 +1,7 @@
 #ifndef ZEROMQ_INTERFACE_H
 #define ZEROMQ_INTERFACE_H
 
-#include "error_codes.h"
+#include "core/error_codes.h"
 
 #include <atomic>
 #include <functional>

@@ -1,7 +1,7 @@
 #ifndef GPU_CUDA_UTILS_H
 #define GPU_CUDA_UTILS_H
 
-#include "error_codes.h"
+#include "core/error_codes.h"
 
 #include <cuda_runtime.h>
 #include <cufft.h>

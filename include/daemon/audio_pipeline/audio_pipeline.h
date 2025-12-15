@@ -1,11 +1,11 @@
 #pragma once
 
-#include "config_loader.h"
 #include "convolution_engine.h"
+#include "core/config_loader.h"
+#include "core/daemon_constants.h"
 #include "crossfeed_engine.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/metrics/runtime_stats.h"
-#include "daemon_constants.h"
 #include "logging/logger.h"
 #include "playback_buffer.h"
 #include "soft_mute.h"
