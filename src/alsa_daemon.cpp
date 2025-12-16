@@ -1471,6 +1471,9 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             break;
         }
+        // Issue #899: avoid per-period host blocking on GPU completion in steady-state playback.
+        // Keep legacy semantics (blocking) for offline/tests unless explicitly enabled here.
+        g_state.upsampler->setStreamingNonBlocking(true);
         PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_state.upsampler, g_state.config,
                                                "ALSA");
 

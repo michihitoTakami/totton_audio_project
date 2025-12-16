@@ -192,6 +192,8 @@ HRTFProcessor::HRTFProcessor()
       d_overlapL_(nullptr),
       d_overlapR_(nullptr),
       streamInitialized_(false),
+      streamDoneEvent_(nullptr),
+      streamInFlight_(false),
       streamValidInputPerBlock_(0),
       pinnedStreamInputL_(nullptr),
       pinnedStreamInputR_(nullptr),
@@ -643,6 +645,50 @@ bool HRTFProcessor::initializeStreaming() {
         return false;
     }
 
+    // Re-initialize non-blocking streaming resources
+    auto safeUnregisterVec = [&](std::vector<float>& buf, const char* context) {
+        if (buf.empty()) {
+            return;
+        }
+        cudaError_t err = cudaHostUnregister(buf.data());
+        if (err != cudaSuccess && err != cudaErrorHostMemoryNotRegistered) {
+            checkCudaError(err, context);
+        }
+    };
+
+    if (streamDoneEvent_) {
+        cudaEventDestroy(streamDoneEvent_);
+        streamDoneEvent_ = nullptr;
+    }
+    safeUnregisterVec(stagedInputL_, "cudaHostUnregister crossfeed staged input L");
+    safeUnregisterVec(stagedInputR_, "cudaHostUnregister crossfeed staged input R");
+    safeUnregisterVec(stagedOutputL_, "cudaHostUnregister crossfeed staged output L");
+    safeUnregisterVec(stagedOutputR_, "cudaHostUnregister crossfeed staged output R");
+    stagedInputL_.clear();
+    stagedInputR_.clear();
+    stagedOutputL_.clear();
+    stagedOutputR_.clear();
+
+    stagedInputL_.assign(streamValidInputPerBlock_, 0.0f);
+    stagedInputR_.assign(streamValidInputPerBlock_, 0.0f);
+    stagedOutputL_.assign(static_cast<size_t>(validOutputPerBlock_), 0.0f);
+    stagedOutputR_.assign(static_cast<size_t>(validOutputPerBlock_), 0.0f);
+    checkCudaError(cudaHostRegister(stagedInputL_.data(), stagedInputL_.size() * sizeof(float),
+                                   cudaHostRegisterDefault),
+                   "cudaHostRegister crossfeed staged input L");
+    checkCudaError(cudaHostRegister(stagedInputR_.data(), stagedInputR_.size() * sizeof(float),
+                                   cudaHostRegisterDefault),
+                   "cudaHostRegister crossfeed staged input R");
+    checkCudaError(cudaHostRegister(stagedOutputL_.data(), stagedOutputL_.size() * sizeof(float),
+                                   cudaHostRegisterDefault),
+                   "cudaHostRegister crossfeed staged output L");
+    checkCudaError(cudaHostRegister(stagedOutputR_.data(), stagedOutputR_.size() * sizeof(float),
+                                   cudaHostRegisterDefault),
+                   "cudaHostRegister crossfeed staged output R");
+    checkCudaError(cudaEventCreateWithFlags(&streamDoneEvent_, cudaEventDisableTiming),
+                   "cudaEventCreate crossfeed streaming done");
+    streamInFlight_ = false;
+
     resetStreaming();
     streamInitialized_ = true;
     return true;
@@ -658,6 +704,7 @@ void HRTFProcessor::resetStreaming() {
     if (d_overlapR_) {
         cudaMemset(d_overlapR_, 0, overlapSize_ * sizeof(float));
     }
+    streamInFlight_ = false;
 }
 
 bool HRTFProcessor::processStereo(const float* inputL, const float* inputR, size_t inputFrames,
@@ -873,21 +920,37 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         return false;
     }
 
-    // Accumulate input
-    size_t requiredInputSamplesL =
-        streamInputAccumulatedL + inputFrames + streamValidInputPerBlock_;
-    size_t requiredInputSamplesR =
-        streamInputAccumulatedR + inputFrames + streamValidInputPerBlock_;
-    if (!ensurePinnedCapacity(streamInputBufferL, requiredInputSamplesL, &pinnedStreamInputL_,
-                              &pinnedStreamInputLBytes_,
-                              "crossfeed stream input L")) {
+    cudaStream_t workStream = (stream != nullptr) ? stream : stream_;
+
+    // If previous block is done, deliver staged output without blocking.
+    bool producedOutput = false;
+    if (streamInFlight_ && streamDoneEvent_ && cudaEventQuery(streamDoneEvent_) == cudaSuccess) {
+        if (!ensurePinnedCapacity(outputL, validOutputPerBlock_, &pinnedStreamOutputL_,
+                                  &pinnedStreamOutputLBytes_, "crossfeed stream output L") ||
+            !ensurePinnedCapacity(outputR, validOutputPerBlock_, &pinnedStreamOutputR_,
+                                  &pinnedStreamOutputRBytes_, "crossfeed stream output R")) {
+            outputL.clear();
+            outputR.clear();
+            return false;
+        }
+        outputL.resize(static_cast<size_t>(validOutputPerBlock_));
+        outputR.resize(static_cast<size_t>(validOutputPerBlock_));
+        std::memcpy(outputL.data(), stagedOutputL_.data(), outputL.size() * sizeof(float));
+        std::memcpy(outputR.data(), stagedOutputR_.data(), outputR.size() * sizeof(float));
+        producedOutput = true;
+        streamInFlight_ = false;
+    } else {
         outputL.clear();
         outputR.clear();
-        return false;
     }
-    if (!ensurePinnedCapacity(streamInputBufferR, requiredInputSamplesR, &pinnedStreamInputR_,
-                              &pinnedStreamInputRBytes_,
-                              "crossfeed stream input R")) {
+
+    // Accumulate input
+    size_t requiredInputSamplesL = streamInputAccumulatedL + inputFrames + streamValidInputPerBlock_;
+    size_t requiredInputSamplesR = streamInputAccumulatedR + inputFrames + streamValidInputPerBlock_;
+    if (!ensurePinnedCapacity(streamInputBufferL, requiredInputSamplesL, &pinnedStreamInputL_,
+                              &pinnedStreamInputLBytes_, "crossfeed stream input L") ||
+        !ensurePinnedCapacity(streamInputBufferR, requiredInputSamplesR, &pinnedStreamInputR_,
+                              &pinnedStreamInputRBytes_, "crossfeed stream input R")) {
         outputL.clear();
         outputR.clear();
         return false;
@@ -908,132 +971,111 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     streamInputAccumulatedL += inputFrames;
     streamInputAccumulatedR += inputFrames;
 
-    // Check if we have enough for a block
-    if (streamInputAccumulatedL < streamValidInputPerBlock_) {
-        outputL.clear();
-        outputR.clear();
-        return false;  // Not enough data yet
+    // Queue next block if enough input and no in-flight work.
+    if (!streamInFlight_ && streamInputAccumulatedL >= streamValidInputPerBlock_) {
+        // Stage input into pinned buffers so we can shift accumulation immediately.
+        std::memcpy(stagedInputL_.data(), streamInputBufferL.data(),
+                    streamValidInputPerBlock_ * sizeof(float));
+        std::memcpy(stagedInputR_.data(), streamInputBufferR.data(),
+                    streamValidInputPerBlock_ * sizeof(float));
+
+        size_t remaining = streamInputAccumulatedL - streamValidInputPerBlock_;
+        if (remaining > 0) {
+            std::memmove(streamInputBufferL.data(),
+                         streamInputBufferL.data() + streamValidInputPerBlock_,
+                         remaining * sizeof(float));
+            std::memmove(streamInputBufferR.data(),
+                         streamInputBufferR.data() + streamValidInputPerBlock_,
+                         remaining * sizeof(float));
+        }
+        streamInputAccumulatedL = remaining;
+        streamInputAccumulatedR = remaining;
+
+        int threadsPerBlock = 256;
+        int blocks = (filterFftSize_ + threadsPerBlock - 1) / threadsPerBlock;
+
+        // Prepare padded input with device-resident overlap
+        checkCudaError(cudaMemsetAsync(d_paddedInputL_, 0, fftSize_ * sizeof(float), workStream),
+                       "memset padded L");
+        checkCudaError(cudaMemsetAsync(d_paddedInputR_, 0, fftSize_ * sizeof(float), workStream),
+                       "memset padded R");
+
+        // Copy device overlap
+        checkCudaError(cudaMemcpyAsync(d_paddedInputL_, d_overlapL_, overlapSize_ * sizeof(float),
+                                       cudaMemcpyDeviceToDevice, workStream),
+                       "copy device overlap L");
+        checkCudaError(cudaMemcpyAsync(d_paddedInputR_, d_overlapR_, overlapSize_ * sizeof(float),
+                                       cudaMemcpyDeviceToDevice, workStream),
+                       "copy device overlap R");
+
+        // Copy new input (from staged pinned buffers)
+        checkCudaError(cudaMemcpyAsync(d_paddedInputL_ + overlapSize_, stagedInputL_.data(),
+                                       streamValidInputPerBlock_ * sizeof(float),
+                                       cudaMemcpyHostToDevice, workStream),
+                       "copy stream input L");
+        checkCudaError(cudaMemcpyAsync(d_paddedInputR_ + overlapSize_, stagedInputR_.data(),
+                                       streamValidInputPerBlock_ * sizeof(float),
+                                       cudaMemcpyHostToDevice, workStream),
+                       "copy stream input R");
+
+        // Forward FFT
+        checkCufftError(cufftSetStream(fftPlanForward_, workStream), "set stream forward");
+        checkCufftError(cufftExecR2C(fftPlanForward_, d_paddedInputL_, d_inputFFT_L_), "FFT L");
+        checkCufftError(cufftExecR2C(fftPlanForward_, d_paddedInputR_, d_inputFFT_R_), "FFT R");
+
+        // 4-channel convolution:
+        complexMultiplyStoreKernel<<<blocks, threadsPerBlock, 0, workStream>>>(
+            d_convLL_, d_inputFFT_L_, d_activeFilterFFT_[0], filterFftSize_);
+        complexMultiplyAccumulateKernel<<<blocks, threadsPerBlock, 0, workStream>>>(
+            d_convLL_, d_inputFFT_R_, d_activeFilterFFT_[2], filterFftSize_);
+
+        complexMultiplyStoreKernel<<<blocks, threadsPerBlock, 0, workStream>>>(
+            d_convLR_, d_inputFFT_L_, d_activeFilterFFT_[1], filterFftSize_);
+        complexMultiplyAccumulateKernel<<<blocks, threadsPerBlock, 0, workStream>>>(
+            d_convLR_, d_inputFFT_R_, d_activeFilterFFT_[3], filterFftSize_);
+
+        // Inverse FFT
+        checkCufftError(cufftSetStream(fftPlanInverse_, workStream), "set stream inverse");
+        checkCufftError(cufftExecC2R(fftPlanInverse_, d_convLL_, d_outputL_), "IFFT L");
+        checkCufftError(cufftExecC2R(fftPlanInverse_, d_convLR_, d_outputR_), "IFFT R");
+
+        // Scale
+        float scale = 1.0f / fftSize_;
+        int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
+        scaleKernel<<<scaleBlocks, threadsPerBlock, 0, workStream>>>(d_outputL_, fftSize_, scale);
+        scaleKernel<<<scaleBlocks, threadsPerBlock, 0, workStream>>>(d_outputR_, fftSize_, scale);
+
+        // Copy valid output into staging buffers
+        checkCudaError(cudaMemcpyAsync(stagedOutputL_.data(), d_outputL_ + overlapSize_,
+                                       static_cast<size_t>(validOutputPerBlock_) * sizeof(float),
+                                       cudaMemcpyDeviceToHost, workStream),
+                       "copy output L");
+        checkCudaError(cudaMemcpyAsync(stagedOutputR_.data(), d_outputR_ + overlapSize_,
+                                       static_cast<size_t>(validOutputPerBlock_) * sizeof(float),
+                                       cudaMemcpyDeviceToHost, workStream),
+                       "copy output R");
+
+        // Update device overlap using the actual tail of this block
+        if (overlapSize_ > 0) {
+            size_t overlapSamples = std::min(static_cast<size_t>(overlapSize_),
+                                             static_cast<size_t>(streamValidInputPerBlock_));
+            size_t overlapStart = streamValidInputPerBlock_ - overlapSamples;
+            checkCudaError(cudaMemcpyAsync(d_overlapL_, d_paddedInputL_ + overlapSize_ + overlapStart,
+                                           overlapSamples * sizeof(float),
+                                           cudaMemcpyDeviceToDevice, workStream),
+                           "update overlap L");
+            checkCudaError(cudaMemcpyAsync(d_overlapR_, d_paddedInputR_ + overlapSize_ + overlapStart,
+                                           overlapSamples * sizeof(float),
+                                           cudaMemcpyDeviceToDevice, workStream),
+                           "update overlap R");
+        }
+
+        checkCudaError(cudaEventRecord(streamDoneEvent_, workStream),
+                       "cudaEventRecord crossfeed streaming done");
+        streamInFlight_ = true;
     }
 
-    // Process one block
-    if (!ensurePinnedCapacity(outputL, validOutputPerBlock_, &pinnedStreamOutputL_,
-                              &pinnedStreamOutputLBytes_, "crossfeed stream output L") ||
-        !ensurePinnedCapacity(outputR, validOutputPerBlock_, &pinnedStreamOutputR_,
-                              &pinnedStreamOutputRBytes_, "crossfeed stream output R")) {
-        outputL.clear();
-        outputR.clear();
-        return false;
-    }
-    if (!validatePinned(outputL, pinnedStreamOutputL_, pinnedStreamOutputLBytes_, "stream output L") ||
-        !validatePinned(outputR, pinnedStreamOutputR_, pinnedStreamOutputRBytes_, "stream output R")) {
-        outputL.clear();
-        outputR.clear();
-        return false;
-    }
-
-    int threadsPerBlock = 256;
-    int blocks = (filterFftSize_ + threadsPerBlock - 1) / threadsPerBlock;
-
-    // Prepare padded input with device-resident overlap
-    checkCudaError(cudaMemsetAsync(d_paddedInputL_, 0, fftSize_ * sizeof(float), stream),
-                   "memset padded L");
-    checkCudaError(cudaMemsetAsync(d_paddedInputR_, 0, fftSize_ * sizeof(float), stream),
-                   "memset padded R");
-
-    // Copy device overlap
-    checkCudaError(cudaMemcpyAsync(d_paddedInputL_, d_overlapL_, overlapSize_ * sizeof(float),
-                                   cudaMemcpyDeviceToDevice, stream),
-                   "copy device overlap L");
-    checkCudaError(cudaMemcpyAsync(d_paddedInputR_, d_overlapR_, overlapSize_ * sizeof(float),
-                                   cudaMemcpyDeviceToDevice, stream),
-                   "copy device overlap R");
-
-    // Copy new input
-    checkCudaError(
-        cudaMemcpyAsync(d_paddedInputL_ + overlapSize_, streamInputBufferL.data(),
-                        streamValidInputPerBlock_ * sizeof(float), cudaMemcpyHostToDevice, stream),
-        "copy stream input L");
-    checkCudaError(
-        cudaMemcpyAsync(d_paddedInputR_ + overlapSize_, streamInputBufferR.data(),
-                        streamValidInputPerBlock_ * sizeof(float), cudaMemcpyHostToDevice, stream),
-        "copy stream input R");
-
-    // Forward FFT
-    checkCufftError(cufftSetStream(fftPlanForward_, stream), "set stream forward");
-    checkCufftError(cufftExecR2C(fftPlanForward_, d_paddedInputL_, d_inputFFT_L_), "FFT L");
-    checkCufftError(cufftExecR2C(fftPlanForward_, d_paddedInputR_, d_inputFFT_R_), "FFT R");
-
-    // 4-channel convolution:
-    // Out_L = L*LL + R*RL
-    // Out_R = L*LR + R*RR
-
-    // d_convLL_ = L * LL
-    complexMultiplyStoreKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-        d_convLL_, d_inputFFT_L_, d_activeFilterFFT_[0], filterFftSize_);
-    // d_convLL_ += R * RL
-    complexMultiplyAccumulateKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-        d_convLL_, d_inputFFT_R_, d_activeFilterFFT_[2], filterFftSize_);
-
-    // d_convLR_ = L * LR
-    complexMultiplyStoreKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-        d_convLR_, d_inputFFT_L_, d_activeFilterFFT_[1], filterFftSize_);
-    // d_convLR_ += R * RR
-    complexMultiplyAccumulateKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-        d_convLR_, d_inputFFT_R_, d_activeFilterFFT_[3], filterFftSize_);
-
-    // Inverse FFT
-    checkCufftError(cufftSetStream(fftPlanInverse_, stream), "set stream inverse");
-    checkCufftError(cufftExecC2R(fftPlanInverse_, d_convLL_, d_outputL_), "IFFT L");
-    checkCufftError(cufftExecC2R(fftPlanInverse_, d_convLR_, d_outputR_), "IFFT R");
-
-    // Scale
-    float scale = 1.0f / fftSize_;
-    int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
-    scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(d_outputL_, fftSize_, scale);
-    scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(d_outputR_, fftSize_, scale);
-
-    // Copy valid output (asynchronous, wait before touching host buffers again)
-    checkCudaError(
-        cudaMemcpyAsync(outputL.data(), d_outputL_ + overlapSize_,
-                        validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-        "copy output L");
-    checkCudaError(
-        cudaMemcpyAsync(outputR.data(), d_outputR_ + overlapSize_,
-                        validOutputPerBlock_ * sizeof(float), cudaMemcpyDeviceToHost, stream),
-        "copy output R");
-
-    // Update device overlap using the actual tail of this block
-    if (overlapSize_ > 0) {
-        size_t overlapSamples = std::min(static_cast<size_t>(overlapSize_),
-                                         static_cast<size_t>(streamValidInputPerBlock_));
-        size_t overlapStart = streamValidInputPerBlock_ - overlapSamples;
-        checkCudaError(
-            cudaMemcpyAsync(d_overlapL_, d_paddedInputL_ + overlapSize_ + overlapStart,
-                            overlapSamples * sizeof(float), cudaMemcpyDeviceToDevice, stream),
-            "update overlap L");
-        checkCudaError(
-            cudaMemcpyAsync(d_overlapR_, d_paddedInputR_ + overlapSize_ + overlapStart,
-                            overlapSamples * sizeof(float), cudaMemcpyDeviceToDevice, stream),
-            "update overlap R");
-    }
-
-    // Ensure all device↔host transfers finished before reusing/altering host buffers
-    checkCudaError(cudaStreamSynchronize(stream), "stream sync (crossfeed streaming)");
-
-    // Shift input buffer
-    size_t remaining = streamInputAccumulatedL - streamValidInputPerBlock_;
-    if (remaining > 0) {
-        std::memmove(streamInputBufferL.data(),
-                     streamInputBufferL.data() + streamValidInputPerBlock_,
-                     remaining * sizeof(float));
-        std::memmove(streamInputBufferR.data(),
-                     streamInputBufferR.data() + streamValidInputPerBlock_,
-                     remaining * sizeof(float));
-    }
-    streamInputAccumulatedL = remaining;
-    streamInputAccumulatedR = remaining;
-
-    return true;
+    return producedOutput;
 }
 
 const HRTFMetadata& HRTFProcessor::getCurrentMetadata() const {
@@ -1112,6 +1154,27 @@ void HRTFProcessor::cleanup() {
         cudaStreamDestroy(streamL_);
     if (streamR_)
         cudaStreamDestroy(streamR_);
+
+    if (streamDoneEvent_) {
+        cudaEventDestroy(streamDoneEvent_);
+        streamDoneEvent_ = nullptr;
+    }
+    // Unregister staged host buffers (owned by this processor)
+    auto safeUnregisterVec = [&](std::vector<float>& buf, const char* context) {
+        if (buf.empty()) {
+            return;
+        }
+        cudaError_t err = cudaHostUnregister(buf.data());
+        if (err != cudaSuccess && err != cudaErrorHostMemoryNotRegistered) {
+            checkCudaError(err, context);
+        }
+        buf.clear();
+    };
+    safeUnregisterVec(stagedInputL_, "cudaHostUnregister cleanup staged input L");
+    safeUnregisterVec(stagedInputR_, "cudaHostUnregister cleanup staged input R");
+    safeUnregisterVec(stagedOutputL_, "cudaHostUnregister cleanup staged output L");
+    safeUnregisterVec(stagedOutputR_, "cudaHostUnregister cleanup staged output R");
+    streamInFlight_ = false;
 
     // Unregister pinned host buffers
     safeCudaHostUnregister(&pinnedStreamInputL_, &pinnedStreamInputLBytes_,

@@ -372,6 +372,17 @@ class HRTFProcessor {
     // Streaming state
     bool streamInitialized_;
     size_t streamValidInputPerBlock_;
+    // Completion tracking for non-blocking streaming (Issue #899)
+    cudaEvent_t streamDoneEvent_;
+    bool streamInFlight_;
+
+    // Pinned host staging buffers to decouple async memcpy from caller-owned vectors.
+    // These are sized once when streaming is initialized and never reallocated in the RT path.
+    std::vector<float> stagedInputL_;
+    std::vector<float> stagedInputR_;
+    std::vector<float> stagedOutputL_;
+    std::vector<float> stagedOutputR_;
+
     void* pinnedStreamInputL_;
     void* pinnedStreamInputR_;
     void* pinnedStreamOutputL_;
