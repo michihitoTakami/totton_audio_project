@@ -1,4 +1,9 @@
-#include "audio_utils.h"
+#include "audio/audio_utils.h"
+#include "audio/eq_parser.h"
+#include "audio/eq_to_fir.h"
+#include "audio/fallback_manager.h"
+#include "audio/filter_headroom.h"
+#include "audio/soft_mute.h"
 #include "convolution_engine.h"
 #include "core/config_loader.h"
 #include "core/daemon_constants.h"
@@ -19,14 +24,9 @@
 #include "daemon/output/alsa_write_loop.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/shutdown_manager.h"
-#include "eq_parser.h"
-#include "eq_to_fir.h"
-#include "fallback_manager.h"
-#include "filter_headroom.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
 #include "playback_buffer.h"
-#include "soft_mute.h"
 
 #include <algorithm>
 #include <alsa/asoundlib.h>

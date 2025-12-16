@@ -1,4 +1,4 @@
-#include "eq_to_fir.h"
+#include "audio/eq_to_fir.h"
 
 #include <cmath>
 #include <iostream>

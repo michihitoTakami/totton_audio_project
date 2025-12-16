@@ -1,7 +1,7 @@
 #pragma once
 
+#include "audio/soft_mute.h"
 #include "graceful_shutdown.h"
-#include "soft_mute.h"
 
 #include <atomic>
 #include <functional>

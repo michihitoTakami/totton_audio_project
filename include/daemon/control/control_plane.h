@@ -1,11 +1,11 @@
 #pragma once
 
+#include "audio/soft_mute.h"
 #include "core/config_loader.h"
 #include "daemon/api/events.h"
 #include "daemon/control/zmq_server.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/pcm/dac_manager.h"
-#include "soft_mute.h"
 
 #include <atomic>
 #include <functional>

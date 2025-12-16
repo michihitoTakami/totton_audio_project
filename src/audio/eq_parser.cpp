@@ -1,4 +1,4 @@
-#include "eq_parser.h"
+#include "audio/eq_parser.h"
 
 #include <algorithm>
 #include <cctype>

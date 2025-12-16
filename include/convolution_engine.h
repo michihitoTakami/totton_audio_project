@@ -1,11 +1,11 @@
 #ifndef CONVOLUTION_ENGINE_H
 #define CONVOLUTION_ENGINE_H
 
+#include "audio/phase_alignment.h"
 #include "core/config_loader.h"  // PhaseType enum
 #include "gpu/partition_plan.h"
 #include "gpu/pinned_allocator.h"
 #include "gpu/precision_traits.h"
-#include "phase_alignment.h"
 
 #include <cuda_runtime.h>
 #include <cufft.h>

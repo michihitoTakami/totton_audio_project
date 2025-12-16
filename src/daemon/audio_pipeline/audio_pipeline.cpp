@@ -1,6 +1,6 @@
 #include "daemon/audio_pipeline/audio_pipeline.h"
 
-#include "audio_utils.h"
+#include "audio/audio_utils.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "logging/metrics.h"
 
@@ -120,10 +120,9 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     const bool crossfeedActive =
         deps_.crossfeedEnabled && deps_.crossfeedEnabled->load(std::memory_order_relaxed);
 
-    if (crossfeedActive && deps_.crossfeedProcessor && deps_.crossfeedMutex &&
-        deps_.cfOutputLeft && deps_.cfOutputRight && deps_.cfStreamInputLeft &&
-        deps_.cfStreamInputRight && deps_.cfStreamAccumulatedLeft &&
-        deps_.cfStreamAccumulatedRight) {
+    if (crossfeedActive && deps_.crossfeedProcessor && deps_.crossfeedMutex && deps_.cfOutputLeft &&
+        deps_.cfOutputRight && deps_.cfStreamInputLeft && deps_.cfStreamInputRight &&
+        deps_.cfStreamAccumulatedLeft && deps_.cfStreamAccumulatedRight) {
         std::lock_guard<std::mutex> cfLock(*deps_.crossfeedMutex);
         bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
             outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,

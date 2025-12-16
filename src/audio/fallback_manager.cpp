@@ -3,7 +3,7 @@
  * @brief Implementation of Dynamic Fallback Manager (Issue #139)
  */
 
-#include "fallback_manager.h"
+#include "audio/fallback_manager.h"
 
 #include "logging/logger.h"
 #include "logging/metrics.h"

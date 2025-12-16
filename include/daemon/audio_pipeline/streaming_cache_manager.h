@@ -2,9 +2,9 @@
 #define STREAMING_CACHE_MANAGER_H
 
 #include "audio/input_stall_detector.h"
+#include "audio/soft_mute.h"
 #include "convolution_engine.h"
 #include "logging/logger.h"
-#include "soft_mute.h"
 
 #include <algorithm>
 #include <atomic>

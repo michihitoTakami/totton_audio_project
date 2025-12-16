@@ -8,12 +8,11 @@
  * - サポート外レートが拒否されること
  */
 
-#include "auto_negotiation.h"
+#include "audio/auto_negotiation.h"
 #include "dac_capability.h"
 
-#include <gtest/gtest.h>
-
 #include <array>
+#include <gtest/gtest.h>
 #include <vector>
 
 using namespace AutoNegotiation;
@@ -105,15 +104,13 @@ TEST_F(RateSwitchE2ETest, CrossFamilyTransitionForcesReconfiguration) {
 
     auto second = negotiate(48000, dac, first.outputRate);
     ASSERT_TRUE(second.isValid);
-    EXPECT_TRUE(second.requiresReconfiguration)
-        << "44k -> 48k family switch must reconfigure ALSA";
+    EXPECT_TRUE(second.requiresReconfiguration) << "44k -> 48k family switch must reconfigure ALSA";
     EXPECT_EQ(second.outputRate, 768000);
     EXPECT_NE(second.outputRate, first.outputRate);
 
     auto third = negotiate(44100, dac, second.outputRate);
     ASSERT_TRUE(third.isValid);
-    EXPECT_TRUE(third.requiresReconfiguration)
-        << "48k -> 44k family switch must reconfigure ALSA";
+    EXPECT_TRUE(third.requiresReconfiguration) << "48k -> 44k family switch must reconfigure ALSA";
     EXPECT_EQ(third.outputRate, 705600);
 }
 
@@ -144,4 +141,3 @@ TEST_F(RateSwitchE2ETest, UnsupportedInputRatesAreRejected) {
         EXPECT_FALSE(config.errorMessage.empty());
     }
 }
-
