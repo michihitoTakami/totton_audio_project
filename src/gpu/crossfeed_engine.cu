@@ -99,19 +99,22 @@ void safeCudaHostUnregister(void** trackedPtr, size_t* trackedBytes, const char*
 
 void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
                                          size_t* trackedBytes, const char* context) {
-    if (buffer.empty()) {
-        safeCudaHostUnregister(trackedPtr, trackedBytes, "cudaHostUnregister stream buffer");
+    if (buffer.capacity() == 0) {
         return;
     }
 
     void* ptr = buffer.data();
-    size_t bytes = buffer.size() * sizeof(float);
+    size_t bytes = buffer.capacity() * sizeof(float);
 
     if (*trackedPtr == ptr && *trackedBytes == bytes) {
         return;  // Already registered
     }
 
-    safeCudaHostUnregister(trackedPtr, trackedBytes, "cudaHostUnregister stream buffer");
+    // RT safety: do not unregister/re-register while streaming. Caller must keep the same vector
+    // instance and capacity in the steady-state path.
+    if (*trackedPtr != nullptr) {
+        throw std::runtime_error("Crossfeed stream buffer pointer/capacity changed");
+    }
 
     checkCudaError(cudaHostRegister(ptr, bytes, cudaHostRegisterDefault), context);
     *trackedPtr = ptr;
@@ -163,8 +166,7 @@ HRTFProcessor::HRTFProcessor()
       pinnedStreamInputRBytes_(0),
       pinnedStreamOutputLBytes_(0),
       pinnedStreamOutputRBytes_(0),
-      validOutputPerBlock_(0),
-      allowPinnedBufferGrowth_(true) {
+      validOutputPerBlock_(0) {
     stats_ = Stats();
     // Initialize all filter FFT pointers to nullptr
     for (int i = 0; i < NUM_CONFIGS; ++i) {
@@ -783,32 +785,30 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     auto ensurePinnedCapacity = [&](std::vector<float>& buffer, size_t requiredSamples,
                                     void** trackedPtr, size_t* trackedBytes,
                                     const char* context) -> bool {
+        (void)trackedPtr;
+        (void)trackedBytes;
         if (buffer.capacity() < requiredSamples) {
-            if (!allowPinnedBufferGrowth_) {
-                std::cerr << "[Crossfeed] Buffer capacity exceeded (" << requiredSamples << " > "
-                          << buffer.capacity() << "): " << context << std::endl;
-                return false;
-            }
-            safeCudaHostUnregister(trackedPtr, trackedBytes, context);
-            buffer.resize(requiredSamples);
-        } else if (buffer.size() < requiredSamples) {
+            std::cerr << "[Crossfeed] Buffer capacity exceeded (" << requiredSamples << " > "
+                      << buffer.capacity() << "): " << context << std::endl;
+            return false;
+        }
+        if (buffer.size() < requiredSamples) {
             buffer.resize(requiredSamples);
         }
         return true;
     };
 
-    // Detect if output buffers are different vector instances from previous call
-    // (e.g., new local variables passed each time). Clear stale tracked pointers
-    // to prevent cudaHostUnregister on memory that no longer belongs to us.
-    if (pinnedStreamOutputL_ != nullptr &&
-        (outputL.empty() || pinnedStreamOutputL_ != outputL.data())) {
-        safeCudaHostUnregister(&pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
-                               "cudaHostUnregister stale crossfeed stream output L");
+    if (pinnedStreamOutputL_ != nullptr && pinnedStreamOutputL_ != outputL.data()) {
+        std::cerr << "[Crossfeed] Output buffer instance changed (L)" << std::endl;
+        outputL.clear();
+        outputR.clear();
+        return false;
     }
-    if (pinnedStreamOutputR_ != nullptr &&
-        (outputR.empty() || pinnedStreamOutputR_ != outputR.data())) {
-        safeCudaHostUnregister(&pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
-                               "cudaHostUnregister stale crossfeed stream output R");
+    if (pinnedStreamOutputR_ != nullptr && pinnedStreamOutputR_ != outputR.data()) {
+        std::cerr << "[Crossfeed] Output buffer instance changed (R)" << std::endl;
+        outputL.clear();
+        outputR.clear();
+        return false;
     }
 
     // Accumulate input
