@@ -94,6 +94,10 @@ cmake --build build -j$(nproc)
 2. **Issue Number Required:** ブランチ名・PR名には必ずIssue番号を含める
    - ブランチ名: `feature/#123-feature-name` または `fix/#456-bug-description`
    - PR名: `#123 機能の説明` または `Fix #456: バグの説明`
+3. **No Auto Merge Without Explicit User Request (必須)**:
+   - **ユーザーが明示的に「マージして」と依頼した場合のみ** `gh pr merge` / merge API 等の **マージ操作を実行**すること。
+   - ユーザーが「マージ判断をせよ」「レビューして問題なければ判断」と言った場合は、**マージ可否の結論と根拠を提示するだけ**で、マージ操作は行わない。
+   - マージが必要そうでも、**明示依頼が無い限りは “マージ可能です。マージしますか？” 相当の確認を文章で返す**（マージ操作はしない）。
 
 ### Workflow
 
