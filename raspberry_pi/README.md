@@ -63,20 +63,15 @@ python3 -m raspberry_pi.rtp_sender \
 ## Docker / Compose (Raspberry Pi 上)
 
 ```bash
-# プロジェクトルートでビルド
-docker build -f raspberry_pi/Dockerfile -t rpi-rtp-sender .
+# デフォルト: I2S (USB/UAC2 -> I2S) ブリッジを起動
+docker compose -f raspberry_pi/docker-compose.yml up -d --build
 
-# 単体コンテナ例
-docker run --rm --device /dev/snd \
-  -e RTP_SENDER_HOST=192.168.55.1 \
-  -e RTP_SENDER_FORMAT=S24_3LE \
-  rpi-rtp-sender
-
-# Compose で Jetson リバースプロキシと並行起動
-docker compose -f raspberry_pi/docker-compose.yml up -d --build rtp-sender jetson-proxy
+# RTP を起動したい場合（レアケース）: profile を明示
+docker compose -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rtp-sender rtp-bridge jetson-proxy
 ```
 
-- `raspberry_pi/docker-compose.yml` は RTCP 付き RTP 送出 (`rtp-sender`) と ZeroMQ ブリッジ (`rtp-bridge`) を分離しています。`rtp-bridge` は `tcp://0.0.0.0:60000` で待ち受け、Jetson から到達できます（ポート 60000 を開ける）。
+- `raspberry_pi/docker-compose.yml` は **デフォルトで I2S ブリッジ**を起動します。RTP 系は `profiles: ["rtp"]` のため、明示しない限り起動しません。
+- RTP を使う場合は RTCP 付き RTP 送出 (`rtp-sender`) と ZeroMQ ブリッジ (`rtp-bridge`) を分離しています。`rtp-bridge` は `tcp://0.0.0.0:60000` で待ち受け、Jetson から到達できます（ポート 60000 を開ける）。
 - `RTP_SENDER_*` を `.env` で上書きすると配信先・フォーマットを切り替えられます。デフォルトは BE (`S24_3BE`)。サンプルレートは自動検出が有効で、`RTP_BRIDGE_STATS_PATH` に検出値を書き出します。
 
 ## ZeroMQ ブリッジ (任意)
