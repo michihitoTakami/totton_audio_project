@@ -28,7 +28,7 @@ FastAPI変更後のOpenAPI同期とCHANGELOG更新を自動化します。
 git diff --name-only | grep -E '^web/.*\.py$'
 
 # 2. OpenAPI仕様生成
-uv run python scripts/export_openapi.py
+uv run python scripts/integration/export_openapi.py
 
 # 3. 差分確認
 git diff docs/api/openapi.json
@@ -42,7 +42,7 @@ git diff docs/api/openapi.json
 # docs/api/CHANGELOG.md に新しいエントリ追加
 
 # 6. 検証
-uv run python scripts/export_openapi.py --check
+uv run python scripts/integration/export_openapi.py --check
 
 # 7. コミット準備
 git add docs/api/openapi.json docs/api/CHANGELOG.md
@@ -162,7 +162,7 @@ git add docs/api/openapi.json docs/api/CHANGELOG.md
   hooks:
     - id: openapi-export
       name: Export OpenAPI spec
-      entry: uv run python scripts/export_openapi.py
+      entry: uv run python scripts/integration/export_openapi.py
       files: ^web/.*\.py$
       language: system
 ```
@@ -199,7 +199,7 @@ git add docs/api/openapi.json docs/api/CHANGELOG.md
 
 このSkillは以下の既存ツールを活用します：
 
-- `scripts/export_openapi.py`: OpenAPI生成スクリプト
+- `scripts/integration/export_openapi.py`: OpenAPI生成スクリプト
 - `docs/api/CHANGELOG.md`: 手動管理されるCHANGELOG
 - `docs/api/openapi.json`: 自動生成されるOpenAPI仕様
 - `pre-commit`: web/変更時の自動実行

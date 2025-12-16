@@ -92,7 +92,7 @@ Filter 11: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5
 
     def test_kb5000_7_filter_detection_uses_correct_values(self, tmp_path: Path):
         """Verifies KB5000_7 detection matches MODERN_TARGET_CORRECTION_BAND values."""
-        from opra import MODERN_TARGET_CORRECTION_BAND
+        from scripts.integration.opra import MODERN_TARGET_CORRECTION_BAND
 
         # Create profile with exact values from MODERN_TARGET_CORRECTION_BAND
         fc = int(MODERN_TARGET_CORRECTION_BAND["frequency"])

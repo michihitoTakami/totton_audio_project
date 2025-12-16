@@ -77,7 +77,9 @@ def main():
 
     # 2. High frequency tone (10 kHz)
     print("2. Generating 10 kHz sine wave...")
-    sine_10k = generate_sine_wave(10000, duration, sample_rate, amplitude=args.amplitude)
+    sine_10k = generate_sine_wave(
+        10000, duration, sample_rate, amplitude=args.amplitude
+    )
     output_path = output_dir / f"test_sine_10khz_{sample_rate}hz.wav"
     wavfile.write(output_path, sample_rate, sine_10k)
     print(f"   Saved: {output_path}")

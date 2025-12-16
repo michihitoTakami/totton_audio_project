@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
-from scripts.partition_analysis import (
+from scripts.analysis.partition_analysis import (
     PartitionConfig,
     build_partition_plan,
     estimate_settling_samples,

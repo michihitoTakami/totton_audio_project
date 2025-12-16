@@ -12,7 +12,7 @@ GPU Audio Upsamplerのセットアップ手順です。
 
 ```bash
 # 1. システム依存関係のインストール (sudo必要)
-./scripts/setup-system.sh
+./scripts/deployment/setup-system.sh
 
 # 2. aquaのインストール (CLIツール管理)
 curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v3.0.1/aqua-installer | bash
@@ -25,7 +25,7 @@ aqua i
 uv sync
 
 # 5. フィルタ係数の生成
-uv run python scripts/generate_minimum_phase.py --taps 1000000
+uv run python scripts/filters/generate_minimum_phase.py --taps 1000000
 
 # 6. ビルド
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -57,7 +57,7 @@ sudo apt install -y \
 または、セットアップスクリプトを使用：
 
 ```bash
-./scripts/setup-system.sh
+./scripts/deployment/setup-system.sh
 ```
 
 > **Note**: このスクリプトはUbuntu/Debian、Fedora、Arch Linuxに対応しています。
@@ -104,10 +104,10 @@ uv sync --all-groups
 
 ```bash
 # 1M-tap minimum phase FIRフィルタを生成
-uv run python scripts/generate_minimum_phase.py --taps 1000000
+uv run python scripts/filters/generate_minimum_phase.py --taps 1000000
 
 # 2M-tapを生成する場合 (メモリ8GB以上推奨)
-uv run python scripts/generate_minimum_phase.py --taps 2000000 --kaiser-beta 55
+uv run python scripts/filters/generate_minimum_phase.py --taps 2000000 --kaiser-beta 55
 ```
 
 生成されるファイル：

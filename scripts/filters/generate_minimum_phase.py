@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 from scipy import signal
 
-from generate_filter import (
+from .generate_filter import (
     FilterConfig,
     FilterExporter,
     FilterPlotter,

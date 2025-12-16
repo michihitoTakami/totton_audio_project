@@ -9,17 +9,14 @@ Tests for:
 """
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-# Add scripts to path for imports
 REPO_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from generate_hrtf import (  # noqa: E402
+from scripts.filters.generate_hrtf import (  # noqa: E402
     angular_distance,
     find_nearest_position,
     pad_hrir_to_length,

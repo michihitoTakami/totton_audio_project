@@ -1,13 +1,8 @@
 """OPRA database endpoints."""
 
-import sys
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException
 
-# Add scripts directory to path for OPRA module
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
-from opra import (  # noqa: E402
+from scripts.integration.opra import (  # noqa: E402
     apply_modern_target_correction,
     convert_opra_to_apo,
     get_database as get_opra_database,
@@ -19,6 +14,7 @@ from ..models import (
     OpraEqAttribution,
     OpraEqResponse,
     OpraSearchResponse,
+    OpraSearchResult,
     OpraStats,
     OpraVendorsResponse,
 )
@@ -84,7 +80,10 @@ async def opra_search(q: str = "", limit: int = 50):
     try:
         db = get_opra_database()
         results = db.search(q, limit=limit)
-        return OpraSearchResponse(results=results, count=len(results), query=q)
+        search_results = [OpraSearchResult(**item) for item in results]
+        return OpraSearchResponse(
+            results=search_results, count=len(search_results), query=q
+        )
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
 

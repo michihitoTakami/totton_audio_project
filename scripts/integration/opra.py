@@ -7,7 +7,7 @@ Source: https://github.com/opra-project/OPRA
 License: CC BY-SA 4.0
 
 Usage:
-    from opra import OpraDatabase, convert_opra_to_apo
+    from scripts.integration.opra import OpraDatabase, convert_opra_to_apo
 
     db = OpraDatabase()
     products = db.search("HD650")

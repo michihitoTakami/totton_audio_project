@@ -41,7 +41,7 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 
 - [x] **Phase Type Selection** (#165, #166, #167)
   - Minimum Phase / Linear Phase 切り替え機能
-  - `scripts/generate_linear_phase.py` による線形位相フィルタ生成
+  - `scripts/filters/generate_linear_phase.py` による線形位相フィルタ生成
   - C++/CUDA側の位相タイプ対応（遅延計算含む）
   - 設定システム（`PhaseType` enum）
 
@@ -122,11 +122,11 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 #### 1. 係数生成 ✅
 - [x] 全8構成の最小位相フィルタ生成スクリプト
   ```bash
-  uv run python scripts/generate_minimum_phase.py --generate-all --taps 640000
+  uv run python scripts/filters/generate_minimum_phase.py --generate-all --taps 640000
   ```
 - [x] 全8構成の線形位相フィルタ生成スクリプト
   ```bash
-  uv run python scripts/generate_linear_phase.py --generate-all --taps 640000
+  uv run python scripts/filters/generate_linear_phase.py --generate-all --taps 640000
   ```
 - [x] C++が期待するファイル名パターンに対応 (`filter_{family}_{ratio}x_{taps}_{phase_label}.bin` 例: `_min_phase`)
 

@@ -2024,20 +2024,20 @@ int main(int argc, char* argv[]) {
                     }
                 } else {
                     std::cerr << "  HRTF: Failed to initialize processor" << std::endl;
-                    std::cerr
-                        << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
-                           "filters"
-                        << std::endl;
+                    std::cerr << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
+                                 "generate HRTF "
+                                 "filters"
+                              << std::endl;
                     delete g_hrtf_processor;
                     g_hrtf_processor = nullptr;
                 }
             } else {
                 std::cout << "HRTF directory not found (" << hrtfDir
                           << "), crossfeed feature disabled" << std::endl;
-                std::cout
-                    << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
-                       "filters"
-                    << std::endl;
+                std::cout << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
+                             "generate HRTF "
+                             "filters"
+                          << std::endl;
             }
         } else {
             std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)"

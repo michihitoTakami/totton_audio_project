@@ -87,12 +87,16 @@ class PartitionPlan:
         return " | ".join(parts)
 
 
-def _make_descriptor(taps: int, realtime: bool, tail_fft_multiple: int) -> PartitionDescriptor:
+def _make_descriptor(
+    taps: int, realtime: bool, tail_fft_multiple: int
+) -> PartitionDescriptor:
     fft_multiple = 2 if realtime else max(2, tail_fft_multiple)
     fft_target = max(taps * fft_multiple, taps + 1)
     fft_size = _next_pow2(fft_target)
     valid_output = max(1, fft_size - taps + 1)
-    return PartitionDescriptor(taps=taps, fft_size=fft_size, valid_output=valid_output, realtime=realtime)
+    return PartitionDescriptor(
+        taps=taps, fft_size=fft_size, valid_output=valid_output, realtime=realtime
+    )
 
 
 def build_partition_plan(total_taps: int, config: PartitionConfig) -> PartitionPlan:
@@ -132,7 +136,9 @@ def build_partition_plan(total_taps: int, config: PartitionConfig) -> PartitionP
         partitions_used += 1
 
     if remaining > 0:
-        plan.partitions.append(_make_descriptor(remaining, False, config.tail_fft_multiple))
+        plan.partitions.append(
+            _make_descriptor(remaining, False, config.tail_fft_multiple)
+        )
 
     plan.realtime_taps = plan.partitions[0].taps
     return plan
@@ -197,7 +203,9 @@ def estimate_settling_samples(plan: PartitionPlan) -> tuple[int, int]:
     return fast_window, total_window
 
 
-def load_partition_config(path: str | Path | None, *, base: PartitionConfig | None = None) -> PartitionConfig:
+def load_partition_config(
+    path: str | Path | None, *, base: PartitionConfig | None = None
+) -> PartitionConfig:
     """Load partition config from config.json (GPU daemon format)."""
     if base is None:
         base = PartitionConfig()
@@ -214,10 +222,11 @@ def load_partition_config(path: str | Path | None, *, base: PartitionConfig | No
     section = raw.get("partitionedConvolution", {})
     overrides = {
         "enabled": section.get("enabled", base.enabled),
-        "fast_partition_taps": section.get("fastPartitionTaps", base.fast_partition_taps),
+        "fast_partition_taps": section.get(
+            "fastPartitionTaps", base.fast_partition_taps
+        ),
         "min_partition_taps": section.get("minPartitionTaps", base.min_partition_taps),
         "max_partitions": section.get("maxPartitions", base.max_partitions),
         "tail_fft_multiple": section.get("tailFftMultiple", base.tail_fft_multiple),
     }
     return PartitionConfig(**overrides)
-

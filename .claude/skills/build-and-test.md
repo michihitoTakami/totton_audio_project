@@ -122,7 +122,7 @@ cd build && ctest --output-on-failure
 
 - `CMakeLists.txt`: ビルドターゲット定義
 - `ctest`: テスト実行フレームワーク
-- `scripts/run_tests.sh`: 差分ベーステスト（pre-push hook）
+- `scripts/deployment/run_tests.sh`: 差分ベーステスト（pre-push hook）
 - GoogleTest: C++テストフレームワーク
 
 ## Automation Level
