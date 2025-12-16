@@ -216,8 +216,8 @@ void ControlPlane::startStatsThread() {
             size_t total = runtime_stats::totalSamples();
             size_t clips = runtime_stats::clipCount();
             if (clips > lastLoggedClips && total > 0) {
-                std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
-                          << total << " (" << (100.0 * clips / total) << "%)" << '\n';
+                LOG_WARN("Clipping detected: {} samples out of {} ({}%)", clips, total,
+                         (100.0 * static_cast<double>(clips) / static_cast<double>(total)));
                 lastLoggedClips = clips;
             }
 
