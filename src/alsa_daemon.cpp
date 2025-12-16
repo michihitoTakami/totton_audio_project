@@ -739,7 +739,10 @@ static bool handle_rate_switch(int newInputRate) {
     size_t buffer_capacity = 0;
 
     {
-        std::lock_guard<std::mutex> streamLock(g_state.streaming.streamingMutex);
+        // Ensure the input thread (AudioPipeline::process) cannot touch streaming buffers while we
+        // tear them down and re-initialize for a new input rate.
+        // Lock order is handled by std::scoped_lock (avoids deadlocks).
+        std::scoped_lock lock(g_state.inputProcessMutex, g_state.streaming.streamingMutex);
 
         g_state.upsampler->resetStreaming();
 
@@ -955,7 +958,8 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
                                         unsigned int rate, unsigned int channels,
                                         snd_pcm_uframes_t period_frames) {
     snd_pcm_t* handle = nullptr;
-    int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, 0);
+    // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
+    int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
     if (err < 0) {
         LOG_ERROR("[Loopback] Cannot open capture device {}: {}", device, snd_strerror(err));
         return nullptr;
@@ -1003,6 +1007,9 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
         return nullptr;
     }
 
+    // Ensure non-blocking is effective even if driver flips it.
+    snd_pcm_nonblock(handle, 1);
+
     LOG_INFO("[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames)", device,
              rate_near, channels, period_frames);
     return handle;
@@ -1013,7 +1020,8 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
                                    snd_pcm_uframes_t period_frames, unsigned int& actual_rate) {
     actual_rate = requested_rate;
     snd_pcm_t* handle = nullptr;
-    int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, 0);
+    // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
+    int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
     if (err < 0) {
         LOG_ERROR("[I2S] Cannot open capture device {}: {}", device, snd_strerror(err));
         return nullptr;
@@ -1072,6 +1080,9 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
         return nullptr;
     }
 
+    // Ensure non-blocking is effective even if driver flips it.
+    snd_pcm_nonblock(handle, 1);
+
     LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames)", device,
              actual_rate, channels, snd_pcm_format_name(format), period_frames);
     return handle;
@@ -1119,6 +1130,18 @@ static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_
     return false;
 }
 
+static void wait_for_capture_ready(snd_pcm_t* handle) {
+    if (!handle) {
+        return;
+    }
+    // snd_pcm_wait is safe for non-blocking handles and prevents a tight EAGAIN spin.
+    int ret = snd_pcm_wait(handle, 100);
+    if (ret < 0) {
+        // Keep it quiet; transient errors may happen on device disconnect.
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 static void i2s_capture_thread(const std::string& device, snd_pcm_format_t format,
                                unsigned int requested_rate, unsigned int channels,
                                snd_pcm_uframes_t period_frames) {
@@ -1128,33 +1151,6 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
         LOG_ERROR("[I2S] Unsupported channel count {} (expected {})", channels, CHANNELS);
         return;
     }
-
-    unsigned int actual_rate = requested_rate;
-    snd_pcm_t* handle =
-        open_i2s_capture(device, format, requested_rate, channels, period_frames, actual_rate);
-    {
-        std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
-        g_state.i2s.handle = handle;
-    }
-
-    if (!handle) {
-        return;
-    }
-
-    // If the hardware rate differs from current engine input rate, schedule follow-up.
-    // (Actual reinit is handled in main loop; network-driven follow is #824.)
-    if (actual_rate == 44100 || actual_rate == 48000) {
-        int current = g_state.rates.inputSampleRate;
-        if (current != static_cast<int>(actual_rate)) {
-            LOG_WARN("[I2S] Detected input rate {} Hz (engine {} Hz). Scheduling rate follow.",
-                     actual_rate, current);
-            g_state.rates.pendingRateChange.store(static_cast<int>(actual_rate),
-                                                  std::memory_order_release);
-        }
-    }
-
-    g_state.i2s.captureRunning.store(true, std::memory_order_release);
-    g_state.i2s.captureReady.store(true, std::memory_order_release);
 
     std::vector<int16_t> buffer16;
     std::vector<int32_t> buffer32;
@@ -1168,60 +1164,107 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
     }
     std::vector<float> floatBuffer;
 
+    g_state.i2s.captureRunning.store(true, std::memory_order_release);
+
     while (g_state.flags.running.load(std::memory_order_acquire)) {
-        playback_buffer().throttleProducerIfFull(g_state.flags.running, []() {
-            return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
-        });
-
-        void* rawBuffer = nullptr;
-        if (format == SND_PCM_FORMAT_S16_LE) {
-            rawBuffer = buffer16.data();
-        } else if (format == SND_PCM_FORMAT_S32_LE) {
-            rawBuffer = buffer32.data();
-        } else if (format == SND_PCM_FORMAT_S24_3LE) {
-            rawBuffer = buffer24.data();
-        } else {
-            break;
+        unsigned int actual_rate = requested_rate;
+        snd_pcm_t* handle =
+            open_i2s_capture(device, format, requested_rate, channels, period_frames, actual_rate);
+        {
+            std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
+            g_state.i2s.handle = handle;
         }
 
-        snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, period_frames);
-        if (frames == -EAGAIN) {
+        if (!handle) {
+            // Device not ready / unplugged. Retry with backoff.
+            g_state.i2s.captureReady.store(false, std::memory_order_release);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
         }
-        if (frames == -EPIPE) {
-            LOG_WARN("[I2S] XRUN detected, recovering");
-            snd_pcm_prepare(handle);
-            continue;
-        }
-        if (frames < 0) {
-            LOG_WARN("[I2S] Read error: {}", snd_strerror(frames));
-            if (snd_pcm_recover(handle, frames, 1) < 0) {
-                LOG_ERROR("[I2S] Recover failed, restarting read loop");
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // If the hardware rate differs from current engine input rate, schedule follow-up.
+        // (Actual reinit is handled in main loop; network-driven follow is #824.)
+        if (actual_rate == 44100 || actual_rate == 48000) {
+            int current = g_state.rates.inputSampleRate;
+            if (current != static_cast<int>(actual_rate)) {
+                LOG_WARN("[I2S] Detected input rate {} Hz (engine {} Hz). Scheduling rate follow.",
+                         actual_rate, current);
+                g_state.rates.pendingRateChange.store(static_cast<int>(actual_rate),
+                                                      std::memory_order_release);
             }
-            continue;
-        }
-        if (frames == 0) {
-            continue;
         }
 
-        if (!convert_pcm_to_float(rawBuffer, format, static_cast<size_t>(frames), channels,
-                                  floatBuffer)) {
-            LOG_ERROR("[I2S] Unsupported format during conversion");
+        g_state.i2s.captureReady.store(true, std::memory_order_release);
+
+        bool needReopen = false;
+        while (g_state.flags.running.load(std::memory_order_acquire)) {
+            playback_buffer().throttleProducerIfFull(g_state.flags.running, []() {
+                return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
+            });
+
+            void* rawBuffer = nullptr;
+            if (format == SND_PCM_FORMAT_S16_LE) {
+                rawBuffer = buffer16.data();
+            } else if (format == SND_PCM_FORMAT_S32_LE) {
+                rawBuffer = buffer32.data();
+            } else if (format == SND_PCM_FORMAT_S24_3LE) {
+                rawBuffer = buffer24.data();
+            } else {
+                needReopen = false;
+                break;
+            }
+
+            snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, period_frames);
+            if (frames == -EAGAIN) {
+                wait_for_capture_ready(handle);
+                continue;
+            }
+            if (frames == -EPIPE) {
+                LOG_WARN("[I2S] XRUN detected, recovering");
+                snd_pcm_prepare(handle);
+                continue;
+            }
+            if (frames < 0) {
+                LOG_WARN("[I2S] Read error: {}", snd_strerror(frames));
+                if (snd_pcm_recover(handle, frames, 1) < 0) {
+                    // Treat as a device fault; close and attempt reopen.
+                    LOG_ERROR("[I2S] Recover failed, attempting reopen");
+                    needReopen = true;
+                    break;
+                }
+                continue;
+            }
+            if (frames == 0) {
+                wait_for_capture_ready(handle);
+                continue;
+            }
+
+            if (!convert_pcm_to_float(rawBuffer, format, static_cast<size_t>(frames), channels,
+                                      floatBuffer)) {
+                LOG_ERROR("[I2S] Unsupported format during conversion");
+                needReopen = true;
+                break;
+            }
+
+            if (g_state.audioPipeline) {
+                g_state.audioPipeline->process(floatBuffer.data(), static_cast<uint32_t>(frames));
+            }
+        }
+
+        snd_pcm_drop(handle);
+        snd_pcm_close(handle);
+        {
+            std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
+            g_state.i2s.handle = nullptr;
+        }
+        g_state.i2s.captureReady.store(false, std::memory_order_release);
+
+        if (!needReopen) {
             break;
         }
-
-        if (g_state.audioPipeline) {
-            g_state.audioPipeline->process(floatBuffer.data(), static_cast<uint32_t>(frames));
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    snd_pcm_drop(handle);
-    snd_pcm_close(handle);
-    {
-        std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
-        g_state.i2s.handle = nullptr;
-    }
     g_state.i2s.captureRunning.store(false, std::memory_order_release);
     g_state.i2s.captureReady.store(false, std::memory_order_release);
     LOG_INFO("[I2S] Capture thread terminated");
@@ -1280,6 +1323,7 @@ static void loopback_capture_thread(const std::string& device, snd_pcm_format_t 
 
         snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, period_frames);
         if (frames == -EAGAIN) {
+            wait_for_capture_ready(handle);
             continue;
         }
         if (frames == -EPIPE) {
@@ -1296,6 +1340,7 @@ static void loopback_capture_thread(const std::string& device, snd_pcm_format_t 
             continue;
         }
         if (frames == 0) {
+            wait_for_capture_ready(handle);
             continue;
         }
 
