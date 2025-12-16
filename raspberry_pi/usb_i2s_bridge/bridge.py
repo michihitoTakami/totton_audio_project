@@ -326,11 +326,11 @@ def build_gst_launch_command(
 def _try_import_gi_gst():
     """テスト環境で GI が無いことがあるため遅延import."""
     try:
-        import gi  # type: ignore
+        import gi
 
         gi.require_version("Gst", "1.0")
         gi.require_version("GLib", "2.0")
-        from gi.repository import GLib, Gst  # type: ignore
+        from gi.repository import GLib, Gst
 
         return GLib, Gst
     except Exception:
@@ -508,9 +508,14 @@ def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
             if self.pipeline is not None:
                 self.pipeline.set_state(Gst.State.NULL)
             self.pipeline = Gst.parse_launch(pipeline_str)
-            self.bus = self.pipeline.get_bus()
+            assert self.pipeline is not None
+
+            bus = self.pipeline.get_bus()
+            assert bus is not None
+            self.bus = bus
             self.bus.add_signal_watch()
             self.bus.connect("message", self._on_message)
+
             self.volume = self.pipeline.get_by_name("vol")
 
         def _on_message(self, bus, message) -> None:  # noqa: ANN001
@@ -569,6 +574,7 @@ def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
                 self.loop.quit()
                 return
             self._set_pipeline(pipeline_str)
+            assert self.pipeline is not None
             self.pipeline.set_state(Gst.State.PLAYING)
             self.current_mode = mode
             self.current_rate = rate
