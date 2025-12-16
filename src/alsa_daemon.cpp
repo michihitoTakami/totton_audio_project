@@ -1119,7 +1119,7 @@ void alsa_output_thread() {
         if (++alive_counter > 200) {  // ~200 iterations ~ a few seconds depending on buffer wait
             alive_counter = 0;
             if (!pcmController.alive()) {
-                std::cerr << "ALSA: PCM disconnected/suspended, attempting reopen..." << '\n';
+                LOG_EVERY_N(WARN, 5, "[ALSA] PCM disconnected/suspended, attempting reopen...");
                 pcmController.close();
                 while (g_state.flags.running && !pcmController.openSelected()) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -1171,7 +1171,7 @@ void alsa_output_thread() {
         if (auto pendingDevice = g_state.managers.dacManager->consumePendingChange()) {
             std::string nextDevice = *pendingDevice;
             if (!nextDevice.empty() && nextDevice != pcmController.device()) {
-                std::cout << "ALSA: Switching output to " << nextDevice << '\n';
+                LOG_INFO("[ALSA] Switching output to {}", nextDevice);
                 if (!pcmController.switchDevice(nextDevice)) {
                     continue;
                 }
@@ -1220,29 +1220,13 @@ void alsa_output_thread() {
         // Apply pending soft mute parameter restoration once transition completes
         maybe_restore_soft_mute_params();
 
-        static auto last_stats_write = std::chrono::steady_clock::now();
-        if (!renderResult.wroteSilence && renderResult.framesRendered > 0) {
-            auto now = std::chrono::steady_clock::now();
-            if (now - last_stats_write >= std::chrono::seconds(1)) {
-                runtime_stats::writeStatsFile(build_runtime_stats_dependencies(),
-                                              get_max_output_buffer_frames(), STATS_FILE_PATH);
-                last_stats_write = now;
-            }
-            size_t total = runtime_stats::totalSamples();
-            size_t clips = runtime_stats::clipCount();
-            if (total % (static_cast<size_t>(period_size) * 2 * 100) == 0 && clips > 0) {
-                std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
-                          << total << " (" << (100.0 * clips / total) << "%)" << '\n';
-            }
-        }
-
         // Write to ALSA device
         long frames_written = pcmController.writeInterleaved(interleaved_buffer.data(),
                                                              static_cast<size_t>(period_size));
         if (frames_written < 0) {
             // Device may be gone; attempt reopen
-            std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
-                      << ", retrying reopen..." << '\n';
+            LOG_EVERY_N(ERROR, 10, "[ALSA] Write error: {}, retrying reopen...",
+                        snd_strerror(frames_written));
             pcmController.close();
             while (g_state.flags.running && !pcmController.openSelected()) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -1262,7 +1246,7 @@ void alsa_output_thread() {
 
     // Cleanup
     pcmController.close();
-    std::cout << "ALSA: Output thread terminated" << '\n';
+    LOG_INFO("[ALSA] Output thread terminated");
 }
 
 int main(int argc, char* argv[]) {
