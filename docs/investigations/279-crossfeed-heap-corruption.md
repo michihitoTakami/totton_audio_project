@@ -55,7 +55,7 @@ checkCudaError(cudaStreamSynchronize(stream), "stream sync (crossfeed streaming)
 
 ### 修正2: 出力バッファのグローバル化
 
-`src/alsa_daemon.cpp`:
+`src/entrypoints/alsa_daemon.cpp`:
 
 ```cpp
 // グローバル変数として宣言
@@ -141,7 +141,7 @@ rm -f /tmp/gpu_os.sock /tmp/alsa_daemon.log
 ## 関連ファイル
 
 - `src/gpu/crossfeed_engine.cu` - CUDAストリーム同期修正
-- `src/alsa_daemon.cpp` - 出力バッファのグローバル化
+- `src/entrypoints/alsa_daemon.cpp` - 出力バッファのグローバル化
 - PR #283
 
 ## 教訓

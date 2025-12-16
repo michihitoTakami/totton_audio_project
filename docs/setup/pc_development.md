@@ -131,7 +131,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 - **src/convolution_engine.cu:393**: Overlap bufferの不適切な初期化を削除
 - **src/convolution_engine.cu:576-586**: CUDA streamの明示的な同期
-- **src/alsa_daemon.cpp:240-244**: Float→Int32変換のオーバーフロー修正
+- **src/entrypoints/alsa_daemon.cpp:240-244**: Float→Int32変換のオーバーフロー修正
 
 詳細は [クラックリングノイズ調査報告](../investigations/crackling_noise_investigation.md) を参照してください。
 

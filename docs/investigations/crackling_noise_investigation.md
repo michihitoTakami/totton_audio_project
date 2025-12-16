@@ -131,7 +131,7 @@ uv run python scripts/analysis/analyze_waveform.py test_data/fanfare_352800hz_fi
 
 #### B. バッファ管理の問題
 ```cpp
-// src/alsa_daemon.cpp (行数は要確認)
+// src/entrypoints/alsa_daemon.cpp (行数は要確認)
 void on_process(void* userdata) {
 }
 
@@ -151,7 +151,7 @@ void alsaOutputThread() {
 
 #### D. 数値精度の問題
 - **Float → Int32変換**: 既に疑われ調査済みだが、再検証の価値あり
-  - `src/alsa_daemon.cpp`でのfloatToS32()変換処理
+  - `src/entrypoints/alsa_daemon.cpp`でのfloatToS32()変換処理
   - 丸め誤差の累積
   - クリッピング処理(-1.0~1.0の範囲外値の扱い)
 
@@ -198,7 +198,7 @@ WARNING: Clipping detected - 95 samples clipped out of 29163520 (0.000325749%)
 ### 優先度2: バッファ管理の詳細調査
 1. **リングバッファのトレース**
    ```cpp
-   // src/alsa_daemon.cpp に追加
+   // src/entrypoints/alsa_daemon.cpp に追加
    std::ofstream trace("buffer_trace.log", std::ios::app);
    trace << timestamp << " Write:" << writePos << " Read:" << readPos
          << " Avail:" << available << std::endl;
@@ -226,7 +226,7 @@ WARNING: Clipping detected - 95 samples clipped out of 29163520 (0.000325749%)
 
 ### 優先度4: Float→Int32変換の再検証
 ```cpp
-// src/alsa_daemon.cpp の floatToS32() を詳細ログ付きで実装
+// src/entrypoints/alsa_daemon.cpp の floatToS32() を詳細ログ付きで実装
 int32_t floatToS32(float sample) {
     if (std::isnan(sample) || std::isinf(sample)) {
         fprintf(stderr, "Invalid sample: %f\n", sample);

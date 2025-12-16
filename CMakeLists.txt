@@ -144,7 +144,7 @@ endif()
 
 # Command-line executable
 add_executable(gpu_upsampler
-    src/main.cpp
+    src/entrypoints/main.cpp
 )
 
 # Link against core library and eq_support
@@ -166,7 +166,7 @@ target_compile_options(gpu_upsampler PRIVATE
 
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa
-    src/alsa_daemon.cpp
+    src/entrypoints/alsa_daemon.cpp
     src/core/partition_runtime_utils.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
@@ -219,7 +219,7 @@ target_compile_options(gpu_upsampler_alsa PRIVATE
 
 # EQ Test executable
 add_executable(test_eq
-    src/test_eq.cpp
+    src/entrypoints/test_eq.cpp
 )
 
 target_link_libraries(test_eq

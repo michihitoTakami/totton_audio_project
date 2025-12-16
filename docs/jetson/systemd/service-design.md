@@ -294,7 +294,7 @@ WatchdogSec=30
 デーモンは30秒ごとにsystemdへハートビートを送信:
 
 ```cpp
-// src/alsa_daemon.cpp
+// src/entrypoints/alsa_daemon.cpp
 #include <systemd/sd-daemon.h>
 
 void watchdog_thread() {

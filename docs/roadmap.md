@@ -371,7 +371,7 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
   - **ハイレゾ対応**: 16/24/32-bit, 44.1k〜768kHz
   - **優先クライアント制御**: `single / takeover / priority` モード
   - **グリッチフリー切り替え**: Soft Mute機能によるシームレスなレート変更
-  - 実装ファイル: `jetson_pcm_receiver/src/`, `src/alsa_daemon.cpp`
+  - 実装ファイル: `jetson_pcm_receiver/src/`, `src/entrypoints/alsa_daemon.cpp`
 
 - [ ] **ALSA Direct Output**
   - USB DAC直接出力
