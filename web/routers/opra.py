@@ -1,13 +1,8 @@
 """OPRA database endpoints."""
 
-import sys
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException
 
-# Add scripts directory to path for OPRA module
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
-from opra import (  # noqa: E402
+from scripts.integration.opra import (  # noqa: E402
     apply_modern_target_correction,
     convert_opra_to_apo,
     get_database as get_opra_database,

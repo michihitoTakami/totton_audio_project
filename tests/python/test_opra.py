@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from opra import (
+from scripts.integration.opra import (
     DEFAULT_OPRA_PATH,
     MODERN_TARGET_CORRECTION_BAND,
     EqBand,

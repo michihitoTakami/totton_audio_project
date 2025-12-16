@@ -23,9 +23,9 @@ from scipy import signal
 SCRIPTS_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from generate_filter import FilterConfig  # noqa: E402
-from generate_linear_phase import LinearPhaseDesigner  # noqa: E402
-from generate_minimum_phase import MinimumPhaseDesigner  # noqa: E402
+from .generate_filter import FilterConfig  # noqa: E402
+from .generate_linear_phase import LinearPhaseDesigner  # noqa: E402
+from .generate_minimum_phase import MinimumPhaseDesigner  # noqa: E402
 
 
 def generate_comparison_plots(
