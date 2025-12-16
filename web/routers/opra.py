@@ -14,6 +14,7 @@ from ..models import (
     OpraEqAttribution,
     OpraEqResponse,
     OpraSearchResponse,
+    OpraSearchResult,
     OpraStats,
     OpraVendorsResponse,
 )
@@ -79,7 +80,10 @@ async def opra_search(q: str = "", limit: int = 50):
     try:
         db = get_opra_database()
         results = db.search(q, limit=limit)
-        return OpraSearchResponse(results=results, count=len(results), query=q)
+        search_results = [OpraSearchResult(**item) for item in results]
+        return OpraSearchResponse(
+            results=search_results, count=len(search_results), query=q
+        )
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
