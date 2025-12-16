@@ -9,7 +9,6 @@
 #include "core/daemon_constants.h"
 #include "core/partition_runtime_utils.h"
 #include "crossfeed_engine.h"
-#include "dac_capability.h"
 #include "daemon/api/dependencies.h"
 #include "daemon/api/events.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
@@ -24,9 +23,10 @@
 #include "daemon/output/alsa_write_loop.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/shutdown_manager.h"
+#include "io/dac_capability.h"
+#include "io/playback_buffer.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
-#include "playback_buffer.h"
 
 #include <algorithm>
 #include <alsa/asoundlib.h>

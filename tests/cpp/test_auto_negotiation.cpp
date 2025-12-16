@@ -11,7 +11,7 @@
  */
 
 #include "audio/auto_negotiation.h"
-#include "dac_capability.h"
+#include "io/dac_capability.h"
 
 #include <gtest/gtest.h>
 

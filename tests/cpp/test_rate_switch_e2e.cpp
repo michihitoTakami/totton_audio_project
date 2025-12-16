@@ -9,7 +9,7 @@
  */
 
 #include "audio/auto_negotiation.h"
-#include "dac_capability.h"
+#include "io/dac_capability.h"
 
 #include <array>
 #include <gtest/gtest.h>
