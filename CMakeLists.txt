@@ -263,7 +263,7 @@ endif()
 
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
-    src/zeromq_interface.cpp
+    src/network/zeromq_interface.cpp
     src/core/base64.cpp
 )
 target_link_libraries(zeromq_interface PUBLIC

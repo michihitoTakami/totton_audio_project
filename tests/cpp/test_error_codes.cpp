@@ -4,7 +4,7 @@
  */
 
 #include "core/error_codes.h"
-#include "zeromq_interface.h"
+#include "network/zeromq_interface.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
