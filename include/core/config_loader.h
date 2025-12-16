@@ -56,6 +56,18 @@ struct AppConfig {
         uint32_t periodFrames = 1024;
     } loopback;
 
+    // I2S input (Jetson RX) configuration (Issue #906 / Epic #838)
+    // Note: sampleRate can be 0 to mean "use current/negotiated rate" (future: #824).
+    // For MVP, 44.1k/48k family rates are expected.
+    struct I2sInputConfig {
+        bool enabled = false;
+        std::string device = "hw:I2S";
+        uint32_t sampleRate = 0;        // 0 = follow runtime/negotiated rate (default)
+        uint8_t channels = 2;           // Typically 2ch
+        std::string format = "S32_LE";  // Typical for 24-in-32 slot I2S (signed)
+        uint32_t periodFrames = 1024;
+    } i2s;
+
     // EQ settings
     bool eqEnabled = false;
     std::string eqProfilePath = "";  // Path to EQ profile file (empty = disabled)

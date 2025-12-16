@@ -207,6 +207,47 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             }
         }
 
+        if (j.contains("i2s") && j["i2s"].is_object()) {
+            auto i2s = j["i2s"];
+            try {
+                if (i2s.contains("enabled") && i2s["enabled"].is_boolean()) {
+                    outConfig.i2s.enabled = i2s["enabled"].get<bool>();
+                }
+                if (i2s.contains("device") && i2s["device"].is_string()) {
+                    outConfig.i2s.device = i2s["device"].get<std::string>();
+                }
+                if (i2s.contains("sampleRate") && i2s["sampleRate"].is_number_integer()) {
+                    outConfig.i2s.sampleRate = i2s["sampleRate"].get<uint32_t>();
+                }
+                if (i2s.contains("channels") && i2s["channels"].is_number_integer()) {
+                    outConfig.i2s.channels = static_cast<uint8_t>(i2s["channels"].get<int>());
+                }
+                if (i2s.contains("format") && i2s["format"].is_string()) {
+                    outConfig.i2s.format = i2s["format"].get<std::string>();
+                }
+                if (i2s.contains("periodFrames") && i2s["periodFrames"].is_number_integer()) {
+                    outConfig.i2s.periodFrames =
+                        static_cast<uint32_t>(i2s["periodFrames"].get<int>());
+                }
+            } catch (const std::exception& e) {
+                if (verbose) {
+                    std::cerr << "Config: Invalid i2s settings, using defaults: " << e.what()
+                              << '\n';
+                }
+                outConfig.i2s = AppConfig::I2sInputConfig{};
+            }
+
+            if (outConfig.i2s.channels == 0) {
+                outConfig.i2s.channels = 2;
+            }
+            outConfig.i2s.channels =
+                static_cast<uint8_t>(std::clamp<int>(outConfig.i2s.channels, 1, 8));
+            if (outConfig.i2s.periodFrames == 0) {
+                outConfig.i2s.periodFrames = 1024;
+            }
+            // sampleRate=0 is allowed (follow runtime/negotiated rate in daemon)
+        }
+
         // Partitioned convolution settings (Issue #351)
         if (j.contains("partitionedConvolution") && j["partitionedConvolution"].is_object()) {
             auto pc = j["partitionedConvolution"];
