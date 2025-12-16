@@ -38,7 +38,7 @@ Magic Box Projectのテスト実行方法。
 ### 一括実行スクリプト
 
 ```bash
-./scripts/run_tests.sh
+./scripts/deployment/run_tests.sh
 ```
 
 ## 個別テストの詳細
@@ -233,8 +233,8 @@ Failed to load filter coefficients
 フィルタ係数を生成してください：
 
 ```bash
-uv run python scripts/generate_minimum_phase.py --generate-all
-uv run python scripts/generate_linear_phase.py --generate-all
+uv run python scripts/filters/generate_minimum_phase.py --generate-all
+uv run python scripts/filters/generate_linear_phase.py --generate-all
 ```
 
 ### セグメンテーションフォルト

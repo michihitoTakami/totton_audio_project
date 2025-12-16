@@ -1,20 +1,25 @@
 """
-Unit tests for scripts/generate_filter.py
+Unit tests for scripts/filters/generate_filter.py
 
 Tests filter coefficient generation, validation, and normalization.
 Uses small tap counts for fast execution.
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy import signal
 
-# Add scripts directory to path
-SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
+from scripts.filters.generate_filter import (
+    FilterConfig,
+    FilterValidator,
+    MinimumPhaseMethod,
+    MULTI_RATE_CONFIGS,
+    calculate_safe_gain,
+    normalize_coefficients,
+    validate_tap_count,
+)
 
 
 class TestMinimumPhaseMethod:
@@ -22,7 +27,6 @@ class TestMinimumPhaseMethod:
 
     def test_minimum_phase_method_values(self):
         """MinimumPhaseMethod should have correct values."""
-        from generate_filter import MinimumPhaseMethod
 
         assert MinimumPhaseMethod.HOMOMORPHIC.value == "homomorphic"
         assert MinimumPhaseMethod.HILBERT.value == "hilbert"
@@ -33,7 +37,6 @@ class TestFilterConfig:
 
     def test_default_values(self):
         """FilterConfig should have correct defaults."""
-        from generate_filter import FilterConfig, MinimumPhaseMethod
 
         config = FilterConfig()
 
@@ -53,7 +56,6 @@ class TestFilterConfig:
 
     def test_output_rate_property(self):
         """output_rate should be calculated correctly."""
-        from generate_filter import FilterConfig
 
         config = FilterConfig(input_rate=44100, upsample_ratio=16)
         assert config.output_rate == 705600
@@ -63,7 +65,6 @@ class TestFilterConfig:
 
     def test_family_property(self):
         """family should detect 44k vs 48k correctly."""
-        from generate_filter import FilterConfig
 
         config_44k = FilterConfig(input_rate=44100)
         assert config_44k.family == "44k"
@@ -79,7 +80,6 @@ class TestFilterConfig:
 
     def test_base_name_minimum_phase(self):
         """base_name should include min_phase suffix."""
-        from generate_filter import FilterConfig
 
         config = FilterConfig(
             n_taps=2_000_000,
@@ -91,14 +91,12 @@ class TestFilterConfig:
 
     def test_base_name_custom_prefix(self):
         """output_prefix should override auto-generated name."""
-        from generate_filter import FilterConfig
 
         config = FilterConfig(output_prefix="custom_filter")
         assert config.base_name == "custom_filter"
 
     def test_minimum_phase_accepts_even_taps(self):
         """Minimum phase should accept even tap counts."""
-        from generate_filter import FilterConfig
 
         config = FilterConfig(n_taps=2_000_000)
         assert config.n_taps == 2_000_000
@@ -109,7 +107,6 @@ class TestFilterValidator:
 
     def test_validate_returns_expected_keys(self):
         """validate should return dict with expected keys."""
-        from generate_filter import FilterConfig, FilterValidator
 
         config = FilterConfig(
             n_taps=1000,
@@ -130,7 +127,6 @@ class TestFilterValidator:
 
     def test_validate_detects_minimum_phase(self):
         """validate should detect minimum phase filters."""
-        from generate_filter import FilterConfig, FilterValidator
 
         config = FilterConfig(
             n_taps=1000,
@@ -153,7 +149,6 @@ class TestFilterValidator:
 
     def test_validate_detects_symmetric(self):
         """validate should detect symmetric (linear phase) filters."""
-        from generate_filter import FilterConfig, FilterValidator
 
         config = FilterConfig(
             n_taps=1001,  # Odd tap count required for linear phase
@@ -174,7 +169,6 @@ class TestValidateTapCount:
 
     def test_valid_tap_count_divisible_by_16(self):
         """Tap count divisible by 16 should pass."""
-        from generate_filter import validate_tap_count
 
         # Should not raise
         validate_tap_count(1600, 16)
@@ -182,14 +176,12 @@ class TestValidateTapCount:
 
     def test_invalid_tap_count_not_divisible(self):
         """Tap count not divisible by upsample ratio should raise."""
-        from generate_filter import validate_tap_count
 
         with pytest.raises(ValueError, match="倍数である必要があります"):
             validate_tap_count(1601, 16)
 
     def test_valid_tap_count_different_ratio(self):
         """Different upsample ratios should work."""
-        from generate_filter import validate_tap_count
 
         validate_tap_count(1000, 8)
         validate_tap_count(1000, 4)
@@ -204,7 +196,6 @@ class TestNormalizeCoefficients:
 
     def test_normalizes_dc_gain_with_factor(self):
         """DCゲインが target × dc_gain_factor に正規化されること"""
-        from generate_filter import normalize_coefficients
 
         # Create test coefficients with known DC gain
         h = np.array([0.5, 1.0, 0.5])  # DC gain = 2.0
@@ -222,7 +213,6 @@ class TestNormalizeCoefficients:
 
     def test_l1_norm_output(self):
         """L1ノルムがメタデータに出力されること"""
-        from generate_filter import normalize_coefficients
 
         h = np.array([0.5, -0.3, 0.2])  # DC gain = 0.4, L1 = 1.0
         h_norm, info = normalize_coefficients(h, target_dc_gain=1.0, dc_gain_factor=1.0)
@@ -238,7 +228,6 @@ class TestNormalizeCoefficients:
 
     def test_normalizes_to_upsample_ratio(self):
         """アップサンプル比に応じたDCゲイン正規化（dc_gain_factor適用）"""
-        from generate_filter import normalize_coefficients
 
         h = np.array([0.1, 0.1])  # DC gain = 0.2
         target = 16.0  # 16x upsample
@@ -255,7 +244,6 @@ class TestNormalizeCoefficients:
 
     def test_dc_gain_factor_1_equals_full_target(self):
         """dc_gain_factor=1.0でフル目標値になること"""
-        from generate_filter import normalize_coefficients
 
         h = np.array([1.0, 1.0])  # DC gain = 2.0
         target = 4.0
@@ -269,7 +257,6 @@ class TestNormalizeCoefficients:
 
     def test_invalid_dc_gain_factor_raises_error(self):
         """不正なdc_gain_factorでエラー"""
-        from generate_filter import normalize_coefficients
 
         h = np.array([1.0, 1.0])
         with pytest.raises(ValueError, match="dc_gain_factor"):
@@ -279,7 +266,6 @@ class TestNormalizeCoefficients:
 
     def test_zero_dc_gain_raises_error(self):
         """Zero DC gain should raise ValueError."""
-        from generate_filter import normalize_coefficients
 
         h = np.array([1.0, -1.0])  # DC gain = 0
         with pytest.raises(ValueError, match="DCゲインが0に近すぎます"):
@@ -287,7 +273,6 @@ class TestNormalizeCoefficients:
 
     def test_preserves_shape(self):
         """Normalization should preserve coefficient shape."""
-        from generate_filter import normalize_coefficients
 
         h = np.random.randn(1000)
         h_norm, _ = normalize_coefficients(h)
@@ -296,7 +281,6 @@ class TestNormalizeCoefficients:
 
     def test_invalid_target_raises_error(self):
         """Non-positive target DC gain should raise ValueError."""
-        from generate_filter import normalize_coefficients
 
         with pytest.raises(ValueError, match="DCゲインのターゲット"):
             normalize_coefficients(np.array([1.0]), target_dc_gain=0.0)
@@ -458,7 +442,6 @@ class TestCoefficientFileNaming:
 
     def test_filter_config_generates_2m_filename(self):
         """FilterConfig should generate filenames with '2m' for 2M taps."""
-        from generate_filter import FilterConfig
 
         # Test all 8 configurations
         test_cases = [
@@ -484,7 +467,6 @@ class TestCoefficientFileNaming:
 
     def test_non_2m_taps_use_numeric_format(self):
         """Non-2M tap counts should use numeric format in filename."""
-        from generate_filter import FilterConfig
 
         # Test with different tap counts
         config_1m = FilterConfig(
@@ -508,13 +490,11 @@ class TestMultiRateConfigs:
 
     def test_multi_rate_configs_has_8_entries(self):
         """MULTI_RATE_CONFIGS should have 8 entries (2 families × 4 ratios)."""
-        from generate_filter import MULTI_RATE_CONFIGS
 
         assert len(MULTI_RATE_CONFIGS) == 8
 
     def test_multi_rate_configs_44k_family(self):
         """44k family should have correct configurations."""
-        from generate_filter import MULTI_RATE_CONFIGS
 
         configs = MULTI_RATE_CONFIGS
 
@@ -538,7 +518,6 @@ class TestMultiRateConfigs:
 
     def test_multi_rate_configs_48k_family(self):
         """48k family should have correct configurations."""
-        from generate_filter import MULTI_RATE_CONFIGS
 
         configs = MULTI_RATE_CONFIGS
 
@@ -562,7 +541,6 @@ class TestMultiRateConfigs:
 
     def test_stopband_equals_input_nyquist(self):
         """Stopband frequency should equal input Nyquist (input_rate / 2)."""
-        from generate_filter import MULTI_RATE_CONFIGS
 
         for name, config in MULTI_RATE_CONFIGS.items():
             expected_stopband = config["input_rate"] // 2
@@ -572,7 +550,6 @@ class TestMultiRateConfigs:
 
     def test_output_rate_consistency(self):
         """All configs in same family should produce same output rate."""
-        from generate_filter import MULTI_RATE_CONFIGS
 
         configs = MULTI_RATE_CONFIGS
 
@@ -592,7 +569,6 @@ class TestMultiRateOutputFilename:
 
     def test_filename_includes_min_phase_suffix(self):
         """Output filename should include the min_phase suffix."""
-        from generate_filter import FilterConfig
 
         config = FilterConfig(
             n_taps=2_000_000,
@@ -607,7 +583,6 @@ class TestValidateTapCountMultiRate:
 
     def test_tap_count_divisible_by_ratio(self):
         """Tap count must be divisible by upsample ratio."""
-        from generate_filter import validate_tap_count
 
         # All ratios used in multi-rate
         for ratio in [16, 8, 4, 2]:
@@ -634,56 +609,48 @@ class TestFilterConfigErrorHandling:
 
     def test_zero_tap_count_raises_error(self):
         """FilterConfig should raise ValueError for zero tap count."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(n_taps=0)
 
     def test_negative_tap_count_raises_error(self):
         """FilterConfig should raise ValueError for negative tap count."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(n_taps=-1000)
 
     def test_zero_input_rate_raises_error(self):
         """FilterConfig should raise ValueError for zero input rate."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(input_rate=0)
 
     def test_negative_input_rate_raises_error(self):
         """FilterConfig should raise ValueError for negative input rate."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(input_rate=-44100)
 
     def test_zero_upsample_ratio_raises_error(self):
         """FilterConfig should raise ValueError for zero upsample ratio."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(upsample_ratio=0)
 
     def test_negative_upsample_ratio_raises_error(self):
         """FilterConfig should raise ValueError for negative upsample ratio."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(upsample_ratio=-16)
 
     def test_negative_kaiser_beta_raises_error(self):
         """FilterConfig should raise ValueError for negative kaiser beta."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(kaiser_beta=-1.0)
 
     def test_passband_exceeds_nyquist_raises_error(self):
         """FilterConfig should raise ValueError if passband > Nyquist."""
-        from generate_filter import FilterConfig
 
         # Passband (25kHz) > Nyquist (22.05kHz) for 44.1kHz input
         with pytest.raises(ValueError):
@@ -691,14 +658,12 @@ class TestFilterConfigErrorHandling:
 
     def test_stopband_less_than_passband_raises_error(self):
         """FilterConfig should raise ValueError if stopband < passband."""
-        from generate_filter import FilterConfig
 
         with pytest.raises(ValueError):
             FilterConfig(passband_end=20000, stopband_start=18000)
 
     def test_stopband_exceeds_output_nyquist_raises_error(self):
         """FilterConfig should raise ValueError if stopband >= output Nyquist."""
-        from generate_filter import FilterConfig
 
         # output_nyquist = 44100 * 16 / 2 = 352800 Hz
         # stopband_start = 1000000 Hz > 352800 Hz -> エラー
@@ -711,7 +676,6 @@ class TestFilterConfigErrorHandling:
 
     def test_stopband_at_output_nyquist_raises_error(self):
         """FilterConfig should raise ValueError if stopband == output Nyquist."""
-        from generate_filter import FilterConfig
 
         # output_nyquist = 44100 * 16 / 2 = 352800 Hz
         with pytest.raises(ValueError, match="出力ナイキスト周波数"):
@@ -727,14 +691,12 @@ class TestNormalizeCoefficientsErrorHandling:
 
     def test_empty_array_raises_error(self):
         """normalize_coefficients should raise ValueError for empty array."""
-        from generate_filter import normalize_coefficients
 
         with pytest.raises(ValueError):
             normalize_coefficients(np.array([]))
 
     def test_near_zero_dc_gain_raises_error(self):
         """normalize_coefficients should raise ValueError for near-zero DC gain."""
-        from generate_filter import normalize_coefficients
 
         # Array with DC gain very close to zero
         h = np.array([1.0, -1.0, 1e-15])
@@ -774,7 +736,6 @@ class TestValidateTapCountErrorHandling:
 
     def test_non_multiple_ratio_raises_error(self):
         """validate_tap_count should raise ValueError for non-multiple taps."""
-        from generate_filter import validate_tap_count
 
         # Float ratio will cause non-integer result, raising ValueError
         with pytest.raises(ValueError, match="倍数である必要があります"):
@@ -782,7 +743,6 @@ class TestValidateTapCountErrorHandling:
 
     def test_zero_ratio_raises_error(self):
         """validate_tap_count should raise error for zero ratio."""
-        from generate_filter import validate_tap_count
 
         with pytest.raises((ValueError, ZeroDivisionError)):
             validate_tap_count(1024, 0)
@@ -797,7 +757,6 @@ class TestCalculateSafeGain:
 
     def test_calculates_from_max_coef(self, tmp_path):
         """max_coef > 1.0 の場合は max_coef ベースで計算"""
-        from generate_filter import calculate_safe_gain
 
         # テスト用JSONファイルを作成
         (tmp_path / "filter_test.json").write_text(
@@ -818,7 +777,6 @@ class TestCalculateSafeGain:
 
     def test_returns_1_when_all_safe(self, tmp_path):
         """全フィルタの max_coef <= 1.0 の場合は gain=1.0"""
-        from generate_filter import calculate_safe_gain
 
         # max_coef が 1.0 以下のJSONファイル
         (tmp_path / "filter_safe.json").write_text(
@@ -838,7 +796,6 @@ class TestCalculateSafeGain:
 
     def test_handles_multiple_filters(self, tmp_path):
         """複数フィルタから最大値を正しく取得"""
-        from generate_filter import calculate_safe_gain
 
         (tmp_path / "filter_a.json").write_text(
             '{"validation_results": {"normalization": {"l1_norm": 100.0, "max_coefficient_amplitude": 0.9}}}'
@@ -864,7 +821,6 @@ class TestCalculateSafeGain:
 
     def test_handles_invalid_data_gracefully(self, tmp_path):
         """無効なデータ（None等）を安全にスキップ"""
-        from generate_filter import calculate_safe_gain
 
         # l1_norm が null のJSON
         (tmp_path / "filter_invalid.json").write_text(
@@ -889,7 +845,6 @@ class TestCalculateSafeGain:
 
     def test_handles_missing_json_file(self, tmp_path):
         """存在しないJSONファイルをスキップ"""
-        from generate_filter import calculate_safe_gain
 
         filter_infos = [("missing", "filter_missing", 1000, {})]
         result = calculate_safe_gain(
@@ -902,7 +857,6 @@ class TestCalculateSafeGain:
 
     def test_int_float_conversion_safety(self, tmp_path):
         """int型の値も正しくfloatに変換される"""
-        from generate_filter import calculate_safe_gain
 
         # JSONでは整数として保存されることがある
         (tmp_path / "filter_int.json").write_text(

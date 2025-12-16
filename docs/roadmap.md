@@ -41,7 +41,7 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 
 - [x] **Phase Type Selection** (#165, #166, #167)
   - Minimum Phase / Linear Phase 切り替え機能
-  - `scripts/generate_linear_phase.py` による線形位相フィルタ生成
+  - `scripts/filters/generate_linear_phase.py` による線形位相フィルタ生成
   - C++/CUDA側の位相タイプ対応（遅延計算含む）
   - 設定システム（`PhaseType` enum）
 
@@ -51,7 +51,7 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
   - GPU Upsamplerのマルチレート対応完了
 
 - [x] **Daemon Implementation**
-  - TCP PCM Receiver統合（jetson_pcm_receiver）
+  - RTP入力サービス連携 (`web/services/rtp_input.py`)
   - PCMヘッダー自動パースによるレート/フォーマット検知
 
 - [x] **ZeroMQ Communication Layer**
@@ -62,7 +62,6 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 - [x] **Safety Mechanisms**
   - **Soft Mute**: レート切り替え時のクロスフェード実装済み
   - **Hot-swap IR loading**: グリッチフリーな係数切り替え
-  - **TCP Client Handoff**: 優先クライアント切替時のバッファリセット
 
 - [x] **Crossfeed/HRTF Engine**
   - バイノーラル処理エンジン実装
@@ -74,7 +73,7 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
   - テキストインポート機能
 
 - [x] **ZeroMQ Communication Layer** ✅
-  - 20以上のコマンドタイプ実装完了（LOAD_IR, SET_GAIN, SOFT_RESET, APPLY_EQ, CROSSFEED_*, TCP_INPUT_*, など）
+  - 20以上のコマンドタイプ実装完了（LOAD_IR, SET_GAIN, SOFT_RESET, APPLY_EQ, CROSSFEED_*, など）
   - REQ/REP パターン、完全なJSON API
   - Control Plane ↔ Data Plane完全統合
   - 実装: `src/zeromq_interface.cpp`, `src/daemon/control/zmq_server.cpp`
@@ -123,11 +122,11 @@ Phase 4: Commercialization & Deployment [                    ] 0% (計画中)
 #### 1. 係数生成 ✅
 - [x] 全8構成の最小位相フィルタ生成スクリプト
   ```bash
-  uv run python scripts/generate_minimum_phase.py --generate-all --taps 640000
+  uv run python scripts/filters/generate_minimum_phase.py --generate-all --taps 640000
   ```
 - [x] 全8構成の線形位相フィルタ生成スクリプト
   ```bash
-  uv run python scripts/generate_linear_phase.py --generate-all --taps 640000
+  uv run python scripts/filters/generate_linear_phase.py --generate-all --taps 640000
   ```
 - [x] C++が期待するファイル名パターンに対応 (`filter_{family}_{ratio}x_{taps}_{phase_label}.bin` 例: `_min_phase`)
 
@@ -309,8 +308,8 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
 **Status:** 📋 Planned
 
 **アーキテクチャ:** I/O分離構成
-- **Raspberry Pi 5**: UAC2デバイス + TCP PCM送信
-- **Jetson Orin Nano**: TCP PCM受信 + GPU処理 + DAC出力
+- **Raspberry Pi 5**: UAC2デバイス + RTP送信
+- **Jetson Orin Nano**: RTP受信 + GPU処理 + DAC出力
 
 ### Tasks
 
@@ -408,7 +407,7 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
 | Item | Specification |
 |------|---------------|
 | SoC | Broadcom BCM2712 (Quad-core Cortex-A76) |
-| Role | USB UAC2デバイス、TCP PCM送信 |
+| Role | USB UAC2デバイス、RTP送信 |
 | Input | USB Type-C (UAC2 Device Mode) |
 | Output | Ethernet → Jetson |
 | Deployment | Docker |
@@ -420,7 +419,7 @@ Phase 2.5は明日（Day 15-16）中に完了予定。Phase 3開始前にコー�
 | CUDA Cores | 1024 |
 | CUDA Arch | SM 8.7 (Ampere) |
 | Storage | 1TB NVMe SSD (KIOXIA EXCERIA G2) |
-| Input | TCP PCM over Ethernet |
+| Input | RTP over Ethernet (GStreamer) |
 | Output | USB Type-A → External USB DAC |
 | Network | Wi-Fi / Ethernet |
 | Deployment | Docker (CUDA Runtime) |

@@ -108,7 +108,7 @@ include_directories(
 # Core library (static) - Phase 2 GPU upsampling engine
 # Split into multiple files for maintainability (Issue #104)
 add_library(gpu_upsampler_core STATIC
-    src/audio_io.cpp
+    src/audio/audio_io.cpp
     src/gpu/convolution_kernels.cu
     src/gpu/cuda_utils.cu
     src/gpu/partition_plan.cpp
@@ -117,7 +117,7 @@ add_library(gpu_upsampler_core STATIC
     src/gpu/gpu_upsampler_streaming.cu
     src/gpu/gpu_upsampler_eq.cu
     src/gpu/crossfeed_engine.cu
-    src/phase_alignment.cpp
+    src/audio/phase_alignment.cpp
     src/hrtf/woodworth_model.cpp
 )
 
@@ -167,7 +167,7 @@ target_compile_options(gpu_upsampler PRIVATE
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
-    src/partition_runtime_utils.cpp
+    src/core/partition_runtime_utils.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
@@ -231,7 +231,7 @@ target_compile_options(test_eq PRIVATE
 
 # Error Codes Library (used by zeromq_interface and other components)
 add_library(error_codes STATIC
-    src/error_codes.cpp
+    src/core/error_codes.cpp
 )
 target_include_directories(error_codes PUBLIC
     ${CMAKE_SOURCE_DIR}/include
@@ -263,8 +263,8 @@ endif()
 
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
-    src/zeromq_interface.cpp
-    src/base64.cpp
+    src/network/zeromq_interface.cpp
+    src/core/base64.cpp
 )
 target_link_libraries(zeromq_interface PUBLIC
     error_codes
@@ -298,7 +298,7 @@ target_compile_options(dac_capability PRIVATE
 
 # Auto-Negotiation Library (CPU-only)
 add_library(auto_negotiation STATIC
-    src/auto_negotiation.cpp
+    src/audio/auto_negotiation.cpp
 )
 target_link_libraries(auto_negotiation PUBLIC
     dac_capability
@@ -313,7 +313,7 @@ target_compile_options(auto_negotiation PRIVATE
 
 # Soft Mute Library (CPU-only, for glitch-free audio transitions)
 add_library(soft_mute STATIC
-    src/soft_mute.cpp
+    src/audio/soft_mute.cpp
 )
 target_include_directories(soft_mute PUBLIC
     ${CMAKE_SOURCE_DIR}/include
@@ -324,7 +324,7 @@ target_compile_options(soft_mute PRIVATE
 
 # Filter headroom helpers (CPU-only)
 add_library(filter_headroom STATIC
-    src/filter_headroom.cpp
+    src/audio/filter_headroom.cpp
 )
 target_include_directories(filter_headroom PUBLIC
     ${CMAKE_SOURCE_DIR}/include
@@ -349,7 +349,7 @@ target_compile_options(graceful_shutdown PRIVATE
 
 # Fallback Manager Library (CPU-only, Issue #139)
 add_library(fallback_manager STATIC
-    src/fallback_manager.cpp
+    src/audio/fallback_manager.cpp
 )
 target_link_libraries(fallback_manager PUBLIC
     logging
@@ -365,9 +365,9 @@ target_compile_options(fallback_manager PRIVATE
 # Consolidates EQ parsing, FIR generation, and config loading
 # No GPU dependencies - can be used independently of gpu_upsampler_core
 add_library(eq_support STATIC
-    src/eq_parser.cpp
-    src/eq_to_fir.cpp
-    src/config_loader.cpp
+    src/audio/eq_parser.cpp
+    src/audio/eq_to_fir.cpp
+    src/core/config_loader.cpp
 )
 target_link_libraries(eq_support PUBLIC
     nlohmann_json::nlohmann_json

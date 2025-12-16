@@ -16,40 +16,30 @@
         {% set status_icon = "⚙️" %}
         {% set status_title = t.get('dashboard.daemon') %}
         {% set status_class = "status.daemon_running ? 'status-ok' : 'status-error'" %}
-        {% set status_text = "status.daemon_running ? '{{ t.get('dashboard.status.running') }}' : '{{ t.get('dashboard.status.stopped') }}'" %}
+        {% set status_text = "status.daemon_running ? '" ~ t.get('dashboard.status.running') ~ "' : '" ~ t.get('dashboard.status.stopped') ~ "'" %}
         {% include 'components/status_card.html' %}
 
         <!-- EQ Status Card -->
         {% set status_icon = "🎚️" %}
         {% set status_title = t.get('dashboard.eq') %}
         {% set status_class = "status.eq_active ? 'status-ok' : 'status-off'" %}
-        {% set status_text = "status.eq_active ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% set status_text = "status.eq_active ? '" ~ t.get('dashboard.status.on') ~ "' : '" ~ t.get('dashboard.status.off') ~ "'" %}
         {% include 'components/status_card.html' %}
 
         <!-- Crossfeed Status Card -->
         {% set status_icon = "🎧" %}
         {% set status_title = t.get('dashboard.crossfeed') %}
         {% set status_class = "status.crossfeed_enabled ? 'status-ok' : 'status-off'" %}
-        {% set status_text = "status.crossfeed_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% set status_text = "status.crossfeed_enabled ? '" ~ t.get('dashboard.status.on') ~ "' : '" ~ t.get('dashboard.status.off') ~ "'" %}
         {% include 'components/status_card.html' %}
 
         <!-- Low Latency Mode Card -->
         {% set status_icon = "⚡" %}
         {% set status_title = t.get('dashboard.low_latency') %}
         {% set status_class = "status.low_latency_enabled ? 'status-ok' : 'status-off'" %}
-        {% set status_text = "status.low_latency_enabled ? '{{ t.get('dashboard.status.on') }}' : '{{ t.get('dashboard.status.off') }}'" %}
+        {% set status_text = "status.low_latency_enabled ? '" ~ t.get('dashboard.status.on') ~ "' : '" ~ t.get('dashboard.status.off') ~ "'" %}
         {% include 'components/status_card.html' %}
 
-        <!-- TCP Input Status Card -->
-        {% set status_icon = "🌐" %}
-        {% set status_title = t.get('dashboard.tcp_input') %}
-        {% set status_class = "tcp.telemetry.listening ? (tcp.telemetry.client_connected ? 'status-ok' : 'status-off') : 'status-error'" %}
-        {% set status_text = "tcpConnectionText()" %}
-        {% set status_subtext = "tcpFormatText()" %}
-        {% set status_link = "/tcp-input" %}
-        {% set status_link_label = t.get('dashboard.tcp_input.manage') %}
-        {% set status_testid = "tcp-status-card" %}
-        {% include 'components/status_card.html' %}
     </div>
 
     <!-- Low Latency Mode -->
@@ -204,25 +194,6 @@ function dashboardData() {
             crossfeed_enabled: false,
             low_latency_enabled: false,
         },
-        tcp: {
-            settings: {
-                bind_address: '',
-                port: 0,
-                buffer_size_bytes: 0,
-            },
-            telemetry: {
-                listening: false,
-                client_connected: false,
-                last_header: null,
-            },
-            updatedAt: null,
-        },
-        tcpLabels: {
-            connected: "{{ t.get('tcp.status.connected') }}",
-            listening: "{{ t.get('tcp.status.listening') }}",
-            stopped: "{{ t.get('tcp.status.stopped') }}",
-            unknown: "{{ t.get('tcp.status.unknown') }}",
-        },
         lowLatency: {
             enabled: false,
             loading: false,
@@ -264,14 +235,12 @@ function dashboardData() {
             this.fetchLowLatencyStatus();
             this.fetchPhaseType();
             this.fetchCrossfeedStatus();
-            this.fetchTcpStatus();
             this.fetchOutputMode();
             // Poll status every 3 seconds
             setInterval(() => {
                 this.fetchStatus();
                 this.fetchLowLatencyStatus();
                 this.fetchCrossfeedStatus();
-                this.fetchTcpStatus();
             }, 3000);
         },
 
@@ -297,25 +266,6 @@ function dashboardData() {
             }
             const num = Number(value);
             return Number.isFinite(num) ? num.toLocaleString() : '—';
-        },
-
-        async fetchTcpStatus() {
-            try {
-                const response = await fetch('/api/tcp-input/status');
-                if (!response.ok) throw new Error('Failed to fetch TCP input status');
-                const data = await response.json();
-                if (data.settings) {
-                    this.tcp.settings = data.settings;
-                }
-                if (data.telemetry) {
-                    this.tcp.telemetry = data.telemetry;
-                } else if (typeof data === 'object') {
-                    this.tcp.telemetry = data;
-                }
-                this.tcp.updatedAt = Date.now();
-            } catch (error) {
-                console.error('Failed to fetch TCP input status:', error);
-            }
         },
 
         async fetchLowLatencyStatus() {
@@ -399,29 +349,6 @@ function dashboardData() {
             } catch (error) {
                 console.error('Failed to fetch output mode:', error);
             }
-        },
-
-        tcpConnectionText() {
-            if (this.tcp.telemetry.listening) {
-                return this.tcp.telemetry.client_connected
-                    ? this.tcpLabels.connected
-                    : this.tcpLabels.listening;
-            }
-            return this.tcpLabels.stopped;
-        },
-
-        tcpFormatText() {
-            const header = this.tcp.telemetry?.last_header || {};
-            const rate = Number(header.sample_rate || 0);
-            const channels = Number(header.channels || 0);
-            const fmt = header.format;
-            if (rate > 0 && channels > 0 && fmt) {
-                return `${this.formatNumber(rate)} Hz · ${channels}ch · ${fmt}`;
-            }
-            if (rate > 0 && channels > 0) {
-                return `${this.formatNumber(rate)} Hz · ${channels}ch`;
-            }
-            return this.tcpLabels.unknown;
         },
 
         async toggleLowLatency() {

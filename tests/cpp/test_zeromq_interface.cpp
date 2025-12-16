@@ -3,7 +3,7 @@
  * @brief Unit tests for ZeroMQ communication interface
  */
 
-#include "zeromq_interface.h"
+#include "network/zeromq_interface.h"
 
 #include <atomic>
 #include <chrono>

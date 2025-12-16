@@ -5,8 +5,8 @@
  * Tests the shared audio components extracted in Issue #105.
  */
 
+#include "audio/audio_utils.h"
 #include "audio_ring_buffer.h"
-#include "audio_utils.h"
 
 #include <cmath>
 #include <gtest/gtest.h>

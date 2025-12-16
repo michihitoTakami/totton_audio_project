@@ -12,7 +12,6 @@
 | `src/daemon/audio_pipeline/` | 入力→GPUアップサンプル→CF→出力バッファ管理、ソフトミュート補助 | `audio_pipeline.cpp`, `rate_switcher.cpp`, `filter_manager.cpp`, `soft_mute_runner.cpp` |
 | `src/daemon/output/` | ALSA 出力のライフサイクル管理、デバイス切替対応 | `alsa_output.{h,cpp}` |
 | `src/daemon/pcm/` | DAC能力の判定/選択 | `dac_manager.cpp` |
-| `jetson_pcm_receiver/` | TCP PCM受信・テレメトリ配信 | `tcp_server.cpp`, `pcm_stream_handler.cpp` |
 | `src/daemon/metrics/` | ランタイム統計の集約/永続化 | `runtime_stats.cpp` |
 
 ## イベント契約（共通ヘッダ）

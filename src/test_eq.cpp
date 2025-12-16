@@ -4,9 +4,9 @@
  * then compares the frequency response to verify EQ is working correctly.
  */
 
+#include "audio/eq_parser.h"
+#include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
-#include "eq_parser.h"
-#include "eq_to_fir.h"
 
 #include <cmath>
 #include <complex>

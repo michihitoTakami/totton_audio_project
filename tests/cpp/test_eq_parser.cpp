@@ -3,7 +3,7 @@
  * @brief Unit tests for EQ parser (Equalizer APO format)
  */
 
-#include "eq_parser.h"
+#include "audio/eq_parser.h"
 
 #include <cmath>
 #include <gtest/gtest.h>
