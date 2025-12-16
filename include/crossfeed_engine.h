@@ -1,13 +1,13 @@
 #ifndef CROSSFEED_ENGINE_H
 #define CROSSFEED_ENGINE_H
 
+#include "hrtf/woodworth_model.h"
+
 #include <cuda_runtime.h>
 #include <cufft.h>
 
 #include <string>
 #include <vector>
-
-#include "hrtf/woodworth_model.h"
 
 namespace CrossfeedEngine {
 
@@ -69,6 +69,18 @@ inline const char* rateFamilyToString(RateFamily family) {
         return "48k";
     default:
         return "44k";
+    }
+}
+
+// Upsampled output rate for the given family (matches convolution engine)
+inline int getOutputSampleRate(RateFamily family) {
+    switch (family) {
+    case RateFamily::RATE_44K:
+        return 705600;
+    case RateFamily::RATE_48K:
+        return 768000;
+    default:
+        return 0;
     }
 }
 
