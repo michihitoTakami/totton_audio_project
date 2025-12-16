@@ -147,6 +147,28 @@ def _hw_params_path(device: str, stream: str) -> Optional[Path]:
     return Path(f"/proc/asound/card{card}/pcm{pcm}{stream}/sub0/hw_params")
 
 
+def _pcm_device_node(device: str, stream: str) -> Optional[Path]:
+    """ALSA device string (hw:2,0) -> /dev/snd/pcmC2D0c のようなデバイスノード.
+
+    電源断復帰やUSB抜き差しなどでは hw_params が "closed" のままでも、
+    デバイスノードの出現で「デバイスとして存在する」ことは判定できる。
+    """
+    match = re.match(r"^(?:plughw:|hw:)(?P<card>\d+),(?P<pcm>\d+)", device)
+    if not match:
+        return None
+    card = match.group("card")
+    pcm = match.group("pcm")
+    suffix = "c" if stream == "c" else "p"
+    return Path(f"/dev/snd/pcmC{card}D{pcm}{suffix}")
+
+
+def _device_present(device: str, stream: str) -> bool:
+    node = _pcm_device_node(device, stream)
+    if node is None:
+        return False
+    return node.exists()
+
+
 def _parse_hw_params_rate(text: str) -> Optional[int]:
     if "closed" in text:
         return None
@@ -365,19 +387,41 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
     signal.signal(signal.SIGINT, _handle_term)
 
     while True:
+        capture_present = _device_present(cfg.capture_device, "c")
         rate, fmt = _probe_capture_params(cfg.capture_device)
-        if rate is None and not cfg.keep_silence_when_no_capture:
-            # キャプチャが無いなら待機しつつリトライ（出力停止）
+        if not capture_present and not cfg.keep_silence_when_no_capture:
+            # キャプチャデバイスが無いなら待機しつつリトライ（出力停止）
             time.sleep(cfg.poll_interval_sec)
             continue
 
         if rate is not None:
             last_rate = rate
+        elif capture_present and current_mode != "capture":
+            # デバイスが現れたが hw_params がまだ取れない場合、まずはフォールバックレートで起動する
+            last_rate = cfg.fallback_rate
         if fmt is not None:
             last_observed_capture_format = fmt
 
-        desired_mode = "capture" if rate is not None else "silence"
+        desired_mode = "capture" if capture_present else "silence"
         current_mode = desired_mode
+
+        # passthrough で rate/format が未確定な段階は、まず conversion で安全に立ち上げる
+        if (
+            cfg.passthrough
+            and current_mode == "capture"
+            and (rate is None or fmt is None)
+        ):
+            conversion = True
+
+        # hw_params が揃ったら passthrough を試す（失敗時はプロセス終了→conversionへ戻る）
+        if (
+            cfg.passthrough
+            and current_mode == "capture"
+            and conversion
+            and rate is not None
+            and fmt is not None
+        ):
+            conversion = False
         raw_format, status_alsa_format = _choose_raw_caps(
             cfg,
             mode=current_mode,
@@ -422,16 +466,19 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
                         print(f"[usb_i2s_bridge] gst-launch exited rc={rc}; restarting")
                     break
                 except subprocess.TimeoutExpired:
+                    new_present = _device_present(cfg.capture_device, "c")
                     new_rate, new_fmt = _probe_capture_params(cfg.capture_device)
                     if (
-                        new_rate != rate
+                        new_present != capture_present
+                        or new_rate != rate
                         or new_fmt != fmt
                         or (rate is None and new_rate is not None)
                         or (fmt is None and new_fmt is not None)
                     ):
                         print(
                             "[usb_i2s_bridge] detected capture change "
-                            f"(rate {rate}->{new_rate}, fmt {fmt}->{new_fmt}); restarting"
+                            f"(present {capture_present}->{new_present}, "
+                            f"rate {rate}->{new_rate}, fmt {fmt}->{new_fmt}); restarting"
                         )
                         proc.terminate()
                         try:
@@ -442,8 +489,8 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
                     # USBが抜けた場合はサイレンスに切替（keep_silence=trueのみ）
                     if (
                         cfg.keep_silence_when_no_capture
-                        and rate is not None
-                        and new_rate is None
+                        and capture_present
+                        and not new_present
                     ):
                         print(
                             "[usb_i2s_bridge] capture disappeared; switching to silence"
@@ -638,20 +685,38 @@ def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
             GLib.timeout_add(int(self.cfg.restart_backoff_sec * 1000), _restart)
 
         def _reconcile(self, force: bool = False) -> None:
+            capture_present = _device_present(self.cfg.capture_device, "c")
             rate, fmt = _probe_capture_params(self.cfg.capture_device)
-            capture_available = rate is not None
-
-            if not capture_available and not self.cfg.keep_silence_when_no_capture:
+            if not capture_present and not self.cfg.keep_silence_when_no_capture:
                 # 無入力時は停止（ポリシー）
                 if self.current_mode != "none":
                     self._stop_then(lambda: setattr(self, "current_mode", "none"))
                 return
 
-            desired_mode = "capture" if capture_available else "silence"
-            desired_rate = rate if capture_available else self.current_rate
+            desired_mode = "capture" if capture_present else "silence"
+            desired_rate = rate if capture_present else self.current_rate
             if desired_rate is None:
                 desired_rate = self.cfg.fallback_rate
-            desired_capture_fmt = fmt if capture_available else None
+            desired_capture_fmt = fmt if capture_present else None
+
+            # passthrough で rate/format が未確定な段階は、まず conversion で安全に立ち上げる
+            if (
+                self.cfg.passthrough
+                and desired_mode == "capture"
+                and (rate is None or fmt is None)
+            ):
+                self.conversion_enabled = True
+
+            # hw_params が揃ったら passthrough を試す（失敗時は ERROR で conversion に戻る）
+            if (
+                self.cfg.passthrough
+                and desired_mode == "capture"
+                and self.conversion_enabled
+                and rate is not None
+                and fmt is not None
+            ):
+                self.conversion_enabled = False
+                force = True
 
             need_switch = (
                 force
