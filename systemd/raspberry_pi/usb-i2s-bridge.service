@@ -1,0 +1,23 @@
+[Unit]
+Description=Magic Box USB->I2S Bridge (Docker Compose)
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+#
+# NOTE:
+# - このユニットは「repo が /opt/magicbox/gpu_os に配置されている」前提の雛形です。
+# - Pi 実機では `scripts/deployment/setup-pi-usb-i2s-bridge.sh` を実行し、
+#   絶対パスを焼き込んだユニットを /etc/systemd/system にインストールしてください。
+WorkingDirectory=/opt/magicbox/gpu_os
+
+# Compose v2 (docker compose). If you use legacy docker-compose, adjust accordingly.
+ExecStart=/usr/bin/docker compose -f raspberry_pi/usb_i2s_bridge/docker-compose.yml up -d --build
+ExecStop=/usr/bin/docker compose -f raspberry_pi/usb_i2s_bridge/docker-compose.yml down
+
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
