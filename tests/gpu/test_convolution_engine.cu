@@ -1529,6 +1529,49 @@ TEST_F(ConvolutionEngineTest, Issue839_StreamBlock_NotAttenuated) {
     EXPECT_GT(maxAbs, 0.1f);
 }
 
+// Issue #899: Non-blocking streaming returns the previous completed block.
+// The first call enqueues work and returns no output; after GPU completion, the next call delivers.
+TEST_F(ConvolutionEngineTest, Issue899_NonBlockingStreaming_DeliversPreviousBlock) {
+    TempCoeffDir tempDir;
+    ASSERT_TRUE(tempDir.isValid()) << tempDir.error();
+
+    GPUUpsampler upsampler;
+    ASSERT_TRUE(upsampler.initializeMultiRate(tempDir.path(), 8192, 44100));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+    upsampler.setStreamingNonBlocking(true);
+
+    StreamFloatVector output;
+    StreamFloatVector streamInputBuffer;
+    size_t streamInputAccumulated = 0;
+    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
+
+    const size_t frames = upsampler.getStreamValidInputPerBlock();
+    ASSERT_GT(frames, 0u);
+
+    std::vector<float> input(frames, 0.5f);
+    bool produced1 = upsampler.processStreamBlock(
+        input.data(), input.size(), output, upsampler.stream_, streamInputBuffer,
+        streamInputAccumulated);
+    EXPECT_FALSE(produced1);
+    EXPECT_TRUE(output.empty());
+
+    // Ensure device work has completed; processStreamBlock itself should remain non-blocking.
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    float dummy = 0.0f;
+    bool produced2 = upsampler.processStreamBlock(
+        &dummy, 0, output, upsampler.stream_, streamInputBuffer, streamInputAccumulated);
+    EXPECT_TRUE(produced2);
+    ASSERT_FALSE(output.empty());
+
+    float maxAbs = 0.0f;
+    for (float v : output) {
+        maxAbs = std::max(maxAbs, std::abs(v));
+    }
+    EXPECT_GT(maxAbs, 0.1f);
+}
+
 // Test consecutive rate switches (44.1k → 88.2k → 176.4k → 352.8k)
 TEST_F(ConvolutionEngineTest, Issue219_ConsecutiveRateSwitches_44kFamily) {
     TempCoeffDir tempDir;
