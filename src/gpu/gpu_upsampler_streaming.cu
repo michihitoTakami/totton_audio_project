@@ -206,7 +206,15 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         // Skip GPU convolution ONLY if EQ is not applied
         // When EQ is applied, we need convolution to apply the EQ filter
         if (upsampleRatio_ == 1 && !eqApplied_) {
-            outputData.assign(inputData, inputData + inputFrames);
+            if (outputData.capacity() < inputFrames) {
+                std::cerr << "[Streaming] Output buffer capacity too small (bypass): need "
+                          << inputFrames << ", cap=" << outputData.capacity() << std::endl;
+                outputData.clear();
+                streamInputAccumulated = 0;
+                return false;
+            }
+            outputData.resize(inputFrames);
+            std::copy(inputData, inputData + inputFrames, outputData.begin());
             // Clear accumulated buffer to prevent stale data when switching back to normal mode
             streamInputAccumulated = 0;
             return true;
@@ -450,7 +458,15 @@ bool GPUUpsampler::processPartitionedStreamBlock(
     cudaStream_t stream, StreamFloatVector& streamInputBuffer, size_t& streamInputAccumulated) {
     try {
         if (upsampleRatio_ == 1 && !eqApplied_) {
-            outputData.assign(inputData, inputData + inputFrames);
+            if (outputData.capacity() < inputFrames) {
+                std::cerr << "[Partition] Output buffer capacity too small (bypass): need "
+                          << inputFrames << ", cap=" << outputData.capacity() << std::endl;
+                outputData.clear();
+                streamInputAccumulated = 0;
+                return false;
+            }
+            outputData.resize(inputFrames);
+            std::copy(inputData, inputData + inputFrames, outputData.begin());
             streamInputAccumulated = 0;
             return true;
         }

@@ -1631,6 +1631,7 @@ TEST_F(ConvolutionEngineTest, Issue219_RateSwitchWithStreamingActive) {
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     // Process a few blocks
     for (int i = 0; i < 3; ++i) {
@@ -1743,6 +1744,7 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_RequiresStreamingReinit
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     bool result = upsampler.processStreamBlock(
         input.data(), inputFrames, output,
@@ -1778,7 +1780,8 @@ TEST_F(ConvolutionEngineTest, Issue219_MultipleRateSwitchesWithStreaming) {
         StreamFloatVector output;
         StreamFloatVector streamInputBuffer;
         size_t streamInputAccumulated = 0;
-    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+        prepareStreamInputBuffer(upsampler, streamInputBuffer);
+        prepareStreamOutputBuffer(upsampler, output);
 
         bool result = upsampler.processStreamBlock(
             input.data(), inputFrames, output,
@@ -1805,6 +1808,7 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_CallsResetStreaming) {
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     // Process a few blocks
     for (int i = 0; i < 3; ++i) {

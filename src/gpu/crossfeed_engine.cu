@@ -812,8 +812,18 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
 
     if (!enabled_) {
         // Passthrough
-        outputL.assign(inputL, inputL + inputFrames);
-        outputR.assign(inputR, inputR + inputFrames);
+        if (outputL.capacity() < inputFrames || outputR.capacity() < inputFrames) {
+            std::cerr << "[Crossfeed] Output buffer capacity too small (passthrough): need "
+                      << inputFrames << " (L cap=" << outputL.capacity()
+                      << ", R cap=" << outputR.capacity() << ")" << std::endl;
+            outputL.clear();
+            outputR.clear();
+            return false;
+        }
+        outputL.resize(inputFrames);
+        outputR.resize(inputFrames);
+        std::memcpy(outputL.data(), inputL, inputFrames * sizeof(float));
+        std::memcpy(outputR.data(), inputR, inputFrames * sizeof(float));
         return true;
     }
 
