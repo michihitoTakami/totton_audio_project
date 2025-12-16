@@ -5,6 +5,7 @@
 
 #include "core/config_loader.h"
 
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "crossfeed_engine.h"
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
