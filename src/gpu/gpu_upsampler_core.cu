@@ -212,7 +212,8 @@ GPUUpsampler::GPUUpsampler()
       partitionFastFftComplexSize_(0), d_tailAccumulator_(nullptr), d_tailMixBuffer_(nullptr),
       d_upsampledHistory_(nullptr), tailAccumulatorSize_(0), historyBufferSize_(0),
       tailBaseSample_(0), tailBaseIndex_(0), partitionProcessedSamples_(0),
-      partitionOutputSamples_(0), historyWriteIndex_(0), partitionStreamingInitialized_(false) {
+      partitionOutputSamples_(0), historyWriteIndex_(0), partitionStreamingInitialized_(false),
+      allowHostBufferGrowth_(true) {
     stats_ = Stats();
     // Initialize multi-rate FFT pointers to nullptr
     for (int i = 0; i < MULTI_RATE_CONFIG_COUNT; ++i) {

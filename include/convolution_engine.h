@@ -634,6 +634,16 @@ class GPUUpsampler {
     void unregisterHostBuffers();
     cufftHandle partitionImpulsePlanInverse_ = 0;
     DeviceSample* d_partitionImpulse_ = nullptr;
+
+    // Allow host buffer growth (tests/offline). In RT daemon path this is disabled.
+    bool allowHostBufferGrowth_ = true;
+
+   public:
+    // Enable/disable host buffer growth in streaming path (input/output vectors owned by caller).
+    // Default: true (tests, offline). Daemon should disable to avoid RT reallocations.
+    void setAllowHostBufferGrowth(bool allow) {
+        allowHostBufferGrowth_ = allow;
+    }
 };
 
 // Utility functions

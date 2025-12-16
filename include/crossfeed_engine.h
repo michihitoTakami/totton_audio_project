@@ -201,6 +201,11 @@ class HRTFProcessor {
         return static_cast<size_t>(validOutputPerBlock_);
     }
 
+    // Allow pinned buffer growth (tests/offline). Daemon should disable to avoid RT realloc.
+    void setAllowPinnedBufferGrowth(bool allow) {
+        allowPinnedBufferGrowth_ = allow;
+    }
+
     // Get filter tap count
     int getFilterTaps() const {
         return filterTaps_;
@@ -362,6 +367,7 @@ class HRTFProcessor {
     // Streaming state
     bool streamInitialized_;
     size_t streamValidInputPerBlock_;
+    bool allowPinnedBufferGrowth_;
     void* pinnedStreamInputL_;
     void* pinnedStreamInputR_;
     void* pinnedStreamOutputL_;

@@ -163,7 +163,8 @@ HRTFProcessor::HRTFProcessor()
       pinnedStreamInputRBytes_(0),
       pinnedStreamOutputLBytes_(0),
       pinnedStreamOutputRBytes_(0),
-      validOutputPerBlock_(0) {
+      validOutputPerBlock_(0),
+      allowPinnedBufferGrowth_(true) {
     stats_ = Stats();
     // Initialize all filter FFT pointers to nullptr
     for (int i = 0; i < NUM_CONFIGS; ++i) {
@@ -782,17 +783,17 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     auto ensurePinnedCapacity = [&](std::vector<float>& buffer, size_t requiredSamples,
                                     void** trackedPtr, size_t* trackedBytes,
                                     const char* context) -> bool {
-        (void)trackedPtr;
-        (void)trackedBytes;
         if (buffer.capacity() < requiredSamples) {
-            std::cerr << "[Crossfeed] Buffer capacity exceeded (" << requiredSamples << " > "
-                      << buffer.capacity() << "): " << context << std::endl;
-            return false;
-        }
-        if (buffer.size() < requiredSamples) {
+            if (!allowPinnedBufferGrowth_) {
+                std::cerr << "[Crossfeed] Buffer capacity exceeded (" << requiredSamples << " > "
+                          << buffer.capacity() << "): " << context << std::endl;
+                return false;
+            }
+            safeCudaHostUnregister(trackedPtr, trackedBytes, context);
+            buffer.resize(requiredSamples);
+        } else if (buffer.size() < requiredSamples) {
             buffer.resize(requiredSamples);
         }
-        // Keep tracked pointers stable to avoid cudaHostRegister/Unregister in RT path
         return true;
     };
 
