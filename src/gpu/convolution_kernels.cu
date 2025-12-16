@@ -39,6 +39,13 @@ __global__ void scaleKernel(DeviceSample* data, int size, DeviceScale scale) {
     }
 }
 
+__global__ void accumulateAddKernel(DeviceSample* dst, const DeviceSample* src, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        dst[idx] += src[idx];
+    }
+}
+
 // CUDA kernel to upconvert float samples to active precision samples
 __global__ void upconvertFromFloatKernel(const float* input, DeviceSample* output, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;

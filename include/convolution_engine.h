@@ -235,6 +235,18 @@ class GPUUpsampler {
     // This pre-allocates buffers and prepares the engine for incremental processing
     bool initializeStreaming();
 
+    // Enable non-blocking streaming completion (Issue #899).
+    // - When enabled, processStreamBlock() avoids per-block host blocking by returning the
+    //   previous completed block (cudaEventQuery-based pipelining).
+    // - When disabled, processStreamBlock() keeps legacy semantics and may block until
+    //   the current block is ready (used by tests/offline tools).
+    void setStreamingNonBlocking(bool enabled) {
+        streamingNonBlockingEnabled_ = enabled;
+    }
+    bool isStreamingNonBlocking() const {
+        return streamingNonBlockingEnabled_;
+    }
+
     // Reset streaming state (clears accumulated input and overlap buffers)
     void resetStreaming();
 
@@ -509,22 +521,69 @@ class GPUUpsampler {
     bool streamInitialized_;           // Whether streaming mode is initialized
     int validOutputPerBlock_;          // Valid output samples per block (after FFT convolution)
     int streamOverlapSize_;            // Adjusted overlap per block for streaming alignment
+    bool streamingNonBlockingEnabled_ = false;  // default: legacy (blocking) semantics
 
-    // Streaming GPU buffers (pre-allocated to avoid malloc/free in callbacks)
-    DeviceSample* d_streamInput_;               // Device buffer for accumulated input
-    DeviceSample* d_streamUpsampled_;           // Device buffer for upsampled input
-    DeviceSample* d_streamPadded_;              // Device buffer for [overlap | new] concatenation
-    DeviceFftComplex* d_streamInputFFT_;        // FFT of padded input
-    DeviceSample* d_streamConvResult_;          // Convolution result
-    DeviceFftComplex* d_streamInputFFTBackup_;  // Backup for phase-aware crossfade
-    DeviceSample* d_streamConvResultOld_;       // Old filter convolution result during crossfade
-    float* d_outputScratch_;                    // Primary/mono stream scratch (float output)
-    float* d_outputScratchLeft_;                // Left channel scratch (float output)
-    float* d_outputScratchRight_;               // Right channel scratch (float output)
+    // Streaming GPU/Host buffers (pre-allocated to avoid malloc/free in callbacks).
+    //
+    // Legacy streaming used a per-block cudaStreamSynchronize() to ensure device buffers were not
+    // reused concurrently. For I2S/RT stability, we avoid per-block host blocking and instead
+    // pipeline completion via cudaEventQuery(), while keeping per-channel working buffers.
+    static constexpr int kStreamingChannelCount = 3;  // 0: mono/other, 1: left, 2: right
+
+    struct StreamingChannel {
+        // Device working buffers (per-channel)
+        DeviceSample* d_streamInput = nullptr;
+        DeviceSample* d_streamUpsampled = nullptr;
+        DeviceSample* d_streamPadded = nullptr;
+        DeviceFftComplex* d_streamInputFFT = nullptr;
+        DeviceFftComplex* d_streamInputFFTBackup = nullptr;
+        DeviceSample* d_streamConvResult = nullptr;
+        DeviceSample* d_streamConvResultOld = nullptr;
+
+        // Host staging (pinned) to decouple async memcpy from caller-owned buffers
+        StreamFloatVector stagedInput;       // size: streamValidInputPerBlock_
+        StreamFloatVector stagedOutput;      // size: validOutputPerBlock_
+        std::vector<float> stagedOldOutput;  // size: validOutputPerBlock_ (crossfade old filter)
+
+        // Partitioned streaming: per-partition staged outputs (pinned).
+        // Each entry is size validOutputPerBlock_ and is filled by async D2H.
+        std::vector<StreamFloatVector> stagedPartitionOutputs;
+
+        // Completion tracking for stagedOutput (and stagedOldOutput when enabled)
+        cudaEvent_t doneEvent = nullptr;
+        bool inFlight = false;
+        bool stagedOldValid = false;
+    };
+
+    StreamingChannel streamingChannels_[kStreamingChannelCount];
+
+    // Stereo streaming coordination:
+    // AudioPipeline calls processStreamBlock() separately for L then R. To keep both channels
+    // in lockstep without per-block cudaStreamSynchronize(), completion is coordinated by a
+    // single event recorded after BOTH channel transfers are enqueued.
+    cudaEvent_t streamingStereoDoneEvent_ = nullptr;
+    bool streamingStereoLeftQueued_ = false;
+    bool streamingStereoInFlight_ = false;
+    uint8_t streamingStereoDeliveredMask_ = 0;  // bit0: left delivered, bit1: right delivered
+
+    float* d_outputScratch_;       // Primary/mono stream scratch (float output)
+    float* d_outputScratchLeft_;   // Left channel scratch (float output)
+    float* d_outputScratchRight_;  // Right channel scratch (float output)
 
     // Device-resident overlap buffers (eliminates H↔D transfers in real-time path)
+    DeviceSample* d_overlapMono_;   // GPU overlap buffer for mono/other stream
     DeviceSample* d_overlapLeft_;   // GPU overlap buffer for left channel
     DeviceSample* d_overlapRight_;  // GPU overlap buffer for right channel
+
+    int getStreamingChannelIndex(cudaStream_t stream) const {
+        if (stream == streamLeft_) {
+            return 1;
+        }
+        if (stream == streamRight_) {
+            return 2;
+        }
+        return 0;
+    }
 
     // Host pinned buffers (long-lived buffers use manual register/unregister;
     // temporary outputs use ScopedHostPin inside implementations)
@@ -594,8 +653,7 @@ class GPUUpsampler {
                                        size_t& streamInputAccumulated);
     bool processPartitionBlock(PartitionState& state, cudaStream_t stream,
                                const DeviceSample* d_newSamples, int newSamples,
-                               DeviceSample* d_channelOverlap, StreamFloatVector& tempOutput,
-                               StreamFloatVector& outputData);
+                               DeviceSample* d_channelOverlap, StreamFloatVector& partitionOutput);
     void setActiveHostCoefficients(const std::vector<float>& source);
     bool updateActiveImpulseFromSpectrum(const DeviceFftComplex* spectrum,
                                          std::vector<float>& destination);

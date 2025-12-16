@@ -195,11 +195,8 @@ GPUUpsampler::GPUUpsampler()
       overlapSize_(0), stream_(nullptr), streamLeft_(nullptr), streamRight_(nullptr),
       streamValidInputPerBlock_(0), streamInitialized_(false), validOutputPerBlock_(0),
       streamOverlapSize_(0),
-      d_streamInput_(nullptr), d_streamUpsampled_(nullptr), d_streamPadded_(nullptr),
-      d_streamInputFFT_(nullptr), d_streamConvResult_(nullptr),
-      d_streamInputFFTBackup_(nullptr), d_streamConvResultOld_(nullptr),
       d_outputScratch_(nullptr), d_outputScratchLeft_(nullptr), d_outputScratchRight_(nullptr),
-      d_overlapLeft_(nullptr), d_overlapRight_(nullptr),
+      d_overlapMono_(nullptr), d_overlapLeft_(nullptr), d_overlapRight_(nullptr),
       pinnedStreamInputLeft_(nullptr), pinnedStreamInputRight_(nullptr),
       pinnedStreamInputMono_(nullptr),
       pinnedStreamInputLeftBytes_(0), pinnedStreamInputRightBytes_(0),
@@ -1096,13 +1093,38 @@ void GPUUpsampler::cleanup() {
     if (d_crossfadeFilterSnapshot_) cudaFree(d_crossfadeFilterSnapshot_);
 
     // Free streaming buffers
-    if (d_streamInput_) cudaFree(d_streamInput_);
-    if (d_streamUpsampled_) cudaFree(d_streamUpsampled_);
-    if (d_streamPadded_) cudaFree(d_streamPadded_);
-    if (d_streamInputFFT_) cudaFree(d_streamInputFFT_);
-    if (d_streamConvResult_) cudaFree(d_streamConvResult_);
-    if (d_streamInputFFTBackup_) cudaFree(d_streamInputFFTBackup_);
-    if (d_streamConvResultOld_) cudaFree(d_streamConvResultOld_);
+    for (int i = 0; i < kStreamingChannelCount; ++i) {
+        auto& ch = streamingChannels_[i];
+        if (ch.d_streamInput) cudaFree(ch.d_streamInput);
+        if (ch.d_streamUpsampled) cudaFree(ch.d_streamUpsampled);
+        if (ch.d_streamPadded) cudaFree(ch.d_streamPadded);
+        if (ch.d_streamInputFFT) cudaFree(ch.d_streamInputFFT);
+        if (ch.d_streamConvResult) cudaFree(ch.d_streamConvResult);
+        if (ch.d_streamInputFFTBackup) cudaFree(ch.d_streamInputFFTBackup);
+        if (ch.d_streamConvResultOld) cudaFree(ch.d_streamConvResultOld);
+        if (ch.doneEvent) cudaEventDestroy(ch.doneEvent);
+        ch.d_streamInput = nullptr;
+        ch.d_streamUpsampled = nullptr;
+        ch.d_streamPadded = nullptr;
+        ch.d_streamInputFFT = nullptr;
+        ch.d_streamConvResult = nullptr;
+        ch.d_streamInputFFTBackup = nullptr;
+        ch.d_streamConvResultOld = nullptr;
+        ch.doneEvent = nullptr;
+        ch.inFlight = false;
+        ch.stagedInput.clear();
+        ch.stagedOutput.clear();
+        ch.stagedOldOutput.clear();
+        ch.stagedPartitionOutputs.clear();
+    }
+    if (streamingStereoDoneEvent_) {
+        cudaEventDestroy(streamingStereoDoneEvent_);
+        streamingStereoDoneEvent_ = nullptr;
+    }
+    streamingStereoLeftQueued_ = false;
+    streamingStereoInFlight_ = false;
+    streamingStereoDeliveredMask_ = 0;
+    if (d_overlapMono_) cudaFree(d_overlapMono_);
     if (d_overlapLeft_) cudaFree(d_overlapLeft_);
     if (d_overlapRight_) cudaFree(d_overlapRight_);
     if (d_tailAccumulator_) cudaFree(d_tailAccumulator_);
@@ -1168,13 +1190,27 @@ void GPUUpsampler::cleanup() {
     d_outputScratch_ = nullptr;
     d_outputScratchLeft_ = nullptr;
     d_outputScratchRight_ = nullptr;
-    d_streamInput_ = nullptr;
-    d_streamUpsampled_ = nullptr;
-    d_streamPadded_ = nullptr;
-    d_streamInputFFT_ = nullptr;
-    d_streamConvResult_ = nullptr;
-    d_streamInputFFTBackup_ = nullptr;
-    d_streamConvResultOld_ = nullptr;
+    for (int i = 0; i < kStreamingChannelCount; ++i) {
+        auto& ch = streamingChannels_[i];
+        ch.d_streamInput = nullptr;
+        ch.d_streamUpsampled = nullptr;
+        ch.d_streamPadded = nullptr;
+        ch.d_streamInputFFT = nullptr;
+        ch.d_streamConvResult = nullptr;
+        ch.d_streamInputFFTBackup = nullptr;
+        ch.d_streamConvResultOld = nullptr;
+        ch.doneEvent = nullptr;
+        ch.inFlight = false;
+        ch.stagedInput.clear();
+        ch.stagedOutput.clear();
+        ch.stagedOldOutput.clear();
+        ch.stagedPartitionOutputs.clear();
+    }
+    streamingStereoDoneEvent_ = nullptr;
+    streamingStereoLeftQueued_ = false;
+    streamingStereoInFlight_ = false;
+    streamingStereoDeliveredMask_ = 0;
+    d_overlapMono_ = nullptr;
     d_overlapLeft_ = nullptr;
     d_overlapRight_ = nullptr;
     d_tailAccumulator_ = nullptr;
@@ -1198,6 +1234,11 @@ void GPUUpsampler::resetPartitionedStreaming() {
         return;
     }
 
+    if (d_overlapMono_) {
+        Utils::checkCudaError(
+            cudaMemset(d_overlapMono_, 0, streamOverlapSize_ * sizeof(Sample)),
+            "cudaMemset partition reset overlap mono");
+    }
     if (d_overlapLeft_) {
         Utils::checkCudaError(
             cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(Sample)),
@@ -1481,34 +1522,74 @@ bool GPUUpsampler::initializePartitionedStreaming() {
 
     size_t upsampledSize = static_cast<size_t>(streamValidInputPerBlock_) * upsampleRatio_;
 
-    Utils::checkCudaError(
-        cudaMalloc(&d_streamInput_, streamValidInputPerBlock_ * sizeof(Sample)),
-        "cudaMalloc partition streaming input");
-    Utils::checkCudaError(
-        cudaMalloc(&d_streamUpsampled_, upsampledSize * sizeof(Sample)),
-        "cudaMalloc partition streaming upsampled");
-    Utils::checkCudaError(
-        cudaMalloc(&d_streamPadded_, partitionFastFftSize_ * sizeof(Sample)),
-        "cudaMalloc partition streaming padded");
-    Utils::checkCudaError(
-        cudaMalloc(&d_streamInputFFT_, partitionFastFftComplexSize_ * sizeof(Complex)),
-        "cudaMalloc partition streaming FFT");
-    Utils::checkCudaError(
-        cudaMalloc(&d_streamInputFFTBackup_, partitionFastFftComplexSize_ * sizeof(Complex)),
-        "cudaMalloc partition streaming FFT backup");
-    Utils::checkCudaError(
-        cudaMalloc(&d_streamConvResult_, partitionFastFftSize_ * sizeof(Sample)),
-        "cudaMalloc partition streaming conv result");
-    Utils::checkCudaError(
-        cudaMalloc(&d_streamConvResultOld_, partitionFastFftSize_ * sizeof(Sample)),
-        "cudaMalloc partition streaming old conv result");
+    for (int i = 0; i < kStreamingChannelCount; ++i) {
+        auto& ch = streamingChannels_[i];
+        Utils::checkCudaError(
+            cudaMalloc(&ch.d_streamInput, streamValidInputPerBlock_ * sizeof(Sample)),
+            "cudaMalloc partition streaming input");
+        Utils::checkCudaError(
+            cudaMalloc(&ch.d_streamUpsampled, upsampledSize * sizeof(Sample)),
+            "cudaMalloc partition streaming upsampled");
+        Utils::checkCudaError(
+            cudaMalloc(&ch.d_streamPadded, partitionFastFftSize_ * sizeof(Sample)),
+            "cudaMalloc partition streaming padded");
+        Utils::checkCudaError(
+            cudaMalloc(&ch.d_streamInputFFT, partitionFastFftComplexSize_ * sizeof(Complex)),
+            "cudaMalloc partition streaming FFT");
+        Utils::checkCudaError(
+            cudaMalloc(&ch.d_streamInputFFTBackup, partitionFastFftComplexSize_ * sizeof(Complex)),
+            "cudaMalloc partition streaming FFT backup");
+        Utils::checkCudaError(
+            cudaMalloc(&ch.d_streamConvResult, partitionFastFftSize_ * sizeof(Sample)),
+            "cudaMalloc partition streaming conv result");
+        Utils::checkCudaError(
+            cudaMalloc(&ch.d_streamConvResultOld, partitionFastFftSize_ * sizeof(Sample)),
+            "cudaMalloc partition streaming old conv result");
 
+        // Host staging buffers (pinned) - sized once, never reallocated in RT path.
+        ch.stagedInput.assign(streamValidInputPerBlock_, 0.0f);
+        ch.stagedOutput.assign(validOutputPerBlock_, 0.0f);
+        ch.stagedOldOutput.clear();
+        ch.stagedOldValid = false;
+
+        ch.stagedPartitionOutputs.clear();
+        ch.stagedPartitionOutputs.resize(partitionStates_.size());
+        for (auto& partOut : ch.stagedPartitionOutputs) {
+            partOut.assign(validOutputPerBlock_, 0.0f);
+        }
+
+        if (!ch.doneEvent) {
+            Utils::checkCudaError(
+                cudaEventCreateWithFlags(&ch.doneEvent, cudaEventDisableTiming),
+                "cudaEventCreate partition streaming done");
+        }
+        ch.inFlight = false;
+    }
+
+    // Stereo coordination event (recorded on stream_ after waiting on L/R done events)
+    if (streamingStereoDoneEvent_) {
+        cudaEventDestroy(streamingStereoDoneEvent_);
+        streamingStereoDoneEvent_ = nullptr;
+    }
+    Utils::checkCudaError(
+        cudaEventCreateWithFlags(&streamingStereoDoneEvent_, cudaEventDisableTiming),
+        "cudaEventCreate partition streaming stereo done event");
+    streamingStereoLeftQueued_ = false;
+    streamingStereoInFlight_ = false;
+    streamingStereoDeliveredMask_ = 0;
+
+    Utils::checkCudaError(
+        cudaMalloc(&d_overlapMono_, streamOverlapSize_ * sizeof(Sample)),
+        "cudaMalloc partition overlap mono");
     Utils::checkCudaError(
         cudaMalloc(&d_overlapLeft_, streamOverlapSize_ * sizeof(Sample)),
         "cudaMalloc partition overlap left");
     Utils::checkCudaError(
         cudaMalloc(&d_overlapRight_, streamOverlapSize_ * sizeof(Sample)),
         "cudaMalloc partition overlap right");
+    Utils::checkCudaError(
+        cudaMemset(d_overlapMono_, 0, streamOverlapSize_ * sizeof(Sample)),
+        "cudaMemset partition overlap mono");
     Utils::checkCudaError(
         cudaMemset(d_overlapLeft_, 0, streamOverlapSize_ * sizeof(Sample)),
         "cudaMemset partition overlap left");
@@ -1586,8 +1667,7 @@ bool GPUUpsampler::initializePartitionedStreaming() {
 
 bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t stream,
                                          const Sample* d_newSamples, int newSamples,
-                                         Sample* d_channelOverlap, StreamFloatVector& tempOutput,
-                                         StreamFloatVector& outputData) {
+                                         Sample* d_channelOverlap, StreamFloatVector& partitionOutput) {
     try {
         int samplesToUse = std::min(newSamples, state.validOutput);
         if (samplesToUse <= 0) {
@@ -1650,20 +1730,12 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
         scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
             state.d_timeDomain, state.descriptor.fftSize, scale);
 
-        tempOutput.resize(samplesToUse);
-        registerStreamOutputBuffer(tempOutput, stream);
+        partitionOutput.resize(samplesToUse);
+        registerStreamOutputBuffer(partitionOutput, stream);
         Utils::checkCudaError(
-            downconvertToHost(tempOutput.data(), state.d_timeDomain + state.overlapSize,
+            downconvertToHost(partitionOutput.data(), state.d_timeDomain + state.overlapSize,
                               samplesToUse, stream),
             "downconvert partition output");
-        Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize partition");
-
-        if (outputData.size() < static_cast<size_t>(samplesToUse)) {
-            outputData.resize(samplesToUse);
-        }
-        for (int i = 0; i < samplesToUse; ++i) {
-            outputData[i] += tempOutput[i];
-        }
         return true;
 
     } catch (const std::exception& e) {

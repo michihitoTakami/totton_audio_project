@@ -19,6 +19,9 @@ __global__ void complexMultiplyKernel(DeviceFftComplex* data, const DeviceFftCom
 // CUDA kernel for scaling after IFFT
 __global__ void scaleKernel(DeviceSample* data, int size, DeviceScale scale);
 
+// CUDA kernel to accumulate time-domain output (dst[i] += src[i])
+__global__ void accumulateAddKernel(DeviceSample* dst, const DeviceSample* src, int size);
+
 // CUDA kernel to upconvert float samples to active precision samples (float->double when enabled)
 __global__ void upconvertFromFloatKernel(const float* input, DeviceSample* output, int size);
 
