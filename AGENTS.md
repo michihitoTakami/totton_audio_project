@@ -108,9 +108,10 @@ gh pr create --title "#123 機能の説明" --body "..."
 **必須:** ワークツリーを作成する前に必ず `git fetch origin main` を実行し、最新の`origin/main`を取り込んでから作業を開始すること。過去のmainで作業を始めるとコンフリクト発生率が高くなる。
 
 ## Testing
-
 - Validate with sample WAVs in `test_data/`
 - Run `scripts/analysis/verify_frequency_response.py` for filter changes
+- Always generate `compile_commands.json` (e.g., `cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`) before lint/test runs so `clang-tidy`/`diff-based-tests` have the data they need.
+- Do **not** skip the `clang-tidy`/`diff-based-tests` pre-push hooks; run `pre-commit run --hook-stage pre-push` (or `git push`) and resolve any failures before submitting changes.
 
 ## RTP Audio Streaming Notes
 
