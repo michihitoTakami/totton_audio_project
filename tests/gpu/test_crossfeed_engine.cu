@@ -1,12 +1,13 @@
-#include <gtest/gtest.h>
 #include "crossfeed_engine.h"
+
 #include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#include <vector>
+#include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
+#include <vector>
 
 using json = nlohmann::json;
 using namespace CrossfeedEngine;
@@ -90,26 +91,24 @@ class HRTFProcessorTest : public ::testing::Test {
 
                 // Write JSON metadata
                 int sampleRate = (strcmp(family, "44k") == 0) ? 705600 : 768000;
-                json meta = {
-                    {"description", "Test HRTF"},
-                    {"size_category", size},
-                    {"subject_id", "test"},
-                    {"sample_rate", sampleRate},
-                    {"rate_family", family},
-                    {"n_taps", taps},
-                    {"n_channels", 4},
-                    {"channel_order", {"LL", "LR", "RL", "RR"}},
-                    {"phase_type", "original"},
-                    {"normalization", "ild_preserving"},
-                    {"max_dc_gain", 1.0},
-                    {"source_azimuth_left", -30.0},
-                    {"source_azimuth_right", 30.0},
-                    {"source_elevation", 0.0},
-                    {"license", "Test"},
-                    {"attribution", "Test Data"},
-                    {"source", "synthetic"},
-                    {"storage_format", "channel_major_v1"}
-                };
+                json meta = {{"description", "Test HRTF"},
+                             {"size_category", size},
+                             {"subject_id", "test"},
+                             {"sample_rate", sampleRate},
+                             {"rate_family", family},
+                             {"n_taps", taps},
+                             {"n_channels", 4},
+                             {"channel_order", {"LL", "LR", "RL", "RR"}},
+                             {"phase_type", "original"},
+                             {"normalization", "ild_preserving"},
+                             {"max_dc_gain", 1.0},
+                             {"source_azimuth_left", -30.0},
+                             {"source_azimuth_right", 30.0},
+                             {"source_elevation", 0.0},
+                             {"license", "Test"},
+                             {"attribution", "Test Data"},
+                             {"source", "synthetic"},
+                             {"storage_format", "channel_major_v1"}};
 
                 std::string jsonPath = testDir_ + "/hrtf_" + size + "_" + family + ".json";
                 std::ofstream jsonFile(jsonPath);
@@ -188,8 +187,8 @@ TEST_F(HRTFProcessorTest, PassthroughWhenDisabled) {
     std::vector<float> inputR(1024, 2.0f);
     std::vector<float> outputL, outputR;
 
-    ASSERT_TRUE(processor.processStereo(inputL.data(), inputR.data(), inputL.size(),
-                                         outputL, outputR));
+    ASSERT_TRUE(
+        processor.processStereo(inputL.data(), inputR.data(), inputL.size(), outputL, outputR));
 
     // Output should equal input (passthrough)
     ASSERT_EQ(outputL.size(), inputL.size());
@@ -215,8 +214,8 @@ TEST_F(HRTFProcessorTest, BasicProcessing) {
 
     std::vector<float> outputL, outputR;
 
-    ASSERT_TRUE(processor.processStereo(inputL.data(), inputR.data(), inputL.size(),
-                                         outputL, outputR));
+    ASSERT_TRUE(
+        processor.processStereo(inputL.data(), inputR.data(), inputL.size(), outputL, outputR));
 
     ASSERT_EQ(outputL.size(), inputL.size());
     ASSERT_EQ(outputR.size(), inputR.size());
@@ -235,7 +234,8 @@ TEST_F(HRTFProcessorTest, BasicProcessing) {
         }
     }
     EXPECT_GT(maxRIdx, 10) << "Right output peak should be delayed (ITD)";
-    EXPECT_LT(maxR, std::abs(outputL[0])) << "Contralateral (LR) should be weaker than ipsilateral (LL)";
+    EXPECT_LT(maxR, std::abs(outputL[0]))
+        << "Contralateral (LR) should be weaker than ipsilateral (LL)";
 }
 
 TEST_F(HRTFProcessorTest, GenerateWoodworthProfileSetsCombinedFilter) {
@@ -248,6 +248,64 @@ TEST_F(HRTFProcessorTest, GenerateWoodworthProfileSetsCombinedFilter) {
     HRTF::WoodworthParams params;
     EXPECT_TRUE(processor.generateWoodworthProfile(RateFamily::RATE_44K, 30.0f, params));
     EXPECT_TRUE(processor.isUsingCombinedFilter());
+}
+
+TEST_F(HRTFProcessorTest, WoodworthProfileMatchesUpsampledDomain) {
+    createTestHRTFFiles();
+
+    HRTFProcessor processor;
+    ASSERT_TRUE(processor.initialize(testDir_, 256, HeadSize::M, RateFamily::RATE_44K));
+
+    auto findPeakIndex = [](const std::vector<float>& data) {
+        size_t idx = 0;
+        float maxVal = 0.0f;
+        for (size_t i = 0; i < data.size(); ++i) {
+            float val = std::fabs(data[i]);
+            if (val > maxVal) {
+                maxVal = val;
+                idx = i;
+            }
+        }
+        return idx;
+    };
+
+    auto verifyFamily = [&](RateFamily family, float targetSampleRate) {
+        if (processor.getCurrentRateFamily() != family) {
+            ASSERT_TRUE(processor.switchRateFamily(family));
+        }
+
+        HRTF::WoodworthParams params;
+        constexpr float azimuthDeg = 30.0f;
+        ASSERT_TRUE(processor.generateWoodworthProfile(family, azimuthDeg, params));
+
+        std::vector<float> inputL(512, 0.0f);
+        std::vector<float> inputR(512, 0.0f);
+        inputL[0] = 1.0f;
+
+        std::vector<float> outputL;
+        std::vector<float> outputR;
+        ASSERT_TRUE(
+            processor.processStereo(inputL.data(), inputR.data(), inputL.size(), outputL, outputR));
+
+        size_t nearPeak = findPeakIndex(outputL);
+        size_t farPeak = findPeakIndex(outputR);
+
+        constexpr float kSpeedOfSound = 343.0f;
+        float azRad = std::fabs(azimuthDeg) * static_cast<float>(M_PI) / 180.0f;
+        float itdNear = (params.headRadiusMeters / kSpeedOfSound) * std::sin(azRad);
+        float itdFar = (params.headRadiusMeters / kSpeedOfSound) * (azRad + std::sin(azRad));
+
+        float expectedNearSamples = itdNear * targetSampleRate;
+        float expectedFarSamples = itdFar * targetSampleRate;
+
+        EXPECT_NEAR(static_cast<float>(nearPeak), expectedNearSamples, 6.0f)
+            << "Near ear ITD mismatch for rate family " << rateFamilyToString(family);
+        EXPECT_NEAR(static_cast<float>(farPeak), expectedFarSamples, 6.0f)
+            << "Far ear ITD mismatch for rate family " << rateFamilyToString(family);
+    };
+
+    verifyFamily(RateFamily::RATE_44K, 705600.0f);
+    verifyFamily(RateFamily::RATE_48K, 768000.0f);
 }
 
 // Test: Stereo symmetry
@@ -263,8 +321,8 @@ TEST_F(HRTFProcessorTest, StereoSymmetry) {
     inputR[0] = 1.0f;
 
     std::vector<float> outputL, outputR;
-    ASSERT_TRUE(processor.processStereo(inputL.data(), inputR.data(), inputL.size(),
-                                         outputL, outputR));
+    ASSERT_TRUE(
+        processor.processStereo(inputL.data(), inputR.data(), inputL.size(), outputL, outputR));
 
     // Right output should have impulse (RR path)
     EXPECT_GT(std::abs(outputR[0]), 0.5f);
@@ -297,8 +355,8 @@ TEST_F(HRTFProcessorTest, EnergyConservation) {
     }
 
     std::vector<float> outputL, outputR;
-    ASSERT_TRUE(processor.processStereo(inputL.data(), inputR.data(), inputL.size(),
-                                         outputL, outputR));
+    ASSERT_TRUE(
+        processor.processStereo(inputL.data(), inputR.data(), inputL.size(), outputL, outputR));
 
     // Calculate energies
     double inputEnergy = 0.0, outputEnergy = 0.0;
@@ -420,10 +478,12 @@ TEST_F(HRTFProcessorTest, SetCombinedFilterRateFamilySwitch) {
     }
 
     // Set both rate families
-    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_44K, filter44k.data(), filter44k.data(),
-                                            filter44k.data(), filter44k.data(), filterFftSize));
-    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_48K, filter48k.data(), filter48k.data(),
-                                            filter48k.data(), filter48k.data(), filterFftSize));
+    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_44K, filter44k.data(),
+                                            filter44k.data(), filter44k.data(), filter44k.data(),
+                                            filterFftSize));
+    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_48K, filter48k.data(),
+                                            filter48k.data(), filter48k.data(), filter48k.data(),
+                                            filterFftSize));
 
     // Switch between rate families should maintain combined filter mode
     EXPECT_TRUE(processor.isUsingCombinedFilter());
@@ -450,8 +510,9 @@ TEST_F(HRTFProcessorTest, SetCombinedFilterAutoRestore) {
     }
 
     // Set combined filter for 44k ONLY (not 48k)
-    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_44K, filter44k.data(), filter44k.data(),
-                                            filter44k.data(), filter44k.data(), filterFftSize));
+    ASSERT_TRUE(processor.setCombinedFilter(RateFamily::RATE_44K, filter44k.data(),
+                                            filter44k.data(), filter44k.data(), filter44k.data(),
+                                            filterFftSize));
     EXPECT_TRUE(processor.isUsingCombinedFilter());
     EXPECT_EQ(processor.getCurrentRateFamily(), RateFamily::RATE_44K);
 
