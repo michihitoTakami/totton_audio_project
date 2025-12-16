@@ -177,6 +177,62 @@ TEST_F(ConfigLoaderTest, LoadOutputSectionOverridesLegacyAlsaDevice) {
     EXPECT_EQ(config.output.usb.preferredDevice, "hw:Preferred");
 }
 
+TEST_F(ConfigLoaderTest, LoadI2sSectionParsesValues) {
+    writeConfig(R"({
+        "i2s": {
+            "enabled": true,
+            "device": "hw:I2S,0,0",
+            "sampleRate": 48000,
+            "channels": 2,
+            "format": "S32_LE",
+            "periodFrames": 256
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+
+    EXPECT_TRUE(config.i2s.enabled);
+    EXPECT_EQ(config.i2s.device, "hw:I2S,0,0");
+    EXPECT_EQ(config.i2s.sampleRate, 48000u);
+    EXPECT_EQ(config.i2s.channels, 2);
+    EXPECT_EQ(config.i2s.format, "S32_LE");
+    EXPECT_EQ(config.i2s.periodFrames, 256u);
+}
+
+TEST_F(ConfigLoaderTest, LoadI2sSectionClampsChannelsAndDefaultsPeriodFrames) {
+    // channels=0 should default to 2; periodFrames=0 should default to 1024.
+    writeConfig(R"({
+        "i2s": {
+            "enabled": true,
+            "channels": 0,
+            "periodFrames": 0
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+
+    EXPECT_TRUE(config.i2s.enabled);
+    EXPECT_EQ(config.i2s.channels, 2);
+    EXPECT_EQ(config.i2s.periodFrames, 1024u);
+}
+
+TEST_F(ConfigLoaderTest, LoadI2sSectionAllowsSampleRateZero) {
+    writeConfig(R"({
+        "i2s": {
+            "enabled": true,
+            "sampleRate": 0
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+
+    EXPECT_TRUE(config.i2s.enabled);
+    EXPECT_EQ(config.i2s.sampleRate, 0u);
+}
+
 TEST_F(ConfigLoaderTest, UnsupportedOutputModeFallsBackToUsb) {
     writeConfig(R"({
         "alsaDevice": "hw:Audio",
