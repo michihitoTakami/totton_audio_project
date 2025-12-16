@@ -176,6 +176,7 @@ add_executable(gpu_upsampler_alsa
     src/daemon/pcm/dac_manager.cpp
     src/daemon/control/control_plane.cpp
     src/daemon/output/alsa_output.cpp
+    src/daemon/output/alsa_pcm_controller.cpp
     src/daemon/control/zmq_server.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/shutdown_manager.cpp
