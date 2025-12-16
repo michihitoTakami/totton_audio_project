@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -18,8 +19,20 @@ class ConfigLoaderTest : public ::testing::Test {
     fs::path testConfigPath;
 
     void SetUp() override {
-        // Create temp directory for test files
-        tempDir = fs::temp_directory_path() / "gpu_upsampler_test";
+        // Create a unique temp directory per test process to avoid parallel ctest collisions.
+        // (ctest -j runs many tests concurrently; a fixed directory causes rm -rf races.)
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        std::string name = "unknown_test";
+        if (info) {
+            name = std::string(info->test_suite_name()) + "_" + std::string(info->name());
+        }
+        for (char& c : name) {
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')) {
+                c = '_';
+            }
+        }
+        tempDir = fs::temp_directory_path() /
+                  ("gpu_upsampler_test_" + name + "_" + std::to_string(getpid()));
         fs::create_directories(tempDir);
         testConfigPath = tempDir / "test_config.json";
     }
