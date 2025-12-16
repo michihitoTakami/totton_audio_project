@@ -62,3 +62,11 @@ def test_build_gst_launch_command_includes_convert_when_enabled() -> None:
     )
     assert "audioresample" in cmd
     assert "audioconvert" in cmd
+
+
+def test_pcm_device_node_mapping_capture() -> None:
+    assert str(bridge._pcm_device_node("hw:2,0", "c")) == "/dev/snd/pcmC2D0c"
+
+
+def test_pcm_device_node_mapping_playback() -> None:
+    assert str(bridge._pcm_device_node("plughw:0,0", "p")) == "/dev/snd/pcmC0D0p"
