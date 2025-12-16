@@ -129,8 +129,11 @@ size_t AudioPipeline::enqueueOutputFramesLocked(const Container& left, const Con
 
     size_t stored = 0;
     size_t dropped = 0;
-    deps_.buffer.playbackBuffer->enqueue(left.data(), right.data(), framesAvailable, outputRate,
-                                         stored, dropped);
+    if (!deps_.buffer.playbackBuffer->enqueue(left.data(), right.data(), framesAvailable,
+                                              outputRate, stored, dropped)) {
+        LOG_ERROR("Failed to enqueue output frames into playback buffer");
+        return 0;
+    }
     if (dropped > 0) {
         runtime_stats::addDroppedFrames(dropped);
     }

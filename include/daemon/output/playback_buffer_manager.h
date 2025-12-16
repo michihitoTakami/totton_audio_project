@@ -28,7 +28,7 @@ class PlaybackBufferManager {
                  size_t& storedFrames, size_t& droppedFrames);
 
     // Consumer API
-    bool readInterleaved(float* dstInterleaved, size_t frames);
+    bool readPlanar(float* dstLeft, float* dstRight, size_t frames);
 
     // Notify/wait primitives
     std::mutex& mutex();
@@ -47,6 +47,7 @@ class PlaybackBufferManager {
     size_t capacityFrames_{0};
     AudioRingBuffer outputLeft_;
     AudioRingBuffer outputRight_;
+    std::vector<float> dropScratch_;
     mutable std::mutex bufferMutex_;
     std::condition_variable bufferCv_;
     std::chrono::steady_clock::time_point lastThrottleWarn_;

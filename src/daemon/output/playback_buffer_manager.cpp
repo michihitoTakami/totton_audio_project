@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 #include "daemon/output/playback_buffer_manager.h"
 
 #include "core/daemon_constants.h"
@@ -48,12 +47,16 @@ void PlaybackBufferManager::dropFramesLocked(size_t frames) {
     if (frames == 0) {
         return;
     }
-    std::vector<float> scratch(std::min<size_t>(frames, capacityFrames_), 0.0f);
+    size_t chunkSize = std::min<size_t>(frames, capacityFrames_);
+    if (dropScratch_.size() < chunkSize) {
+        dropScratch_.assign(chunkSize, 0.0f);
+    }
+    float* scratch = dropScratch_.data();
     size_t remaining = frames;
     while (remaining > 0) {
-        size_t chunk = std::min(remaining, scratch.size());
-        outputLeft_.read(scratch.data(), chunk);
-        outputRight_.read(scratch.data(), chunk);
+        size_t chunk = std::min(remaining, chunkSize);
+        outputLeft_.read(scratch, chunk);
+        outputRight_.read(scratch, chunk);
         remaining -= chunk;
     }
 }
@@ -96,10 +99,17 @@ bool PlaybackBufferManager::enqueue(const float* left, const float* right, size_
     const float* leftPtr = left + startIndex;
     const float* rightPtr = right + startIndex;
 
-    // AudioRingBuffer::write returns false if insufficient space (should not happen after drop).
+    // Ensure both channels have room; avoid L/R mismatch.
+    if (outputLeft_.availableToWrite() < decision.framesToStore ||
+        outputRight_.availableToWrite() < decision.framesToStore) {
+        LOG_ERROR("Output buffer write failed: insufficient space after drop");
+        return false;
+    }
+
     bool leftOk = outputLeft_.write(leftPtr, decision.framesToStore);
     bool rightOk = outputRight_.write(rightPtr, decision.framesToStore);
     if (!leftOk || !rightOk) {
+        LOG_ERROR("Output buffer write failed: write() returned false");
         return false;
     }
 
@@ -115,24 +125,17 @@ bool PlaybackBufferManager::enqueue(const float* left, const float* right, size_
     return true;
 }
 
-bool PlaybackBufferManager::readInterleaved(float* dstInterleaved, size_t frames) {
+bool PlaybackBufferManager::readPlanar(float* dstLeft, float* dstRight, size_t frames) {
     std::lock_guard<std::mutex> lock(bufferMutex_);
-    if (!dstInterleaved || frames == 0) {
+    if (!dstLeft || !dstRight || frames == 0) {
         return false;
     }
     if (queuedFramesLocked() < frames) {
         return false;
     }
 
-    std::vector<float> left(frames);
-    std::vector<float> right(frames);
-    if (!outputLeft_.read(left.data(), frames) || !outputRight_.read(right.data(), frames)) {
+    if (!outputLeft_.read(dstLeft, frames) || !outputRight_.read(dstRight, frames)) {
         return false;
-    }
-
-    for (size_t i = 0; i < frames; ++i) {
-        dstInterleaved[i * 2] = left[i];
-        dstInterleaved[i * 2 + 1] = right[i];
     }
     return true;
 }

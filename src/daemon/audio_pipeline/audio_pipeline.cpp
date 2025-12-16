@@ -173,13 +173,18 @@ RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& in
     }
 
     interleavedOut.resize(frames * 2);
-    floatScratch.assign(frames * 2, 0.0f);
+    // Use floatScratch layout: [0..frames) left, [frames..2*frames) right,
+    // [2*frames..4*frames) interleaved
+    floatScratch.assign(frames * 4, 0.0f);
+    float* planarLeft = floatScratch.data();
+    float* planarRight = floatScratch.data() + frames;
+    float* interleavedPtr = floatScratch.data() + (frames * 2);
 
     const float baseGain =
         (deps_.output.outputGain) ? deps_.output.outputGain->load(std::memory_order_relaxed) : 1.0f;
 
     bool hasAudio = deps_.buffer.playbackBuffer &&
-                    deps_.buffer.playbackBuffer->readInterleaved(floatScratch.data(), frames);
+                    deps_.buffer.playbackBuffer->readPlanar(planarLeft, planarRight, frames);
 
     if (!hasAudio) {
         // Output buffer underflow at daemon level (not necessarily ALSA XRUN).
@@ -196,8 +201,11 @@ RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& in
         return result;
     }
 
+    // Interleave with gain before limiter/soft-mute
+    AudioUtils::interleaveStereoWithGain(planarLeft, planarRight, interleavedPtr, frames, baseGain);
+
     if (softMute) {
-        softMute->process(floatScratch.data(), frames);
+        softMute->process(interleavedPtr, frames);
         using namespace DaemonConstants;
         if (softMute->getState() == SoftMute::MuteState::PLAYING &&
             softMute->getFadeDuration() > DEFAULT_SOFT_MUTE_FADE_MS) {
@@ -205,13 +213,13 @@ RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& in
         }
     }
 
-    float postGainPeak = applyOutputLimiter(floatScratch.data(), frames);
+    float postGainPeak = applyOutputLimiter(interleavedPtr, frames);
     runtime_stats::updatePostGainPeak(postGainPeak);
 
     constexpr float kInt32MaxFloat = 2147483647.0f;
     for (size_t i = 0; i < frames; ++i) {
-        float leftSample = floatScratch[i * 2];
-        float rightSample = floatScratch[i * 2 + 1];
+        float leftSample = interleavedPtr[i * 2];
+        float rightSample = interleavedPtr[i * 2 + 1];
 
         if (leftSample > 1.0f || leftSample < -1.0f || rightSample > 1.0f || rightSample < -1.0f) {
             runtime_stats::recordClip();

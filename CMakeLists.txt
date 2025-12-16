@@ -469,6 +469,7 @@ add_executable(cpu_tests
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/output/alsa_output.cpp
+    src/daemon/output/playback_buffer_manager.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main

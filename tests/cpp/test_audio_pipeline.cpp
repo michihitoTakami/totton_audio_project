@@ -2,6 +2,7 @@
 #include "core/config_loader.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/metrics/runtime_stats.h"
+#include "daemon/output/playback_buffer_manager.h"
 #include "gtest/gtest.h"
 
 #include <atomic>
@@ -15,18 +16,13 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     AppConfig config;
     config.upsampleRatio = 2;
 
-    std::vector<float> outputBufferLeft;
-    std::vector<float> outputBufferRight;
-    size_t outputReadPos = 0;
-    std::mutex bufferMutex;
-    std::condition_variable bufferCv;
-
     std::atomic<bool> fallbackActive{false};
     std::atomic<bool> outputReady{true};
     std::atomic<bool> crossfeedEnabled{false};
 
     std::mutex inputMutex;
     std::mutex crossfeedMutex;
+    daemon_output::PlaybackBufferManager playbackBuffer([]() { return static_cast<size_t>(48); });
 
     ConvolutionEngine::StreamFloatVector streamInputLeft;
     ConvolutionEngine::StreamFloatVector streamInputRight;
@@ -63,12 +59,7 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     deps.upsamplerOutputRight = &upsamplerOutputRight;
     deps.streamingCacheManager = nullptr;
     deps.inputMutex = &inputMutex;
-    deps.buffer.outputBufferLeft = &outputBufferLeft;
-    deps.buffer.outputBufferRight = &outputBufferRight;
-    deps.buffer.outputReadPos = &outputReadPos;
-    deps.buffer.bufferMutex = &bufferMutex;
-    deps.buffer.bufferCv = &bufferCv;
-    deps.maxOutputBufferFrames = []() { return static_cast<size_t>(48); };
+    deps.buffer.playbackBuffer = &playbackBuffer;
     deps.currentOutputRate = []() { return 48000; };
 
     deps.upsampler.available = true;
@@ -87,12 +78,13 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     std::vector<float> input = {0.3f, -0.2f, -0.5f, 0.1f, 0.2f, 0.4f};
     ASSERT_TRUE(pipeline.process(input.data(), 3));
 
-    EXPECT_EQ(outputBufferLeft.size(), static_cast<size_t>(6));
-    EXPECT_EQ(outputBufferRight.size(), static_cast<size_t>(6));
-    for (float value : outputBufferLeft) {
+    std::vector<float> left(6);
+    std::vector<float> right(6);
+    ASSERT_TRUE(playbackBuffer.readPlanar(left.data(), right.data(), 6));
+    for (float value : left) {
         EXPECT_FLOAT_EQ(value, 0.7f);
     }
-    for (float value : outputBufferRight) {
+    for (float value : right) {
         EXPECT_FLOAT_EQ(value, 0.7f);
     }
 
@@ -113,11 +105,7 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     config.upsampleRatio = 1;
     config.headroomTarget = 1.0f;
 
-    std::vector<float> outputBufferLeft;
-    std::vector<float> outputBufferRight;
-    size_t outputReadPos = 0;
-    std::mutex bufferMutex;
-    std::condition_variable bufferCv;
+    daemon_output::PlaybackBufferManager playbackBuffer([]() { return static_cast<size_t>(48); });
 
     std::atomic<bool> fallbackActive{false};
     std::atomic<bool> outputReady{true};
@@ -168,12 +156,7 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     deps.upsamplerOutputRight = &upsamplerOutputRight;
     deps.streamingCacheManager = nullptr;
     deps.inputMutex = &inputMutex;
-    deps.buffer.outputBufferLeft = &outputBufferLeft;
-    deps.buffer.outputBufferRight = &outputBufferRight;
-    deps.buffer.outputReadPos = &outputReadPos;
-    deps.buffer.bufferMutex = &bufferMutex;
-    deps.buffer.bufferCv = &bufferCv;
-    deps.maxOutputBufferFrames = []() { return static_cast<size_t>(48); };
+    deps.buffer.playbackBuffer = &playbackBuffer;
     deps.currentOutputRate = []() { return 48000; };
 
     deps.upsampler.available = true;
