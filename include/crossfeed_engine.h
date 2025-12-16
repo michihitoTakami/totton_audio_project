@@ -197,6 +197,10 @@ class HRTFProcessor {
         return streamValidInputPerBlock_;
     }
 
+    size_t getStreamValidOutputPerBlock() const {
+        return static_cast<size_t>(validOutputPerBlock_);
+    }
+
     // Get filter tap count
     int getFilterTaps() const {
         return filterTaps_;

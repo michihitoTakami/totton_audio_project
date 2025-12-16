@@ -118,6 +118,8 @@ bool GPUUpsampler::initializeStreaming() {
     fprintf(stderr, "  - GPU streaming buffers pre-allocated\n");
     fprintf(stderr, "  - Device-resident overlap buffers allocated (no H↔D in RT path)\n");
 
+    crossfadeOldOutput_.resize(validOutputPerBlock_);
+
     return true;
 }
 
@@ -223,10 +225,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
         size_t required = streamInputAccumulated + inputFrames;
         if (required > streamInputBuffer.size()) {
-            // Upstream network sources may deliver larger bursts than the preallocated buffer.
-            size_t newSize = std::max(streamInputBuffer.size() * 2, required);
-            newSize = std::max(newSize, static_cast<size_t>(streamValidInputPerBlock_) * 2);
-            streamInputBuffer.resize(newSize, 0.0f);
+            std::cerr << "[Streaming] Input buffer capacity exceeded: required=" << required
+                      << ", capacity=" << streamInputBuffer.size() << std::endl;
+            outputData.clear();
+            return false;
         }
 
         registerStreamInputBuffer(streamInputBuffer, stream);
@@ -335,6 +337,12 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         );
 
         // Extract valid output
+        if (outputData.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
+            std::cerr << "[Streaming] Output buffer capacity too small: need "
+                      << validOutputPerBlock_ << ", cap=" << outputData.capacity() << std::endl;
+            outputData.clear();
+            return false;
+        }
         outputData.resize(validOutputPerBlock_);
         registerStreamOutputBuffer(outputData, stream);
         Utils::checkCudaError(
@@ -367,6 +375,13 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                 d_streamConvResultOld_, fftSize_, scale
             );
 
+            if (crossfadeOldOutput_.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
+                std::cerr << "[Streaming] Crossfade buffer capacity too small: need "
+                          << validOutputPerBlock_ << ", cap=" << crossfadeOldOutput_.capacity()
+                          << std::endl;
+                outputData.clear();
+                return false;
+            }
             crossfadeOldOutput_.resize(validOutputPerBlock_);
             Utils::checkCudaError(
                 downconvertToHost(crossfadeOldOutput_.data(),
@@ -453,10 +468,10 @@ bool GPUUpsampler::processPartitionedStreamBlock(
 
         size_t required = streamInputAccumulated + inputFrames;
         if (required > streamInputBuffer.size()) {
-            // Upstream network sources may deliver larger bursts than the preallocated buffer.
-            size_t newSize = std::max(streamInputBuffer.size() * 2, required);
-            newSize = std::max(newSize, static_cast<size_t>(streamValidInputPerBlock_) * 2);
-            streamInputBuffer.resize(newSize, 0.0f);
+            std::cerr << "[Partition] Input buffer capacity exceeded: required=" << required
+                      << ", capacity=" << streamInputBuffer.size() << std::endl;
+            outputData.clear();
+            return false;
         }
 
         registerStreamInputBuffer(streamInputBuffer, stream);
@@ -484,6 +499,12 @@ bool GPUUpsampler::processPartitionedStreamBlock(
 
         int newSamples = validOutputPerBlock_;
 
+        if (static_cast<size_t>(newSamples) > outputData.capacity()) {
+            std::cerr << "[Partition] Output buffer capacity too small: need " << newSamples
+                      << ", cap=" << outputData.capacity() << std::endl;
+            outputData.clear();
+            return false;
+        }
         outputData.assign(newSamples, 0.0f);
         registerStreamOutputBuffer(outputData, stream);
 
