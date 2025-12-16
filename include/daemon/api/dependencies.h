@@ -1,8 +1,8 @@
 #pragma once
 
+#include "audio/soft_mute.h"
 #include "core/config_loader.h"
 #include "daemon/api/events.h"
-#include "soft_mute.h"
 
 #include <atomic>
 #include <functional>

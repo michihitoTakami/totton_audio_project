@@ -3,7 +3,7 @@
  * @brief Unit tests for EQ to FIR conversion (biquad calculations)
  */
 
-#include "eq_to_fir.h"
+#include "audio/eq_to_fir.h"
 
 #include <cmath>
 #include <gtest/gtest.h>

@@ -1,12 +1,12 @@
 #include "daemon/control/control_plane.h"
 
-#include "audio_utils.h"
+#include "audio/audio_utils.h"
+#include "audio/eq_parser.h"
+#include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
 #include "core/base64.h"
 #include "crossfeed_engine.h"
 #include "daemon/api/events.h"
-#include "eq_parser.h"
-#include "eq_to_fir.h"
 #include "hrtf/woodworth_model.h"
 #include "logging/logger.h"
 

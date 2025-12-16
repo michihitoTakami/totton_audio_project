@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/soft_mute.h"
 #include "convolution_engine.h"
 #include "core/config_loader.h"
 #include "core/daemon_constants.h"
@@ -8,7 +9,6 @@
 #include "daemon/metrics/runtime_stats.h"
 #include "logging/logger.h"
 #include "playback_buffer.h"
-#include "soft_mute.h"
 
 #include <cuda_runtime_api.h>
 

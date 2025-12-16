@@ -1,7 +1,7 @@
 #ifndef EQ_TO_FIR_H
 #define EQ_TO_FIR_H
 
-#include "eq_parser.h"
+#include "audio/eq_parser.h"
 
 #include <complex>
 #include <vector>

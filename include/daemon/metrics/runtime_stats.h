@@ -1,9 +1,9 @@
 #pragma once
 
+#include "audio/fallback_manager.h"
+#include "audio/filter_headroom.h"
 #include "core/config_loader.h"
 #include "daemon/pcm/dac_manager.h"
-#include "fallback_manager.h"
-#include "filter_headroom.h"
 
 #include <atomic>
 #include <cstddef>

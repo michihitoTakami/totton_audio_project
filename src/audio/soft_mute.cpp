@@ -1,4 +1,4 @@
-#include "soft_mute.h"
+#include "audio/soft_mute.h"
 
 #include <algorithm>
 #include <cmath>

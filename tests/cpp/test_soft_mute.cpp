@@ -5,7 +5,7 @@
  * Tests the soft mute functionality for glitch-free audio transitions.
  */
 
-#include "soft_mute.h"
+#include "audio/soft_mute.h"
 
 #include <atomic>
 #include <chrono>
