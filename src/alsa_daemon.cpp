@@ -573,6 +573,9 @@ static void print_config_summary(const AppConfig& cfg) {
     LOG_INFO("  ALSA device:    {}", cfg.alsaDevice);
     LOG_INFO("  Output mode:    {} (preferred USB device: {})", outputModeToString(cfg.output.mode),
              cfg.output.usb.preferredDevice);
+    LOG_INFO("  I2S input:      {} device={} rate={} ch={} fmt={} period={}",
+             (cfg.i2s.enabled ? "enabled" : "disabled"), cfg.i2s.device, cfg.i2s.sampleRate,
+             cfg.i2s.channels, cfg.i2s.format, cfg.i2s.periodFrames);
     LOG_INFO("  Loopback:       {} device={} rate={} ch={} fmt={} period={}",
              (cfg.loopback.enabled ? "enabled" : "disabled"), cfg.loopback.device,
              cfg.loopback.sampleRate, cfg.loopback.channels, cfg.loopback.format,
@@ -849,6 +852,13 @@ static void load_runtime_config() {
     if (g_state.config.loopback.enabled) {
         g_state.rates.inputSampleRate = static_cast<int>(g_state.config.loopback.sampleRate);
     }
+    if (g_state.config.i2s.enabled) {
+        // MVP: i2s.sampleRate can be 0 (= follow runtime/negotiated rate).
+        // If explicitly specified, adopt it as the engine input sample rate.
+        if (g_state.config.i2s.sampleRate != 0) {
+            g_state.rates.inputSampleRate = static_cast<int>(g_state.config.i2s.sampleRate);
+        }
+    }
     if (g_state.rates.inputSampleRate != 44100 && g_state.rates.inputSampleRate != 48000) {
         g_state.rates.inputSampleRate = DEFAULT_INPUT_SAMPLE_RATE;
     }
@@ -883,6 +893,11 @@ static snd_pcm_format_t parse_loopback_format(const std::string& formatStr) {
     return SND_PCM_FORMAT_UNKNOWN;
 }
 
+static snd_pcm_format_t parse_i2s_format(const std::string& formatStr) {
+    // Same set as loopback (MVP)
+    return parse_loopback_format(formatStr);
+}
+
 static bool validate_loopback_config(const AppConfig& cfg) {
     if (!cfg.loopback.enabled) {
         return true;
@@ -903,6 +918,34 @@ static bool validate_loopback_config(const AppConfig& cfg) {
     }
     if (parse_loopback_format(cfg.loopback.format) == SND_PCM_FORMAT_UNKNOWN) {
         LOG_ERROR("[Loopback] Unsupported format '{}'", cfg.loopback.format);
+        return false;
+    }
+    return true;
+}
+
+static bool validate_i2s_config(const AppConfig& cfg) {
+    if (!cfg.i2s.enabled) {
+        return true;
+    }
+    if (cfg.i2s.device.empty()) {
+        LOG_ERROR("[I2S] device must not be empty");
+        return false;
+    }
+    if (cfg.i2s.channels != CHANNELS) {
+        LOG_ERROR("[I2S] Unsupported channels {} (expected {})", cfg.i2s.channels, CHANNELS);
+        return false;
+    }
+    if (cfg.i2s.periodFrames == 0) {
+        LOG_ERROR("[I2S] periodFrames must be > 0");
+        return false;
+    }
+    if (parse_i2s_format(cfg.i2s.format) == SND_PCM_FORMAT_UNKNOWN) {
+        LOG_ERROR("[I2S] Unsupported format '{}'", cfg.i2s.format);
+        return false;
+    }
+    // sampleRate may be 0 (follow runtime/negotiated); otherwise accept MVP rates.
+    if (cfg.i2s.sampleRate != 0 && cfg.i2s.sampleRate != 44100 && cfg.i2s.sampleRate != 48000) {
+        LOG_ERROR("[I2S] Unsupported sample rate {} (expected 0/44100/48000)", cfg.i2s.sampleRate);
         return false;
     }
     return true;
@@ -965,6 +1008,75 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
     return handle;
 }
 
+static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t format,
+                                   unsigned int requested_rate, unsigned int channels,
+                                   snd_pcm_uframes_t period_frames, unsigned int& actual_rate) {
+    actual_rate = requested_rate;
+    snd_pcm_t* handle = nullptr;
+    int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, 0);
+    if (err < 0) {
+        LOG_ERROR("[I2S] Cannot open capture device {}: {}", device, snd_strerror(err));
+        return nullptr;
+    }
+
+    snd_pcm_hw_params_t* hw_params;
+    snd_pcm_hw_params_alloca(&hw_params);
+    snd_pcm_hw_params_any(handle, hw_params);
+
+    if ((err = snd_pcm_hw_params_set_access(handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
+            0 ||
+        (err = snd_pcm_hw_params_set_format(handle, hw_params, format)) < 0) {
+        LOG_ERROR("[I2S] Cannot set access/format: {}", snd_strerror(err));
+        snd_pcm_close(handle);
+        return nullptr;
+    }
+
+    if ((err = snd_pcm_hw_params_set_channels(handle, hw_params, channels)) < 0) {
+        LOG_ERROR("[I2S] Cannot set channels {}: {}", channels, snd_strerror(err));
+        snd_pcm_close(handle);
+        return nullptr;
+    }
+
+    unsigned int rate_near = requested_rate;
+    if (rate_near > 0) {
+        if ((err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate_near, nullptr)) < 0) {
+            LOG_ERROR("[I2S] Cannot set rate {}: {}", requested_rate, snd_strerror(err));
+            snd_pcm_close(handle);
+            return nullptr;
+        }
+    }
+
+    snd_pcm_uframes_t buffer_frames =
+        static_cast<snd_pcm_uframes_t>(std::max<uint32_t>(period_frames * 4, period_frames));
+    snd_pcm_hw_params_set_period_size_near(handle, hw_params, &period_frames, nullptr);
+    snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames);
+
+    if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
+        LOG_ERROR("[I2S] Cannot apply hardware parameters: {}", snd_strerror(err));
+        snd_pcm_close(handle);
+        return nullptr;
+    }
+
+    // Query actual rate after applying hw_params (best-effort).
+    unsigned int got_rate = 0;
+    int dir = 0;
+    if ((err = snd_pcm_hw_params_get_rate(hw_params, &got_rate, &dir)) >= 0 && got_rate > 0) {
+        actual_rate = got_rate;
+    } else {
+        actual_rate = rate_near;
+    }
+
+    if ((err = snd_pcm_prepare(handle)) < 0) {
+        LOG_ERROR("[I2S] Cannot prepare capture device: {}", snd_strerror(err));
+        snd_pcm_close(handle);
+        return nullptr;
+    }
+
+    LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames)", device,
+             actual_rate, channels, snd_pcm_format_name(format), period_frames);
+    return handle;
+}
+
 static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_t frames,
                                  unsigned int channels, std::vector<float>& dst) {
     const size_t samples = frames * static_cast<size_t>(channels);
@@ -1005,6 +1117,114 @@ static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_
     }
 
     return false;
+}
+
+static void i2s_capture_thread(const std::string& device, snd_pcm_format_t format,
+                               unsigned int requested_rate, unsigned int channels,
+                               snd_pcm_uframes_t period_frames) {
+    elevate_realtime_priority("I2S capture");
+
+    if (channels != static_cast<unsigned int>(CHANNELS)) {
+        LOG_ERROR("[I2S] Unsupported channel count {} (expected {})", channels, CHANNELS);
+        return;
+    }
+
+    unsigned int actual_rate = requested_rate;
+    snd_pcm_t* handle =
+        open_i2s_capture(device, format, requested_rate, channels, period_frames, actual_rate);
+    {
+        std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
+        g_state.i2s.handle = handle;
+    }
+
+    if (!handle) {
+        return;
+    }
+
+    // If the hardware rate differs from current engine input rate, schedule follow-up.
+    // (Actual reinit is handled in main loop; network-driven follow is #824.)
+    if (actual_rate == 44100 || actual_rate == 48000) {
+        int current = g_state.rates.inputSampleRate;
+        if (current != static_cast<int>(actual_rate)) {
+            LOG_WARN("[I2S] Detected input rate {} Hz (engine {} Hz). Scheduling rate follow.",
+                     actual_rate, current);
+            g_state.rates.pendingRateChange.store(static_cast<int>(actual_rate),
+                                                  std::memory_order_release);
+        }
+    }
+
+    g_state.i2s.captureRunning.store(true, std::memory_order_release);
+    g_state.i2s.captureReady.store(true, std::memory_order_release);
+
+    std::vector<int16_t> buffer16;
+    std::vector<int32_t> buffer32;
+    std::vector<uint8_t> buffer24;
+    if (format == SND_PCM_FORMAT_S16_LE) {
+        buffer16.resize(period_frames * channels);
+    } else if (format == SND_PCM_FORMAT_S32_LE) {
+        buffer32.resize(period_frames * channels);
+    } else if (format == SND_PCM_FORMAT_S24_3LE) {
+        buffer24.resize(static_cast<size_t>(period_frames) * channels * 3);
+    }
+    std::vector<float> floatBuffer;
+
+    while (g_state.flags.running.load(std::memory_order_acquire)) {
+        playback_buffer().throttleProducerIfFull(g_state.flags.running, []() {
+            return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
+        });
+
+        void* rawBuffer = nullptr;
+        if (format == SND_PCM_FORMAT_S16_LE) {
+            rawBuffer = buffer16.data();
+        } else if (format == SND_PCM_FORMAT_S32_LE) {
+            rawBuffer = buffer32.data();
+        } else if (format == SND_PCM_FORMAT_S24_3LE) {
+            rawBuffer = buffer24.data();
+        } else {
+            break;
+        }
+
+        snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, period_frames);
+        if (frames == -EAGAIN) {
+            continue;
+        }
+        if (frames == -EPIPE) {
+            LOG_WARN("[I2S] XRUN detected, recovering");
+            snd_pcm_prepare(handle);
+            continue;
+        }
+        if (frames < 0) {
+            LOG_WARN("[I2S] Read error: {}", snd_strerror(frames));
+            if (snd_pcm_recover(handle, frames, 1) < 0) {
+                LOG_ERROR("[I2S] Recover failed, restarting read loop");
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            continue;
+        }
+        if (frames == 0) {
+            continue;
+        }
+
+        if (!convert_pcm_to_float(rawBuffer, format, static_cast<size_t>(frames), channels,
+                                  floatBuffer)) {
+            LOG_ERROR("[I2S] Unsupported format during conversion");
+            break;
+        }
+
+        if (g_state.audioPipeline) {
+            g_state.audioPipeline->process(floatBuffer.data(), static_cast<uint32_t>(frames));
+        }
+    }
+
+    snd_pcm_drop(handle);
+    snd_pcm_close(handle);
+    {
+        std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
+        g_state.i2s.handle = nullptr;
+    }
+    g_state.i2s.captureRunning.store(false, std::memory_order_release);
+    g_state.i2s.captureReady.store(false, std::memory_order_release);
+    LOG_INFO("[I2S] Capture thread terminated");
 }
 
 static void loopback_capture_thread(const std::string& device, snd_pcm_format_t format,
@@ -1778,6 +1998,58 @@ int main(int argc, char* argv[]) {
         std::thread alsa_thread(alsa_output_thread);
 
         std::thread loopback_thread;
+        std::thread i2s_thread;
+
+        if (g_state.config.i2s.enabled && g_state.config.loopback.enabled) {
+            LOG_ERROR("Config error: i2s.enabled and loopback.enabled cannot both be true");
+            exitCode = 1;
+            g_state.flags.running = false;
+            playback_buffer().cv().notify_all();
+            alsa_thread.join();
+            break;
+        }
+
+        if (g_state.config.i2s.enabled) {
+            if (!validate_i2s_config(g_state.config)) {
+                exitCode = 1;
+                g_state.flags.running = false;
+                playback_buffer().cv().notify_all();
+                alsa_thread.join();
+                break;
+            }
+            snd_pcm_format_t i2s_format = parse_i2s_format(g_state.config.i2s.format);
+            unsigned int i2s_rate = (g_state.config.i2s.sampleRate != 0)
+                                        ? static_cast<unsigned int>(g_state.config.i2s.sampleRate)
+                                        : static_cast<unsigned int>(g_state.rates.inputSampleRate);
+            std::cout << "Starting I2S capture thread (" << g_state.config.i2s.device
+                      << ", fmt=" << g_state.config.i2s.format << ", rate=" << i2s_rate
+                      << ", period=" << g_state.config.i2s.periodFrames << ")" << '\n';
+            i2s_thread =
+                std::thread(i2s_capture_thread, g_state.config.i2s.device, i2s_format, i2s_rate,
+                            g_state.config.i2s.channels,
+                            static_cast<snd_pcm_uframes_t>(g_state.config.i2s.periodFrames));
+
+            // Wait briefly for I2S thread to become ready
+            bool i2s_ready = false;
+            for (int i = 0; i < 40; ++i) {  // up to ~2s
+                if (g_state.i2s.captureReady.load(std::memory_order_acquire)) {
+                    i2s_ready = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (!i2s_ready) {
+                LOG_ERROR("[I2S] Failed to start capture thread (not ready)");
+                g_state.flags.running = false;
+                playback_buffer().cv().notify_all();
+                if (i2s_thread.joinable()) {
+                    i2s_thread.join();
+                }
+                alsa_thread.join();
+                exitCode = 1;
+                break;
+            }
+        }
         if (g_state.config.loopback.enabled) {
             if (!validate_loopback_config(g_state.config)) {
                 exitCode = 1;
@@ -1826,6 +2098,12 @@ int main(int argc, char* argv[]) {
                       << "x upsampling)" << '\n';
             std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
                       << '\n';
+        } else if (g_state.config.i2s.enabled) {
+            std::cout << "System ready (I2S capture mode). Audio routing configured:" << '\n';
+            std::cout << "  1. I2S capture → GPU Upsampler (" << g_state.config.upsampleRatio
+                      << "x upsampling)" << '\n';
+            std::cout << "  2. GPU Upsampler → ALSA → DAC (" << outputRateKHz << "kHz direct)"
+                      << '\n';
         } else {
             std::cout << "System ready (TCP/loopback input). Audio routing configured:" << '\n';
             std::cout << "  1. Network or loopback source → GPU Upsampler ("
@@ -1842,6 +2120,12 @@ int main(int argc, char* argv[]) {
             while (g_state.flags.running.load() && !g_state.flags.reloadRequested.load() &&
                    !g_state.flags.zmqBindFailed.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                // Input rate follow-up hook (Issue #906; network-driven detection is #824)
+                int pending =
+                    g_state.rates.pendingRateChange.exchange(0, std::memory_order_acq_rel);
+                if (pending > 0 && (pending == 44100 || pending == 48000)) {
+                    (void)handle_rate_switch(pending);
+                }
                 shutdownManager.tick();
             }
         };
@@ -1862,6 +2146,9 @@ int main(int argc, char* argv[]) {
             controlPlane->stop();
         }
         alsa_thread.join();  // ALSA thread will call snd_pcm_drain() before exit
+        if (i2s_thread.joinable()) {
+            i2s_thread.join();
+        }
         if (loopback_thread.joinable()) {
             loopback_thread.join();
         }

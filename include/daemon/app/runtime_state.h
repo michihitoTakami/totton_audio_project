@@ -118,6 +118,13 @@ struct LoopbackState {
     std::atomic<bool> captureReady{false};
 };
 
+struct I2sState {
+    std::mutex handleMutex;
+    snd_pcm_t* handle = nullptr;
+    std::atomic<bool> captureRunning{false};
+    std::atomic<bool> captureReady{false};
+};
+
 struct ManagerState {
     std::unique_ptr<streaming_cache::StreamingCacheManager> streamingCacheManager;
     std::unique_ptr<daemon_core::api::EventDispatcher> eventDispatcher;
@@ -152,6 +159,7 @@ struct RuntimeState {
     CrossfeedState crossfeed;
     ManagerState managers;
     LoopbackState loopback;
+    I2sState i2s;
 
     FallbackManager::Manager* fallbackManager = nullptr;
     std::atomic<bool> fallbackActive{false};
