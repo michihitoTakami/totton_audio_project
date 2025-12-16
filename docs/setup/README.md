@@ -9,9 +9,9 @@ Magic Box Projectの開発環境構築とセットアップに関するドキュ
 | [クイックスタート](quick_start.md) | 最小限の手順で動作確認 | 初めての方 |
 | [ビルド手順](build.md) | 詳細なビルド手順・トラブルシューティング | 開発者 |
 | [テスト実行](test.md) | テストの実行方法 | 開発者 |
-| [PC開発環境](pc_development.md) | ALSA/TCP入力の詳細設定 | 開発者（実機動作） |
+| [PC開発環境](pc_development.md) | ALSA Loopback / RTP入力の詳細設定 | 開発者（実機動作） |
 | [Web UI](web_ui.md) | Web UIサーバーの起動・設定 | 開発者 |
-| [Raspberry Pi ブリッジ](pi_bridge.md) | PiをUAC2+TCPブリッジとして初期化 | Jetson + Pi構成 |
+| [Raspberry Pi ブリッジ](pi_bridge.md) | PiをUAC2+RTPブリッジとして初期化 | Jetson + Pi構成 |
 
 ## 環境別ガイド
 
@@ -22,7 +22,7 @@ Magic Box Projectの開発環境構築とセットアップに関するドキュ
 │  PC開発環境 (Ubuntu 22.04+)                                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  GPU: RTX 2070 Super以上 (CUDA SM 7.5+)                         │
-│  Audio: ALSA Loopback/TCP → GPU Upsampler → ALSA → USB DAC       │
+│  Audio: ALSA Loopback (RTP) → GPU Upsampler → ALSA → USB DAC       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,7 +72,7 @@ flowchart TD
     C --> D[ビルド]
     D --> E{目的は?}
     E -->|テストのみ| F[テスト実行]
-    E -->|実機動作| G[ALSA/TCP入力設定]
+    E -->|実機動作| G[ALSA Loopback入力設定]
     G --> H[デーモン起動]
     H --> I[Web UI起動]
 ```
@@ -94,10 +94,10 @@ uv sync
 
 ```bash
 # 全構成（44k/48k × 2x/4x/8x/16x）最小位相フィルタ
-uv run python scripts/generate_minimum_phase.py --generate-all
+uv run python scripts/filters/generate_minimum_phase.py --generate-all
 
 # 全構成の線形位相フィルタ（100Hzクロスオーバ/約10ms整列）
-uv run python scripts/generate_linear_phase.py --generate-all
+uv run python scripts/filters/generate_linear_phase.py --generate-all
 ```
 
 ### Step 3: ビルド

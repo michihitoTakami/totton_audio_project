@@ -1,4 +1,4 @@
-#include "phase_alignment.h"
+#include "audio/phase_alignment.h"
 
 #include <cmath>
 #include <gtest/gtest.h>

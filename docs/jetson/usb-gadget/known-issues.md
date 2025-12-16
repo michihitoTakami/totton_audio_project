@@ -128,13 +128,15 @@ PC  ──USB──>  DAC  ─┤ I2S (BCLK, LRCK, DATA) ├──>  Magic Box (
 
 #### Jetson Orin Nano I2S ピンアウト
 
-| ピン | 機能 |
-|------|------|
-| GPIO | I2S_BCLK |
-| GPIO | I2S_LRCK |
-| GPIO | I2S_DIN |
+Jetson Orin Nano DevKit（キャリアボード）の **J12（40pin）** は、I2S0系の信号を利用できる。詳細は `docs/jetson/i2s/i2s_migration_spec_820.md` を参照。
 
-**注意**: 具体的なピン番号はキャリアボードに依存
+| 信号 | J12 物理ピン | 備考 |
+|---|---:|---|
+| I2S0_SCLK（BCLK） | 12 | |
+| I2S0_FS（LRCLK） | 35 | |
+| I2S0_DIN | 38 | Pi→Jetson（MVP）で使用 |
+| I2S0_DOUT | 40 | MVPでは未使用 |
+| GND | 39 | 推奨（DATA隣） |
 
 ---
 
@@ -157,7 +159,7 @@ PC  ──USB──>  DAC  ─┤ I2S (BCLK, LRCK, DATA) ├──>  Magic Box (
 
 #### 設定例（廃止）
 
-> ⚠️ RTP/PipeWire経路は #690 で廃止し、TCP PCM入力に一本化しました。
+> ⚠️ RTP/PipeWire経路は #690 で廃止され、当時は TCP PCM入力に一本化されましたが、その後 TCP経路も廃止され、現在は GStreamer RTP入力に一本化されています。
 > 本節の設定は現在サポートされていません（歴史的記録のみ）。
 
 ---

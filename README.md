@@ -43,7 +43,7 @@
 │                    Data Plane (C++ Audio Engine)                │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                   Audio Processing Pipeline               │   │
-│  │  TCP/Loopback Input → Rate Detection → GPU FFT → Crossfeed → ALSA  │   │
+│  │  ALSA Loopback Input (RTP feed) → Rate Detection → GPU FFT → Crossfeed → ALSA  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │  ┌────────────┐ ┌─────────────┐ ┌───────────┐ ┌─────────────┐  │
 │  │ Auto-Nego  │ │  Soft Mute  │ │ ZeroMQ Srv│ │ DAC Detect  │  │
@@ -56,7 +56,7 @@
 ```mermaid
 flowchart LR
     subgraph Input
-        IN[TCP / Loopback Input<br/>44.1k/48k/96k/...]
+        IN[ALSA Loopback Input<br/>44.1k/48k/96k/... (RTP)]
     end
 
     subgraph Processing
@@ -99,10 +99,10 @@ sequenceDiagram
     Py-->>Web: WebSocket Push
 ```
 
-### ネットワーク入力 (現行: TCP/ALSA)
+### ネットワーク入力 (現行: RTP/ALSA)
 
-- Jetson: `jetson_pcm_receiver` → ALSA Loopback → GPU Upsampler
-- PC: ALSA loopbackまたは直接 ALSA デバイスから入力
+- Jetson: GStreamerベースの `web/services/rtp_input.py` が RTP/RTCP パイプラインを駆動し、ALSA Loopback playback (`hw:Loopback,0,0`) に音声を注入
+- PC: ALSA Loopback capture または直接 ALSA デバイスで稼働 (必要に応じて `raspberry_pi/rtp_sender.py` で送信)
 
 ---
 
@@ -168,7 +168,7 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 | GPU | NVIDIA RTX 2070 Super (8GB VRAM) 以上 |
 | CUDA | SM 7.5 (Turing) |
 | OS | Linux (Ubuntu 22.04+) |
-| オーディオ | ALSA (loopback) / TCP PCM |
+| オーディオ | ALSA Loopback (RTP) |
 
 ### 本番環境（Magic Box）
 
@@ -204,16 +204,16 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 uv sync
 
 # 44.1k系 2M-tap 最小位相フィルタ（基準）
-uv run python scripts/generate_minimum_phase.py --taps 2000000
+uv run python scripts/filters/generate_minimum_phase.py --taps 2000000
 
 # 44.1k系 2M-tap 線形位相フィルタ
-uv run python scripts/generate_linear_phase.py --taps 2000000
+uv run python scripts/filters/generate_linear_phase.py --taps 2000000
 
 # 全構成（44k/48k × 2x/4x/8x/16x）最小位相フィルタを一括生成
-uv run python scripts/generate_minimum_phase.py --generate-all
+uv run python scripts/filters/generate_minimum_phase.py --generate-all
 
 # 全構成（44k/48k × 2x/4x/8x/16x）線形位相フィルタを一括生成
-uv run python scripts/generate_linear_phase.py --generate-all
+uv run python scripts/filters/generate_linear_phase.py --generate-all
 
 # 生成されるフィルタ:
 # - filter_44k_16x_2m_min_phase.bin (44.1kHz → 705.6kHz)
@@ -330,7 +330,7 @@ cmake --build build -j$(nproc)
 
 1. **パーティション構成の確認**
    ```bash
-   uv run python scripts/inspect_impulse.py \
+   uv run python scripts/analysis/inspect_impulse.py \
      --coeff data/coefficients/filter_44k_16x_2m_min_phase.bin \
      --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
      --config config.json --enable-partition \
@@ -340,7 +340,7 @@ cmake --build build -j$(nproc)
    - 推定遅延（fastウィンドウ / tail合流ウィンドウ）を自動計算
 2. **周波数応答の比較**
    ```bash
-   uv run python scripts/verify_frequency_response.py \
+   uv run python scripts/analysis/verify_frequency_response.py \
      test_data/low_latency/test_sweep_44100hz.wav \
      test_output/lowlat_sweep.wav \
      --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
@@ -368,10 +368,6 @@ cmake --build build -j$(nproc)
 | `/api/eq/apply` | POST | EQ適用 |
 | `/api/opra/search` | GET | OPRAヘッドホン検索 |
 | `/api/dac/capability/{id}` | GET | DAC性能取得 |
-| `/api/tcp-input/status` | GET | TCP入力ステータス・テレメトリ取得 |
-| `/api/tcp-input/start` | POST | TCP入力開始 |
-| `/api/tcp-input/stop` | POST | TCP入力停止 |
-| `/api/tcp-input/config` | PUT | TCP入力設定更新 |
 
 ### ZeroMQコマンド
 
@@ -384,10 +380,6 @@ cmake --build build -j$(nproc)
 | `SWITCH_RATE` | レートファミリー切り替え |
 | `APPLY_EQ` | EQ適用 |
 | `RESTORE_EQ` | EQ解除 |
-| `TCP_INPUT_STATUS` | TCP入力ステータス取得 |
-| `TCP_INPUT_START` | TCP入力開始 |
-| `TCP_INPUT_STOP` | TCP入力停止 |
-| `TCP_INPUT_CONFIG_UPDATE` | TCP入力設定更新 |
 
 ---
 

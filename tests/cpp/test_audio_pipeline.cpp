@@ -1,5 +1,5 @@
-#include "config_loader.h"
 #include "convolution_engine.h"
+#include "core/config_loader.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "gtest/gtest.h"

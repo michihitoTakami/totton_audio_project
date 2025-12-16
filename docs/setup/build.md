@@ -107,7 +107,7 @@ cmake --build build --target cpu_tests gpu_tests -- -j$(nproc)
 
 | ファイル | 説明 |
 |---------|------|
-| `gpu_upsampler_alsa` | メインデーモン（TCP/ALSA入力→GPU処理→ALSA出力） |
+| `gpu_upsampler_alsa` | メインデーモン（ALSA Loopback入力→GPU処理→ALSA出力） |
 | `test_eq` | EQテストツール |
 
 ### テストバイナリ
@@ -234,6 +234,6 @@ ls -lh data/coefficients/filter_*_*x_2m_linear_phase.bin
 フィルタがない場合は先に生成してください：
 
 ```bash
-uv run python scripts/generate_minimum_phase.py --generate-all          # 最小位相
-uv run python scripts/generate_linear_phase.py --generate-all     # 線形位相（100Hz/10ms）
+uv run python scripts/filters/generate_minimum_phase.py --generate-all          # 最小位相
+uv run python scripts/filters/generate_linear_phase.py --generate-all     # 線形位相（100Hz/10ms）
 ```

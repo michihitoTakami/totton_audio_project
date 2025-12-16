@@ -1,11 +1,11 @@
-"""Unit tests for scripts.partition_analysis helpers."""
+"""Unit tests for scripts.analysis.partition_analysis helpers."""
 
 from pathlib import Path
 import json
 
 import numpy as np
 
-from scripts.partition_analysis import (
+from scripts.analysis.partition_analysis import (
     PartitionConfig,
     build_partition_plan,
     estimate_settling_samples,
@@ -32,7 +32,9 @@ def test_build_partition_plan_matches_cpp_defaults():
 
 def test_partition_energy_summary_tracks_segments():
     coeffs = np.ones(16, dtype=np.float32)
-    config = PartitionConfig(enabled=True, fast_partition_taps=4, min_partition_taps=4, max_partitions=3)
+    config = PartitionConfig(
+        enabled=True, fast_partition_taps=4, min_partition_taps=4, max_partitions=3
+    )
     plan = build_partition_plan(len(coeffs), config)
     summary = partition_energy_summary(coeffs, plan)
     assert len(summary) == len(plan.partitions)
@@ -41,7 +43,9 @@ def test_partition_energy_summary_tracks_segments():
 
 
 def test_estimate_settling_samples_returns_valid_windows():
-    config = PartitionConfig(enabled=True, fast_partition_taps=8, min_partition_taps=4, max_partitions=2)
+    config = PartitionConfig(
+        enabled=True, fast_partition_taps=8, min_partition_taps=4, max_partitions=2
+    )
     plan = build_partition_plan(32, config)
     fast_window, settling_window = estimate_settling_samples(plan)
     assert fast_window > 0
@@ -66,4 +70,3 @@ def test_load_partition_config_reads_json(tmp_path: Path):
     assert loaded.min_partition_taps == 2048
     assert loaded.max_partitions == 5
     assert loaded.tail_fft_multiple == 6
-

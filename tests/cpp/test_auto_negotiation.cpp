@@ -10,7 +10,7 @@
  * - DAC capability validation
  */
 
-#include "auto_negotiation.h"
+#include "audio/auto_negotiation.h"
 #include "dac_capability.h"
 
 #include <gtest/gtest.h>

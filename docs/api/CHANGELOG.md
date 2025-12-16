@@ -7,11 +7,6 @@ APIへの重要な変更はこのファイルに記録されます。
 ## [Unreleased]
 
 ### Added
-- **TCP Input API** (#684-#687)
-  - `GET /api/tcp-input/status` - TCP入力ステータス・テレメトリ取得
-  - `POST /api/tcp-input/start` - TCP入力開始
-  - `POST /api/tcp-input/stop` - TCP入力停止
-  - `PUT /api/tcp-input/config` - TCP入力設定更新（bindAddress/port/buffer/connectionMode/priorityClients）
 - **Phase Type Control**: 位相タイプのランタイム切り替え（フィルタは常時プリロード）
   - `GET /daemon/phase-type` - 現在の位相タイプ取得
   - `PUT /daemon/phase-type` - 位相タイプ変更（即時反映）
@@ -22,14 +17,22 @@ APIへの重要な変更はこのファイルに記録されます。
   - `GET /dac/max-ratio` - 最大アップサンプリング倍率取得
   - `GET /dac/validate-config` - 設定バリデーション
 - **Low-Latency Validation Toolkit** (#355)
-  - `scripts/inspect_impulse.py` に partition summary / latency 推定を追加
-  - `scripts/verify_frequency_response.py` に fast/tail スペクトル比較と自動スキップ機能を追加
+  - `scripts/analysis/inspect_impulse.py` に partition summary / latency 推定を追加
+  - `scripts/analysis/verify_frequency_response.py` に fast/tail スペクトル比較と自動スキップ機能を追加
   - `docs/investigations/low_latency_partition_validation.md` にループバック手順とQA基準を掲載
 
 ### Changed
-- **FastAPI Lifespan Migration**: `@router.on_event("startup"/"shutdown")` から `lifespan` コンテキストマネージャへ移行
-  - TCPテレメトリポーラーのライフサイクル管理を `web/main.py` の `lifespan` 関数に統合
-- **Protocol Cleanup**: RTP/PipeWireエンドポイントとモデルを削除し、TCP入力のみをサポート
+- **FastAPI Lifespan Migration**: `lifespan` コンテキストマネージャで RTPautostart/シャットダウンを管理し、TCPテレメトリポーラーを削除
+- **Protocol Cleanup**: `tcp_input` ルーターとモデルを削除し、Web API は RTP入力経路に一本化
+
+### Removed
+- **TCP Input API & UI** (#846)
+  - `GET /api/tcp-input/status`
+  - `POST /api/tcp-input/start`
+  - `POST /api/tcp-input/stop`
+  - `PUT /api/tcp-input/config`
+  - `/tcp-input` ページおよび `web/static/js/tcp_input.js`, `web/templates/pages/tcp_input.html`
+  - ZeroMQ コマンド `TCP_INPUT_STATUS`, `TCP_INPUT_START`, `TCP_INPUT_STOP`, `TCP_INPUT_CONFIG_UPDATE`
 
 ### Security
 - ALSAデバイス名のバリデーション追加（パストラバーサル防止）

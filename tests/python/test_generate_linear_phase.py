@@ -1,18 +1,15 @@
-"""Unit tests for scripts/generate_linear_phase.py"""
+"""Unit tests for scripts/filters/generate_linear_phase.py"""
 
 import argparse
-import sys
-from pathlib import Path
 
 import numpy as np
 
-# Ensure scripts directory is importable
-SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
-
-from generate_filter import FilterConfig  # noqa: E402
-import generate_linear_phase as linear_phase_module  # noqa: E402
-from generate_linear_phase import LinearPhaseDesigner, generate_single_filter  # noqa: E402
+from scripts.filters.generate_filter import FilterConfig
+import scripts.filters.generate_linear_phase as linear_phase_module
+from scripts.filters.generate_linear_phase import (
+    LinearPhaseDesigner,
+    generate_single_filter,
+)
 
 
 class TestLinearPhaseDesigner:

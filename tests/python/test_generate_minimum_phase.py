@@ -1,18 +1,12 @@
-"""Unit tests for scripts/generate_minimum_phase.py"""
+"""Unit tests for scripts/filters/generate_minimum_phase.py"""
 
 import argparse
-import sys
-from pathlib import Path
 
 import numpy as np
 
-# Ensure scripts directory is importable
-SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
-
-from generate_filter import FilterConfig  # noqa: E402
-import generate_minimum_phase as min_phase_module  # noqa: E402
-from generate_minimum_phase import (  # noqa: E402
+from scripts.filters.generate_filter import FilterConfig
+import scripts.filters.generate_minimum_phase as min_phase_module
+from scripts.filters.generate_minimum_phase import (
     MinimumPhaseDesigner,
     generate_single_filter,
 )

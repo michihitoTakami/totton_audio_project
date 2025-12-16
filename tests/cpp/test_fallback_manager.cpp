@@ -7,7 +7,7 @@
  * without GPU hardware (using stub values when NVML unavailable).
  */
 
-#include "fallback_manager.h"
+#include "audio/fallback_manager.h"
 #include "logging/metrics.h"
 
 #include <atomic>

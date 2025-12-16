@@ -1,6 +1,13 @@
-#include "audio_utils.h"
-#include "config_loader.h"
+#include "audio/audio_utils.h"
+#include "audio/eq_parser.h"
+#include "audio/eq_to_fir.h"
+#include "audio/fallback_manager.h"
+#include "audio/filter_headroom.h"
+#include "audio/soft_mute.h"
 #include "convolution_engine.h"
+#include "core/config_loader.h"
+#include "core/daemon_constants.h"
+#include "core/partition_runtime_utils.h"
 #include "crossfeed_engine.h"
 #include "dac_capability.h"
 #include "daemon/api/dependencies.h"
@@ -17,16 +24,9 @@
 #include "daemon/output/alsa_write_loop.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/shutdown_manager.h"
-#include "daemon_constants.h"
-#include "eq_parser.h"
-#include "eq_to_fir.h"
-#include "fallback_manager.h"
-#include "filter_headroom.h"
 #include "logging/logger.h"
 #include "logging/metrics.h"
-#include "partition_runtime_utils.h"
 #include "playback_buffer.h"
-#include "soft_mute.h"
 
 #include <algorithm>
 #include <alsa/asoundlib.h>
@@ -2033,20 +2033,20 @@ int main(int argc, char* argv[]) {
                     }
                 } else {
                     std::cerr << "  HRTF: Failed to initialize processor" << std::endl;
-                    std::cerr
-                        << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
-                           "filters"
-                        << std::endl;
+                    std::cerr << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
+                                 "generate HRTF "
+                                 "filters"
+                              << std::endl;
                     delete g_hrtf_processor;
                     g_hrtf_processor = nullptr;
                 }
             } else {
                 std::cout << "HRTF directory not found (" << hrtfDir
                           << "), crossfeed feature disabled" << std::endl;
-                std::cout
-                    << "  Hint: Run 'uv run python scripts/generate_hrtf.py' to generate HRTF "
-                       "filters"
-                    << std::endl;
+                std::cout << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
+                             "generate HRTF "
+                             "filters"
+                          << std::endl;
             }
         } else {
             std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)"

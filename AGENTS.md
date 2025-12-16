@@ -56,7 +56,7 @@ gpu_os/
 ```bash
 # Filter generation
 uv sync
-uv run python scripts/generate_minimum_phase.py --taps 640000
+uv run python scripts/filters/generate_minimum_phase.py --taps 640000
 
 # Build
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -110,7 +110,7 @@ gh pr create --title "#123 機能の説明" --body "..."
 ## Testing
 
 - Validate with sample WAVs in `test_data/`
-- Run `scripts/verify_frequency_response.py` for filter changes
+- Run `scripts/analysis/verify_frequency_response.py` for filter changes
 
 ## RTP Audio Streaming Notes
 

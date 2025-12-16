@@ -55,10 +55,10 @@ uv sync  # Python依存関係インストール
 
 # 3. 並列生成（CPU許す限り）
 # phase_type=minimum の場合:
-uv run python scripts/generate_minimum_phase.py --generate-all
+uv run python scripts/filters/generate_minimum_phase.py --generate-all
 
 # phase_type=linear の場合:
-uv run python scripts/generate_linear_phase.py --generate-all
+uv run python scripts/filters/generate_linear_phase.py --generate-all
 
 # 4. メタデータ検証
 # data/coefficients/*.json を解析:
@@ -221,9 +221,9 @@ uv run python scripts/generate_linear_phase.py --generate-all
 このSkillは以下の既存スクリプトを活用します：
 
 ### スクリプト
-- `scripts/generate_minimum_phase.py`: 最小位相フィルター生成
-- `scripts/generate_linear_phase.py`: 線形位相フィルター生成
-- `scripts/verify_frequency_response.py`: 周波数応答検証（オプション）
+- `scripts/filters/generate_minimum_phase.py`: 最小位相フィルター生成
+- `scripts/filters/generate_linear_phase.py`: 線形位相フィルター生成
+- `scripts/analysis/verify_frequency_response.py`: 周波数応答検証（オプション）
 
 ### 生成ファイル構造
 ```

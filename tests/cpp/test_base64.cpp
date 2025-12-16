@@ -3,7 +3,7 @@
  * @brief Unit tests for Base64 encoding/decoding (RFC 4648).
  */
 
-#include "base64.h"
+#include "core/base64.h"
 
 #include <cstring>
 #include <gtest/gtest.h>

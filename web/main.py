@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from .exceptions import register_exception_handlers
 from .i18n import normalize_lang
-from .models import ApiResponse, TcpInputStatusResponse, TcpInputTelemetry
+from .models import ApiResponse
 from .routers import (
     crossfeed_router,
     dac_router,
@@ -25,23 +25,14 @@ from .routers import (
     output_mode_router,
     partitioned_router,
     status_router,
-    tcp_input_router,
     rtp_router,
     rtp_input_router,
-)
-from .services import get_daemon_client
-from .services.daemon_client import DaemonError
-from .services.tcp_input import (
-    TcpTelemetryPoller,
-    TcpTelemetryStore,
-    parse_tcp_telemetry,
 )
 from .services.rtp_input import get_rtp_receiver_manager
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
     render_system,
-    render_tcp_input,
 )
 
 # OpenAPI tag descriptions
@@ -79,10 +70,6 @@ tags_metadata = [
         "description": "Deprecated endpoints - use alternatives instead",
     },
     {
-        "name": "tcp-input",
-        "description": "TCP入力のステータス取得と制御 (ZeroMQ経由)",
-    },
-    {
         "name": "rtp",
         "description": "RTP ZeroMQブリッジのステータス/制御",
     },
@@ -93,39 +80,7 @@ tags_metadata = [
 ]
 
 
-_tcp_telemetry_store = TcpTelemetryStore()
 _logger = logging.getLogger(__name__)
-
-
-async def _fetch_tcp_telemetry() -> TcpInputTelemetry | None:
-    """ZeroMQ経由でTCPテレメトリを取得."""
-    with get_daemon_client(timeout_ms=1500) as client:
-        response = client.tcp_input_status()
-    if response.success:
-        data = response.data
-        if isinstance(data, TcpInputStatusResponse):
-            return data.telemetry
-        if isinstance(data, TcpInputTelemetry):
-            return data
-        if isinstance(data, dict):
-            telemetry_payload = data.get("telemetry", data)
-            if isinstance(telemetry_payload, dict):
-                return parse_tcp_telemetry(telemetry_payload)
-        return None
-    if response.error:
-        if isinstance(response.error, DaemonError) and response.error.error_code in {
-            "IPC_INVALID_COMMAND"
-        }:
-            _logger.info("TCP telemetry not supported by daemon; skipping polling")
-            return None
-        # 例外はポーラー側で握りつぶし、storeにエラーを記録させる
-        raise response.error
-    return None
-
-
-_tcp_telemetry_poller = TcpTelemetryPoller(
-    fetcher=_fetch_tcp_telemetry, store=_tcp_telemetry_store
-)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -147,8 +102,6 @@ def _resolve_rtp_manager(app: FastAPI):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""
-    # Startup
-    await _tcp_telemetry_poller.start()
     rtp_manager = _resolve_rtp_manager(app)
     rtp_autostart = _env_flag("MAGICBOX_RTP_AUTOSTART", True)
     if rtp_autostart:
@@ -161,8 +114,6 @@ async def lifespan(app: FastAPI):
         _logger.info("RTP autostart disabled via MAGICBOX_RTP_AUTOSTART")
 
     yield
-    # Shutdown
-    await _tcp_telemetry_poller.stop()
     try:
         await rtp_manager.shutdown()
     except Exception as exc:  # noqa: BLE001
@@ -211,7 +162,6 @@ app.include_router(dac_router)
 app.include_router(crossfeed_router)
 app.include_router(partitioned_router)
 app.include_router(output_mode_router)
-app.include_router(tcp_input_router)
 app.include_router(rtp_router)
 app.include_router(rtp_input_router)
 
@@ -260,15 +210,6 @@ async def system_page(request: Request, lang: str | None = None):
     resolved_lang = _resolve_lang(request, lang)
     return _render_with_lang(
         content=render_system(lang=resolved_lang), lang=resolved_lang
-    )
-
-
-@app.get("/tcp-input", response_class=HTMLResponse)
-async def tcp_input_page(request: Request, lang: str | None = None):
-    """Serve the TCP Input page."""
-    resolved_lang = _resolve_lang(request, lang)
-    return _render_with_lang(
-        content=render_tcp_input(lang=resolved_lang), lang=resolved_lang
     )
 
 

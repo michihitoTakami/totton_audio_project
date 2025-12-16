@@ -18,7 +18,7 @@
 ## Step 1 – Provision Test Stimuli
 
 ```bash
-uv run python scripts/generate_test_audio.py \
+uv run python scripts/testing/generate_test_audio.py \
   --output-dir test_data/low_latency \
   --duration 5.0 \
   --sample-rate 44100 \
@@ -69,7 +69,7 @@ Artifacts:
 ## Step 3 – Inspect the Filter / Partition Plan
 
 ```bash
-uv run python scripts/inspect_impulse.py \
+uv run python scripts/analysis/inspect_impulse.py \
   --coeff data/coefficients/filter_44k_16x_2m_linear_phase.bin \
   --metadata data/coefficients/filter_44k_16x_2m_linear_phase.json \
   --config config.json \
@@ -91,7 +91,7 @@ Outputs:
 ## Step 4 – Verify Frequency Response (Fast vs Combined)
 
 ```bash
-uv run python scripts/verify_frequency_response.py \
+uv run python scripts/analysis/verify_frequency_response.py \
   test_data/low_latency/test_sweep_44100hz.wav \
   test_output/lowlat_sweep.wav \
   --metadata data/coefficients/filter_44k_16x_2m_linear_phase.json \
@@ -110,7 +110,7 @@ uv run python scripts/verify_frequency_response.py \
 For impulse captures:
 
 ```bash
-uv run python scripts/verify_frequency_response.py \
+uv run python scripts/analysis/verify_frequency_response.py \
   test_data/low_latency/test_impulse_44100hz.wav \
   test_output/lowlat_impulse.wav \
   --metadata data/coefficients/filter_44k_16x_2m_linear_phase.json \

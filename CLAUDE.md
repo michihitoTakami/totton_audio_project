@@ -229,16 +229,16 @@ graph TD
 uv sync
 
 # Generate 640k-tap minimum phase filter (default β≈28)
-uv run python scripts/generate_minimum_phase.py --taps 640000
+uv run python scripts/filters/generate_minimum_phase.py --taps 640000
 
 # Generate 640k-tap linear phase filter
-uv run python scripts/generate_linear_phase.py --taps 640000
+uv run python scripts/filters/generate_linear_phase.py --taps 640000
 
 # Generate all 8 minimum-phase configurations
-uv run python scripts/generate_minimum_phase.py --generate-all
+uv run python scripts/filters/generate_minimum_phase.py --generate-all
 
 # Generate all 8 linear-phase configurations
-uv run python scripts/generate_linear_phase.py --generate-all
+uv run python scripts/filters/generate_linear_phase.py --generate-all
 
 # Output (example for minimum-phase result, 44.1kHz input, 16x upsample):
 # - data/coefficients/filter_44k_16x_2m_min_phase.bin (2.44 MB binary)
@@ -391,10 +391,10 @@ async def restart():
 手動実行：
 ```bash
 # OpenAPI spec を出力
-uv run python scripts/export_openapi.py
+uv run python scripts/integration/export_openapi.py
 
 # 最新かどうか確認
-uv run python scripts/export_openapi.py --check
+uv run python scripts/integration/export_openapi.py --check
 ```
 
 ### API変更時のチェックリスト
