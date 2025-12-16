@@ -97,28 +97,63 @@ void safeCudaHostUnregister(void** trackedPtr, size_t* trackedBytes, const char*
 
 }  // namespace
 
-void HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
+bool HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr,
                                          size_t* trackedBytes, const char* context) {
     if (buffer.capacity() == 0) {
-        return;
+        return false;
     }
 
     void* ptr = buffer.data();
     size_t bytes = buffer.capacity() * sizeof(float);
 
     if (*trackedPtr == ptr && *trackedBytes == bytes) {
-        return;  // Already registered
+        return true;  // Already registered
     }
 
-    // RT safety: do not unregister/re-register while streaming. Caller must keep the same vector
-    // instance and capacity in the steady-state path.
+    // If already registered, caller changed pointer/capacity unexpectedly.
+    // Do not unregister here (RT safety). Require re-init / explicit prepare call.
     if (*trackedPtr != nullptr) {
-        throw std::runtime_error("Crossfeed stream buffer pointer/capacity changed");
+        std::cerr << "[Crossfeed] Stream buffer pointer/capacity changed; re-init required"
+                  << std::endl;
+        return false;
     }
 
     checkCudaError(cudaHostRegister(ptr, bytes, cudaHostRegisterDefault), context);
     *trackedPtr = ptr;
     *trackedBytes = bytes;
+    return true;
+}
+
+bool HRTFProcessor::prepareStreamingHostBuffers(std::vector<float>& streamInputBufferL,
+                                                std::vector<float>& streamInputBufferR,
+                                                std::vector<float>& outputL,
+                                                std::vector<float>& outputR) {
+    try {
+        safeCudaHostUnregister(&pinnedStreamInputL_, &pinnedStreamInputLBytes_,
+                               "cudaHostUnregister crossfeed input L (re-prepare)");
+        safeCudaHostUnregister(&pinnedStreamInputR_, &pinnedStreamInputRBytes_,
+                               "cudaHostUnregister crossfeed input R (re-prepare)");
+        safeCudaHostUnregister(&pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
+                               "cudaHostUnregister crossfeed output L (re-prepare)");
+        safeCudaHostUnregister(&pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
+                               "cudaHostUnregister crossfeed output R (re-prepare)");
+
+        if (!registerStreamBuffer(streamInputBufferL, &pinnedStreamInputL_, &pinnedStreamInputLBytes_,
+                                  "cudaHostRegister crossfeed stream input L") ||
+            !registerStreamBuffer(streamInputBufferR, &pinnedStreamInputR_, &pinnedStreamInputRBytes_,
+                                  "cudaHostRegister crossfeed stream input R") ||
+            !registerStreamBuffer(outputL, &pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
+                                  "cudaHostRegister crossfeed stream output L") ||
+            !registerStreamBuffer(outputR, &pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
+                                  "cudaHostRegister crossfeed stream output R")) {
+            std::cerr << "[Crossfeed] Failed to prepare pinned host buffers" << std::endl;
+            return false;
+        }
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[Crossfeed] prepareStreamingHostBuffers failed: " << e.what() << std::endl;
+        return false;
+    }
 }
 
 // ============================================================================
@@ -798,6 +833,23 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         return true;
     };
 
+    auto validatePinned = [&](std::vector<float>& buffer, void* trackedPtr, size_t trackedBytes,
+                              const char* name) -> bool {
+        if (trackedPtr == nullptr) {
+            std::cerr << "[Crossfeed] Host buffers not prepared (missing pin): " << name
+                      << std::endl;
+            return false;
+        }
+        void* ptr = buffer.data();
+        size_t bytes = buffer.capacity() * sizeof(float);
+        if (ptr != trackedPtr || bytes != trackedBytes) {
+            std::cerr << "[Crossfeed] Pinned buffer mismatch: " << name
+                      << " (ptr/capacity changed)" << std::endl;
+            return false;
+        }
+        return true;
+    };
+
     if (pinnedStreamOutputL_ != nullptr && pinnedStreamOutputL_ != outputL.data()) {
         std::cerr << "[Crossfeed] Output buffer instance changed (L)" << std::endl;
         outputL.clear();
@@ -830,10 +882,14 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         outputR.clear();
         return false;
     }
-    registerStreamBuffer(streamInputBufferL, &pinnedStreamInputL_, &pinnedStreamInputLBytes_,
-                         "cudaHostRegister crossfeed stream input L");
-    registerStreamBuffer(streamInputBufferR, &pinnedStreamInputR_, &pinnedStreamInputRBytes_,
-                         "cudaHostRegister crossfeed stream input R");
+    if (!validatePinned(streamInputBufferL, pinnedStreamInputL_, pinnedStreamInputLBytes_,
+                        "stream input L") ||
+        !validatePinned(streamInputBufferR, pinnedStreamInputR_, pinnedStreamInputRBytes_,
+                        "stream input R")) {
+        outputL.clear();
+        outputR.clear();
+        return false;
+    }
 
     std::memcpy(streamInputBufferL.data() + streamInputAccumulatedL, inputL,
                 inputFrames * sizeof(float));
@@ -858,10 +914,12 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         outputR.clear();
         return false;
     }
-    registerStreamBuffer(outputL, &pinnedStreamOutputL_, &pinnedStreamOutputLBytes_,
-                         "cudaHostRegister crossfeed stream output L");
-    registerStreamBuffer(outputR, &pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
-                         "cudaHostRegister crossfeed stream output R");
+    if (!validatePinned(outputL, pinnedStreamOutputL_, pinnedStreamOutputLBytes_, "stream output L") ||
+        !validatePinned(outputR, pinnedStreamOutputR_, pinnedStreamOutputRBytes_, "stream output R")) {
+        outputL.clear();
+        outputR.clear();
+        return false;
+    }
 
     int threadsPerBlock = 256;
     int blocks = (filterFftSize_ + threadsPerBlock - 1) / threadsPerBlock;

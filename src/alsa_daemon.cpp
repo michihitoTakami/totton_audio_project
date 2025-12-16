@@ -1573,6 +1573,14 @@ int main(int argc, char* argv[]) {
                         std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity
                                   << " samples" << '\n';
 
+                        if (!g_state.crossfeed.processor->prepareStreamingHostBuffers(
+                                g_state.crossfeed.cfStreamInputLeft,
+                                g_state.crossfeed.cfStreamInputRight,
+                                g_state.crossfeed.cfOutputLeft, g_state.crossfeed.cfOutputRight)) {
+                            std::cerr << "  Crossfeed: Failed to prepare pinned host buffers"
+                                      << '\n';
+                        }
+
                         // Crossfeed is initialized but disabled by default
                         g_state.crossfeed.enabled.store(false);
                         g_state.crossfeed.processor->setEnabled(false);
