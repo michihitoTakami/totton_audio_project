@@ -22,6 +22,7 @@
 #include "daemon/output/alsa_output.h"
 #include "daemon/output/alsa_pcm_controller.h"
 #include "daemon/output/alsa_write_loop.h"
+#include "daemon/output/playback_buffer_manager.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/shutdown_manager.h"
 #include "io/dac_capability.h"
@@ -322,70 +323,15 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
     }
 }
 
-// Audio buffer for thread communication
-static std::mutex g_buffer_mutex;
-static std::condition_variable g_buffer_cv;
-static std::vector<float> g_output_buffer_left;
-static std::vector<float> g_output_buffer_right;
-static size_t g_output_read_pos = 0;
+// Audio buffer for thread communication (managed component)
+static std::unique_ptr<daemon_output::PlaybackBufferManager> g_playback_buffer;
 
-// Producer backpressure (loopback capture input) to prevent output buffer overflows.
-// Rationale:
-// - If upstream input is not paced in real-time (e.g., software loopback or bursty network),
-//   the GPU pipeline can enqueue output faster than ALSA can consume it.
-// - The current overflow handling drops frames, which introduces discontinuities ("ジッ/プチ").
-// - By throttling producers when the output queue is near full, we keep continuity and let
-//   backpressure propagate upstream.
-static std::chrono::steady_clock::time_point g_last_producer_throttle_warn{
-    std::chrono::steady_clock::now() - std::chrono::seconds(10)};
-
-static size_t get_queued_output_frames_locked() {
-    // Caller must hold g_buffer_mutex.
-    if (g_output_buffer_left.size() <= g_output_read_pos) {
-        return 0;
+static daemon_output::PlaybackBufferManager& playback_buffer() {
+    if (!g_playback_buffer) {
+        g_playback_buffer = std::make_unique<daemon_output::PlaybackBufferManager>(
+            []() { return get_max_output_buffer_frames(); });
     }
-    return g_output_buffer_left.size() - g_output_read_pos;
-}
-
-static void throttle_input_if_output_queue_full() {
-    size_t capacity = get_max_output_buffer_frames();
-    if (capacity == 0) {
-        return;
-    }
-
-    // Hysteresis to avoid wake/sleep oscillation.
-    // High watermark: start throttling
-    // Low watermark: resume processing
-    size_t high = std::max<size_t>(1, (capacity * 9) / 10);
-    size_t low = std::min(high, std::max<size_t>(1, (capacity * 7) / 10));
-
-    std::unique_lock<std::mutex> lock(g_buffer_mutex);
-    size_t queued = get_queued_output_frames_locked();
-    if (queued < high) {
-        return;
-    }
-
-    auto now = std::chrono::steady_clock::now();
-    if (now - g_last_producer_throttle_warn > std::chrono::seconds(5)) {
-        int outputRate = g_current_output_rate.load(std::memory_order_acquire);
-        if (outputRate <= 0) {
-            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
-        }
-        double queuedSec = static_cast<double>(queued) / static_cast<double>(outputRate);
-        double capSec = static_cast<double>(capacity) / static_cast<double>(outputRate);
-        LOG_WARN(
-            "Throttling input: output queue near full (queued={} frames / {:.3f}s, cap={} frames / "
-            "{:.3f}s)",
-            queued, queuedSec, capacity, capSec);
-        g_last_producer_throttle_warn = now;
-    }
-
-    // Wait briefly for playback to drain the queue.
-    // Note: ALSA thread notifies after consuming frames.
-    g_buffer_cv.wait_for(lock, std::chrono::milliseconds(200), [low] {
-        return !g_running.load(std::memory_order_acquire) ||
-               get_queued_output_frames_locked() <= low;
-    });
+    return *g_playback_buffer;
 }
 
 // Streaming input accumulation buffers
@@ -575,10 +521,7 @@ static void reset_crossfeed_stream_state_locked() {
 static void initialize_streaming_cache_manager() {
     streaming_cache::StreamingCacheDependencies deps;
     deps.inputMutex = &g_input_process_mutex;
-    deps.outputBufferLeft = &g_output_buffer_left;
-    deps.outputBufferRight = &g_output_buffer_right;
-    deps.bufferMutex = &g_buffer_mutex;
-    deps.outputReadPos = &g_output_read_pos;
+    deps.resetPlaybackBuffer = []() { playback_buffer().reset(); };
 
     deps.streamInputLeft = &g_stream_input_left;
     deps.streamInputRight = &g_stream_input_right;
@@ -780,9 +723,7 @@ static void refresh_current_headroom(const std::string& reason) {
 static void reset_runtime_state() {
     g_streaming_cache_manager.reset();
 
-    g_output_buffer_left.clear();
-    g_output_buffer_right.clear();
-    g_output_read_pos = 0;
+    playback_buffer().reset();
     g_stream_input_left.clear();
     g_stream_input_right.clear();
     g_stream_accumulated_left = 0;
@@ -806,12 +747,7 @@ static bool reinitialize_streaming_for_legacy_mode() {
 
     std::lock_guard<std::mutex> streamLock(g_streaming_mutex);
     g_upsampler->resetStreaming();
-    {
-        std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
-        g_output_buffer_left.clear();
-        g_output_buffer_right.clear();
-        g_output_read_pos = 0;
-    }
+    playback_buffer().reset();
 
     g_stream_input_left.clear();
     g_stream_input_right.clear();
@@ -885,12 +821,7 @@ static bool handle_rate_switch(int newInputRate) {
 
         g_upsampler->resetStreaming();
 
-        {
-            std::lock_guard<std::mutex> bufferLock(g_buffer_mutex);
-            g_output_buffer_left.clear();
-            g_output_buffer_right.clear();
-            g_output_read_pos = 0;
-        }
+        playback_buffer().reset();
         g_stream_input_left.clear();
         g_stream_input_right.clear();
         g_stream_accumulated_left = 0;
@@ -1176,7 +1107,8 @@ static void loopback_capture_thread(std::string device, snd_pcm_format_t format,
     while (g_running.load(std::memory_order_acquire)) {
         // Apply backpressure before pulling more input.
         // This prevents software loopback / bursty upstream from running ahead of ALSA playback.
-        throttle_input_if_output_queue_full();
+        playback_buffer().throttleProducerIfFull(
+            g_running, []() { return g_current_output_rate.load(std::memory_order_acquire); });
 
         void* rawBuffer = nullptr;
         if (format == SND_PCM_FORMAT_S16_LE) {
@@ -1258,6 +1190,7 @@ void alsa_output_thread() {
     }
     std::vector<int32_t> interleaved_buffer(period_size * CHANNELS);
     std::vector<float> float_buffer(period_size * CHANNELS);  // for soft mute processing
+    auto& bufferManager = playback_buffer();
 
     // Main playback loop
     while (g_running) {
@@ -1333,12 +1266,12 @@ void alsa_output_thread() {
         }
 
         // Wait for GPU processed data (dynamic threshold to avoid underflow with crossfeed)
-        std::unique_lock<std::mutex> lock(g_buffer_mutex);
+        std::unique_lock<std::mutex> lock(bufferManager.mutex());
         size_t ready_threshold = get_playback_ready_threshold(static_cast<size_t>(period_size));
-        g_buffer_cv.wait_for(lock, std::chrono::milliseconds(200), [ready_threshold] {
-            return (g_output_buffer_left.size() - g_output_read_pos) >= ready_threshold ||
-                   !g_running;
-        });
+        bufferManager.cv().wait_for(
+            lock, std::chrono::milliseconds(200), [&bufferManager, ready_threshold] {
+                return bufferManager.queuedFramesLocked() >= ready_threshold || !g_running;
+            });
 
         if (!g_running)
             break;
@@ -1357,8 +1290,9 @@ void alsa_output_thread() {
         }
 
         // Wake any producers that are throttling on "space available".
-        // renderOutput() advances g_output_read_pos under its own lock; notifying here is safe.
-        g_buffer_cv.notify_all();
+        // renderOutput() advances the output read position under its own lock; notifying here is
+        // safe.
+        bufferManager.cv().notify_all();
 
         // Apply pending soft mute parameter restoration once transition completes
         maybe_restore_soft_mute_params();
@@ -1771,11 +1705,7 @@ int main(int argc, char* argv[]) {
             pipelineDeps.crossfeedEnabled = &g_crossfeed_enabled;
             pipelineDeps.crossfeedProcessor = g_hrtf_processor;
             pipelineDeps.crossfeedMutex = &g_crossfeed_mutex;
-            pipelineDeps.buffer.outputBufferLeft = &g_output_buffer_left;
-            pipelineDeps.buffer.outputBufferRight = &g_output_buffer_right;
-            pipelineDeps.buffer.outputReadPos = &g_output_read_pos;
-            pipelineDeps.buffer.bufferMutex = &g_buffer_mutex;
-            pipelineDeps.buffer.bufferCv = &g_buffer_cv;
+            pipelineDeps.buffer.playbackBuffer = &playback_buffer();
             pipelineDeps.maxOutputBufferFrames = []() { return get_max_output_buffer_frames(); };
             pipelineDeps.currentOutputRate = []() {
                 return g_current_output_rate.load(std::memory_order_acquire);
@@ -1929,7 +1859,7 @@ int main(int argc, char* argv[]) {
             if (!loopback_ready) {
                 LOG_ERROR("[Loopback] Failed to start capture thread (not ready)");
                 g_running = false;
-                g_buffer_cv.notify_all();
+                playback_buffer().cv().notify_all();
                 if (loopback_thread.joinable()) {
                     loopback_thread.join();
                 }
@@ -1979,7 +1909,7 @@ int main(int argc, char* argv[]) {
         // Step 5: Signal worker threads to stop and wait for them
         std::cout << "  Step 5: Stopping worker threads..." << std::endl;
         g_running = false;
-        g_buffer_cv.notify_all();
+        playback_buffer().cv().notify_all();
         if (controlPlane) {
             controlPlane->stop();
         }

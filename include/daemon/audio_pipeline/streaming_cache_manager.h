@@ -22,6 +22,9 @@ struct StreamingCacheDependencies {
     // Optional: when null, flushing proceeds without this outer lock.
     std::mutex* inputMutex = nullptr;
 
+    // Optional callback to reset playback/output buffers.
+    // If set、下記のoutputBufferLeft/Rightのクリアは呼ばれない。
+    std::function<void()> resetPlaybackBuffer;
     std::vector<float>* outputBufferLeft = nullptr;
     std::vector<float>* outputBufferRight = nullptr;
     std::mutex* bufferMutex = nullptr;
@@ -83,6 +86,10 @@ class StreamingCacheManager {
         firstInputTimestampNs_.store(0, std::memory_order_release);
 
         auto resetPlaybackBuffers = [&]() {
+            if (deps_.resetPlaybackBuffer) {
+                deps_.resetPlaybackBuffer();
+                return;
+            }
             if (deps_.outputBufferLeft && deps_.outputBufferRight) {
                 deps_.outputBufferLeft->clear();
                 deps_.outputBufferRight->clear();

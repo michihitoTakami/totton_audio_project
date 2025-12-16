@@ -7,7 +7,7 @@
 #include "crossfeed_engine.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/metrics/runtime_stats.h"
-#include "io/playback_buffer.h"
+#include "daemon/output/playback_buffer_manager.h"
 #include "logging/logger.h"
 
 #include <cuda_runtime_api.h>
@@ -25,11 +25,7 @@
 namespace audio_pipeline {
 
 struct BufferResources {
-    std::vector<float>* outputBufferLeft = nullptr;
-    std::vector<float>* outputBufferRight = nullptr;
-    size_t* outputReadPos = nullptr;
-    std::mutex* bufferMutex = nullptr;
-    std::condition_variable* bufferCv = nullptr;
+    daemon_output::PlaybackBufferManager* playbackBuffer = nullptr;
 };
 
 struct Upsampler {
@@ -114,8 +110,7 @@ class AudioPipeline {
 
 template <typename Container>
 size_t AudioPipeline::enqueueOutputFramesLocked(const Container& left, const Container& right) {
-    if (!hasBufferState() || !deps_.buffer.bufferMutex || !deps_.buffer.outputBufferLeft ||
-        !deps_.buffer.outputBufferRight || !deps_.buffer.outputReadPos) {
+    if (!hasBufferState() || !deps_.buffer.playbackBuffer) {
         return 0;
     }
 
@@ -124,53 +119,25 @@ size_t AudioPipeline::enqueueOutputFramesLocked(const Container& left, const Con
         return 0;
     }
 
-    size_t capacityFrames = 1;
-    if (deps_.maxOutputBufferFrames) {
-        capacityFrames = std::max<size_t>(1, deps_.maxOutputBufferFrames());
-    }
-
-    size_t bufferSize = deps_.buffer.outputBufferLeft->size();
-    size_t currentFrames = (bufferSize >= *deps_.buffer.outputReadPos)
-                               ? (bufferSize - *deps_.buffer.outputReadPos)
-                               : 0;
-    auto decision =
-        PlaybackBuffer::planCapacityEnforcement(currentFrames, framesAvailable, capacityFrames);
-
-    size_t totalDropped = decision.dropFromExisting + decision.newDataOffset;
-    if (totalDropped > 0) {
-        int outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
-        if (deps_.currentOutputRate) {
-            outputRate = deps_.currentOutputRate();
-            if (outputRate <= 0) {
-                outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
-            }
+    int outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
+    if (deps_.currentOutputRate) {
+        outputRate = deps_.currentOutputRate();
+        if (outputRate <= 0) {
+            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
         }
-        float seconds = static_cast<float>(totalDropped) / static_cast<float>(outputRate);
-        LOG_WARN(
-            "Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, max={}]",
-            totalDropped, seconds, currentFrames, framesAvailable, capacityFrames);
-        runtime_stats::addDroppedFrames(totalDropped);
     }
 
-    if (decision.dropFromExisting > 0) {
-        *deps_.buffer.outputReadPos += decision.dropFromExisting;
-    }
-
-    size_t minFramesToRemove = capacityFrames;
-    trimInternal(minFramesToRemove);
-
-    if (decision.framesToStore == 0) {
+    size_t stored = 0;
+    size_t dropped = 0;
+    if (!deps_.buffer.playbackBuffer->enqueue(left.data(), right.data(), framesAvailable,
+                                              outputRate, stored, dropped)) {
+        LOG_ERROR("Failed to enqueue output frames into playback buffer");
         return 0;
     }
-
-    size_t startIndex = framesAvailable - decision.framesToStore;
-    auto startOffset = static_cast<std::ptrdiff_t>(startIndex);
-    auto endOffset = static_cast<std::ptrdiff_t>(framesAvailable);
-    deps_.buffer.outputBufferLeft->insert(deps_.buffer.outputBufferLeft->end(),
-                                          left.begin() + startOffset, left.begin() + endOffset);
-    deps_.buffer.outputBufferRight->insert(deps_.buffer.outputBufferRight->end(),
-                                           right.begin() + startOffset, right.begin() + endOffset);
-    return decision.framesToStore;
+    if (dropped > 0) {
+        runtime_stats::addDroppedFrames(dropped);
+    }
+    return stored;
 }
 
 }  // namespace audio_pipeline
