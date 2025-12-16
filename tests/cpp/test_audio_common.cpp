@@ -6,7 +6,7 @@
  */
 
 #include "audio/audio_utils.h"
-#include "audio_ring_buffer.h"
+#include "io/audio_ring_buffer.h"
 
 #include <cmath>
 #include <gtest/gtest.h>

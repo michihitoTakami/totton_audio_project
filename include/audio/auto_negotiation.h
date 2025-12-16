@@ -2,7 +2,7 @@
 #define AUTO_NEGOTIATION_H
 
 #include "convolution_engine.h"
-#include "dac_capability.h"
+#include "io/dac_capability.h"
 
 #include <string>
 

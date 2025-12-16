@@ -283,7 +283,7 @@ target_compile_options(zeromq_interface PRIVATE
 
 # DAC Capability Library (CPU-only, ALSA required)
 add_library(dac_capability STATIC
-    src/dac_capability.cpp
+    src/io/dac_capability.cpp
 )
 target_link_libraries(dac_capability PUBLIC
     ${ALSA_LIBRARIES}
