@@ -634,6 +634,10 @@ class GPUUpsampler {
     void unregisterHostBuffers();
     cufftHandle partitionImpulsePlanInverse_ = 0;
     DeviceSample* d_partitionImpulse_ = nullptr;
+
+   public:
+    // Note: streaming I/O buffers are caller-owned. For RT safety, caller must pre-size them so
+    // processStreamBlock never grows capacity.
 };
 
 // Utility functions

@@ -59,6 +59,11 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     std::lock_guard<std::mutex> inputLock(*deps_.inputMutex);
 
     const size_t frames = static_cast<size_t>(nFrames);
+    if (frames > workLeft_.capacity() || frames > workRight_.capacity()) {
+        LOG_ERROR("Input frames {} exceed work buffer capacity (L:{} R:{})", frames,
+                  workLeft_.capacity(), workRight_.capacity());
+        return false;
+    }
     workLeft_.resize(frames);
     workRight_.resize(frames);
     AudioUtils::deinterleaveStereo(inputSamples, workLeft_.data(), workRight_.data(), nFrames);
@@ -79,6 +84,11 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         }
         auto ratio = static_cast<size_t>(deps_.config->upsampleRatio);
         size_t outputFrames = frames * ratio;
+        if (outputFrames > outputLeft->capacity() || outputFrames > outputRight->capacity()) {
+            LOG_ERROR("Fallback output frames {} exceed buffer capacity (L:{} R:{})", outputFrames,
+                      outputLeft->capacity(), outputRight->capacity());
+            return false;
+        }
         outputLeft->assign(outputFrames, 0.0f);
         outputRight->assign(outputFrames, 0.0f);
         for (size_t i = 0; i < frames; ++i) {

@@ -185,6 +185,16 @@ class HRTFProcessor {
                             std::vector<float>& streamInputBufferR, size_t& streamInputAccumulatedL,
                             size_t& streamInputAccumulatedR);
 
+    // Prepare (pin) host streaming buffers outside the RT path.
+    //
+    // This registers the underlying vector capacity once via cudaHostRegister.
+    // Caller must keep the same vector instances and must not change their capacity while
+    // streaming. Call this after resizing/reserving buffers and before starting steady-state
+    // processing.
+    bool prepareStreamingHostBuffers(std::vector<float>& streamInputBufferL,
+                                     std::vector<float>& streamInputBufferR,
+                                     std::vector<float>& outputL, std::vector<float>& outputR);
+
     // Process offline (non-streaming) audio
     bool processStereo(const float* inputL, const float* inputR, size_t inputFrames,
                        std::vector<float>& outputL, std::vector<float>& outputR);
@@ -195,6 +205,10 @@ class HRTFProcessor {
     // Get streaming buffer requirements
     size_t getStreamValidInputPerBlock() const {
         return streamValidInputPerBlock_;
+    }
+
+    size_t getStreamValidOutputPerBlock() const {
+        return static_cast<size_t>(validOutputPerBlock_);
     }
 
     // Get filter tap count
@@ -273,7 +287,7 @@ class HRTFProcessor {
     // This saves memory, especially important for Jetson Unified Memory
     void releaseHostCoefficients();
 
-    void registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr, size_t* trackedBytes,
+    bool registerStreamBuffer(std::vector<float>& buffer, void** trackedPtr, size_t* trackedBytes,
                               const char* context);
 
     // Get filter index for (size, family) combination

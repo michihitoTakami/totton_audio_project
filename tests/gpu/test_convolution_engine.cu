@@ -33,6 +33,13 @@ static void prepareStreamInputBuffer(GPUUpsampler& upsampler, StreamFloatVector&
     buffer.resize(requiredSize, 0.0f);
 }
 
+// Helper: streaming output buffer must be pre-sized (RT-equivalent; no growth in processStreamBlock)
+static void prepareStreamOutputBuffer(GPUUpsampler& upsampler, StreamFloatVector& buffer) {
+    const size_t framesPerBlock =
+        upsampler.getStreamValidInputPerBlock() * static_cast<size_t>(upsampler.getUpsampleRatio());
+    buffer.reserve(framesPerBlock);
+}
+
 // RAII wrapper for temporary coefficient directory
 // Automatically cleans up on destruction (handles ASSERT_* early returns)
 class TempCoeffDir {
@@ -1433,6 +1440,7 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_ResetsStreamingState) {
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     // Process a few blocks
     for (int i = 0; i < 3; ++i) {
@@ -1475,6 +1483,7 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_ReinitializeStreaming) 
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     // Process should work with new rate
     bool result = upsampler.processStreamBlock(
@@ -1500,6 +1509,7 @@ TEST_F(ConvolutionEngineTest, Issue839_StreamBlock_NotAttenuated) {
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     const size_t frames = upsampler.getStreamValidInputPerBlock();
     ASSERT_GT(frames, 0u);
@@ -1621,6 +1631,7 @@ TEST_F(ConvolutionEngineTest, Issue219_RateSwitchWithStreamingActive) {
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     // Process a few blocks
     for (int i = 0; i < 3; ++i) {
@@ -1733,6 +1744,7 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_RequiresStreamingReinit
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     bool result = upsampler.processStreamBlock(
         input.data(), inputFrames, output,
@@ -1768,7 +1780,8 @@ TEST_F(ConvolutionEngineTest, Issue219_MultipleRateSwitchesWithStreaming) {
         StreamFloatVector output;
         StreamFloatVector streamInputBuffer;
         size_t streamInputAccumulated = 0;
-    prepareStreamInputBuffer(upsampler, streamInputBuffer);
+        prepareStreamInputBuffer(upsampler, streamInputBuffer);
+        prepareStreamOutputBuffer(upsampler, output);
 
         bool result = upsampler.processStreamBlock(
             input.data(), inputFrames, output,
@@ -1795,6 +1808,7 @@ TEST_F(ConvolutionEngineTest, Issue219_SwitchToInputRate_CallsResetStreaming) {
     StreamFloatVector streamInputBuffer;
     size_t streamInputAccumulated = 0;
     prepareStreamInputBuffer(upsampler, streamInputBuffer);
+    prepareStreamOutputBuffer(upsampler, output);
 
     // Process a few blocks
     for (int i = 0; i < 3; ++i) {

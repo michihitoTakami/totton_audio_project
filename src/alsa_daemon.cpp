@@ -184,6 +184,23 @@ static size_t get_max_output_buffer_frames() {
     return static_cast<size_t>(frames);
 }
 
+static size_t compute_stream_buffer_capacity(size_t streamValidInputPerBlock) {
+    using namespace DaemonConstants;
+    size_t frames = static_cast<size_t>(DEFAULT_BLOCK_SIZE);
+    if (g_state.config.blockSize > 0) {
+        frames = std::max(frames, static_cast<size_t>(g_state.config.blockSize));
+    }
+    if (g_state.config.periodSize > 0) {
+        frames = std::max(frames, static_cast<size_t>(g_state.config.periodSize));
+    }
+    if (g_state.config.loopback.periodFrames > 0) {
+        frames = std::max(frames, static_cast<size_t>(g_state.config.loopback.periodFrames));
+    }
+    frames = std::max(frames, streamValidInputPerBlock);
+    // 2x safety margin for bursty upstream (no reallocation in RT path)
+    return frames * 2;
+}
+
 // Pending rate change (set by input event handlers, processed in main loop)
 // Value: 0 = no change pending, >0 = detected input sample rate
 
@@ -670,19 +687,15 @@ static bool reinitialize_streaming_for_legacy_mode() {
         return false;
     }
 
-    size_t buffer_capacity = g_state.upsampler->getStreamValidInputPerBlock() * 2;
-    if (buffer_capacity > 0) {
-        g_state.streaming.streamInputLeft.resize(buffer_capacity, 0.0f);
-        g_state.streaming.streamInputRight.resize(buffer_capacity, 0.0f);
-    } else {
-        g_state.streaming.streamInputLeft.clear();
-        g_state.streaming.streamInputRight.clear();
-    }
+    size_t buffer_capacity =
+        compute_stream_buffer_capacity(g_state.upsampler->getStreamValidInputPerBlock());
+    g_state.streaming.streamInputLeft.resize(buffer_capacity, 0.0f);
+    g_state.streaming.streamInputRight.resize(buffer_capacity, 0.0f);
     g_state.streaming.streamAccumulatedLeft = 0;
     g_state.streaming.streamAccumulatedRight = 0;
 
-    size_t upsampler_output_capacity = g_state.upsampler->getStreamValidInputPerBlock() *
-                                       g_state.upsampler->getUpsampleRatio() * 2;
+    size_t upsampler_output_capacity =
+        buffer_capacity * static_cast<size_t>(g_state.upsampler->getUpsampleRatio());
     g_state.streaming.upsamplerOutputLeft.reserve(upsampler_output_capacity);
     g_state.streaming.upsamplerOutputRight.reserve(upsampler_output_capacity);
 
@@ -765,11 +778,16 @@ static bool handle_rate_switch(int newInputRate) {
         newOutputRate = g_state.upsampler->getOutputSampleRate();
         newUpsampleRatio = g_state.upsampler->getUpsampleRatio();
 
-        buffer_capacity = g_state.upsampler->getStreamValidInputPerBlock() * 2;
+        buffer_capacity =
+            compute_stream_buffer_capacity(g_state.upsampler->getStreamValidInputPerBlock());
         g_state.streaming.streamInputLeft.resize(buffer_capacity, 0.0f);
         g_state.streaming.streamInputRight.resize(buffer_capacity, 0.0f);
         g_state.streaming.streamAccumulatedLeft = 0;
         g_state.streaming.streamAccumulatedRight = 0;
+        size_t upsampler_output_capacity =
+            buffer_capacity * static_cast<size_t>(g_state.upsampler->getUpsampleRatio());
+        g_state.streaming.upsamplerOutputLeft.reserve(upsampler_output_capacity);
+        g_state.streaming.upsamplerOutputRight.reserve(upsampler_output_capacity);
 
         if (g_state.softMute.controller) {
             delete g_state.softMute.controller;
@@ -1500,17 +1518,17 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Pre-allocate streaming input buffers (based on streamValidInputPerBlock_)
-        // Use 2x safety margin to handle timing variations
-        size_t buffer_capacity = g_state.upsampler->getStreamValidInputPerBlock() * 2;
+        // Pre-allocate streaming input buffers (avoid RT reallocations)
+        size_t buffer_capacity =
+            compute_stream_buffer_capacity(g_state.upsampler->getStreamValidInputPerBlock());
         g_state.streaming.streamInputLeft.resize(buffer_capacity, 0.0f);
         g_state.streaming.streamInputRight.resize(buffer_capacity, 0.0f);
         std::cout << "Streaming buffer capacity: " << buffer_capacity
-                  << " samples (2x streamValidInputPerBlock)" << '\n';
+                  << " samples (pre-sized for RT path)" << '\n';
         g_state.streaming.streamAccumulatedLeft = 0;
         g_state.streaming.streamAccumulatedRight = 0;
         size_t upsampler_output_capacity =
-            g_state.upsampler->getStreamValidInputPerBlock() * g_state.config.upsampleRatio * 2;
+            buffer_capacity * static_cast<size_t>(g_state.config.upsampleRatio);
         g_state.streaming.upsamplerOutputLeft.reserve(upsampler_output_capacity);
         g_state.streaming.upsamplerOutputRight.reserve(upsampler_output_capacity);
         initialize_streaming_cache_manager();
@@ -1539,16 +1557,29 @@ int main(int argc, char* argv[]) {
                                   << ")" << '\n';
 
                         // Pre-allocate crossfeed streaming buffers
-                        size_t cf_buffer_capacity =
-                            g_state.crossfeed.processor->getStreamValidInputPerBlock() * 2;
+                        size_t cf_buffer_capacity = compute_stream_buffer_capacity(
+                            g_state.crossfeed.processor->getStreamValidInputPerBlock());
                         g_state.crossfeed.cfStreamInputLeft.resize(cf_buffer_capacity, 0.0f);
                         g_state.crossfeed.cfStreamInputRight.resize(cf_buffer_capacity, 0.0f);
                         g_state.crossfeed.cfStreamAccumulatedLeft = 0;
                         g_state.crossfeed.cfStreamAccumulatedRight = 0;
-                        g_state.crossfeed.cfOutputBufferLeft.reserve(cf_buffer_capacity);
-                        g_state.crossfeed.cfOutputBufferRight.reserve(cf_buffer_capacity);
+                        size_t cf_output_capacity =
+                            std::max(cf_buffer_capacity,
+                                     g_state.crossfeed.processor->getStreamValidOutputPerBlock());
+                        g_state.crossfeed.cfOutputLeft.reserve(cf_output_capacity);
+                        g_state.crossfeed.cfOutputRight.reserve(cf_output_capacity);
+                        g_state.crossfeed.cfOutputBufferLeft.reserve(cf_output_capacity);
+                        g_state.crossfeed.cfOutputBufferRight.reserve(cf_output_capacity);
                         std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity
                                   << " samples" << '\n';
+
+                        if (!g_state.crossfeed.processor->prepareStreamingHostBuffers(
+                                g_state.crossfeed.cfStreamInputLeft,
+                                g_state.crossfeed.cfStreamInputRight,
+                                g_state.crossfeed.cfOutputLeft, g_state.crossfeed.cfOutputRight)) {
+                            std::cerr << "  Crossfeed: Failed to prepare pinned host buffers"
+                                      << '\n';
+                        }
 
                         // Crossfeed is initialized but disabled by default
                         g_state.crossfeed.enabled.store(false);
