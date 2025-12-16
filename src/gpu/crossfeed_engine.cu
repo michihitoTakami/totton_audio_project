@@ -22,10 +22,8 @@ namespace CrossfeedEngine {
 
 // Complex multiply-accumulate kernel
 // out += in * filter (accumulates into output)
-__global__ void complexMultiplyAccumulateKernel(cufftComplex* out,
-                                                  const cufftComplex* in,
-                                                  const cufftComplex* filter,
-                                                  int size) {
+__global__ void complexMultiplyAccumulateKernel(cufftComplex* out, const cufftComplex* in,
+                                                const cufftComplex* filter, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         float a = in[idx].x;
@@ -40,10 +38,8 @@ __global__ void complexMultiplyAccumulateKernel(cufftComplex* out,
 
 // Complex multiply and store kernel
 // out = in * filter (replaces output)
-__global__ void complexMultiplyStoreKernel(cufftComplex* out,
-                                            const cufftComplex* in,
-                                            const cufftComplex* filter,
-                                            int size) {
+__global__ void complexMultiplyStoreKernel(cufftComplex* out, const cufftComplex* in,
+                                           const cufftComplex* filter, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         float a = in[idx].x;
@@ -192,8 +188,8 @@ HRTFProcessor::~HRTFProcessor() {
     cleanup();
 }
 
-bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
-                                HeadSize initialSize, RateFamily initialFamily) {
+bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize, HeadSize initialSize,
+                               RateFamily initialFamily) {
     // Reset host-side state in case initialize() is retried
     filterTaps_ = 0;
     for (int i = 0; i < NUM_CONFIGS; ++i) {
@@ -285,9 +281,8 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize,
     return true;
 }
 
-bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
-                                          const std::string& jsonPath,
-                                          HeadSize size, RateFamily family, int expectedTaps) {
+bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath, const std::string& jsonPath,
+                                         HeadSize size, RateFamily family, int expectedTaps) {
     // Check if files exist
     std::ifstream binFile(binPath, std::ios::binary);
     std::ifstream jsonFile(jsonPath);
@@ -348,8 +343,8 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
         // Expected: 4 channels * nTaps * sizeof(float)
         size_t expectedSize = static_cast<size_t>(md.nChannels) * md.nTaps * sizeof(float);
         if (fileSize != expectedSize) {
-            std::cerr << "Error: HRTF file size mismatch: expected " << expectedSize
-                      << ", got " << fileSize << std::endl;
+            std::cerr << "Error: HRTF file size mismatch: expected " << expectedSize << ", got "
+                      << fileSize << std::endl;
             return false;
         }
 
@@ -357,8 +352,7 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath,
         std::vector<float> raw(totalFloats);
         binFile.read(reinterpret_cast<char*>(raw.data()), totalFloats * sizeof(float));
         if (!binFile) {
-            std::cerr << "Error: Failed to read HRTF binary data (" << binPath << ")"
-                      << std::endl;
+            std::cerr << "Error: Failed to read HRTF binary data (" << binPath << ")" << std::endl;
             return false;
         }
 
@@ -418,7 +412,8 @@ bool HRTFProcessor::setupGPUResources() {
         }
 
         // Calculate FFT size for Overlap-Save
-        size_t fftSizeNeeded = static_cast<size_t>(blockSize_) + static_cast<size_t>(filterTaps_) - 1;
+        size_t fftSizeNeeded =
+            static_cast<size_t>(blockSize_) + static_cast<size_t>(filterTaps_) - 1;
         fftSize_ = 1;
         while (static_cast<size_t>(fftSize_) < fftSizeNeeded) {
             fftSize_ *= 2;
@@ -463,12 +458,9 @@ bool HRTFProcessor::setupGPUResources() {
                        "cudaMalloc conv RL");
         checkCudaError(cudaMalloc(&d_convRR_, fftComplexSize * sizeof(cufftComplex)),
                        "cudaMalloc conv RR");
-        checkCudaError(cudaMalloc(&d_outputL_, fftSize_ * sizeof(float)),
-                       "cudaMalloc output L");
-        checkCudaError(cudaMalloc(&d_outputR_, fftSize_ * sizeof(float)),
-                       "cudaMalloc output R");
-        checkCudaError(cudaMalloc(&d_tempConv_, fftSize_ * sizeof(float)),
-                       "cudaMalloc temp conv");
+        checkCudaError(cudaMalloc(&d_outputL_, fftSize_ * sizeof(float)), "cudaMalloc output L");
+        checkCudaError(cudaMalloc(&d_outputR_, fftSize_ * sizeof(float)), "cudaMalloc output R");
+        checkCudaError(cudaMalloc(&d_tempConv_, fftSize_ * sizeof(float)), "cudaMalloc temp conv");
 
         // Device overlap buffers
         checkCudaError(cudaMalloc(&d_overlapL_, overlapSize_ * sizeof(float)),
@@ -499,12 +491,11 @@ bool HRTFProcessor::setupGPUResources() {
             for (int c = 0; c < NUM_CHANNELS; ++c) {
                 checkCudaError(cudaMemset(d_filterPadded, 0, fftSize_ * sizeof(float)),
                                "cudaMemset filter padded");
-                size_t copyTaps =
-                    std::min(static_cast<size_t>(filterTaps_), h_filterCoeffs_[configIdx][c].size());
-                checkCudaError(
-                    cudaMemcpy(d_filterPadded, h_filterCoeffs_[configIdx][c].data(),
-                               copyTaps * sizeof(float), cudaMemcpyHostToDevice),
-                    "cudaMemcpy filter to padded");
+                size_t copyTaps = std::min(static_cast<size_t>(filterTaps_),
+                                           h_filterCoeffs_[configIdx][c].size());
+                checkCudaError(cudaMemcpy(d_filterPadded, h_filterCoeffs_[configIdx][c].data(),
+                                          copyTaps * sizeof(float), cudaMemcpyHostToDevice),
+                               "cudaMemcpy filter to padded");
                 if (copyTaps < static_cast<size_t>(filterTaps_)) {
                     size_t remaining = static_cast<size_t>(filterTaps_) - copyTaps;
                     checkCudaError(
@@ -631,10 +622,8 @@ void HRTFProcessor::resetStreaming() {
     }
 }
 
-bool HRTFProcessor::processStereo(const float* inputL, const float* inputR,
-                                   size_t inputFrames,
-                                   std::vector<float>& outputL,
-                                   std::vector<float>& outputR) {
+bool HRTFProcessor::processStereo(const float* inputL, const float* inputR, size_t inputFrames,
+                                  std::vector<float>& outputL, std::vector<float>& outputR) {
     if (!initialized_ || !enabled_) {
         // Passthrough when disabled
         outputL.assign(inputL, inputL + inputFrames);
@@ -655,8 +644,8 @@ bool HRTFProcessor::processStereo(const float* inputL, const float* inputR,
 
         while (outputPos < inputFrames) {
             size_t remainingSamples = inputFrames - inputPos;
-            size_t currentBlockSize = std::min(remainingSamples,
-                                               static_cast<size_t>(validOutputPerBlock_));
+            size_t currentBlockSize =
+                std::min(remainingSamples, static_cast<size_t>(validOutputPerBlock_));
 
             // Prepare padded input: [overlap | new data]
             checkCudaError(cudaMemsetAsync(d_paddedInputL_, 0, fftSize_ * sizeof(float), stream_),
@@ -724,8 +713,8 @@ bool HRTFProcessor::processStereo(const float* inputL, const float* inputR,
             scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream_>>>(d_outputR_, fftSize_, scale);
 
             // Extract valid output (skip first overlapSize_ samples)
-            size_t validOutputSize = std::min(inputFrames - outputPos,
-                                              static_cast<size_t>(validOutputPerBlock_));
+            size_t validOutputSize =
+                std::min(inputFrames - outputPos, static_cast<size_t>(validOutputPerBlock_));
 
             checkCudaError(
                 cudaMemcpyAsync(outputL.data() + outputPos, d_outputL_ + overlapSize_,
@@ -743,11 +732,13 @@ bool HRTFProcessor::processStereo(const float* inputL, const float* inputR,
                 if (overlapCopyEnd <= static_cast<size_t>(fftSize_)) {
                     checkCudaError(
                         cudaMemcpyAsync(overlapBufferL_.data(), d_paddedInputL_ + overlapCopyStart,
-                                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream_),
+                                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost,
+                                        stream_),
                         "save overlap L");
                     checkCudaError(
                         cudaMemcpyAsync(overlapBufferR_.data(), d_paddedInputR_ + overlapCopyStart,
-                                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost, stream_),
+                                        overlapSize_ * sizeof(float), cudaMemcpyDeviceToHost,
+                                        stream_),
                         "save overlap R");
                 }
             }
@@ -771,15 +762,12 @@ bool HRTFProcessor::processStereo(const float* inputL, const float* inputR,
     }
 }
 
-bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
-                                         size_t inputFrames,
-                                         std::vector<float>& outputL,
-                                         std::vector<float>& outputR,
-                                         cudaStream_t stream,
-                                         std::vector<float>& streamInputBufferL,
-                                         std::vector<float>& streamInputBufferR,
-                                         size_t& streamInputAccumulatedL,
-                                         size_t& streamInputAccumulatedR) {
+bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR, size_t inputFrames,
+                                       std::vector<float>& outputL, std::vector<float>& outputR,
+                                       cudaStream_t stream, std::vector<float>& streamInputBufferL,
+                                       std::vector<float>& streamInputBufferR,
+                                       size_t& streamInputAccumulatedL,
+                                       size_t& streamInputAccumulatedR) {
     if (!initialized_ || !streamInitialized_) {
         return false;
     }
@@ -842,10 +830,10 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     registerStreamBuffer(streamInputBufferR, &pinnedStreamInputR_, &pinnedStreamInputRBytes_,
                          "cudaHostRegister crossfeed stream input R");
 
-    std::memcpy(streamInputBufferL.data() + streamInputAccumulatedL,
-                inputL, inputFrames * sizeof(float));
-    std::memcpy(streamInputBufferR.data() + streamInputAccumulatedR,
-                inputR, inputFrames * sizeof(float));
+    std::memcpy(streamInputBufferL.data() + streamInputAccumulatedL, inputL,
+                inputFrames * sizeof(float));
+    std::memcpy(streamInputBufferR.data() + streamInputAccumulatedR, inputR,
+                inputFrames * sizeof(float));
     streamInputAccumulatedL += inputFrames;
     streamInputAccumulatedR += inputFrames;
 
@@ -878,14 +866,12 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
                    "memset padded R");
 
     // Copy device overlap
-    checkCudaError(
-        cudaMemcpyAsync(d_paddedInputL_, d_overlapL_, overlapSize_ * sizeof(float),
-                        cudaMemcpyDeviceToDevice, stream),
-        "copy device overlap L");
-    checkCudaError(
-        cudaMemcpyAsync(d_paddedInputR_, d_overlapR_, overlapSize_ * sizeof(float),
-                        cudaMemcpyDeviceToDevice, stream),
-        "copy device overlap R");
+    checkCudaError(cudaMemcpyAsync(d_paddedInputL_, d_overlapL_, overlapSize_ * sizeof(float),
+                                   cudaMemcpyDeviceToDevice, stream),
+                   "copy device overlap L");
+    checkCudaError(cudaMemcpyAsync(d_paddedInputR_, d_overlapR_, overlapSize_ * sizeof(float),
+                                   cudaMemcpyDeviceToDevice, stream),
+                   "copy device overlap R");
 
     // Copy new input
     checkCudaError(
@@ -943,8 +929,8 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
 
     // Update device overlap using the actual tail of this block
     if (overlapSize_ > 0) {
-        size_t overlapSamples =
-            std::min(static_cast<size_t>(overlapSize_), static_cast<size_t>(streamValidInputPerBlock_));
+        size_t overlapSamples = std::min(static_cast<size_t>(overlapSize_),
+                                         static_cast<size_t>(streamValidInputPerBlock_));
         size_t overlapStart = streamValidInputPerBlock_ - overlapSamples;
         checkCudaError(
             cudaMemcpyAsync(d_overlapL_, d_paddedInputL_ + overlapSize_ + overlapStart,
@@ -1007,30 +993,50 @@ void HRTFProcessor::cleanup() {
     usingCombinedFilter_ = false;
 
     // Free working buffers
-    if (d_inputL_) cudaFree(d_inputL_);
-    if (d_inputR_) cudaFree(d_inputR_);
-    if (d_paddedInputL_) cudaFree(d_paddedInputL_);
-    if (d_paddedInputR_) cudaFree(d_paddedInputR_);
-    if (d_inputFFT_L_) cudaFree(d_inputFFT_L_);
-    if (d_inputFFT_R_) cudaFree(d_inputFFT_R_);
-    if (d_convLL_) cudaFree(d_convLL_);
-    if (d_convLR_) cudaFree(d_convLR_);
-    if (d_convRL_) cudaFree(d_convRL_);
-    if (d_convRR_) cudaFree(d_convRR_);
-    if (d_outputL_) cudaFree(d_outputL_);
-    if (d_outputR_) cudaFree(d_outputR_);
-    if (d_tempConv_) cudaFree(d_tempConv_);
-    if (d_overlapL_) cudaFree(d_overlapL_);
-    if (d_overlapR_) cudaFree(d_overlapR_);
+    if (d_inputL_)
+        cudaFree(d_inputL_);
+    if (d_inputR_)
+        cudaFree(d_inputR_);
+    if (d_paddedInputL_)
+        cudaFree(d_paddedInputL_);
+    if (d_paddedInputR_)
+        cudaFree(d_paddedInputR_);
+    if (d_inputFFT_L_)
+        cudaFree(d_inputFFT_L_);
+    if (d_inputFFT_R_)
+        cudaFree(d_inputFFT_R_);
+    if (d_convLL_)
+        cudaFree(d_convLL_);
+    if (d_convLR_)
+        cudaFree(d_convLR_);
+    if (d_convRL_)
+        cudaFree(d_convRL_);
+    if (d_convRR_)
+        cudaFree(d_convRR_);
+    if (d_outputL_)
+        cudaFree(d_outputL_);
+    if (d_outputR_)
+        cudaFree(d_outputR_);
+    if (d_tempConv_)
+        cudaFree(d_tempConv_);
+    if (d_overlapL_)
+        cudaFree(d_overlapL_);
+    if (d_overlapR_)
+        cudaFree(d_overlapR_);
 
     // Destroy cuFFT plans
-    if (fftPlanForward_) cufftDestroy(fftPlanForward_);
-    if (fftPlanInverse_) cufftDestroy(fftPlanInverse_);
+    if (fftPlanForward_)
+        cufftDestroy(fftPlanForward_);
+    if (fftPlanInverse_)
+        cufftDestroy(fftPlanInverse_);
 
     // Destroy streams
-    if (stream_) cudaStreamDestroy(stream_);
-    if (streamL_) cudaStreamDestroy(streamL_);
-    if (streamR_) cudaStreamDestroy(streamR_);
+    if (stream_)
+        cudaStreamDestroy(stream_);
+    if (streamL_)
+        cudaStreamDestroy(streamL_);
+    if (streamR_)
+        cudaStreamDestroy(streamR_);
 
     // Unregister pinned host buffers
     safeCudaHostUnregister(&pinnedStreamInputL_, &pinnedStreamInputLBytes_,
@@ -1082,12 +1088,10 @@ void HRTFProcessor::cleanup() {
     streamInitialized_ = false;
 }
 
-bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily,
-                                       const cufftComplex* combinedLL,
-                                       const cufftComplex* combinedLR,
-                                       const cufftComplex* combinedRL,
-                                       const cufftComplex* combinedRR,
-                                       size_t filterComplexCount) {
+bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily, const cufftComplex* combinedLL,
+                                      const cufftComplex* combinedLR,
+                                      const cufftComplex* combinedRL,
+                                      const cufftComplex* combinedRR, size_t filterComplexCount) {
     if (!initialized_) {
         std::cerr << "HRTFProcessor::setCombinedFilter: Not initialized" << std::endl;
         return false;
@@ -1100,9 +1104,8 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily,
 
     // Validate filter size matches expected FFT size
     if (filterComplexCount != filterFftSize_) {
-        std::cerr << "HRTFProcessor::setCombinedFilter: Filter size mismatch. "
-                  << "Expected " << filterFftSize_ << " complex values, got " << filterComplexCount
-                  << std::endl;
+        std::cerr << "HRTFProcessor::setCombinedFilter: Filter size mismatch. " << "Expected "
+                  << filterFftSize_ << " complex values, got " << filterComplexCount << std::endl;
         return false;
     }
 
@@ -1167,8 +1170,8 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily,
         resetStreaming();
     }
 
-    std::cout << "HRTFProcessor: Set combined filter for " << rateFamilyToString(rateFamily)
-              << " (" << filterComplexCount << " complex values)" << std::endl;
+    std::cout << "HRTFProcessor: Set combined filter for " << rateFamilyToString(rateFamily) << " ("
+              << filterComplexCount << " complex values)" << std::endl;
     return true;
 }
 
@@ -1183,13 +1186,19 @@ bool HRTFProcessor::generateWoodworthProfile(RateFamily rateFamily, float azimut
         return false;
     }
     if (filterTaps_ <= 0 || fftSize_ <= 0) {
-        std::cerr << "HRTFProcessor::generateWoodworthProfile: Invalid filter geometry" << std::endl;
+        std::cerr << "HRTFProcessor::generateWoodworthProfile: Invalid filter geometry"
+                  << std::endl;
         return false;
     }
 
     HRTF::WoodworthParams tuned = params;
     tuned.taps = static_cast<size_t>(filterTaps_);
-    tuned.sampleRate = (rateFamily == RateFamily::RATE_44K) ? 44100.0f : 48000.0f;
+    int familyOutputRate = getOutputSampleRate(rateFamily);
+    if (familyOutputRate <= 0) {
+        std::cerr << "HRTFProcessor::generateWoodworthProfile: Unknown rate family" << std::endl;
+        return false;
+    }
+    tuned.sampleRate = static_cast<float>(familyOutputRate);
 
     HRTF::WoodworthIRSet irSet = HRTF::generateWoodworthSet(azimuthDeg, tuned);
 
@@ -1226,33 +1235,30 @@ bool HRTFProcessor::generateWoodworthProfile(RateFamily rateFamily, float azimut
     };
 
     try {
-        checkCudaError(cudaMalloc(&d_temp, fftSize_ * sizeof(float)),
-                       "cudaMalloc woodworth temp");
+        checkCudaError(cudaMalloc(&d_temp, fftSize_ * sizeof(float)), "cudaMalloc woodworth temp");
         checkCudaError(cudaMalloc(&d_fftTemp, filterFftSize_ * sizeof(cufftComplex)),
                        "cudaMalloc woodworth FFT");
 
         auto convertChannel = [&](const std::vector<float>& timeDomain,
-                                  std::vector<cufftComplex>& freqDomain,
-                                  const char* context) {
+                                  std::vector<cufftComplex>& freqDomain, const char* context) {
             cudaStream_t workStream = stream_ ? stream_ : nullptr;
             size_t copyBytes =
                 std::min(static_cast<size_t>(filterTaps_), timeDomain.size()) * sizeof(float);
-            checkCudaError(
-                cudaMemsetAsync(d_temp, 0, fftSize_ * sizeof(float), workStream),
-                "cudaMemsetAsync woodworth temp");
+            checkCudaError(cudaMemsetAsync(d_temp, 0, fftSize_ * sizeof(float), workStream),
+                           "cudaMemsetAsync woodworth temp");
             if (copyBytes > 0) {
-                checkCudaError(
-                    cudaMemcpyAsync(d_temp, timeDomain.data(), copyBytes, cudaMemcpyHostToDevice,
-                                    workStream),
-                    "cudaMemcpyAsync woodworth temp");
+                checkCudaError(cudaMemcpyAsync(d_temp, timeDomain.data(), copyBytes,
+                                               cudaMemcpyHostToDevice, workStream),
+                               "cudaMemcpyAsync woodworth temp");
             }
-            checkCufftError(cufftSetStream(fftPlanForward_, workStream), "cufftSetStream woodworth");
+            checkCufftError(cufftSetStream(fftPlanForward_, workStream),
+                            "cufftSetStream woodworth");
             checkCufftError(cufftExecR2C(fftPlanForward_, d_temp, d_fftTemp), context);
             checkCudaError(cudaStreamSynchronize(workStream), "cudaStreamSynchronize woodworth");
             freqDomain.resize(filterFftSize_);
             checkCudaError(
-                cudaMemcpy(freqDomain.data(), d_fftTemp,
-                           filterFftSize_ * sizeof(cufftComplex), cudaMemcpyDeviceToHost),
+                cudaMemcpy(freqDomain.data(), d_fftTemp, filterFftSize_ * sizeof(cufftComplex),
+                           cudaMemcpyDeviceToHost),
                 "cudaMemcpy woodworth FFT");
         };
 
@@ -1328,8 +1334,7 @@ void HRTFProcessor::releaseHostCoefficients() {
     }
 
     if (freedBytes > 0) {
-        std::cout << "  Released HRTF CPU coefficient memory: "
-                  << (freedBytes / 1024) << " KB ("
+        std::cout << "  Released HRTF CPU coefficient memory: " << (freedBytes / 1024) << " KB ("
                   << freedBytes << " bytes)" << std::endl;
     }
 }
