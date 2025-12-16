@@ -14,10 +14,17 @@ RemainAfterExit=yes
 WorkingDirectory=/opt/magicbox/gpu_os
 
 # Compose v2 (docker compose). If you use legacy docker-compose, adjust accordingly.
-ExecStart=/usr/bin/docker compose -f raspberry_pi/usb_i2s_bridge/docker-compose.yml up -d --build
+#
+# 電源断→復帰などで /dev/snd が遅れて現れるケースがあるため、開始前に待つ。
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -e /dev/snd ] && exit 0; sleep 1; done; echo \"[usb-i2s-bridge] /dev/snd not found\" >&2; exit 1'
+#
+# NOTE: 起動時に毎回 --build するとネットワーク/ストレージ要因で失敗しやすいので避ける。
+ExecStart=/usr/bin/docker compose -f raspberry_pi/usb_i2s_bridge/docker-compose.yml up -d
 ExecStop=/usr/bin/docker compose -f raspberry_pi/usb_i2s_bridge/docker-compose.yml down
 
 TimeoutStartSec=0
+Restart=on-failure
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

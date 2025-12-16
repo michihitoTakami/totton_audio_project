@@ -43,9 +43,12 @@ After=network-online.target docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=${ROOT_DIR}
-ExecStart=/usr/bin/docker compose -f ${ROOT_DIR}/raspberry_pi/usb_i2s_bridge/docker-compose.yml up -d --build
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -e /dev/snd ] && exit 0; sleep 1; done; echo "[usb-i2s-bridge] /dev/snd not found" >&2; exit 1'
+ExecStart=/usr/bin/docker compose -f ${ROOT_DIR}/raspberry_pi/usb_i2s_bridge/docker-compose.yml up -d
 ExecStop=/usr/bin/docker compose -f ${ROOT_DIR}/raspberry_pi/usb_i2s_bridge/docker-compose.yml down
 TimeoutStartSec=0
+Restart=on-failure
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

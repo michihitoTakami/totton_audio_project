@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -343,6 +344,25 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
     last_observed_capture_format: Optional[str] = None
     current_mode = "silence" if cfg.keep_silence_when_no_capture else "capture"
     conversion = False
+    proc_holder: dict[str, subprocess.Popen | None] = {"proc": None}
+
+    # Docker/systemd からの SIGTERM で子プロセスが残らないようにする
+    def _handle_term(signum: int, frame) -> None:  # noqa: ANN001
+        _ = signum, frame
+        proc = proc_holder.get("proc")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_term)
+    signal.signal(signal.SIGINT, _handle_term)
 
     while True:
         rate, fmt = _probe_capture_params(cfg.capture_device)
@@ -392,6 +412,7 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
             f"conversion={conversion} cmd={' '.join(cmd)}"
         )
         proc = subprocess.Popen(cmd)
+        proc_holder["proc"] = proc
         # ポーリングでレート変化・切断を検知したら再起動
         try:
             while True:
@@ -657,6 +678,18 @@ def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
                 "silence" if self.cfg.keep_silence_when_no_capture else "capture"
             )
             self._start(initial_mode, self.current_rate, None)
+
+            # Docker/systemd からの SIGTERM でパイプラインを確実に落として終了する
+            def _handle_term(signum: int, frame) -> None:  # noqa: ANN001
+                _ = signum, frame
+                try:
+                    if self.pipeline is not None:
+                        self.pipeline.set_state(Gst.State.NULL)
+                finally:
+                    self.loop.quit()
+
+            signal.signal(signal.SIGTERM, _handle_term)
+            signal.signal(signal.SIGINT, _handle_term)
 
             def _poll() -> bool:
                 try:
