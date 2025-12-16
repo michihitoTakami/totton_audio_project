@@ -17,6 +17,11 @@
 namespace streaming_cache {
 
 struct StreamingCacheDependencies {
+    // Serialize cache flush against AudioPipeline::process() to avoid resetting
+    // streaming overlap state while the producer thread is actively using it.
+    // Optional: when null, flushing proceeds without this outer lock.
+    std::mutex* inputMutex = nullptr;
+
     std::vector<float>* outputBufferLeft = nullptr;
     std::vector<float>* outputBufferRight = nullptr;
     std::mutex* bufferMutex = nullptr;
@@ -67,6 +72,12 @@ class StreamingCacheManager {
 
    private:
     void flushCachesInternal(std::chrono::nanoseconds gap) {
+        // Prevent concurrent modifications from the producer (AudioPipeline::process).
+        std::unique_lock<std::mutex> inputLock;
+        if (deps_.inputMutex) {
+            inputLock = std::unique_lock<std::mutex>(*deps_.inputMutex);
+        }
+
         // リセット後に再度グレース期間を適用するため、入力タイムスタンプを初期化
         lastInputTimestampNs_.store(0, std::memory_order_release);
         firstInputTimestampNs_.store(0, std::memory_order_release);

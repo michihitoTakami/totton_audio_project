@@ -20,6 +20,7 @@
 #include "daemon/control/handlers/handler_registry.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/alsa_output.h"
+#include "daemon/output/alsa_pcm_controller.h"
 #include "daemon/output/alsa_write_loop.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/shutdown_manager.h"
@@ -573,6 +574,7 @@ static void reset_crossfeed_stream_state_locked() {
 
 static void initialize_streaming_cache_manager() {
     streaming_cache::StreamingCacheDependencies deps;
+    deps.inputMutex = &g_input_process_mutex;
     deps.outputBufferLeft = &g_output_buffer_left;
     deps.outputBufferRight = &g_output_buffer_right;
     deps.bufferMutex = &g_buffer_mutex;
@@ -628,72 +630,6 @@ static runtime_stats::Dependencies build_runtime_stats_dependencies() {
     deps.limiterGain = &g_limiter_gain;
     deps.effectiveGain = &g_effective_gain;
     return deps;
-}
-
-static void flush_audio_caches_for_output_reset(const char* reason) {
-    // When the output device is switched/disconnected, we must flush producer/streaming state.
-    // Otherwise, the streaming overlap state (and/or buffered audio) can replay short segments,
-    // sounding like a broken record.
-    //
-    // Lock ordering note:
-    // - AudioPipeline crossfeed path locks: g_crossfeed_mutex -> g_buffer_mutex
-    // - We follow the same order to avoid deadlocks.
-    //
-    // Concurrency note:
-    // - AudioPipeline::process() holds g_input_process_mutex while calling the upsampler and
-    //   manipulating streaming buffers. Resetting streaming overlap concurrently can cause
-    //   glitches or undefined behavior, so we serialize against the input processing mutex.
-    std::unique_lock<std::mutex> input_lock(g_input_process_mutex);
-
-    std::unique_lock<std::mutex> cf_lock;
-    if (g_crossfeed_enabled.load(std::memory_order_relaxed)) {
-        cf_lock = std::unique_lock<std::mutex>(g_crossfeed_mutex);
-        reset_crossfeed_stream_state_locked();
-    }
-
-    {
-        std::scoped_lock<std::mutex, std::mutex> lock(g_streaming_mutex, g_buffer_mutex);
-
-        g_output_buffer_left.clear();
-        g_output_buffer_right.clear();
-        g_output_read_pos = 0;
-
-        // Reset streaming input accumulation and internal overlap state.
-        g_stream_input_left.clear();
-        g_stream_input_right.clear();
-        g_stream_accumulated_left = 0;
-        g_stream_accumulated_right = 0;
-        if (g_upsampler) {
-            g_upsampler->resetStreaming();
-        }
-    }
-
-    if (reason && *reason) {
-        LOG_INFO("[ALSA] Flushed audio caches: {}", reason);
-    } else {
-        LOG_INFO("[ALSA] Flushed audio caches");
-    }
-}
-
-static void mark_dac_connected(
-    const std::string& device,
-    const char* log_message = "DAC connected - input processing enabled") {
-    g_output_ready.store(true, std::memory_order_release);
-    LOG_INFO(log_message);
-    if (g_dac_manager) {
-        g_dac_manager->markActiveDevice(device, true);
-    }
-}
-
-static void mark_dac_disconnected(
-    const std::string& device,
-    const char* log_message = "DAC disconnected - stopping input processing") {
-    g_output_ready.store(false, std::memory_order_release);
-    flush_audio_caches_for_output_reset("dac disconnected");
-    LOG_INFO(log_message);
-    if (g_dac_manager) {
-        g_dac_manager->markActiveDevice(device, false);
-    }
 }
 
 // ========== PID File Lock (flock-based) ==========
@@ -1065,217 +1001,6 @@ static void load_runtime_config() {
     g_effective_gain.store(initialOutput, std::memory_order_relaxed);
 }
 
-// Open and configure ALSA device. Returns nullptr on failure.
-static snd_pcm_t* open_and_configure_pcm(const std::string& device) {
-    snd_pcm_t* pcm_handle = nullptr;
-    int err;
-
-    if (device.empty()) {
-        std::cerr << "ALSA: No output device selected yet" << std::endl;
-        return nullptr;
-    }
-
-    err = snd_pcm_open(&pcm_handle, device.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
-    if (err < 0) {
-        std::cerr << "ALSA: Cannot open device " << device << ": " << snd_strerror(err)
-                  << std::endl;
-        return nullptr;
-    }
-
-    // Set hardware parameters
-    snd_pcm_hw_params_t* hw_params;
-    snd_pcm_hw_params_alloca(&hw_params);
-    snd_pcm_hw_params_any(pcm_handle, hw_params);
-
-    if ((err = snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
-            0 ||
-        (err = snd_pcm_hw_params_set_format(pcm_handle, hw_params, SND_PCM_FORMAT_S32_LE)) < 0) {
-        std::cerr << "ALSA: Cannot set access/format: " << snd_strerror(err) << std::endl;
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    int configuredOutputRate = g_current_output_rate.load(std::memory_order_acquire);
-    if (configuredOutputRate <= 0) {
-        configuredOutputRate = g_input_sample_rate * g_config.upsampleRatio;
-    }
-    unsigned int rate = static_cast<unsigned int>(configuredOutputRate);
-    if ((err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0)) < 0) {
-        std::cerr << "ALSA: Cannot set sample rate: " << snd_strerror(err) << std::endl;
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-    if ((err = snd_pcm_hw_params_set_channels(pcm_handle, hw_params, CHANNELS)) < 0) {
-        std::cerr << "ALSA: Cannot set channel count: " << snd_strerror(err) << std::endl;
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    snd_pcm_uframes_t buffer_size = static_cast<snd_pcm_uframes_t>(g_config.bufferSize);
-    snd_pcm_uframes_t period_size = static_cast<snd_pcm_uframes_t>(g_config.periodSize);
-    snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size);
-    snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, 0);
-
-    if ((err = snd_pcm_hw_params(pcm_handle, hw_params)) < 0) {
-        std::cerr << "ALSA: Cannot set hardware parameters: " << snd_strerror(err) << std::endl;
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    if ((err = snd_pcm_prepare(pcm_handle)) < 0) {
-        std::cerr << "ALSA: Cannot prepare device: " << snd_strerror(err) << std::endl;
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    // Set software parameters for XRUN detection (Issue #139)
-    snd_pcm_sw_params_t* sw_params;
-    snd_pcm_sw_params_alloca(&sw_params);
-    if (snd_pcm_sw_params_current(pcm_handle, sw_params) == 0) {
-        // Enable XRUN detection
-        snd_pcm_sw_params_set_start_threshold(pcm_handle, sw_params, buffer_size);
-        snd_pcm_sw_params_set_avail_min(pcm_handle, sw_params, period_size);
-        if (snd_pcm_sw_params(pcm_handle, sw_params) < 0) {
-            std::cerr << "ALSA: Warning - Failed to set software parameters" << std::endl;
-        }
-    }
-
-    std::cout << "ALSA: Output device " << device << " configured (" << rate
-              << " Hz, 32-bit int, stereo)" << " buffer " << buffer_size << " frames, period "
-              << period_size << " frames" << std::endl;
-    return pcm_handle;
-}
-
-// Reconfigure ALSA PCM for new sample rate (Issue #219)
-// Closes the old handle and opens a new one with the specified rate.
-// Returns new handle on success, nullptr on failure (old handle is closed regardless).
-static snd_pcm_t* reconfigure_alsa(snd_pcm_t* old_handle, const std::string& device,
-                                   int new_sample_rate) {
-    // Drop any pending samples and close old handle
-    if (old_handle) {
-        snd_pcm_drop(old_handle);
-        snd_pcm_close(old_handle);
-        LOG_INFO("[ALSA] Closed old PCM handle for reconfiguration");
-    }
-
-    snd_pcm_t* pcm_handle = nullptr;
-    int err;
-
-    if (device.empty()) {
-        LOG_ERROR("[ALSA] Cannot reconfigure: no active device");
-        return nullptr;
-    }
-
-    err = snd_pcm_open(&pcm_handle, device.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
-    if (err < 0) {
-        LOG_ERROR("[ALSA] Cannot open device {} for reconfiguration: {}", device,
-                  snd_strerror(err));
-        return nullptr;
-    }
-
-    // Set hardware parameters
-    snd_pcm_hw_params_t* hw_params;
-    snd_pcm_hw_params_alloca(&hw_params);
-    snd_pcm_hw_params_any(pcm_handle, hw_params);
-
-    if ((err = snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
-            0 ||
-        (err = snd_pcm_hw_params_set_format(pcm_handle, hw_params, SND_PCM_FORMAT_S32_LE)) < 0) {
-        LOG_ERROR("[ALSA] Cannot set access/format: {}", snd_strerror(err));
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    // Use the new sample rate
-    unsigned int rate = static_cast<unsigned int>(new_sample_rate);
-    if ((err = snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &rate, 0)) < 0) {
-        LOG_ERROR("[ALSA] Cannot set sample rate {} Hz: {}", new_sample_rate, snd_strerror(err));
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-    if ((err = snd_pcm_hw_params_set_channels(pcm_handle, hw_params, CHANNELS)) < 0) {
-        LOG_ERROR("[ALSA] Cannot set channel count: {}", snd_strerror(err));
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    snd_pcm_uframes_t buffer_size = static_cast<snd_pcm_uframes_t>(g_config.bufferSize);
-    snd_pcm_uframes_t period_size = static_cast<snd_pcm_uframes_t>(g_config.periodSize);
-    snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size);
-    snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, 0);
-
-    if ((err = snd_pcm_hw_params(pcm_handle, hw_params)) < 0) {
-        LOG_ERROR("[ALSA] Cannot set hardware parameters: {}", snd_strerror(err));
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    if ((err = snd_pcm_prepare(pcm_handle)) < 0) {
-        LOG_ERROR("[ALSA] Cannot prepare device: {}", snd_strerror(err));
-        snd_pcm_close(pcm_handle);
-        return nullptr;
-    }
-
-    // Set software parameters for XRUN detection
-    snd_pcm_sw_params_t* sw_params;
-    snd_pcm_sw_params_alloca(&sw_params);
-    if (snd_pcm_sw_params_current(pcm_handle, sw_params) == 0) {
-        snd_pcm_sw_params_set_start_threshold(pcm_handle, sw_params, buffer_size);
-        snd_pcm_sw_params_set_avail_min(pcm_handle, sw_params, period_size);
-        if (snd_pcm_sw_params(pcm_handle, sw_params) < 0) {
-            LOG_WARN("[ALSA] Failed to set software parameters");
-        }
-    }
-
-    LOG_INFO(
-        "[ALSA] Reconfigured for {} Hz (32-bit int, stereo), buffer {} frames, period {} frames",
-        rate, buffer_size, period_size);
-    return pcm_handle;
-}
-
-// Check current PCM state; return false if disconnected/suspended
-static bool pcm_alive(snd_pcm_t* pcm_handle) {
-    if (!pcm_handle)
-        return false;
-    snd_pcm_status_t* status;
-    snd_pcm_status_alloca(&status);
-    if (snd_pcm_status(pcm_handle, status) < 0) {
-        return false;
-    }
-    snd_pcm_state_t st = snd_pcm_status_get_state(status);
-    if (st == SND_PCM_STATE_DISCONNECTED || st == SND_PCM_STATE_SUSPENDED) {
-        return false;
-    }
-    return true;
-}
-
-static snd_pcm_sframes_t write_interleaved_frames_blocking(snd_pcm_t* pcm_handle,
-                                                           const int32_t* interleaved,
-                                                           snd_pcm_uframes_t frames,
-                                                           unsigned int channels) {
-    if (!pcm_handle || !interleaved || frames == 0 || channels == 0) {
-        return 0;
-    }
-
-    return static_cast<snd_pcm_sframes_t>(daemon_output::alsa_write_loop::writeAllInterleaved(
-        interleaved, static_cast<size_t>(frames), channels,
-        [&](const int32_t* ptr, size_t requestedFrames) -> long {
-            return static_cast<long>(
-                snd_pcm_writei(pcm_handle, ptr, static_cast<snd_pcm_uframes_t>(requestedFrames)));
-        },
-        [&](long err) -> long { return static_cast<long>(snd_pcm_recover(pcm_handle, err, 0)); },
-        [&]() { std::this_thread::sleep_for(std::chrono::milliseconds(1)); },
-        [&]() { return g_running.load(std::memory_order_acquire); },
-        [&]() {
-            if (g_fallback_manager) {
-                g_fallback_manager->notifyXrun();
-            }
-            gpu_upsampler::metrics::recordXrun();
-            LOG_WARN("ALSA: XRUN detected");
-        },
-        static_cast<long>(EAGAIN), static_cast<long>(EPIPE)));
-}
-
 static snd_pcm_format_t parse_loopback_format(const std::string& formatStr) {
     std::string lower = formatStr;
     std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -1512,39 +1237,27 @@ static void loopback_capture_thread(std::string device, snd_pcm_format_t format,
 void alsa_output_thread() {
     elevate_realtime_priority("ALSA output");
 
-    std::string currentDevice = g_dac_manager->waitForSelection();
-    snd_pcm_t* pcm_handle = nullptr;
-    while (g_running && !pcm_handle) {
-        if (currentDevice.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = g_dac_manager->waitForSelection();
-            continue;
-        }
-        pcm_handle = open_and_configure_pcm(currentDevice);
-        if (!pcm_handle) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            currentDevice = g_dac_manager->waitForSelection();
-        } else {
-            mark_dac_connected(currentDevice);
-        }
-    }
-    std::vector<int32_t> interleaved_buffer(32768 * CHANNELS);  // resized after open
-    std::vector<float> float_buffer(32768 * CHANNELS);          // for soft mute processing
-    snd_pcm_uframes_t period_size = 32768;
-    if (!pcm_handle) {
+    daemon_output::AlsaPcmController pcmController(daemon_output::AlsaPcmControllerDependencies{
+        .config = &g_config,
+        .dacManager = g_dac_manager.get(),
+        .streamingCacheManager = g_streaming_cache_manager.get(),
+        .fallbackManager = g_fallback_manager,
+        .running = &g_running,
+        .outputReady = &g_output_ready,
+        .currentOutputRate = []() { return g_current_output_rate.load(std::memory_order_acquire); },
+    });
+
+    if (!pcmController.openSelected()) {
         return;
     }
-    snd_pcm_hw_params_t* cur_params;
-    snd_pcm_hw_params_alloca(&cur_params);
-    if (snd_pcm_hw_params_current(pcm_handle, cur_params) == 0) {
-        snd_pcm_uframes_t detected_period = 0;
-        if (snd_pcm_hw_params_get_period_size(cur_params, &detected_period, nullptr) == 0 &&
-            detected_period > 0) {
-            period_size = detected_period;
-            interleaved_buffer.resize(period_size * CHANNELS);
-            float_buffer.resize(period_size * CHANNELS);
-        }
+
+    snd_pcm_uframes_t period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
+    if (period_size == 0) {
+        period_size =
+            static_cast<snd_pcm_uframes_t>((g_config.periodSize > 0) ? g_config.periodSize : 32768);
     }
+    std::vector<int32_t> interleaved_buffer(period_size * CHANNELS);
+    std::vector<float> float_buffer(period_size * CHANNELS);  // for soft mute processing
 
     // Main playback loop
     while (g_running) {
@@ -1552,25 +1265,19 @@ void alsa_output_thread() {
         static int alive_counter = 0;
         if (++alive_counter > 200) {  // ~200 iterations ~ a few seconds depending on buffer wait
             alive_counter = 0;
-            if (!pcm_alive(pcm_handle)) {
+            if (!pcmController.alive()) {
                 std::cerr << "ALSA: PCM disconnected/suspended, attempting reopen..." << std::endl;
-                if (pcm_handle) {
-                    snd_pcm_drop(pcm_handle);
-                    snd_pcm_close(pcm_handle);
-                    pcm_handle = nullptr;
-                }
-                mark_dac_disconnected(currentDevice);
-                while (g_running && !pcm_handle) {
+                pcmController.close();
+                while (g_running && !pcmController.openSelected()) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
-                    currentDevice = g_dac_manager->waitForSelection();
-                    if (currentDevice.empty())
-                        continue;
-                    pcm_handle = open_and_configure_pcm(currentDevice);
                 }
-                if (pcm_handle) {
-                    mark_dac_connected(currentDevice,
-                                       "DAC reconnected - resuming input processing");
+                period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
+                if (period_size == 0) {
+                    period_size = static_cast<snd_pcm_uframes_t>(
+                        (g_config.periodSize > 0) ? g_config.periodSize : 32768);
                 }
+                interleaved_buffer.resize(period_size * CHANNELS);
+                float_buffer.resize(period_size * CHANNELS);
                 continue;
             }
         }
@@ -1582,10 +1289,14 @@ void alsa_output_thread() {
                 LOG_INFO("[Main] Reconfiguring ALSA for new output rate {} Hz", new_output_rate);
 
                 // Reconfigure ALSA with new rate
-                snd_pcm_t* new_handle =
-                    reconfigure_alsa(pcm_handle, currentDevice, new_output_rate);
-                if (new_handle) {
-                    pcm_handle = new_handle;
+                if (pcmController.reconfigure(new_output_rate)) {
+                    period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
+                    if (period_size == 0) {
+                        period_size = static_cast<snd_pcm_uframes_t>(
+                            (g_config.periodSize > 0) ? g_config.periodSize : 32768);
+                    }
+                    interleaved_buffer.resize(period_size * CHANNELS);
+                    float_buffer.resize(period_size * CHANNELS);
 
                     // Update soft mute sample rate
                     if (g_soft_mute) {
@@ -1597,8 +1308,7 @@ void alsa_output_thread() {
                     // Failed to reconfigure - try to reopen with old rate
                     LOG_ERROR("[Main] ALSA reconfiguration failed, attempting recovery...");
                     int old_rate = g_current_output_rate.load(std::memory_order_acquire);
-                    pcm_handle = reconfigure_alsa(nullptr, currentDevice, old_rate);
-                    if (!pcm_handle) {
+                    if (!pcmController.reconfigure(old_rate)) {
                         LOG_ERROR("[Main] ALSA recovery failed, waiting for reconnect...");
                     }
                 }
@@ -1607,28 +1317,18 @@ void alsa_output_thread() {
 
         if (auto pendingDevice = g_dac_manager->consumePendingChange()) {
             std::string nextDevice = *pendingDevice;
-            if (!nextDevice.empty() && nextDevice != currentDevice) {
+            if (!nextDevice.empty() && nextDevice != pcmController.device()) {
                 std::cout << "ALSA: Switching output to " << nextDevice << std::endl;
-                if (pcm_handle) {
-                    snd_pcm_drop(pcm_handle);
-                    snd_pcm_close(pcm_handle);
-                    pcm_handle = nullptr;
-                    mark_dac_disconnected(currentDevice);
-                }
-                currentDevice = nextDevice;
-                while (g_running && !pcm_handle) {
-                    pcm_handle = open_and_configure_pcm(currentDevice);
-                    if (!pcm_handle) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                        currentDevice = g_dac_manager->waitForSelection();
-                        if (currentDevice.empty())
-                            break;
-                    }
-                }
-                if (!pcm_handle) {
+                if (!pcmController.switchDevice(nextDevice)) {
                     continue;
                 }
-                mark_dac_connected(currentDevice, "DAC reconnected - resuming input processing");
+                period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
+                if (period_size == 0) {
+                    period_size = static_cast<snd_pcm_uframes_t>(
+                        (g_config.periodSize > 0) ? g_config.periodSize : 32768);
+                }
+                interleaved_buffer.resize(period_size * CHANNELS);
+                float_buffer.resize(period_size * CHANNELS);
             }
         }
 
@@ -1680,53 +1380,31 @@ void alsa_output_thread() {
         }
 
         // Write to ALSA device
-        snd_pcm_sframes_t frames_written =
-            write_interleaved_frames_blocking(pcm_handle, interleaved_buffer.data(), period_size,
-                                              static_cast<unsigned int>(CHANNELS));
+        long frames_written = pcmController.writeInterleaved(interleaved_buffer.data(),
+                                                             static_cast<size_t>(period_size));
         if (frames_written < 0) {
             // Device may be gone; attempt reopen
             std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
                       << ", retrying reopen..." << std::endl;
-            snd_pcm_drop(pcm_handle);
-            snd_pcm_close(pcm_handle);
-            pcm_handle = nullptr;
-            mark_dac_disconnected(currentDevice);
-            while (g_running && !pcm_handle) {
+            pcmController.close();
+            while (g_running && !pcmController.openSelected()) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
-                std::string next = g_dac_manager->getSelectedDevice();
-                if (!next.empty()) {
-                    currentDevice = next;
-                }
-                if (currentDevice.empty())
-                    continue;
-                pcm_handle = open_and_configure_pcm(currentDevice);
             }
-            if (pcm_handle) {
-                mark_dac_connected(currentDevice, "DAC reconnected - resuming input processing");
-                // resize buffer to new period size if needed
-                snd_pcm_uframes_t new_period = 0;
-                snd_pcm_hw_params_t* hw_params;
-                snd_pcm_hw_params_alloca(&hw_params);
-                if (snd_pcm_hw_params_current(pcm_handle, hw_params) == 0 &&
-                    snd_pcm_hw_params_get_period_size(hw_params, &new_period, nullptr) == 0 &&
-                    new_period != period_size) {
-                    period_size = new_period;
-                    interleaved_buffer.resize(period_size * CHANNELS);
-                    float_buffer.resize(period_size * CHANNELS);
-                }
-            } else {
-                // If still not available, continue loop to retry
+            if (!pcmController.isOpen()) {
                 continue;
             }
+            period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
+            if (period_size == 0) {
+                period_size = static_cast<snd_pcm_uframes_t>(
+                    (g_config.periodSize > 0) ? g_config.periodSize : 32768);
+            }
+            interleaved_buffer.resize(period_size * CHANNELS);
+            float_buffer.resize(period_size * CHANNELS);
         }
     }
 
     // Cleanup
-    if (pcm_handle) {
-        snd_pcm_drain(pcm_handle);
-        snd_pcm_close(pcm_handle);
-        mark_dac_disconnected(currentDevice);
-    }
+    pcmController.close();
     std::cout << "ALSA: Output thread terminated" << std::endl;
 }
 

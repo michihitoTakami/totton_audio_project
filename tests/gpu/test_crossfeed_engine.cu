@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 #include "crossfeed_engine.h"
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <vector>
 #include <nlohmann/json.hpp>
+#include <unistd.h>
 
 using json = nlohmann::json;
 using namespace CrossfeedEngine;
@@ -13,14 +15,26 @@ using namespace CrossfeedEngine;
 class HRTFProcessorTest : public ::testing::Test {
    protected:
     void SetUp() override {
-        // Create test data directory
-        testDir_ = "test_hrtf_data";
-        system(("mkdir -p " + testDir_).c_str());
+        // Create a unique test data directory per test process to avoid parallel collisions.
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        std::string name = "unknown_test";
+        if (info) {
+            name = std::string(info->test_suite_name()) + "_" + std::string(info->name());
+        }
+        for (char& c : name) {
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')) {
+                c = '_';
+            }
+        }
+        testDir_ = (std::filesystem::temp_directory_path() /
+                    ("test_hrtf_data_" + name + "_" + std::to_string(getpid())))
+                       .string();
+        std::filesystem::create_directories(testDir_);
     }
 
     void TearDown() override {
         // Clean up test data
-        system(("rm -rf " + testDir_).c_str());
+        std::filesystem::remove_all(testDir_);
     }
 
     // Create synthetic HRTF filter coefficients for testing
