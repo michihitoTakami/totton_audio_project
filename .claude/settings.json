@@ -62,8 +62,8 @@
       "Bash(./build/gpu_tests:*)",
       "Bash(uv sync:*)",
       "Bash(uv run pytest:*)",
-      "Bash(./scripts/run_tests.sh:*)",
-      "Bash(scripts/generate_filter.py)"
+      "Bash(./scripts/deployment/run_tests.sh:*)",
+      "Bash(scripts/filters/generate_filter.py)"
     ],
     "deny": [
       "Bash(gh pr merge:*)",

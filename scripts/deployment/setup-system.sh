@@ -1,7 +1,7 @@
 #!/bin/bash
 # setup-system.sh - Install system-level dependencies (requires sudo)
 #
-# Usage: ./scripts/setup-system.sh
+# Usage: ./scripts/deployment/setup-system.sh
 #
 # These packages cannot be managed by aqua (shared libraries, headers, drivers)
 

@@ -1,4 +1,4 @@
-"""Unit tests for scripts/generate_linear_phase.py"""
+"""Unit tests for scripts/filters/generate_linear_phase.py"""
 
 import argparse
 import sys

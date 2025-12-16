@@ -8,10 +8,10 @@ Beta sweep simulator for Kaiser-window FIR filters.
 - βを上げても改善が頭打ちになるポイントを推定
 
 使い方:
-    uv run python scripts/beta_sweep.py --taps 131072 --betas 10 15 20 25 30
+    uv run python scripts/analysis/beta_sweep.py --taps 131072 --betas 10 15 20 25 30
 
     # 44.1kHz→16xアップサンプル、最小位相化も評価
-    uv run python scripts/beta_sweep.py --phase minimum --taps 2000000 \\
+    uv run python scripts/analysis/beta_sweep.py --phase minimum --taps 2000000 \\
         --beta-min 12 --beta-max 32 --beta-step 2
 
 出力:
@@ -38,7 +38,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Kaiser β sweep simulator (Float64 vs Float32 characteristics)"
     )
-    parser.add_argument("--input-rate", type=int, default=44100, help="入力サンプルレート")
+    parser.add_argument(
+        "--input-rate", type=int, default=44100, help="入力サンプルレート"
+    )
     parser.add_argument(
         "--upsample-ratio", type=int, default=16, help="アップサンプリング比率"
     )
@@ -173,7 +175,9 @@ def build_beta_list(args: argparse.Namespace) -> list[float]:
             if args.beta_min + i * args.beta_step <= args.beta_max + 1e-6
         ]
     if not betas:
-        raise ValueError("βリストが空です。--betas か min/max/step を確認してください。")
+        raise ValueError(
+            "βリストが空です。--betas か min/max/step を確認してください。"
+        )
     return betas
 
 
@@ -217,9 +221,7 @@ def design_filter(beta: float, cfg: SweepConfig) -> np.ndarray:
     return h
 
 
-def compute_response(
-    h: np.ndarray, cfg: SweepConfig
-) -> tuple[np.ndarray, np.ndarray]:
+def compute_response(h: np.ndarray, cfg: SweepConfig) -> tuple[np.ndarray, np.ndarray]:
     w, H = signal.freqz(h, worN=cfg.freq_points, fs=cfg.output_rate)
     magnitude_db = 20 * np.log10(np.maximum(np.abs(H), EPS))
     return w, magnitude_db
@@ -303,9 +305,11 @@ def render_table(results: Sequence[BetaResult], target_stopband: float) -> None:
             f"{r.max_response_diff_db:10.3f} {r.coeff_snr_db:13.2f} {r.zero_ratio*100:9.4f}"
         )
     best = max(results, key=lambda r: abs(r.stopband32_db))
-    print("\n最良(実効)阻止帯域: "
-          f"β={best.beta:.2f}, |H|32={abs(best.stopband32_db):.2f} dB "
-          f"(目標 {target_stopband:.1f} dB)")
+    print(
+        "\n最良(実効)阻止帯域: "
+        f"β={best.beta:.2f}, |H|32={abs(best.stopband32_db):.2f} dB "
+        f"(目標 {target_stopband:.1f} dB)"
+    )
 
 
 def save_csv(path: Path, results: Sequence[BetaResult]) -> None:
@@ -414,4 +418,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

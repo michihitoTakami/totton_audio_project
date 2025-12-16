@@ -117,12 +117,12 @@ DAC Capability検出とサンプリングレートフィルタリング
 
 手動で更新する場合：
 ```bash
-uv run python scripts/export_openapi.py
+uv run python scripts/integration/export_openapi.py
 ```
 
 最新かどうか確認する場合：
 ```bash
-uv run python scripts/export_openapi.py --check
+uv run python scripts/integration/export_openapi.py --check
 ```
 
 ## ライセンス

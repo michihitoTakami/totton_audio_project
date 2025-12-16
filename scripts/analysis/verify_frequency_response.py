@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io.wavfile as wavfile
 
-from scripts.partition_analysis import (
+from scripts.analysis.partition_analysis import (
     PartitionConfig,
     build_partition_plan,
     estimate_settling_samples,

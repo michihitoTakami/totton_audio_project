@@ -35,7 +35,7 @@
 
 ### コード修正状況
 
-**ファイル:** `scripts/generate_filter.py`（99行目）
+**ファイル:** `scripts/filters/generate_filter.py`（99行目）
 
 ```python
 # 最新コミット（c238324）のコード
@@ -45,7 +45,7 @@ n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 8)))
 
 **確認方法:**
 ```bash
-git show c238324:scripts/generate_filter.py | grep -A 2 "n_fft ="
+git show c238324:scripts/filters/generate_filter.py | grep -A 2 "n_fft ="
 ```
 
 ### 最新の検証結果
@@ -111,7 +111,7 @@ cat data/coefficients/metadata.json | jq '.validation_results'
 
 GitHubのWeb UIで以下のファイルを確認してください：
 
-- `scripts/generate_filter.py` の99行目
+- `scripts/filters/generate_filter.py` の99行目
   ```python
   n_fft = 2 ** int(np.ceil(np.log2(len(h_linear) * 8)))
   ```
@@ -131,7 +131,7 @@ git checkout phase1/filter-coefficient-generation
 git log --oneline -1  # c238324 が表示されることを確認
 
 # 実行
-uv run python scripts/generate_minimum_phase.py
+uv run python scripts/filters/generate_minimum_phase.py
 
 # 結果確認
 cat data/coefficients/metadata.json | jq '.validation_results.is_minimum_phase'

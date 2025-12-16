@@ -46,6 +46,9 @@ RUN_JETSON_PCM=false
 # Analyze changed files
 for file in $CHANGED_FILES; do
     case "$file" in
+        scripts/*/*.py)
+            RUN_PYTHON=true
+            ;;
         scripts/*.py|tests/python/*|pyproject.toml)
             RUN_PYTHON=true
             ;;

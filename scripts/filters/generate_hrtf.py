@@ -27,8 +27,8 @@ Attribution:
     F. Brinkmann et al., TU Berlin, 2019
 
 Usage:
-    python scripts/generate_hrtf.py
-    python scripts/generate_hrtf.py --size M --output-dir data/crossfeed/hrtf
+    python scripts/filters/generate_hrtf.py
+    python scripts/filters/generate_hrtf.py --size M --output-dir data/crossfeed/hrtf
 """
 
 import argparse
@@ -594,13 +594,13 @@ def main():
         epilog="""
 Examples:
   # Generate all sizes and rates
-  python scripts/generate_hrtf.py --all
+  python scripts/filters/generate_hrtf.py --all
 
   # Generate specific size
-  python scripts/generate_hrtf.py --size M
+  python scripts/filters/generate_hrtf.py --size M
 
   # Specify SOFA directory
-  python scripts/generate_hrtf.py --sofa-dir data/crossfeed/raw/sofa
+  python scripts/filters/generate_hrtf.py --sofa-dir data/crossfeed/raw/sofa
 
 License: HUTUBS data is CC BY 4.0
 Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin

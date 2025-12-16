@@ -204,16 +204,16 @@ DAC性能と入力レートから最適な出力レートを自動算出しま�
 uv sync
 
 # 44.1k系 2M-tap 最小位相フィルタ（基準）
-uv run python scripts/generate_minimum_phase.py --taps 2000000
+uv run python scripts/filters/generate_minimum_phase.py --taps 2000000
 
 # 44.1k系 2M-tap 線形位相フィルタ
-uv run python scripts/generate_linear_phase.py --taps 2000000
+uv run python scripts/filters/generate_linear_phase.py --taps 2000000
 
 # 全構成（44k/48k × 2x/4x/8x/16x）最小位相フィルタを一括生成
-uv run python scripts/generate_minimum_phase.py --generate-all
+uv run python scripts/filters/generate_minimum_phase.py --generate-all
 
 # 全構成（44k/48k × 2x/4x/8x/16x）線形位相フィルタを一括生成
-uv run python scripts/generate_linear_phase.py --generate-all
+uv run python scripts/filters/generate_linear_phase.py --generate-all
 
 # 生成されるフィルタ:
 # - filter_44k_16x_2m_min_phase.bin (44.1kHz → 705.6kHz)
@@ -330,7 +330,7 @@ cmake --build build -j$(nproc)
 
 1. **パーティション構成の確認**
    ```bash
-   uv run python scripts/inspect_impulse.py \
+   uv run python scripts/analysis/inspect_impulse.py \
      --coeff data/coefficients/filter_44k_16x_2m_min_phase.bin \
      --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \
      --config config.json --enable-partition \
@@ -340,7 +340,7 @@ cmake --build build -j$(nproc)
    - 推定遅延（fastウィンドウ / tail合流ウィンドウ）を自動計算
 2. **周波数応答の比較**
    ```bash
-   uv run python scripts/verify_frequency_response.py \
+   uv run python scripts/analysis/verify_frequency_response.py \
      test_data/low_latency/test_sweep_44100hz.wav \
      test_output/lowlat_sweep.wav \
      --metadata data/coefficients/filter_44k_16x_2m_min_phase.json \

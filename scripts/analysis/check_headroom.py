@@ -129,9 +129,14 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional output path to render a full-scale sine for stress testing",
     )
-    parser.add_argument("--sine-frequency", type=float, default=997.0, help="Sine frequency in Hz")
     parser.add_argument(
-        "--sine-duration", type=float, default=5.0, help="Duration in seconds for generated sine"
+        "--sine-frequency", type=float, default=997.0, help="Sine frequency in Hz"
+    )
+    parser.add_argument(
+        "--sine-duration",
+        type=float,
+        default=5.0,
+        help="Duration in seconds for generated sine",
     )
     parser.add_argument(
         "--sine-sample-rate",
@@ -145,10 +150,17 @@ def parse_args() -> argparse.Namespace:
         default=0.999,
         help="Sine amplitude (set to <1 to avoid immediate clipping)",
     )
-    parser.add_argument("--input-wav", type=Path, help="Optional captured input WAV to inspect")
-    parser.add_argument("--output-wav", type=Path, help="Optional captured output WAV to inspect")
     parser.add_argument(
-        "--hist-bins", type=int, default=120, help="Number of histogram bins for PCM analysis"
+        "--input-wav", type=Path, help="Optional captured input WAV to inspect"
+    )
+    parser.add_argument(
+        "--output-wav", type=Path, help="Optional captured output WAV to inspect"
+    )
+    parser.add_argument(
+        "--hist-bins",
+        type=int,
+        default=120,
+        help="Number of histogram bins for PCM analysis",
     )
     parser.add_argument(
         "--fail-on-clip",
@@ -187,7 +199,9 @@ def main() -> None:
             frequency_hz=args.sine_frequency,
             amplitude=args.sine_amplitude,
         )
-        print(f"[generate] wrote {out_path} ({args.sine_sample_rate} Hz, {args.sine_duration}s)")
+        print(
+            f"[generate] wrote {out_path} ({args.sine_sample_rate} Hz, {args.sine_duration}s)"
+        )
 
     if args.input_wav:
         input_stats = analyze_wave(args.input_wav, bins=args.hist_bins)
@@ -233,4 +247,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

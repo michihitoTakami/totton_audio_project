@@ -1,5 +1,5 @@
 """
-Unit tests for scripts/generate_filter.py
+Unit tests for scripts/filters/generate_filter.py
 
 Tests filter coefficient generation, validation, and normalization.
 Uses small tap counts for fast execution.

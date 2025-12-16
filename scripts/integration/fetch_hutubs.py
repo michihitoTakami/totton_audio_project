@@ -15,8 +15,8 @@ Attribution:
     F. Brinkmann et al., TU Berlin, 2019
 
 Usage:
-    python scripts/fetch_hutubs.py
-    python scripts/fetch_hutubs.py --output-dir data/crossfeed
+    python scripts/integration/fetch_hutubs.py
+    python scripts/integration/fetch_hutubs.py --output-dir data/crossfeed
 """
 
 import argparse
@@ -320,10 +320,10 @@ Prerequisites:
 
 Examples:
   # Generate classification from HUTUBS data
-  python scripts/fetch_hutubs.py
+  python scripts/integration/fetch_hutubs.py
 
   # Specify output directory
-  python scripts/fetch_hutubs.py --output-dir data/crossfeed
+  python scripts/integration/fetch_hutubs.py --output-dir data/crossfeed
 
 License: CC BY-SA 4.0
 Attribution: HUTUBS - Head-related Transfer Function Database, TU Berlin

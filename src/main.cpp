@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Warning: 48kHz preset filter missing: " << FILTER_PRESET_48K.path
                           << std::endl;
                 std::cerr << "To generate: "
-                          << "python scripts/generate_minimum_phase.py --input-rate 48000 "
+                          << "python scripts/filters/generate_minimum_phase.py --input-rate 48000 "
                           << "--stopband-start 24000 --passband-end 21500 "
                           << "--output-prefix filter_48k_16x_2m_min_phase" << std::endl;
                 if (!applyPreset(FILTER_PRESET_44K)) {
@@ -161,9 +161,9 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "Error: Preset filter file not found: "
                           << (targetPreset ? targetPreset->path : "") << std::endl;
-                std::cerr
-                    << "Generate it via scripts/generate_minimum_phase.py or specify with --filter."
-                    << std::endl;
+                std::cerr << "Generate it via scripts/filters/generate_minimum_phase.py or specify "
+                             "with --filter."
+                          << std::endl;
                 return 1;
             }
         } else {
@@ -179,13 +179,13 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error: Filter file not found: " << config.filterPath << std::endl;
             if (inputAudio.sampleRate == FILTER_PRESET_48K.inputSampleRate) {
                 std::cerr << "Generate it via: "
-                          << "python scripts/generate_minimum_phase.py --input-rate 48000 "
+                          << "python scripts/filters/generate_minimum_phase.py --input-rate 48000 "
                           << "--stopband-start 24000 --passband-end 21500 "
                           << "--output-prefix filter_48k_16x_2m_min_phase" << std::endl;
             } else {
-                std::cerr
-                    << "Generate it via scripts/generate_minimum_phase.py or specify with --filter."
-                    << std::endl;
+                std::cerr << "Generate it via scripts/filters/generate_minimum_phase.py or specify "
+                             "with --filter."
+                          << std::endl;
             }
             return 1;
         }

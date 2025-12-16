@@ -1,4 +1,4 @@
-"""Unit tests for scripts/generate_minimum_phase.py"""
+"""Unit tests for scripts/filters/generate_minimum_phase.py"""
 
 import argparse
 import sys

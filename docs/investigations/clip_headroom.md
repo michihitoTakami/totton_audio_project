@@ -29,20 +29,20 @@
 
 1. **Filter audit**
    ```bash
-   uv run python scripts/check_headroom.py \
+   uv run python scripts/analysis/check_headroom.py \
      --filter data/coefficients/filter_44k_16x_2m_linear_phase.bin
    ```
    Reports the theoretical maximum coefficient and required headroom.
 
 2. **Max-level stimulus**
    ```bash
-   uv run python scripts/generate_test_audio.py \
+   uv run python scripts/testing/generate_test_audio.py \
      --amplitude 0.999 --duration 10 --sample-rate 44100
    ```
 
 3. **PCM histogram & clip check**
    ```bash
-   uv run python scripts/check_headroom.py \
+   uv run python scripts/analysis/check_headroom.py \
      --output-wav test_output/captured.wav \
      --fail-on-clip --fail-threshold 0.995
    ```
@@ -50,7 +50,7 @@
 
 4. **Long duration stress**
    ```bash
-   uv run python scripts/watch_clip_rate.py \
+   uv run python scripts/analysis/watch_clip_rate.py \
      --duration 900 --headroom-threshold 0.995
    ```
    Monitors the live stats file and aborts if the clip counter increments or if the

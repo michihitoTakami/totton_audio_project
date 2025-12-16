@@ -6,9 +6,9 @@ This script exports the OpenAPI schema without running the server.
 Used by pre-commit hooks to keep docs/api/openapi.json up to date.
 
 Usage:
-    uv run python scripts/export_openapi.py
-    uv run python scripts/export_openapi.py --output custom/path.json
-    uv run python scripts/export_openapi.py --check  # Exit 1 if out of date
+    uv run python scripts/integration/export_openapi.py
+    uv run python scripts/integration/export_openapi.py --output custom/path.json
+    uv run python scripts/integration/export_openapi.py --check  # Exit 1 if out of date
 """
 
 import argparse
@@ -65,7 +65,7 @@ def check_openapi(output_path: Path) -> bool:
         return True
     else:
         print(f"OpenAPI spec is OUT OF DATE: {output_path}")
-        print("Run: uv run python scripts/export_openapi.py")
+        print("Run: uv run python scripts/integration/export_openapi.py")
         return False
 
 
@@ -75,9 +75,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  uv run python scripts/export_openapi.py              # Export to default location
-  uv run python scripts/export_openapi.py --check      # Check if up to date
-  uv run python scripts/export_openapi.py -o api.json  # Export to custom path
+  uv run python scripts/integration/export_openapi.py              # Export to default location
+  uv run python scripts/integration/export_openapi.py --check      # Check if up to date
+  uv run python scripts/integration/export_openapi.py -o api.json  # Export to custom path
         """,
     )
     parser.add_argument(

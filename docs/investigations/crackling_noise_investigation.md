@@ -22,11 +22,11 @@ Overlap-Saveアルゴリズムのオーバーラップバッファ計算に不�
 ## 波形解析結果 (Waveform Analysis)
 
 ### 解析手法
-`scripts/analyze_waveform.py`を作成し、`test_data/fanfare.wav`(44.1kHz, 16-bit, 11.68秒)をGPU変換して検証:
+`scripts/analysis/analyze_waveform.py`を作成し、`test_data/fanfare.wav`(44.1kHz, 16-bit, 11.68秒)をGPU変換して検証:
 
 ```bash
 ./build/gpu_upsampler test_data/fanfare.wav test_data/fanfare_352800hz.wav --ratio 8
-uv run python scripts/analyze_waveform.py test_data/fanfare_352800hz.wav
+uv run python scripts/analysis/analyze_waveform.py test_data/fanfare_352800hz.wav
 ```
 
 ### 修正前の結果 (Before Fix)
@@ -100,7 +100,7 @@ if (outputPos + validOutputSize < outputFrames) {
 #### 修正後 (After Fix)
 ```bash
 ./build/gpu_upsampler test_data/fanfare.wav test_data/fanfare_352800hz_fixed.wav --ratio 8
-uv run python scripts/analyze_waveform.py test_data/fanfare_352800hz_fixed.wav
+uv run python scripts/analysis/analyze_waveform.py test_data/fanfare_352800hz_fixed.wav
 ```
 
 ```
@@ -258,7 +258,7 @@ chrt -f -p 99 $(pgrep gpu_upsampler_alsa)
 - `/home/michihito/Working/gpu_os/src/convolution_engine.cu` (行477-520): Overlap-Saveアルゴリズム修正
 
 ### 解析ツール
-- `/home/michihito/Working/gpu_os/scripts/analyze_waveform.py` (新規作成): クリック検出・波形解析
+- `/home/michihito/Working/gpu_os/scripts/analysis/analyze_waveform.py` (新規作成): クリック検出・波形解析
 - `/home/michihito/Working/gpu_os/pyproject.toml` (行11): soundfile依存追加
 
 ### テストデータ
