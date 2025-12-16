@@ -106,6 +106,10 @@ class AudioPipeline {
     Dependencies deps_;
     std::chrono::steady_clock::time_point lastDropWarn_{std::chrono::steady_clock::now() -
                                                         std::chrono::seconds(6)};
+
+    // RT パスで毎回 std::vector を生成しないためのワークバッファ (Issue #894)
+    std::vector<float> workLeft_;
+    std::vector<float> workRight_;
 };
 
 template <typename Container>
