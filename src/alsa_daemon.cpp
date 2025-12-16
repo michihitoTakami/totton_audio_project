@@ -1953,6 +1953,15 @@ int main(int argc, char* argv[]) {
                     static_cast<double>(g_input_sample_rate) * g_config.upsampleRatio;
                 auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
                                                                 outputSampleRate, eqProfile);
+                double eqMax = 0.0;
+                double eqMin = std::numeric_limits<double>::infinity();
+                for (double v : eqMagnitude) {
+                    eqMax = std::max(eqMax, v);
+                    eqMin = std::min(eqMin, v);
+                }
+                std::cout << "  EQ magnitude stats: max=" << eqMax << " ("
+                          << 20.0 * std::log10(std::max(eqMax, 1e-30)) << " dB), min=" << eqMin
+                          << std::endl;
 
                 if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
                     // Log message depends on phase type (already logged by applyEqMagnitude)

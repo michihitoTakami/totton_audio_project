@@ -1,13 +1,18 @@
 #include "audio/audio_io.h"
+#include "audio/eq_parser.h"
+#include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
 #include "core/config_loader.h"
 #include "core/filter_metadata.h"
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
+#include <vector>
 
 void printUsage(const char* programName) {
     std::cout << "GPU Audio Upsampler - Phase 2" << std::endl;
@@ -18,6 +23,7 @@ void printUsage(const char* programName) {
     std::cout
         << "                     (default: data/coefficients/filter_44k_16x_2m_linear_phase.bin)"
         << std::endl;
+    std::cout << "  --eq <path>        Path to EQ profile file (optional)" << std::endl;
     std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << std::endl;
     std::cout << "  --block <size>     Block size for processing (default: 8192)" << std::endl;
     std::cout << "  --help             Show this help message" << std::endl;
@@ -32,11 +38,40 @@ struct Config {
     std::string inputFile;
     std::string outputFile;
     std::string filterPath = std::string(FILTER_PRESET_44K.path);
+    std::string eqPath;
     int upsampleRatio = FILTER_PRESET_44K.upsampleRatio;
     int blockSize = 8192;
     bool filterOverridden = false;
     bool configLoaded = false;
 };
+
+static float computePeakLinear(const float* samples, size_t count) {
+    float peak = 0.0f;
+    for (size_t i = 0; i < count; ++i) {
+        float v = std::fabs(samples[i]);
+        if (v > peak) {
+            peak = v;
+        }
+    }
+    return peak;
+}
+
+static double linearToDbfs(double value) {
+    if (value <= 0.0) {
+        return -200.0;
+    }
+    return 20.0 * std::log10(value);
+}
+
+static void printStereoPeaks(const char* label, const std::vector<float>& interleaved) {
+    if (interleaved.empty()) {
+        std::cout << label << ": (empty)" << std::endl;
+        return;
+    }
+    float peak = computePeakLinear(interleaved.data(), interleaved.size());
+    std::cout << label << ": peak=" << std::fixed << std::setprecision(6) << peak << " ("
+              << std::setprecision(2) << linearToDbfs(peak) << " dBFS)" << std::endl;
+}
 
 bool parseArguments(int argc, char* argv[], Config& config) {
     if (argc < 3) {
@@ -54,6 +89,8 @@ bool parseArguments(int argc, char* argv[], Config& config) {
         } else if (arg == "--filter" && i + 1 < argc) {
             config.filterPath = argv[++i];
             config.filterOverridden = true;
+        } else if (arg == "--eq" && i + 1 < argc) {
+            config.eqPath = argv[++i];
         } else if (arg == "--ratio" && i + 1 < argc) {
             config.upsampleRatio = std::stoi(argv[++i]);
         } else if (arg == "--block" && i + 1 < argc) {
@@ -197,6 +234,40 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        // Optional: Apply EQ profile
+        if (!config.eqPath.empty()) {
+            std::cout << std::endl << "Step 2b: Loading EQ profile..." << std::endl;
+            EQ::EqProfile eqProfile;
+            if (!EQ::parseEqFile(config.eqPath, eqProfile)) {
+                std::cerr << "Error: Failed to parse EQ file: " << config.eqPath << std::endl;
+                return 1;
+            }
+            std::cout << "  EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
+                      << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
+
+            size_t filterFftSize = upsampler.getFilterFftSize();
+            size_t fullFftSize = upsampler.getFullFftSize();
+            double outputSampleRate = static_cast<double>(inputAudio.sampleRate) *
+                                      static_cast<double>(config.upsampleRatio);
+            auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
+                                                            outputSampleRate, eqProfile);
+
+            double maxMag = 0.0;
+            double minMag = std::numeric_limits<double>::infinity();
+            for (double v : eqMagnitude) {
+                maxMag = std::max(maxMag, v);
+                minMag = std::min(minMag, v);
+            }
+            std::cout << "  EQ magnitude: max=" << std::setprecision(6) << maxMag << " ("
+                      << std::setprecision(2) << 20.0 * std::log10(std::max(maxMag, 1e-30))
+                      << " dB), min=" << std::setprecision(6) << minMag << std::endl;
+
+            if (!upsampler.applyEqMagnitude(eqMagnitude)) {
+                std::cerr << "Error: Failed to apply EQ magnitude" << std::endl;
+                return 1;
+            }
+        }
+
         // Step 3: Process audio
         std::cout << std::endl << "Step 3: Processing audio..." << std::endl;
 
@@ -243,6 +314,10 @@ int main(int argc, char* argv[]) {
 
         AudioIO::Utils::separateToInterleaved(outputLeft.data(), outputRight.data(),
                                               outputInterleaved.data(), outputFrames);
+
+        std::cout << std::endl << "Level check (peak dBFS):" << std::endl;
+        printStereoPeaks("  Input ", inputAudio.data);
+        printStereoPeaks("  Output", outputInterleaved);
 
         // Step 5: Write output WAV file
         std::cout << std::endl << "Step 5: Writing output file..." << std::endl;
