@@ -13,8 +13,9 @@ namespace EQ {
 size_t EqProfile::activeBandCount() const {
     size_t count = 0;
     for (const auto& band : bands) {
-        if (band.enabled)
+        if (band.enabled) {
             ++count;
+        }
     }
     return count;
 }
@@ -71,54 +72,74 @@ FilterType parseFilterType(const std::string& typeStr) {
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
 
     // Peaking filters
-    if (upper == "PK" || upper == "PEAK" || upper == "PEAKING")
+    if (upper == "PK" || upper == "PEAK" || upper == "PEAKING") {
         return FilterType::PK;
-    if (upper == "MODAL")
+    }
+    if (upper == "MODAL") {
         return FilterType::MODAL;
-    if (upper == "PEQ")
+    }
+    if (upper == "PEQ") {
         return FilterType::PEQ;
+    }
 
     // Pass filters
-    if (upper == "LP" || upper == "LOWPASS")
+    if (upper == "LP" || upper == "LOWPASS") {
         return FilterType::LP;
-    if (upper == "LPQ")
+    }
+    if (upper == "LPQ") {
         return FilterType::LPQ;
-    if (upper == "HP" || upper == "HIGHPASS")
+    }
+    if (upper == "HP" || upper == "HIGHPASS") {
         return FilterType::HP;
-    if (upper == "HPQ")
+    }
+    if (upper == "HPQ") {
         return FilterType::HPQ;
-    if (upper == "BP" || upper == "BANDPASS")
+    }
+    if (upper == "BP" || upper == "BANDPASS") {
         return FilterType::BP;
+    }
 
     // Notch and All-pass
-    if (upper == "NO" || upper == "NOTCH")
+    if (upper == "NO" || upper == "NOTCH") {
         return FilterType::NO;
-    if (upper == "AP" || upper == "ALLPASS")
+    }
+    if (upper == "AP" || upper == "ALLPASS") {
         return FilterType::AP;
+    }
 
     // Shelf filters
-    if (upper == "LS" || upper == "LOWSHELF")
+    if (upper == "LS" || upper == "LOWSHELF") {
         return FilterType::LS;
-    if (upper == "HS" || upper == "HIGHSHELF")
+    }
+    if (upper == "HS" || upper == "HIGHSHELF") {
         return FilterType::HS;
-    if (upper == "LSC")
+    }
+    if (upper == "LSC") {
         return FilterType::LSC;
-    if (upper == "HSC")
+    }
+    if (upper == "HSC") {
         return FilterType::HSC;
-    if (upper == "LSQ")
+    }
+    if (upper == "LSQ") {
         return FilterType::LSQ;
-    if (upper == "HSQ")
+    }
+    if (upper == "HSQ") {
         return FilterType::HSQ;
+    }
 
     // Fixed-slope shelf filters (with space handling)
-    if (upper == "LS 6DB" || upper == "LS6DB")
+    if (upper == "LS 6DB" || upper == "LS6DB") {
         return FilterType::LS_6DB;
-    if (upper == "LS 12DB" || upper == "LS12DB")
+    }
+    if (upper == "LS 12DB" || upper == "LS12DB") {
         return FilterType::LS_12DB;
-    if (upper == "HS 6DB" || upper == "HS6DB")
+    }
+    if (upper == "HS 6DB" || upper == "HS6DB") {
         return FilterType::HS_6DB;
-    if (upper == "HS 12DB" || upper == "HS12DB")
+    }
+    if (upper == "HS 12DB" || upper == "HS12DB") {
         return FilterType::HS_12DB;
+    }
 
     return FilterType::PK;  // Default to peaking
 }
@@ -281,7 +302,7 @@ bool parseEqString(const std::string& content, EqProfile& profile) {
 bool parseEqFile(const std::string& filePath, EqProfile& profile) {
     std::ifstream file(filePath);
     if (!file.is_open()) {
-        std::cerr << "EQ Parser: Cannot open file: " << filePath << std::endl;
+        std::cerr << "EQ Parser: Cannot open file: " << filePath << '\n';
         return false;
     }
 
@@ -309,7 +330,7 @@ bool parseEqFile(const std::string& filePath, EqProfile& profile) {
 
     if (result) {
         std::cout << "EQ Parser: Loaded '" << profile.name << "' with " << profile.activeBandCount()
-                  << " active bands, preamp " << profile.preampDb << " dB" << std::endl;
+                  << " active bands, preamp " << profile.preampDb << " dB" << '\n';
     }
 
     return result;

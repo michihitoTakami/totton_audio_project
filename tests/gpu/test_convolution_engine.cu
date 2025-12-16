@@ -261,8 +261,10 @@ TEST_F(ConvolutionEngineTest, DualRateInitialize) {
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
     if (f44 == nullptr || f48 == nullptr) {
-        if (f44) fclose(f44);
-        if (f48) fclose(f48);
+        if (f44) { fclose(f44);
+}
+        if (f48) { fclose(f48);
+}
         GTEST_SKIP() << "Coefficient files not found";
     }
     fclose(f44);
@@ -284,8 +286,10 @@ TEST_F(ConvolutionEngineTest, SwitchRateFamily) {
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
     if (f44 == nullptr || f48 == nullptr) {
-        if (f44) fclose(f44);
-        if (f48) fclose(f48);
+        if (f44) { fclose(f44);
+}
+        if (f48) { fclose(f48);
+}
         GTEST_SKIP() << "Coefficient files not found";
     }
     fclose(f44);
@@ -677,8 +681,10 @@ TEST_F(ConvolutionEngineTest, GetSampleRates) {
     FILE* f44 = fopen(coeff44k, "rb");
     FILE* f48 = fopen(coeff48k, "rb");
     if (f44 == nullptr || f48 == nullptr) {
-        if (f44) fclose(f44);
-        if (f48) fclose(f48);
+        if (f44) { fclose(f44);
+}
+        if (f48) { fclose(f48);
+}
         GTEST_SKIP() << "Coefficient files not found";
     }
     fclose(f44);

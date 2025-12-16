@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <iostream>
 #include <thread>
 #include <utility>
@@ -216,7 +217,7 @@ void ControlPlane::startStatsThread() {
             size_t clips = runtime_stats::clipCount();
             if (clips > lastLoggedClips && total > 0) {
                 std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
-                          << total << " (" << (100.0 * clips / total) << "%)" << std::endl;
+                          << total << " (" << (100.0 * clips / total) << "%)" << '\n';
                 lastLoggedClips = clips;
             }
 
@@ -361,7 +362,7 @@ std::string ControlPlane::handleCrossfeedSetCombined(const daemon_ipc::ZmqReques
     auto decodedRR = Base64::decode(combinedRR);
 
     constexpr size_t CUFFT_COMPLEX_SIZE = 8;
-    constexpr size_t MAX_FILTER_BYTES = 256 * 1024;
+    constexpr size_t MAX_FILTER_BYTES = static_cast<const size_t>(256 * 1024);
 
     bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
                      (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
@@ -391,10 +392,10 @@ std::string ControlPlane::handleCrossfeedSetCombined(const daemon_ipc::ZmqReques
                                              ? CrossfeedEngine::RateFamily::RATE_44K
                                              : CrossfeedEngine::RateFamily::RATE_48K;
     size_t complexCount = decodedLL.size() / CUFFT_COMPLEX_SIZE;
-    const cufftComplex* filterLL = reinterpret_cast<const cufftComplex*>(decodedLL.data());
-    const cufftComplex* filterLR = reinterpret_cast<const cufftComplex*>(decodedLR.data());
-    const cufftComplex* filterRL = reinterpret_cast<const cufftComplex*>(decodedRL.data());
-    const cufftComplex* filterRR = reinterpret_cast<const cufftComplex*>(decodedRR.data());
+    const auto* filterLL = reinterpret_cast<const cufftComplex*>(decodedLL.data());
+    const auto* filterLR = reinterpret_cast<const cufftComplex*>(decodedLR.data());
+    const auto* filterRL = reinterpret_cast<const cufftComplex*>(decodedRL.data());
+    const auto* filterRR = reinterpret_cast<const cufftComplex*>(decodedRR.data());
 
     bool applySuccess = false;
     if (deps_.applySoftMuteForFilterSwitch) {
@@ -449,7 +450,7 @@ std::string ControlPlane::handleCrossfeedSetCombined(const daemon_ipc::ZmqReques
     data["rate_family"] = rateFamily;
     data["complex_count"] = complexCount;
     std::cout << "ZeroMQ: CROSSFEED_SET_COMBINED applied for " << rateFamily << " (" << complexCount
-              << " complex values)" << std::endl;
+              << " complex values)" << '\n';
     return buildOkResponse(request, "Combined filter applied", data);
 }
 
@@ -532,7 +533,7 @@ std::string ControlPlane::handleCrossfeedGenerate(const daemon_ipc::ZmqRequest& 
     data["far_shadow_db"] = modelParams.farEarShadowDb;
     data["diffuse_tilt_db"] = modelParams.diffuseFieldTiltDb;
     std::cout << "ZeroMQ: Generated Woodworth HRTF (" << rateFamily << ", az=" << azimuth << " deg)"
-              << std::endl;
+              << '\n';
     return buildOkResponse(request, "Woodworth profile generated", data);
 }
 
@@ -770,7 +771,7 @@ std::string ControlPlane::handlePhaseTypeSet(const daemon_ipc::ZmqRequest& reque
         if (disablePartitionForLinear && deps_.config) {
             std::cout << "[Partition] Linear phase selected, disabling low-latency partitioned "
                          "convolution."
-                      << std::endl;
+                      << '\n';
             deps_.config->partitionedConvolution.enabled = false;
             up->setPartitionedConvolutionConfig(deps_.config->partitionedConvolution);
             if (deps_.reinitializeStreamingForLegacyMode &&
@@ -797,14 +798,13 @@ std::string ControlPlane::handlePhaseTypeSet(const daemon_ipc::ZmqRequest& reque
                     auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
                                                                     outputSampleRate, eqProfile);
                     if (up->applyEqMagnitude(eqMagnitude)) {
-                        std::cout << "ZeroMQ: EQ re-applied with " << phaseStr << " phase"
-                                  << std::endl;
+                        std::cout << "ZeroMQ: EQ re-applied with " << phaseStr << " phase" << '\n';
                     } else {
-                        std::cerr << "ZeroMQ: Warning - EQ re-apply failed" << std::endl;
+                        std::cerr << "ZeroMQ: Warning - EQ re-apply failed" << '\n';
                     }
                 } else {
                     std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                              << deps_.config->eqProfilePath << std::endl;
+                              << deps_.config->eqProfilePath << '\n';
                 }
             }
         }

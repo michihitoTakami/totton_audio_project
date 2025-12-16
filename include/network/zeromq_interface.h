@@ -163,7 +163,7 @@ class ZMQClient {
     CommandResult outputModeSet(const std::string& mode, const std::string& preferredDevice);
 
     // Subscribe to status updates (async)
-    bool subscribeStatus(const std::string& pubEndpoint, StatusCallback callback);
+    bool subscribeStatus(const std::string& pubEndpoint, const StatusCallback& callback);
     void unsubscribeStatus();
 
    private:

@@ -323,6 +323,7 @@ TEST_F(FallbackManagerTest, ConcurrentXrunNotifications_ThreadSafe) {
     // XRUN-triggered fallback works regardless of NVML availability
     // Simulate concurrent XRUN notifications
     std::vector<std::thread> threads;
+    threads.reserve(10);
     for (int i = 0; i < 10; ++i) {
         threads.emplace_back([mgr]() { mgr->notifyXrun(); });
     }

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -39,8 +40,8 @@ enum class LogLevel {
  */
 struct LogConfig {
     LogLevel level = LogLevel::Info;
-    std::string filePath = "";              // Empty = no file output
-    size_t maxFileSize = 10 * 1024 * 1024;  // 10 MB
+    std::string filePath = "";                                   // Empty = no file output
+    size_t maxFileSize = static_cast<size_t>(10 * 1024 * 1024);  // 10 MB
     size_t maxBackups = 5;
     bool consoleOutput = true;
     bool coloredOutput = true;

@@ -35,8 +35,8 @@ struct Upsampler {
         ConvolutionEngine::StreamFloatVector& streamInputBuffer, size_t& streamInputAccumulated)>;
 
     ProcessFn process;
-    cudaStream_t streamLeft = 0;
-    cudaStream_t streamRight = 0;
+    cudaStream_t streamLeft = nullptr;
+    cudaStream_t streamRight = nullptr;
     bool available = false;
 };
 

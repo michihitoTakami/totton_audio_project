@@ -58,7 +58,7 @@ TEST(AlsaWriteLoopTest, HandlesShortWritesAndEagainWithCorrectPointerOffset) {
     // First call starts at frame 0
     EXPECT_EQ(ptrs[0], interleaved.data());
     // Second call is retry at frame 3 (because 3 frames were written)
-    EXPECT_EQ(ptrs[1], interleaved.data() + (3 * kChannels));
+    EXPECT_EQ(ptrs[1], interleaved.data() + static_cast<size_t>(3 * kChannels));
 }
 
 TEST(AlsaWriteLoopTest, CallsOnXrunAndUsesRecoverThenContinues) {

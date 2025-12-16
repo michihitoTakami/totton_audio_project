@@ -9,6 +9,7 @@
 #include "io/audio_ring_buffer.h"
 
 #include <cmath>
+#include <cstddef>
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
@@ -137,7 +138,7 @@ TEST_F(AudioRingBufferTest, MultipleWriteRead_Cycles) {
     for (int cycle = 0; cycle < 100; ++cycle) {
         std::vector<float> writeData(64);
         for (size_t i = 0; i < 64; ++i) {
-            writeData[i] = static_cast<float>(cycle * 64 + i);
+            writeData[i] = static_cast<float>(static_cast<size_t>(cycle * 64) + i);
         }
 
         EXPECT_TRUE(buffer_.write(writeData.data(), 64));

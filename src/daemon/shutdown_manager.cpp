@@ -14,7 +14,7 @@
 
 namespace shutdown_manager {
 
-ShutdownManager::ShutdownManager(Dependencies deps) : deps_(std::move(deps)) {
+ShutdownManager::ShutdownManager(Dependencies deps) : deps_(deps) {
     if (!deps_.runningFlag || !deps_.reloadFlag) {
         throw std::invalid_argument("ShutdownManager requires running/reload flags");
     }
@@ -25,7 +25,7 @@ ShutdownManager::ShutdownManager(Dependencies deps) : deps_(std::move(deps)) {
             softMute->startFadeOut();
         }
     });
-    controller_.setLogCallback([](const char* message) { std::cout << message << std::endl; });
+    controller_.setLogCallback([](const char* message) { std::cout << message << '\n'; });
     controller_.setQuitLoopCallback([this]() {
         if (deps_.mainLoopRunningFlag && deps_.mainLoopRunningFlag->load() && quitLoopCallback_) {
             quitLoopCallback_();
@@ -77,7 +77,7 @@ void ShutdownManager::runShutdownSequence() {
     }
     sequenceRan_ = true;
 
-    std::cout << "Shutting down..." << std::endl;
+    std::cout << "Shutting down..." << '\n';
 
 #ifdef HAVE_SYSTEMD
     sendStoppingNotify();
@@ -125,12 +125,12 @@ void ShutdownManager::waitForFadeOut() {
         return;
     }
 
-    std::cout << "  Step 2: Waiting for fade-out to complete..." << std::endl;
+    std::cout << "  Step 2: Waiting for fade-out to complete..." << '\n';
     auto fadeStart = std::chrono::steady_clock::now();
     while (softMute->isTransitioning()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         if (std::chrono::steady_clock::now() - fadeStart > std::chrono::milliseconds(100)) {
-            std::cout << "  Step 2: Fade-out timeout, forcing shutdown" << std::endl;
+            std::cout << "  Step 2: Fade-out timeout, forcing shutdown" << '\n';
             break;
         }
     }

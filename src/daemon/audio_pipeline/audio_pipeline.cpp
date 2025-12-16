@@ -56,7 +56,7 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         if (!deps_.config) {
             return false;
         }
-        size_t ratio = static_cast<size_t>(deps_.config->upsampleRatio);
+        auto ratio = static_cast<size_t>(deps_.config->upsampleRatio);
         size_t outputFrames = static_cast<size_t>(nFrames) * ratio;
         outputLeft->assign(outputFrames, 0.0f);
         outputRight->assign(outputFrames, 0.0f);
@@ -126,7 +126,7 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         std::lock_guard<std::mutex> cfLock(*deps_.crossfeedMutex);
         bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
             outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,
-            *deps_.cfOutputRight, 0, *deps_.cfStreamInputLeft, *deps_.cfStreamInputRight,
+            *deps_.cfOutputRight, nullptr, *deps_.cfStreamInputLeft, *deps_.cfStreamInputRight,
             *deps_.cfStreamAccumulatedLeft, *deps_.cfStreamAccumulatedRight);
         if (cfGenerated) {
             size_t cfFrames = std::min(deps_.cfOutputLeft->size(), deps_.cfOutputRight->size());

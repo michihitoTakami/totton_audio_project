@@ -67,7 +67,7 @@ BiquadCoeffs calculateBiquadCoeffs(const EqBand& band, double sampleRate) {
     default:
         // Not implemented - return unity
         std::cerr << "EQ: Filter type " << filterTypeName(band.type)
-                  << " not implemented, using bypass" << std::endl;
+                  << " not implemented, using bypass" << '\n';
         return c;
     }
 
@@ -90,8 +90,9 @@ std::vector<std::complex<double>> biquadFrequencyResponse(const std::vector<doub
     for (size_t i = 0; i < frequencies.size(); ++i) {
         double f = frequencies[i];
         // Handle negative frequencies (for full FFT spectrum)
-        if (f < 0)
+        if (f < 0) {
             f = -f;
+        }
 
         double w = 2.0 * pi * f / sampleRate;
         std::complex<double> z = std::exp(std::complex<double>(0, -w));  // z = e^(-jw)
@@ -123,8 +124,9 @@ std::vector<std::complex<double>> computeEqFrequencyResponse(const std::vector<d
 
     // Multiply response from each band
     for (const auto& band : profile.bands) {
-        if (!band.enabled)
+        if (!band.enabled) {
             continue;
+        }
 
         BiquadCoeffs coeffs = calculateBiquadCoeffs(band, sampleRate);
         auto bandResponse = biquadFrequencyResponse(frequencies, coeffs, sampleRate);

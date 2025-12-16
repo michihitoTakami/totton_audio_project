@@ -2,7 +2,7 @@
 
 namespace daemon_control::handlers {
 
-HandlerRegistry::HandlerRegistry(HandlerRegistryDependencies deps) : deps_(std::move(deps)) {}
+HandlerRegistry::HandlerRegistry(HandlerRegistryDependencies deps) : deps_(deps) {}
 
 void HandlerRegistry::registerDefaults() {
     if (deps_.dispatcher) {

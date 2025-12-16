@@ -14,18 +14,22 @@ namespace dac {
 namespace {
 
 std::string resolvePreferredDevice(const AppConfig* config, const std::string& fallback) {
-    if (!config)
+    if (!config) {
         return fallback;
-    if (!config->output.usb.preferredDevice.empty())
+    }
+    if (!config->output.usb.preferredDevice.empty()) {
         return config->output.usb.preferredDevice;
-    if (!config->alsaDevice.empty())
+    }
+    if (!config->alsaDevice.empty()) {
         return config->alsaDevice;
+    }
     return fallback;
 }
 
 void updatePreferredDevice(AppConfig* config, const std::string& device) {
-    if (!config)
+    if (!config) {
         return;
+    }
     config->alsaDevice = device;
     config->output.mode = OutputMode::Usb;
     config->output.usb.preferredDevice = device;
@@ -45,17 +49,21 @@ void DacManager::setEventPublisher(std::function<void(const nlohmann::json&)> ev
 }
 
 bool DacManager::isValidDeviceName(const std::string& device) const {
-    if (device.empty())
+    if (device.empty()) {
         return false;
-    if (device == "default")
+    }
+    if (device == "default") {
         return true;
+    }
 
     auto checkPrefix = [](const std::string& value, const std::string& prefix) -> bool {
-        if (value.rfind(prefix, 0) != 0)
+        if (value.rfind(prefix, 0) != 0) {
             return false;
+        }
         const std::string rest = value.substr(prefix.size());
-        if (rest.empty())
+        if (rest.empty()) {
             return false;
+        }
         for (char c : rest) {
             if (!(std::isalnum(static_cast<unsigned char>(c)) || c == ',' || c == '_' ||
                   c == ':')) {
@@ -80,10 +88,12 @@ void DacManager::addDeviceEntry(std::vector<DacDeviceRuntimeInfo>& list,
                                 std::unordered_set<std::string>& seen, const std::string& id,
                                 const std::string& card, const std::string& name,
                                 const std::string& description) const {
-    if (id.empty())
+    if (id.empty()) {
         return;
-    if (!seen.insert(id).second)
+    }
+    if (!seen.insert(id).second) {
         return;
+    }
     list.push_back({id, card, name, description});
 }
 
@@ -118,8 +128,9 @@ std::vector<DacDeviceRuntimeInfo> DacManager::enumerateDevices() const {
         std::string cardName = snd_ctl_card_info_get_name(cardInfo);
         std::string cardLong = snd_ctl_card_info_get_longname(cardInfo);
         std::string cardId = snd_ctl_card_info_get_id(cardInfo);
-        if (cardLong.empty())
+        if (cardLong.empty()) {
             cardLong = cardName;
+        }
 
         addDeviceEntry(devices, seen, cardBaseId, cardName, "hw", cardLong);
         addDeviceEntry(devices, seen, "plughw:" + cardNum, cardName, "plughw", cardLong);
@@ -135,13 +146,15 @@ std::vector<DacDeviceRuntimeInfo> DacManager::enumerateDevices() const {
             snd_pcm_info_set_device(pcmInfo, device);
             snd_pcm_info_set_subdevice(pcmInfo, 0);
             snd_pcm_info_set_stream(pcmInfo, SND_PCM_STREAM_PLAYBACK);
-            if (snd_ctl_pcm_info(handle, pcmInfo) < 0)
+            if (snd_ctl_pcm_info(handle, pcmInfo) < 0) {
                 continue;
+            }
 
             std::string pcmName = snd_pcm_info_get_name(pcmInfo);
             std::string desc = cardName;
-            if (!pcmName.empty())
+            if (!pcmName.empty()) {
                 desc += " / " + pcmName;
+            }
 
             std::string deviceSuffix = "," + std::to_string(device);
             addDeviceEntry(devices, seen, cardBaseId + deviceSuffix, cardName, pcmName, desc);
@@ -173,8 +186,9 @@ std::string DacManager::pickPreferredDeviceLocked(
     }
 
     for (const auto& dev : devices) {
-        if (dev.id == "default")
+        if (dev.id == "default") {
             continue;
+        }
         return dev.id;
     }
     return requestedDevice_;
@@ -221,18 +235,20 @@ nlohmann::json DacManager::buildDevicesJsonLocked() {
 }
 
 void DacManager::setSelectedDeviceLocked(const std::string& device, const std::string& reason) {
-    if (selectedDevice_ == device)
+    if (selectedDevice_ == device) {
         return;
+    }
     selectedDevice_ = device;
     changePending_.store(true, std::memory_order_release);
     cv_.notify_all();
     std::cout << "[DAC] Selected ALSA device: " << (device.empty() ? "<none>" : device) << " ("
-              << reason << ")" << std::endl;
+              << reason << ")" << '\n';
 }
 
 void DacManager::updateCapabilityAndNotify(const std::string& device, const std::string& reason) {
-    if (device.empty())
+    if (device.empty()) {
         return;
+    }
     auto cap = DacCapability::scan(device);
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -297,8 +313,9 @@ void DacManager::initialize() {
 }
 
 void DacManager::start() {
-    if (monitorRunning_.exchange(true))
+    if (monitorRunning_.exchange(true)) {
         return;
+    }
     monitorThread_ = std::thread(&DacManager::monitorLoop, this);
 }
 

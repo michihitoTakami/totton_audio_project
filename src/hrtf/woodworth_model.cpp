@@ -22,7 +22,7 @@ std::vector<float> makeImpulse(size_t taps, float delaySamples, float gain) {
     }
 
     float clampedDelay = std::max(0.0f, delaySamples);
-    size_t idx = static_cast<size_t>(std::floor(clampedDelay));
+    auto idx = static_cast<size_t>(std::floor(clampedDelay));
     float frac = clampedDelay - static_cast<float>(idx);
 
     if (idx < taps) {
@@ -100,7 +100,8 @@ WoodworthIRSet generateWoodworthSet(float azimuthDegrees, const WoodworthParams&
     }
 
     float bleedGain = 0.02f;
-    auto bleed = makeImpulse(params.taps, nearDelaySamples + params.sampleRate * 0.0005f, bleedGain);
+    auto bleed =
+        makeImpulse(params.taps, nearDelaySamples + params.sampleRate * 0.0005f, bleedGain);
     set.ll = sumResponses(set.ll, bleed);
     set.rr = sumResponses(set.rr, bleed);
 
@@ -108,4 +109,3 @@ WoodworthIRSet generateWoodworthSet(float azimuthDegrees, const WoodworthParams&
 }
 
 }  // namespace HRTF
-
