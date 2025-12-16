@@ -83,7 +83,7 @@ static void refresh_current_headroom(const std::string& reason);
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
         std::cout << "[Partition] Linear phase is incompatible with low-latency mode. "
-                  << "Switching to minimum phase." << std::endl;
+                  << "Switching to minimum phase." << '\n';
         config.phaseType = PhaseType::Minimum;
     }
 }
@@ -134,8 +134,7 @@ static void ensure_output_config(AppConfig& config) {
     std::string current = outputModeToString(config.output.mode);
     std::string normalized = normalize_output_mode(current);
     if (!is_supported_output_mode(normalized)) {
-        std::cout << "Config: Unsupported output mode '" << current << "', forcing 'usb'"
-                  << std::endl;
+        std::cout << "Config: Unsupported output mode '" << current << "', forcing 'usb'" << '\n';
         config.output.mode = OutputMode::Usb;
         normalized = "usb";
     }
@@ -183,7 +182,7 @@ static std::atomic<int> g_current_rate_family_int{
 
 static size_t get_max_output_buffer_frames() {
     using namespace DaemonConstants;
-    double seconds = static_cast<double>(MAX_OUTPUT_BUFFER_SECONDS);
+    auto seconds = static_cast<double>(MAX_OUTPUT_BUFFER_SECONDS);
     if (seconds <= 0.0) {
         return DEFAULT_MAX_OUTPUT_BUFFER_FRAMES;
     }
@@ -283,7 +282,7 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
     g_soft_mute->setSampleRate(outputSampleRate);
 
     std::cout << "[Filter Switch] Starting fade-out (" << (FILTER_SWITCH_FADE_MS / 1000.0)
-              << "s)..." << std::endl;
+              << "s)..." << '\n';
     g_soft_mute->startFadeOut();
 
     // Wait briefly until mostly muted (or timeout) to avoid pops, but keep command responsive
@@ -307,7 +306,7 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
     if (switch_success) {
         // Start fade-in after filter switch
         std::cout << "[Filter Switch] Starting fade-in (" << (FILTER_SWITCH_FADE_MS / 1000.0)
-                  << "s)..." << std::endl;
+                  << "s)..." << '\n';
         g_soft_mute->startFadeIn();
 
         // Mark pending restoration to be applied once transition completes
@@ -316,7 +315,7 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
         g_soft_mute_restore_pending.store(true, std::memory_order_release);
     } else {
         // If switch failed, restore original state immediately
-        std::cerr << "[Filter Switch] Switch failed, restoring audio state" << std::endl;
+        std::cerr << "[Filter Switch] Switch failed, restoring audio state" << '\n';
         g_soft_mute->setPlaying();
         g_soft_mute->setFadeDuration(originalFadeDuration);
         g_soft_mute->setSampleRate(outputSampleRate);
@@ -583,8 +582,9 @@ static int g_pid_lock_fd = -1;
 // Read PID from lock file (for display purposes)
 static pid_t read_pid_from_lockfile() {
     std::ifstream pidfile(PID_FILE_PATH);
-    if (!pidfile.is_open())
+    if (!pidfile.is_open()) {
         return 0;
+    }
     pid_t pid = 0;
     pidfile >> pid;
     return pid;
@@ -759,7 +759,7 @@ static bool reinitialize_streaming_for_legacy_mode() {
     // Rebuild legacy streams so the buffers match the full FFT (avoids invalid cudaMemset after
     // disabling partitions).
     if (!g_upsampler->initializeStreaming()) {
-        std::cerr << "[Partition] Failed to initialize legacy streaming buffers" << std::endl;
+        std::cerr << "[Partition] Failed to initialize legacy streaming buffers" << '\n';
         return false;
     }
 
@@ -784,18 +784,17 @@ static bool reinitialize_streaming_for_legacy_mode() {
 
 static bool handle_rate_switch(int newInputRate) {
     if (!g_upsampler || !g_upsampler->isMultiRateEnabled()) {
-        std::cerr << "[Rate] Multi-rate mode not enabled" << std::endl;
+        std::cerr << "[Rate] Multi-rate mode not enabled" << '\n';
         return false;
     }
 
     int currentRate = g_upsampler->getCurrentInputRate();
     if (currentRate == newInputRate) {
-        std::cout << "[Rate] Already at target rate: " << newInputRate << " Hz" << std::endl;
+        std::cout << "[Rate] Already at target rate: " << newInputRate << " Hz" << '\n';
         return true;
     }
 
-    std::cout << "[Rate] Switching: " << currentRate << " Hz -> " << newInputRate << " Hz"
-              << std::endl;
+    std::cout << "[Rate] Switching: " << currentRate << " Hz -> " << newInputRate << " Hz" << '\n';
 
     int savedRate = currentRate;
 
@@ -806,7 +805,7 @@ static bool handle_rate_switch(int newInputRate) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             if (elapsed > std::chrono::milliseconds(200)) {
-                std::cerr << "[Rate] Warning: Fade-out timeout" << std::endl;
+                std::cerr << "[Rate] Warning: Fade-out timeout" << '\n';
                 break;
             }
         }
@@ -828,12 +827,12 @@ static bool handle_rate_switch(int newInputRate) {
         g_stream_accumulated_right = 0;
 
         if (!g_upsampler->switchToInputRate(newInputRate)) {
-            std::cerr << "[Rate] Failed to switch rate, rolling back" << std::endl;
+            std::cerr << "[Rate] Failed to switch rate, rolling back" << '\n';
             if (g_upsampler->switchToInputRate(savedRate)) {
                 std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
-                          << std::endl;
+                          << '\n';
             } else {
-                std::cerr << "[Rate] ERROR: Rollback failed!" << std::endl;
+                std::cerr << "[Rate] ERROR: Rollback failed!" << '\n';
             }
             if (g_soft_mute) {
                 g_soft_mute->startFadeIn();
@@ -842,11 +841,11 @@ static bool handle_rate_switch(int newInputRate) {
         }
 
         if (!g_upsampler->initializeStreaming()) {
-            std::cerr << "[Rate] Failed to re-initialize streaming mode, rolling back" << std::endl;
+            std::cerr << "[Rate] Failed to re-initialize streaming mode, rolling back" << '\n';
             if (g_upsampler->switchToInputRate(savedRate)) {
                 if (g_upsampler->initializeStreaming()) {
                     std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
-                              << std::endl;
+                              << '\n';
                 }
             }
             if (g_soft_mute) {
@@ -876,9 +875,9 @@ static bool handle_rate_switch(int newInputRate) {
     }
 
     std::cout << "[Rate] Switch complete: " << newInputRate << " Hz (" << newUpsampleRatio
-              << "x -> " << newOutputRate << " Hz)" << std::endl;
+              << "x -> " << newOutputRate << " Hz)" << '\n';
     std::cout << "[Rate] Streaming buffers re-initialized: " << buffer_capacity
-              << " samples capacity" << std::endl;
+              << " samples capacity" << '\n';
 
     return true;
 }
@@ -889,28 +888,39 @@ static void load_runtime_config() {
     g_config = loaded;
     ensure_output_config(g_config);
 
-    if (g_config.alsaDevice.empty())
+    if (g_config.alsaDevice.empty()) {
         set_preferred_output_device(g_config, DEFAULT_ALSA_DEVICE);
-    if (g_config.filterPath.empty())
+    }
+    if (g_config.filterPath.empty()) {
         g_config.filterPath = DEFAULT_FILTER_PATH;
-    if (g_config.upsampleRatio <= 0)
+    }
+    if (g_config.upsampleRatio <= 0) {
         g_config.upsampleRatio = DEFAULT_UPSAMPLE_RATIO;
-    if (g_config.blockSize <= 0)
+    }
+    if (g_config.blockSize <= 0) {
         g_config.blockSize = DEFAULT_BLOCK_SIZE;
-    if (g_config.bufferSize <= 0)
+    }
+    if (g_config.bufferSize <= 0) {
         g_config.bufferSize = 262144;
-    if (g_config.periodSize <= 0)
+    }
+    if (g_config.periodSize <= 0) {
         g_config.periodSize = 32768;
-    if (g_config.loopback.device.empty())
+    }
+    if (g_config.loopback.device.empty()) {
         g_config.loopback.device = DEFAULT_LOOPBACK_DEVICE;
-    if (g_config.loopback.sampleRate == 0)
+    }
+    if (g_config.loopback.sampleRate == 0) {
         g_config.loopback.sampleRate = DEFAULT_INPUT_SAMPLE_RATE;
-    if (g_config.loopback.channels == 0)
+    }
+    if (g_config.loopback.channels == 0) {
         g_config.loopback.channels = CHANNELS;
-    if (g_config.loopback.periodFrames == 0)
+    }
+    if (g_config.loopback.periodFrames == 0) {
         g_config.loopback.periodFrames = DEFAULT_LOOPBACK_PERIOD_FRAMES;
-    if (g_config.loopback.format.empty())
+    }
+    if (g_config.loopback.format.empty()) {
         g_config.loopback.format = "S16_LE";
+    }
     if (g_config.loopback.enabled) {
         g_input_sample_rate = static_cast<int>(g_config.loopback.sampleRate);
     }
@@ -919,7 +929,7 @@ static void load_runtime_config() {
     }
 
     if (!found) {
-        std::cout << "Config: Using defaults (no config.json found)" << std::endl;
+        std::cout << "Config: Using defaults (no config.json found)" << '\n';
     }
 
     enforce_phase_partition_constraints(g_config);
@@ -1036,7 +1046,7 @@ static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_
     dst.resize(samples);
 
     if (format == SND_PCM_FORMAT_S16_LE) {
-        const int16_t* in = static_cast<const int16_t*>(src);
+        const auto* in = static_cast<const int16_t*>(src);
         constexpr float scale = 1.0f / 32768.0f;
         for (size_t i = 0; i < samples; ++i) {
             dst[i] = static_cast<float>(in[i]) * scale;
@@ -1045,7 +1055,7 @@ static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_
     }
 
     if (format == SND_PCM_FORMAT_S32_LE) {
-        const int32_t* in = static_cast<const int32_t*>(src);
+        const auto* in = static_cast<const int32_t*>(src);
         constexpr float scale = 1.0f / 2147483648.0f;
         for (size_t i = 0; i < samples; ++i) {
             dst[i] = static_cast<float>(in[i]) * scale;
@@ -1054,7 +1064,7 @@ static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_
     }
 
     if (format == SND_PCM_FORMAT_S24_3LE) {
-        const uint8_t* in = static_cast<const uint8_t*>(src);
+        const auto* in = static_cast<const uint8_t*>(src);
         constexpr float scale = 1.0f / 8388608.0f;
         for (size_t i = 0; i < samples; ++i) {
             size_t idx = i * 3;
@@ -1072,8 +1082,9 @@ static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_
     return false;
 }
 
-static void loopback_capture_thread(std::string device, snd_pcm_format_t format, unsigned int rate,
-                                    unsigned int channels, snd_pcm_uframes_t period_frames) {
+static void loopback_capture_thread(const std::string& device, snd_pcm_format_t format,
+                                    unsigned int rate, unsigned int channels,
+                                    snd_pcm_uframes_t period_frames) {
     if (channels != static_cast<unsigned int>(CHANNELS)) {
         LOG_ERROR("[Loopback] Unsupported channel count {} (expected {})", channels, CHANNELS);
         return;
@@ -1183,7 +1194,7 @@ void alsa_output_thread() {
         return;
     }
 
-    snd_pcm_uframes_t period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
+    auto period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
     if (period_size == 0) {
         period_size =
             static_cast<snd_pcm_uframes_t>((g_config.periodSize > 0) ? g_config.periodSize : 32768);
@@ -1199,7 +1210,7 @@ void alsa_output_thread() {
         if (++alive_counter > 200) {  // ~200 iterations ~ a few seconds depending on buffer wait
             alive_counter = 0;
             if (!pcmController.alive()) {
-                std::cerr << "ALSA: PCM disconnected/suspended, attempting reopen..." << std::endl;
+                std::cerr << "ALSA: PCM disconnected/suspended, attempting reopen..." << '\n';
                 pcmController.close();
                 while (g_running && !pcmController.openSelected()) {
                     std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -1251,7 +1262,7 @@ void alsa_output_thread() {
         if (auto pendingDevice = g_dac_manager->consumePendingChange()) {
             std::string nextDevice = *pendingDevice;
             if (!nextDevice.empty() && nextDevice != pcmController.device()) {
-                std::cout << "ALSA: Switching output to " << nextDevice << std::endl;
+                std::cout << "ALSA: Switching output to " << nextDevice << '\n';
                 if (!pcmController.switchDevice(nextDevice)) {
                     continue;
                 }
@@ -1273,8 +1284,9 @@ void alsa_output_thread() {
                 return bufferManager.queuedFramesLocked() >= ready_threshold || !g_running;
             });
 
-        if (!g_running)
+        if (!g_running) {
             break;
+        }
 
         lock.unlock();
 
@@ -1309,7 +1321,7 @@ void alsa_output_thread() {
             size_t clips = runtime_stats::clipCount();
             if (total % (static_cast<size_t>(period_size) * 2 * 100) == 0 && clips > 0) {
                 std::cout << "WARNING: Clipping detected - " << clips << " samples clipped out of "
-                          << total << " (" << (100.0 * clips / total) << "%)" << std::endl;
+                          << total << " (" << (100.0 * clips / total) << "%)" << '\n';
             }
         }
 
@@ -1319,7 +1331,7 @@ void alsa_output_thread() {
         if (frames_written < 0) {
             // Device may be gone; attempt reopen
             std::cerr << "ALSA: Write error: " << snd_strerror(frames_written)
-                      << ", retrying reopen..." << std::endl;
+                      << ", retrying reopen..." << '\n';
             pcmController.close();
             while (g_running && !pcmController.openSelected()) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -1339,7 +1351,7 @@ void alsa_output_thread() {
 
     // Cleanup
     pcmController.close();
-    std::cout << "ALSA: Output thread terminated" << std::endl;
+    std::cout << "ALSA: Output thread terminated" << '\n';
 }
 
 int main(int argc, char* argv[]) {
@@ -1382,13 +1394,13 @@ int main(int argc, char* argv[]) {
         // Environment variable overrides config.json
         if (const char* env_dev = std::getenv("ALSA_DEVICE")) {
             set_preferred_output_device(g_config, env_dev);
-            std::cout << "Config: ALSA_DEVICE env override: " << env_dev << std::endl;
+            std::cout << "Config: ALSA_DEVICE env override: " << env_dev << '\n';
         }
 
         // Command line argument overrides filter path
         if (argc > 1) {
             g_config.filterPath = argv[1];
-            std::cout << "Config: CLI filter path override: " << argv[1] << std::endl;
+            std::cout << "Config: CLI filter path override: " << argv[1] << '\n';
         }
 
         initialize_event_modules();
@@ -1409,7 +1421,7 @@ int main(int argc, char* argv[]) {
                                                basePath.substr(dotPos);
                 if (std::filesystem::exists(rateSpecificPath)) {
                     std::cout << "Config: Using sample-rate-specific filter: " << rateSpecificPath
-                              << std::endl;
+                              << '\n';
                     g_config.filterPath = rateSpecificPath;
                 }
             }
@@ -1420,23 +1432,23 @@ int main(int argc, char* argv[]) {
             g_config.filterPath.find("44100") == std::string::npos &&
             g_config.filterPath.find("48000") == std::string::npos) {
             std::cout << "Warning: Using generic filter with 48kHz input. "
-                      << "For optimal quality, generate a 48kHz-optimized filter." << std::endl;
+                      << "For optimal quality, generate a 48kHz-optimized filter." << '\n';
         }
 
         // Initialize GPU upsampler with configured values
-        std::cout << "Initializing GPU upsampler..." << std::endl;
+        std::cout << "Initializing GPU upsampler..." << '\n';
         g_upsampler = new ConvolutionEngine::GPUUpsampler();
         g_upsampler->setPartitionedConvolutionConfig(g_config.partitionedConvolution);
 
         bool initSuccess = false;
         ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
         if (g_config.multiRateEnabled) {
-            std::cout << "Multi-rate mode enabled" << std::endl;
-            std::cout << "  Coefficient directory: " << g_config.coefficientDir << std::endl;
+            std::cout << "Multi-rate mode enabled" << '\n';
+            std::cout << "  Coefficient directory: " << g_config.coefficientDir << '\n';
 
             if (!std::filesystem::exists(g_config.coefficientDir)) {
                 std::cerr << "Config error: Coefficient directory not found: "
-                          << g_config.coefficientDir << std::endl;
+                          << g_config.coefficientDir << '\n';
                 delete g_upsampler;
                 exitCode = 1;
                 break;
@@ -1453,13 +1465,13 @@ int main(int argc, char* argv[]) {
                 g_set_rate_family(ConvolutionEngine::detectRateFamily(g_input_sample_rate));
             }
         } else {
-            std::cout << "Quad-phase mode enabled" << std::endl;
+            std::cout << "Quad-phase mode enabled" << '\n';
 
             bool allFilesExist = true;
             for (const auto& path : {g_config.filterPath44kMin, g_config.filterPath48kMin,
                                      g_config.filterPath44kLinear, g_config.filterPath48kLinear}) {
                 if (!std::filesystem::exists(path)) {
-                    std::cerr << "Config error: Filter file not found: " << path << std::endl;
+                    std::cerr << "Config error: Filter file not found: " << path << '\n';
                     allFilesExist = false;
                 }
             }
@@ -1481,7 +1493,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (!initSuccess) {
-            std::cerr << "Failed to initialize GPU upsampler" << std::endl;
+            std::cerr << "Failed to initialize GPU upsampler" << '\n';
             delete g_upsampler;
             exitCode = 1;
             break;
@@ -1489,7 +1501,7 @@ int main(int argc, char* argv[]) {
 
         // Check for early abort (signal received during GPU initialization)
         if (!g_running) {
-            std::cout << "Startup interrupted by signal" << std::endl;
+            std::cout << "Startup interrupted by signal" << '\n';
             delete g_upsampler;
             g_upsampler = nullptr;
             break;
@@ -1497,16 +1509,14 @@ int main(int argc, char* argv[]) {
 
         if (g_config.multiRateEnabled) {
             std::cout << "GPU upsampler ready (multi-rate mode, " << g_config.blockSize
-                      << " samples/block)" << std::endl;
+                      << " samples/block)" << '\n';
             std::cout << "  Current input rate: " << g_upsampler->getCurrentInputRate() << " Hz"
-                      << std::endl;
-            std::cout << "  Upsample ratio: " << g_upsampler->getUpsampleRatio() << "x"
-                      << std::endl;
-            std::cout << "  Output rate: " << g_upsampler->getOutputSampleRate() << " Hz"
-                      << std::endl;
+                      << '\n';
+            std::cout << "  Upsample ratio: " << g_upsampler->getUpsampleRatio() << "x" << '\n';
+            std::cout << "  Output rate: " << g_upsampler->getOutputSampleRate() << " Hz" << '\n';
         } else {
             std::cout << "GPU upsampler ready (" << g_config.upsampleRatio << "x upsampling, "
-                      << g_config.blockSize << " samples/block)" << std::endl;
+                      << g_config.blockSize << " samples/block)" << '\n';
         }
 
         // Set g_active_rate_family and g_active_phase_type for headroom tracking
@@ -1521,21 +1531,21 @@ int main(int argc, char* argv[]) {
         publish_filter_switch_event(current_filter_path(), g_active_phase_type, true);
 
         std::cout << "Input sample rate: " << g_upsampler->getInputSampleRate() << " Hz -> "
-                  << g_upsampler->getOutputSampleRate() << " Hz output" << std::endl;
+                  << g_upsampler->getOutputSampleRate() << " Hz output" << '\n';
         if (!g_config.multiRateEnabled) {
-            std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << std::endl;
+            std::cout << "Phase type: " << phaseTypeToString(g_config.phaseType) << '\n';
         }
 
         // Log latency warning for linear phase
         if (g_config.phaseType == PhaseType::Linear) {
             double latencySec = g_upsampler->getLatencySeconds();
             std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
-                      << g_upsampler->getLatencySamples() << " samples)" << std::endl;
+                      << g_upsampler->getLatencySamples() << " samples)" << '\n';
         }
 
         // Initialize streaming mode to preserve overlap buffers across input callbacks
         if (!g_upsampler->initializeStreaming()) {
-            std::cerr << "Failed to initialize streaming mode" << std::endl;
+            std::cerr << "Failed to initialize streaming mode" << '\n';
             delete g_upsampler;
             exitCode = 1;
             break;
@@ -1544,7 +1554,7 @@ int main(int argc, char* argv[]) {
 
         // Check for early abort
         if (!g_running) {
-            std::cout << "Startup interrupted by signal" << std::endl;
+            std::cout << "Startup interrupted by signal" << '\n';
             delete g_upsampler;
             g_upsampler = nullptr;
             break;
@@ -1552,11 +1562,11 @@ int main(int argc, char* argv[]) {
 
         // Apply EQ profile if enabled
         if (g_config.eqEnabled && !g_config.eqProfilePath.empty()) {
-            std::cout << "Loading EQ profile: " << g_config.eqProfilePath << std::endl;
+            std::cout << "Loading EQ profile: " << g_config.eqProfilePath << '\n';
             EQ::EqProfile eqProfile;
             if (EQ::parseEqFile(g_config.eqProfilePath, eqProfile)) {
                 std::cout << "  EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
-                          << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
+                          << " bands, preamp " << eqProfile.preampDb << " dB)" << '\n';
 
                 // Compute EQ magnitude response and apply with minimum phase reconstruction
                 size_t filterFftSize = g_upsampler->getFilterFftSize();  // N/2+1 (R2C output)
@@ -1573,16 +1583,15 @@ int main(int argc, char* argv[]) {
                 }
                 std::cout << "  EQ magnitude stats: max=" << eqMax << " ("
                           << 20.0 * std::log10(std::max(eqMax, 1e-30)) << " dB), min=" << eqMin
-                          << std::endl;
+                          << '\n';
 
                 if (g_upsampler->applyEqMagnitude(eqMagnitude)) {
                     // Log message depends on phase type (already logged by applyEqMagnitude)
                 } else {
-                    std::cerr << "  EQ: Failed to apply frequency response" << std::endl;
+                    std::cerr << "  EQ: Failed to apply frequency response" << '\n';
                 }
             } else {
-                std::cerr << "  EQ: Failed to parse profile: " << g_config.eqProfilePath
-                          << std::endl;
+                std::cerr << "  EQ: Failed to parse profile: " << g_config.eqProfilePath << '\n';
             }
         }
 
@@ -1592,7 +1601,7 @@ int main(int argc, char* argv[]) {
         g_stream_input_left.resize(buffer_capacity, 0.0f);
         g_stream_input_right.resize(buffer_capacity, 0.0f);
         std::cout << "Streaming buffer capacity: " << buffer_capacity
-                  << " samples (2x streamValidInputPerBlock)" << std::endl;
+                  << " samples (2x streamValidInputPerBlock)" << '\n';
         g_stream_accumulated_left = 0;
         g_stream_accumulated_right = 0;
         size_t upsampler_output_capacity =
@@ -1606,7 +1615,7 @@ int main(int argc, char* argv[]) {
             // Crossfeed is disabled by default until enabled via ZeroMQ command
             std::string hrtfDir = "data/crossfeed/hrtf";
             if (std::filesystem::exists(hrtfDir)) {
-                std::cout << "Initializing HRTF processor for crossfeed..." << std::endl;
+                std::cout << "Initializing HRTF processor for crossfeed..." << '\n';
                 g_hrtf_processor = new CrossfeedEngine::HRTFProcessor();
 
                 // Determine rate family based on input sample rate
@@ -1620,7 +1629,7 @@ int main(int argc, char* argv[]) {
                         std::cout << "  HRTF processor ready (head size: M, rate family: "
                                   << (rateFamily == CrossfeedEngine::RateFamily::RATE_44K ? "44k"
                                                                                           : "48k")
-                                  << ")" << std::endl;
+                                  << ")" << '\n';
 
                         // Pre-allocate crossfeed streaming buffers
                         size_t cf_buffer_capacity =
@@ -1632,40 +1641,39 @@ int main(int argc, char* argv[]) {
                         g_cf_output_buffer_left.reserve(cf_buffer_capacity);
                         g_cf_output_buffer_right.reserve(cf_buffer_capacity);
                         std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity
-                                  << " samples" << std::endl;
+                                  << " samples" << '\n';
 
                         // Crossfeed is initialized but disabled by default
                         g_crossfeed_enabled.store(false);
                         g_hrtf_processor->setEnabled(false);
-                        std::cout << "  Crossfeed: initialized (disabled by default)" << std::endl;
+                        std::cout << "  Crossfeed: initialized (disabled by default)" << '\n';
                     } else {
-                        std::cerr << "  HRTF: Failed to initialize streaming mode" << std::endl;
+                        std::cerr << "  HRTF: Failed to initialize streaming mode" << '\n';
                         delete g_hrtf_processor;
                         g_hrtf_processor = nullptr;
                     }
                 } else {
-                    std::cerr << "  HRTF: Failed to initialize processor" << std::endl;
+                    std::cerr << "  HRTF: Failed to initialize processor" << '\n';
                     std::cerr << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
                                  "generate HRTF "
                                  "filters"
-                              << std::endl;
+                              << '\n';
                     delete g_hrtf_processor;
                     g_hrtf_processor = nullptr;
                 }
             } else {
                 std::cout << "HRTF directory not found (" << hrtfDir
-                          << "), crossfeed feature disabled" << std::endl;
+                          << "), crossfeed feature disabled" << '\n';
                 std::cout << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
                              "generate HRTF "
                              "filters"
-                          << std::endl;
+                          << '\n';
             }
         } else {
-            std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)"
-                      << std::endl;
+            std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)" << '\n';
         }
 
-        std::cout << std::endl;
+        std::cout << '\n';
 
         if (!g_audio_pipeline && g_upsampler) {
             audio_pipeline::Dependencies pipelineDeps{};
@@ -1717,7 +1725,7 @@ int main(int argc, char* argv[]) {
 
         // Check for early abort before starting threads
         if (!g_running) {
-            std::cout << "Startup interrupted by signal" << std::endl;
+            std::cout << "Startup interrupted by signal" << '\n';
             delete g_upsampler;
             g_upsampler = nullptr;
             break;
@@ -1728,7 +1736,7 @@ int main(int argc, char* argv[]) {
         int outputSampleRate = g_input_sample_rate * g_config.upsampleRatio;
         g_soft_mute = new SoftMute::Controller(DEFAULT_SOFT_MUTE_FADE_MS, outputSampleRate);
         std::cout << "Soft mute initialized (" << DEFAULT_SOFT_MUTE_FADE_MS << "ms fade at "
-                  << outputSampleRate << "Hz)" << std::endl;
+                  << outputSampleRate << "Hz)" << '\n';
 
         // Initialize fallback manager (Issue #139)
         if (g_config.fallback.enabled) {
@@ -1754,15 +1762,15 @@ int main(int argc, char* argv[]) {
                 std::cout << "Fallback manager initialized (GPU threshold: "
                           << fbConfig.gpuThreshold << "%, XRUN fallback: "
                           << (fbConfig.xrunTriggersFallback ? "enabled" : "disabled") << ")"
-                          << std::endl;
+                          << '\n';
             } else {
-                std::cerr << "Warning: Failed to initialize fallback manager" << std::endl;
+                std::cerr << "Warning: Failed to initialize fallback manager" << '\n';
                 delete g_fallback_manager;
                 g_fallback_manager = nullptr;
                 g_fallback_active.store(false, std::memory_order_relaxed);
             }
         } else {
-            std::cout << "Fallback manager disabled" << std::endl;
+            std::cout << "Fallback manager disabled" << '\n';
             g_fallback_active.store(false, std::memory_order_relaxed);
         }
 
@@ -1773,7 +1781,7 @@ int main(int argc, char* argv[]) {
             g_dac_manager = std::make_unique<dac::DacManager>(make_dac_dependencies());
         }
         if (!g_dac_manager) {
-            std::cerr << "Failed to initialize DAC manager" << std::endl;
+            std::cerr << "Failed to initialize DAC manager" << '\n';
             exitCode = 1;
             break;
         }
@@ -1826,7 +1834,7 @@ int main(int argc, char* argv[]) {
         if (g_dac_manager) {
             g_dac_manager->start();
         }
-        std::cout << "Starting ALSA output thread..." << std::endl;
+        std::cout << "Starting ALSA output thread..." << '\n';
         std::thread alsa_thread(alsa_output_thread);
 
         std::thread loopback_thread;
@@ -1841,7 +1849,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Starting loopback capture thread (" << g_config.loopback.device
                       << ", fmt=" << g_config.loopback.format
                       << ", rate=" << g_config.loopback.sampleRate
-                      << ", period=" << g_config.loopback.periodFrames << ")" << std::endl;
+                      << ", period=" << g_config.loopback.periodFrames << ")" << '\n';
             loopback_thread =
                 std::thread(loopback_capture_thread, g_config.loopback.device, lb_format,
                             g_config.loopback.sampleRate, g_config.loopback.channels,
@@ -1870,24 +1878,22 @@ int main(int argc, char* argv[]) {
         }
 
         double outputRateKHz = g_input_sample_rate * g_config.upsampleRatio / 1000.0;
-        std::cout << std::endl;
+        std::cout << '\n';
         if (g_config.loopback.enabled) {
-            std::cout << "System ready (Loopback capture mode). Audio routing configured:"
-                      << std::endl;
+            std::cout << "System ready (Loopback capture mode). Audio routing configured:" << '\n';
             std::cout << "  1. Loopback capture → GPU Upsampler (" << g_config.upsampleRatio
-                      << "x upsampling)" << std::endl;
+                      << "x upsampling)" << '\n';
             std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
-                      << std::endl;
+                      << '\n';
         } else {
-            std::cout << "System ready (TCP/loopback input). Audio routing configured:"
-                      << std::endl;
+            std::cout << "System ready (TCP/loopback input). Audio routing configured:" << '\n';
             std::cout << "  1. Network or loopback source → GPU Upsampler ("
-                      << g_config.upsampleRatio << "x upsampling)" << std::endl;
+                      << g_config.upsampleRatio << "x upsampling)" << '\n';
             std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
-                      << std::endl;
+                      << '\n';
         }
-        std::cout << "Press Ctrl+C to stop." << std::endl;
-        std::cout << "========================================" << std::endl;
+        std::cout << "Press Ctrl+C to stop." << '\n';
+        std::cout << "========================================" << '\n';
 
         shutdownManager.notifyReady();
 
@@ -1899,7 +1905,7 @@ int main(int argc, char* argv[]) {
         };
 
         if (g_zmq_bind_failed.load()) {
-            std::cerr << "Startup aborted due to ZeroMQ bind failure." << std::endl;
+            std::cerr << "Startup aborted due to ZeroMQ bind failure." << '\n';
         } else {
             runMainLoop();
         }
@@ -1907,7 +1913,7 @@ int main(int argc, char* argv[]) {
         shutdownManager.runShutdownSequence();
 
         // Step 5: Signal worker threads to stop and wait for them
-        std::cout << "  Step 5: Stopping worker threads..." << std::endl;
+        std::cout << "  Step 5: Stopping worker threads..." << '\n';
         g_running = false;
         playback_buffer().cv().notify_all();
         if (controlPlane) {
@@ -1919,7 +1925,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Step 6: Release audio processing resources
-        std::cout << "  Step 6: Releasing resources..." << std::endl;
+        std::cout << "  Step 6: Releasing resources..." << '\n';
         if (g_fallback_manager) {
             g_fallback_manager->shutdown();
             delete g_fallback_manager;
@@ -1943,18 +1949,18 @@ int main(int argc, char* argv[]) {
 
         // Don't reload if ZMQ bind failed - exit completely
         if (g_zmq_bind_failed.load()) {
-            std::cerr << "Exiting due to ZeroMQ initialization failure." << std::endl;
+            std::cerr << "Exiting due to ZeroMQ initialization failure." << '\n';
             exitCode = 1;
             break;
         }
 
         if (g_reload_requested) {
-            std::cout << "Reload requested. Restarting daemon with updated config..." << std::endl;
+            std::cout << "Reload requested. Restarting daemon with updated config..." << '\n';
         }
     } while (g_reload_requested);
 
     // Release PID lock and remove file on clean exit
     release_pid_lock();
-    std::cout << "Goodbye!" << std::endl;
+    std::cout << "Goodbye!" << '\n';
     return exitCode;
 }

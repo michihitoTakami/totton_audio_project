@@ -450,17 +450,17 @@ include(GoogleTest)
 # CPU-only unit tests (no GPU required)
 # Tests: RateFamily, EQ Parser, EQ to FIR, Config Loader
 add_executable(cpu_tests
-    tests/cpp/test_rate_family.cpp
-    tests/cpp/test_eq_parser.cpp
-    tests/cpp/test_eq_to_fir.cpp
-    tests/cpp/test_config_loader.cpp
-    tests/cpp/test_partition_plan.cpp
-    tests/cpp/test_phase_alignment.cpp
-    tests/cpp/test_playback_buffer_threshold.cpp
-    tests/cpp/test_alsa_write_loop.cpp
-    tests/cpp/test_runtime_stats.cpp
-    tests/cpp/test_audio_pipeline.cpp
-    tests/cpp/test_precision_traits.cpp
+    tests/cpp/audio/test_rate_family.cpp
+    tests/cpp/audio/test_eq_parser.cpp
+    tests/cpp/audio/test_eq_to_fir.cpp
+    tests/cpp/core/test_config_loader.cpp
+    tests/cpp/e2e/test_partition_plan.cpp
+    tests/cpp/audio/test_phase_alignment.cpp
+    tests/cpp/audio/test_playback_buffer_threshold.cpp
+    tests/cpp/daemon/test_alsa_write_loop.cpp
+    tests/cpp/daemon/test_runtime_stats.cpp
+    tests/cpp/audio/test_audio_pipeline.cpp
+    tests/cpp/core/test_precision_traits.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
@@ -506,7 +506,7 @@ gtest_discover_tests(gpu_tests)
 
 # ZeroMQ communication tests (CPU-only)
 add_executable(zmq_tests
-    tests/cpp/test_zeromq_interface.cpp
+    tests/cpp/network/test_zeromq_interface.cpp
 )
 target_link_libraries(zmq_tests
     GTest::gtest_main
@@ -516,7 +516,7 @@ gtest_discover_tests(zmq_tests)
 
 # Base64 encoding/decoding tests (CPU-only)
 add_executable(base64_tests
-    tests/cpp/test_base64.cpp
+    tests/cpp/core/test_base64.cpp
 )
 target_link_libraries(base64_tests
     GTest::gtest_main
@@ -525,7 +525,7 @@ target_link_libraries(base64_tests
 gtest_discover_tests(base64_tests)
 
 add_executable(zmq_server_tests
-    tests/cpp/test_zmq_server.cpp
+    tests/cpp/network/test_zmq_server.cpp
     src/daemon/control/zmq_server.cpp
 )
 target_link_libraries(zmq_server_tests
@@ -543,7 +543,7 @@ gtest_discover_tests(zmq_server_tests)
 
 # Error codes tests (CPU-only)
 add_executable(error_codes_tests
-    tests/cpp/test_error_codes.cpp
+    tests/cpp/core/test_error_codes.cpp
 )
 target_link_libraries(error_codes_tests
     GTest::gtest_main
@@ -557,7 +557,7 @@ gtest_discover_tests(error_codes_tests)
 
 # Auto-Negotiation tests (CPU-only, no ALSA hardware required)
 add_executable(auto_negotiation_tests
-    tests/cpp/test_auto_negotiation.cpp
+    tests/cpp/audio/test_auto_negotiation.cpp
 )
 target_link_libraries(auto_negotiation_tests
     GTest::gtest_main
@@ -571,7 +571,7 @@ gtest_discover_tests(auto_negotiation_tests)
 
 # Rate Switch E2E tests (Issue #221)
 add_executable(rate_switch_e2e_tests
-    tests/cpp/test_rate_switch_e2e.cpp
+    tests/cpp/e2e/test_rate_switch_e2e.cpp
 )
 target_link_libraries(rate_switch_e2e_tests
     GTest::gtest_main
@@ -584,7 +584,7 @@ gtest_discover_tests(rate_switch_e2e_tests)
 
 # Soft Mute tests (CPU-only)
 add_executable(soft_mute_tests
-    tests/cpp/test_soft_mute.cpp
+    tests/cpp/audio/test_soft_mute.cpp
 )
 target_link_libraries(soft_mute_tests
     GTest::gtest_main
@@ -597,7 +597,7 @@ gtest_discover_tests(soft_mute_tests)
 
 # Graceful Shutdown tests (CPU-only, Issue #215)
 add_executable(graceful_shutdown_tests
-    tests/cpp/test_graceful_shutdown.cpp
+    tests/cpp/audio/test_graceful_shutdown.cpp
 )
 target_link_libraries(graceful_shutdown_tests
     GTest::gtest_main
@@ -610,7 +610,7 @@ gtest_discover_tests(graceful_shutdown_tests)
 
 # Fallback Manager tests (CPU-only, Issue #139)
 add_executable(fallback_manager_tests
-    tests/cpp/test_fallback_manager.cpp
+    tests/cpp/audio/test_fallback_manager.cpp
 )
 target_link_libraries(fallback_manager_tests
     GTest::gtest_main
@@ -624,7 +624,7 @@ gtest_discover_tests(fallback_manager_tests)
 
 # Audio common utilities tests (AudioRingBuffer, AudioUtils)
 add_executable(audio_common_tests
-    tests/cpp/test_audio_common.cpp
+    tests/cpp/audio/test_audio_common.cpp
 )
 target_link_libraries(audio_common_tests
     GTest::gtest_main
@@ -636,7 +636,7 @@ gtest_discover_tests(audio_common_tests)
 
 # Stall detector unit tests
 add_executable(audio_input_stall_tests
-    tests/cpp/test_audio_input_stall.cpp
+    tests/cpp/e2e/test_audio_input_stall.cpp
 )
 target_link_libraries(audio_input_stall_tests
     GTest::gtest_main

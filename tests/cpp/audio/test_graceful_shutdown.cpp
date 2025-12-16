@@ -15,7 +15,7 @@ class GracefulShutdownTest : public ::testing::Test {
         controller_.setFadeOutCallback([this]() { fadeOutCalled_ = true; });
         controller_.setQuitLoopCallback([this]() { quitLoopCalled_ = true; });
         // Set log callback to print to stdout (safe in test context)
-        controller_.setLogCallback([](const char* msg) { std::cout << msg << std::endl; });
+        controller_.setLogCallback([](const char* msg) { std::cout << msg << '\n'; });
     }
 
     SignalState state_;

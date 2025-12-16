@@ -90,7 +90,7 @@ Capability scan(const std::string& device) {
 
     for (int rate : testRates) {
         if (rate >= cap.minSampleRate && rate <= cap.maxSampleRate) {
-            unsigned int testRate = static_cast<unsigned int>(rate);
+            auto testRate = static_cast<unsigned int>(rate);
             err = snd_pcm_hw_params_test_rate(pcm, params, testRate, 0);
             if (err == 0) {
                 cap.supportedRates.push_back(rate);
@@ -120,10 +120,12 @@ std::vector<std::string> listPlaybackDevices() {
 }
 
 bool isRateSupported(const Capability& cap, int sampleRate) {
-    if (!cap.isValid)
+    if (!cap.isValid) {
         return false;
-    if (sampleRate < cap.minSampleRate || sampleRate > cap.maxSampleRate)
+    }
+    if (sampleRate < cap.minSampleRate || sampleRate > cap.maxSampleRate) {
         return false;
+    }
     // If supportedRates is empty, we couldn't determine which rates are actually supported
     // Be conservative and return false (unknown = unsupported)
     if (cap.supportedRates.empty()) {
@@ -134,10 +136,12 @@ bool isRateSupported(const Capability& cap, int sampleRate) {
 }
 
 int getBestSupportedRate(const Capability& cap, int requestedRate) {
-    if (!cap.isValid)
+    if (!cap.isValid) {
         return 0;
-    if (isRateSupported(cap, requestedRate))
+    }
+    if (isRateSupported(cap, requestedRate)) {
         return requestedRate;
+    }
 
     int bestRate = 0;
     if (!cap.supportedRates.empty()) {

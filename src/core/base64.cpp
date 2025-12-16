@@ -49,10 +49,12 @@ size_t decodedSize(const std::string& encoded) {
 
     // Count padding
     size_t padding = 0;
-    if (len >= 1 && encoded[len - 1] == '=')
+    if (len >= 1 && encoded[len - 1] == '=') {
         padding++;
-    if (len >= 2 && encoded[len - 2] == '=')
+    }
+    if (len >= 2 && encoded[len - 2] == '=') {
         padding++;
+    }
 
     // Each 4 chars decode to 3 bytes, minus padding
     return (len / 4) * 3 - padding;
@@ -116,10 +118,12 @@ std::vector<uint8_t> decode(const std::string& encoded) {
 
     // Count padding
     size_t padding = 0;
-    if (len >= 1 && encoded[len - 1] == '=')
+    if (len >= 1 && encoded[len - 1] == '=') {
         padding++;
-    if (len >= 2 && encoded[len - 2] == '=')
+    }
+    if (len >= 2 && encoded[len - 2] == '=') {
         padding++;
+    }
 
     std::vector<uint8_t> result;
     result.reserve((len / 4) * 3 - padding);

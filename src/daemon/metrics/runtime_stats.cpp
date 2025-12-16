@@ -288,7 +288,7 @@ void writeStatsFile(const Dependencies& deps, std::size_t bufferCapacityFrames,
     if (!ofs) {
         return;
     }
-    ofs << stats.dump(2) << std::endl;
+    ofs << stats.dump(2) << '\n';
     ofs.close();
     std::rename(tmpPath.c_str(), path.c_str());
 }

@@ -122,7 +122,7 @@ bool AlsaPcmController::openForDevice(const std::string& device, int forcedSampl
     if (configuredRate <= 0) {
         configuredRate = static_cast<int>(deps_.config->upsampleRatio) * 44100;
     }
-    unsigned int rate = static_cast<unsigned int>(configuredRate);
+    auto rate = static_cast<unsigned int>(configuredRate);
     if ((err = snd_pcm_hw_params_set_rate_near(pcm, hwParams, &rate, nullptr)) < 0) {
         LOG_ERROR("[ALSA] Cannot set sample rate: {}", snd_strerror(err));
         snd_pcm_close(pcm);
@@ -135,8 +135,8 @@ bool AlsaPcmController::openForDevice(const std::string& device, int forcedSampl
         return false;
     }
 
-    snd_pcm_uframes_t bufferSize = static_cast<snd_pcm_uframes_t>(deps_.config->bufferSize);
-    snd_pcm_uframes_t periodSize = static_cast<snd_pcm_uframes_t>(deps_.config->periodSize);
+    auto bufferSize = static_cast<snd_pcm_uframes_t>(deps_.config->bufferSize);
+    auto periodSize = static_cast<snd_pcm_uframes_t>(deps_.config->periodSize);
     snd_pcm_hw_params_set_buffer_size_near(pcm, hwParams, &bufferSize);
     snd_pcm_hw_params_set_period_size_near(pcm, hwParams, &periodSize, nullptr);
 

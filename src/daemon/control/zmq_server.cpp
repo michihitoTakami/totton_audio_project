@@ -52,11 +52,11 @@ bool ZmqCommandServer::start() {
         bindFailed_.store(false);
         serverThread_ = std::thread(&ZmqCommandServer::serverLoop, this);
 
-        std::cout << "ZeroMQ: Listening on " << endpoint_ << std::endl;
-        std::cout << "ZeroMQ: PUB socket on " << pubEndpoint_ << std::endl;
+        std::cout << "ZeroMQ: Listening on " << endpoint_ << '\n';
+        std::cout << "ZeroMQ: PUB socket on " << pubEndpoint_ << '\n';
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZeroMQ: Fatal error - " << e.what() << std::endl;
+        std::cerr << "ZeroMQ: Fatal error - " << e.what() << '\n';
         bindFailed_.store(true);
         running_.store(false);
         cleanupSockets();
@@ -95,7 +95,7 @@ bool ZmqCommandServer::publish(const std::string& message) {
         pubSocket_->send(zmq::buffer(message), zmq::send_flags::dontwait);
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZeroMQ: PUB send failed: " << e.what() << std::endl;
+        std::cerr << "ZeroMQ: PUB send failed: " << e.what() << '\n';
         return false;
     }
 }
@@ -193,7 +193,7 @@ void ZmqCommandServer::serverLoop() {
             repSocket_->send(zmq::buffer(response), zmq::send_flags::none);
         } catch (const zmq::error_t& e) {
             if (running_.load()) {
-                std::cerr << "ZeroMQ: Listener error - " << e.what() << std::endl;
+                std::cerr << "ZeroMQ: Listener error - " << e.what() << '\n';
             }
         }
     }

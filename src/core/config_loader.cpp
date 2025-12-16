@@ -58,7 +58,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
     std::ifstream file(configPath);
     if (!file.is_open()) {
         if (verbose) {
-            std::cout << "Config: " << configPath << " not found, using defaults" << std::endl;
+            std::cout << "Config: " << configPath << " not found, using defaults" << '\n';
         }
         return false;
     }
@@ -67,24 +67,33 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         nlohmann::json j;
         file >> j;
 
-        if (j.contains("alsaDevice"))
+        if (j.contains("alsaDevice")) {
             outConfig.alsaDevice = j["alsaDevice"].get<std::string>();
-        if (j.contains("bufferSize"))
+        }
+        if (j.contains("bufferSize")) {
             outConfig.bufferSize = j["bufferSize"].get<int>();
-        if (j.contains("periodSize"))
+        }
+        if (j.contains("periodSize")) {
             outConfig.periodSize = j["periodSize"].get<int>();
-        if (j.contains("upsampleRatio"))
+        }
+        if (j.contains("upsampleRatio")) {
             outConfig.upsampleRatio = j["upsampleRatio"].get<int>();
-        if (j.contains("blockSize"))
+        }
+        if (j.contains("blockSize")) {
             outConfig.blockSize = j["blockSize"].get<int>();
-        if (j.contains("gain"))
+        }
+        if (j.contains("gain")) {
             outConfig.gain = j["gain"].get<float>();
-        if (j.contains("headroomTarget"))
+        }
+        if (j.contains("headroomTarget")) {
             outConfig.headroomTarget = j["headroomTarget"].get<float>();
-        if (j.contains("filterPath"))
+        }
+        if (j.contains("filterPath")) {
             outConfig.filterPath = j["filterPath"].get<std::string>();
-        if (j.contains("phaseType"))
+        }
+        if (j.contains("phaseType")) {
             outConfig.phaseType = parsePhaseType(j["phaseType"].get<std::string>());
+        }
 
         // Keep output config aligned with legacy alsaDevice field by default
         outConfig.output.mode = OutputMode::Usb;
@@ -102,7 +111,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                     if (normalized != "usb" && verbose) {
                         std::cerr << "Config: Unsupported output.mode '" << modeStr
-                                  << "', falling back to 'usb'" << std::endl;
+                                  << "', falling back to 'usb'" << '\n';
                     }
                     outConfig.output.mode = parsed;
                 }
@@ -120,20 +129,24 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             } catch (const std::exception& e) {
                 if (verbose) {
                     std::cerr << "Config: Invalid output settings, using defaults: " << e.what()
-                              << std::endl;
+                              << '\n';
                 }
                 outConfig.output = OutputConfig{};
             }
         }
 
-        if (j.contains("filterPath44kMin"))
+        if (j.contains("filterPath44kMin")) {
             outConfig.filterPath44kMin = j["filterPath44kMin"].get<std::string>();
-        if (j.contains("filterPath48kMin"))
+        }
+        if (j.contains("filterPath48kMin")) {
             outConfig.filterPath48kMin = j["filterPath48kMin"].get<std::string>();
-        if (j.contains("filterPath44kLinear"))
+        }
+        if (j.contains("filterPath44kLinear")) {
             outConfig.filterPath44kLinear = j["filterPath44kLinear"].get<std::string>();
-        if (j.contains("filterPath48kLinear"))
+        }
+        if (j.contains("filterPath48kLinear")) {
             outConfig.filterPath48kLinear = j["filterPath48kLinear"].get<std::string>();
+        }
         // Synchronize legacy alsaDevice with structured output config
         if (outConfig.output.mode == OutputMode::Usb) {
             if (!outConfig.output.usb.preferredDevice.empty()) {
@@ -144,31 +157,39 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         }
 
         // Multi-rate mode settings (Issue #219)
-        if (j.contains("multiRateEnabled"))
+        if (j.contains("multiRateEnabled")) {
             outConfig.multiRateEnabled = j["multiRateEnabled"].get<bool>();
-        if (j.contains("coefficientDir"))
+        }
+        if (j.contains("coefficientDir")) {
             outConfig.coefficientDir = j["coefficientDir"].get<std::string>();
+        }
 
         if (j.contains("loopback") && j["loopback"].is_object()) {
             auto lb = j["loopback"];
             try {
-                if (lb.contains("enabled") && lb["enabled"].is_boolean())
+                if (lb.contains("enabled") && lb["enabled"].is_boolean()) {
                     outConfig.loopback.enabled = lb["enabled"].get<bool>();
-                if (lb.contains("device") && lb["device"].is_string())
+                }
+                if (lb.contains("device") && lb["device"].is_string()) {
                     outConfig.loopback.device = lb["device"].get<std::string>();
-                if (lb.contains("sampleRate") && lb["sampleRate"].is_number_integer())
+                }
+                if (lb.contains("sampleRate") && lb["sampleRate"].is_number_integer()) {
                     outConfig.loopback.sampleRate = lb["sampleRate"].get<uint32_t>();
-                if (lb.contains("channels") && lb["channels"].is_number_integer())
+                }
+                if (lb.contains("channels") && lb["channels"].is_number_integer()) {
                     outConfig.loopback.channels = static_cast<uint8_t>(lb["channels"].get<int>());
-                if (lb.contains("format") && lb["format"].is_string())
+                }
+                if (lb.contains("format") && lb["format"].is_string()) {
                     outConfig.loopback.format = lb["format"].get<std::string>();
-                if (lb.contains("periodFrames") && lb["periodFrames"].is_number_integer())
+                }
+                if (lb.contains("periodFrames") && lb["periodFrames"].is_number_integer()) {
                     outConfig.loopback.periodFrames =
                         static_cast<uint32_t>(lb["periodFrames"].get<int>());
+                }
             } catch (const std::exception& e) {
                 if (verbose) {
                     std::cerr << "Config: Invalid loopback settings, using defaults: " << e.what()
-                              << std::endl;
+                              << '\n';
                 }
                 outConfig.loopback = AppConfig::LoopbackInputConfig{};
             }
@@ -190,17 +211,22 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("partitionedConvolution") && j["partitionedConvolution"].is_object()) {
             auto pc = j["partitionedConvolution"];
             try {
-                if (pc.contains("enabled") && pc["enabled"].is_boolean())
+                if (pc.contains("enabled") && pc["enabled"].is_boolean()) {
                     outConfig.partitionedConvolution.enabled = pc["enabled"].get<bool>();
-                if (pc.contains("fastPartitionTaps") && pc["fastPartitionTaps"].is_number_integer())
+                }
+                if (pc.contains("fastPartitionTaps") &&
+                    pc["fastPartitionTaps"].is_number_integer()) {
                     outConfig.partitionedConvolution.fastPartitionTaps =
                         std::max(1024, pc["fastPartitionTaps"].get<int>());
-                if (pc.contains("minPartitionTaps") && pc["minPartitionTaps"].is_number_integer())
+                }
+                if (pc.contains("minPartitionTaps") && pc["minPartitionTaps"].is_number_integer()) {
                     outConfig.partitionedConvolution.minPartitionTaps =
                         std::max(1024, pc["minPartitionTaps"].get<int>());
-                if (pc.contains("maxPartitions") && pc["maxPartitions"].is_number_integer())
+                }
+                if (pc.contains("maxPartitions") && pc["maxPartitions"].is_number_integer()) {
                     outConfig.partitionedConvolution.maxPartitions =
                         std::max(1, pc["maxPartitions"].get<int>());
+                }
                 if (pc.contains("tailFftMultiple") && pc["tailFftMultiple"].is_number_integer()) {
                     int tailMultiple = pc["tailFftMultiple"].get<int>();
                     outConfig.partitionedConvolution.tailFftMultiple =
@@ -209,34 +235,39 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             } catch (const std::exception& e) {
                 if (verbose) {
                     std::cerr << "Config: Invalid partitionedConvolution settings, using defaults: "
-                              << e.what() << std::endl;
+                              << e.what() << '\n';
                 }
                 outConfig.partitionedConvolution = AppConfig::PartitionedConvolutionConfig{};
             }
         }
 
         // EQ settings (type-safe parse to avoid null/number crashes)
-        if (j.contains("eqEnabled") && j["eqEnabled"].is_boolean())
+        if (j.contains("eqEnabled") && j["eqEnabled"].is_boolean()) {
             outConfig.eqEnabled = j["eqEnabled"].get<bool>();
-        if (j.contains("eqProfilePath") && j["eqProfilePath"].is_string())
+        }
+        if (j.contains("eqProfilePath") && j["eqProfilePath"].is_string()) {
             outConfig.eqProfilePath = j["eqProfilePath"].get<std::string>();
+        }
 
         // Crossfeed settings (with type error handling)
         if (j.contains("crossfeed") && j["crossfeed"].is_object()) {
             auto cf = j["crossfeed"];
             try {
-                if (cf.contains("enabled") && cf["enabled"].is_boolean())
+                if (cf.contains("enabled") && cf["enabled"].is_boolean()) {
                     outConfig.crossfeed.enabled = cf["enabled"].get<bool>();
-                if (cf.contains("headSize") && cf["headSize"].is_string())
+                }
+                if (cf.contains("headSize") && cf["headSize"].is_string()) {
                     outConfig.crossfeed.headSize =
                         validateHeadSize(cf["headSize"].get<std::string>());
-                if (cf.contains("hrtfPath") && cf["hrtfPath"].is_string())
+                }
+                if (cf.contains("hrtfPath") && cf["hrtfPath"].is_string()) {
                     outConfig.crossfeed.hrtfPath = cf["hrtfPath"].get<std::string>();
+                }
             } catch (const std::exception& e) {
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {
                     std::cerr << "Config: Invalid crossfeed settings, using defaults: " << e.what()
-                              << std::endl;
+                              << '\n';
                 }
             }
         }
@@ -245,22 +276,32 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         if (j.contains("fallback") && j["fallback"].is_object()) {
             auto fb = j["fallback"];
             try {
-                if (fb.contains("enabled") && fb["enabled"].is_boolean())
+                if (fb.contains("enabled") && fb["enabled"].is_boolean()) {
                     outConfig.fallback.enabled = fb["enabled"].get<bool>();
-                if (fb.contains("gpuThreshold") && fb["gpuThreshold"].is_number())
+                }
+                if (fb.contains("gpuThreshold") && fb["gpuThreshold"].is_number()) {
                     outConfig.fallback.gpuThreshold = fb["gpuThreshold"].get<float>();
-                if (fb.contains("gpuThresholdCount") && fb["gpuThresholdCount"].is_number_integer())
+                }
+                if (fb.contains("gpuThresholdCount") &&
+                    fb["gpuThresholdCount"].is_number_integer()) {
                     outConfig.fallback.gpuThresholdCount = fb["gpuThresholdCount"].get<int>();
-                if (fb.contains("gpuRecoveryThreshold") && fb["gpuRecoveryThreshold"].is_number())
+                }
+                if (fb.contains("gpuRecoveryThreshold") && fb["gpuRecoveryThreshold"].is_number()) {
                     outConfig.fallback.gpuRecoveryThreshold =
                         fb["gpuRecoveryThreshold"].get<float>();
-                if (fb.contains("gpuRecoveryCount") && fb["gpuRecoveryCount"].is_number_integer())
+                }
+                if (fb.contains("gpuRecoveryCount") && fb["gpuRecoveryCount"].is_number_integer()) {
                     outConfig.fallback.gpuRecoveryCount = fb["gpuRecoveryCount"].get<int>();
-                if (fb.contains("xrunTriggersFallback") && fb["xrunTriggersFallback"].is_boolean())
+                }
+                if (fb.contains("xrunTriggersFallback") &&
+                    fb["xrunTriggersFallback"].is_boolean()) {
                     outConfig.fallback.xrunTriggersFallback =
                         fb["xrunTriggersFallback"].get<bool>();
-                if (fb.contains("monitorIntervalMs") && fb["monitorIntervalMs"].is_number_integer())
+                }
+                if (fb.contains("monitorIntervalMs") &&
+                    fb["monitorIntervalMs"].is_number_integer()) {
                     outConfig.fallback.monitorIntervalMs = fb["monitorIntervalMs"].get<int>();
+                }
 
                 // Validate fallback configuration values
                 // GPU threshold: clamp to 0-100%
@@ -281,7 +322,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {
                     std::cerr << "Config: Invalid fallback settings, using defaults: " << e.what()
-                              << std::endl;
+                              << '\n';
                 }
             }
         }
@@ -308,8 +349,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             outConfig.filterPath48kLinear = outConfig.filterPath;
         }
         if (verbose) {
-            std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath)
-                      << std::endl;
+            std::cout << "Config: Loaded from " << std::filesystem::absolute(configPath) << '\n';
         }
 
         // Clamp derived floating-point values after parsing (ensures sane bounds)
@@ -318,7 +358,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         return true;
     } catch (const std::exception& e) {
         if (verbose) {
-            std::cerr << "Config: Failed to parse " << configPath << ": " << e.what() << std::endl;
+            std::cerr << "Config: Failed to parse " << configPath << ": " << e.what() << '\n';
         }
         return false;
     }

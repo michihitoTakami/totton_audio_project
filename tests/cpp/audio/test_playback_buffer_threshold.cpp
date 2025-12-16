@@ -37,7 +37,7 @@ TEST(PlaybackBufferThresholdTest, CrossfeedBlockSmallerThanPeriodClampsToPeriod)
 }
 
 TEST(PlaybackBufferThresholdTest, CrossfeedBlockWithinRangeUsesBlockSize) {
-    size_t blockSize = static_cast<size_t>(kPeriod * 1.5);
+    auto blockSize = static_cast<size_t>(kPeriod * 1.5);
     EXPECT_EQ(PlaybackBuffer::computeReadyThreshold(kPeriod, true, blockSize), blockSize);
 }
 

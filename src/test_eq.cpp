@@ -80,39 +80,41 @@ void saveSpectrumCSV(const std::string& filename, const std::vector<float>& spec
         }
     }
     file.close();
-    std::cout << "Saved: " << filename << std::endl;
+    std::cout << "Saved: " << filename << '\n';
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "========================================" << std::endl;
-    std::cout << "  EQ Effect Verification Test" << std::endl;
-    std::cout << "========================================" << std::endl;
+    std::cout << "========================================" << '\n';
+    std::cout << "  EQ Effect Verification Test" << '\n';
+    std::cout << "========================================" << '\n';
 
     std::string filterPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     std::string eqPath = "/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt";
 
-    if (argc > 1)
+    if (argc > 1) {
         eqPath = argv[1];
-    if (argc > 2)
+    }
+    if (argc > 2) {
         filterPath = argv[2];
+    }
 
     // Initialize GPU upsampler
-    std::cout << "\n1. Initializing GPU upsampler..." << std::endl;
+    std::cout << "\n1. Initializing GPU upsampler..." << '\n';
     ConvolutionEngine::GPUUpsampler upsampler;
 
     if (!upsampler.initialize(filterPath, UPSAMPLE_RATIO, BLOCK_SIZE)) {
-        std::cerr << "Failed to initialize GPU upsampler" << std::endl;
+        std::cerr << "Failed to initialize GPU upsampler" << '\n';
         return 1;
     }
-    std::cout << "   GPU upsampler initialized" << std::endl;
+    std::cout << "   GPU upsampler initialized" << '\n';
 
     // Generate test signal (impulse for cleaner frequency response)
-    std::cout << "\n2. Generating test impulse..." << std::endl;
+    std::cout << "\n2. Generating test impulse..." << '\n';
     auto impulse = generateImpulse(BLOCK_SIZE * 4);
-    std::cout << "   Generated " << impulse.size() << " samples" << std::endl;
+    std::cout << "   Generated " << impulse.size() << " samples" << '\n';
 
     // Process WITHOUT EQ
-    std::cout << "\n3. Processing WITHOUT EQ..." << std::endl;
+    std::cout << "\n3. Processing WITHOUT EQ..." << '\n';
     std::vector<float> outputNoEq;
 
     // Process in blocks
@@ -124,20 +126,20 @@ int main(int argc, char* argv[]) {
             outputNoEq.insert(outputNoEq.end(), output.begin(), output.end());
         }
     }
-    std::cout << "   Output (no EQ): " << outputNoEq.size() << " samples" << std::endl;
+    std::cout << "   Output (no EQ): " << outputNoEq.size() << " samples" << '\n';
 
     // Load and apply EQ
-    std::cout << "\n4. Loading EQ profile: " << eqPath << std::endl;
+    std::cout << "\n4. Loading EQ profile: " << eqPath << '\n';
     EQ::EqProfile eqProfile;
     if (!EQ::parseEqFile(eqPath, eqProfile)) {
-        std::cerr << "Failed to parse EQ file" << std::endl;
+        std::cerr << "Failed to parse EQ file" << '\n';
         return 1;
     }
     std::cout << "   EQ: " << eqProfile.name << " (" << eqProfile.bands.size() << " bands, preamp "
-              << eqProfile.preampDb << " dB)" << std::endl;
+              << eqProfile.preampDb << " dB)" << '\n';
 
     // Compute EQ magnitude and apply with minimum phase reconstruction
-    std::cout << "\n5. Applying EQ to filter (minimum phase)..." << std::endl;
+    std::cout << "\n5. Applying EQ to filter (minimum phase)..." << '\n';
     size_t filterFftSize = upsampler.getFilterFftSize();  // N/2+1 (R2C output)
     size_t fullFftSize = upsampler.getFullFftSize();      // N (full FFT)
     int upsampleRatio = upsampler.getUpsampleRatio();
@@ -146,14 +148,14 @@ int main(int argc, char* argv[]) {
         EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
     if (!upsampler.applyEqMagnitude(eqMagnitude)) {
-        std::cerr << "Failed to apply EQ magnitude" << std::endl;
+        std::cerr << "Failed to apply EQ magnitude" << '\n';
         return 1;
     }
-    std::cout << "   EQ applied with minimum phase reconstruction" << std::endl;
+    std::cout << "   EQ applied with minimum phase reconstruction" << '\n';
 
     // Re-initialize for clean processing (reset overlap buffers)
     // Process WITH EQ
-    std::cout << "\n6. Processing WITH EQ..." << std::endl;
+    std::cout << "\n6. Processing WITH EQ..." << '\n';
     std::vector<float> outputWithEq;
 
     for (size_t i = 0; i + BLOCK_SIZE <= impulse.size(); i += BLOCK_SIZE) {
@@ -164,10 +166,10 @@ int main(int argc, char* argv[]) {
             outputWithEq.insert(outputWithEq.end(), output.begin(), output.end());
         }
     }
-    std::cout << "   Output (with EQ): " << outputWithEq.size() << " samples" << std::endl;
+    std::cout << "   Output (with EQ): " << outputWithEq.size() << " samples" << '\n';
 
     // Analyze frequency response
-    std::cout << "\n7. Analyzing frequency response..." << std::endl;
+    std::cout << "\n7. Analyzing frequency response..." << '\n';
     int analysisFFTSize = 16384;
     // outputSampleRate already defined above as double
 
@@ -181,7 +183,7 @@ int main(int argc, char* argv[]) {
                     analysisFFTSize);
 
     // Compute difference
-    std::cout << "\n8. Computing EQ effect (difference)..." << std::endl;
+    std::cout << "\n8. Computing EQ effect (difference)..." << '\n';
     std::vector<float> difference(spectrumNoEq.size());
     for (size_t i = 0; i < spectrumNoEq.size(); ++i) {
         difference[i] = spectrumWithEq[i] - spectrumNoEq[i];
@@ -190,9 +192,9 @@ int main(int argc, char* argv[]) {
                     analysisFFTSize);
 
     // Report significant differences
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "  Results" << std::endl;
-    std::cout << "========================================" << std::endl;
+    std::cout << "\n========================================" << '\n';
+    std::cout << "  Results" << '\n';
+    std::cout << "========================================" << '\n';
 
     float maxDiff = 0, minDiff = 0;
     float freqMaxDiff = 0, freqMinDiff = 0;
@@ -211,19 +213,19 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::cout << "\nEQ Effect Summary:" << std::endl;
-    std::cout << "  Max boost: " << maxDiff << " dB at " << freqMaxDiff << " Hz" << std::endl;
-    std::cout << "  Max cut:   " << minDiff << " dB at " << freqMinDiff << " Hz" << std::endl;
+    std::cout << "\nEQ Effect Summary:" << '\n';
+    std::cout << "  Max boost: " << maxDiff << " dB at " << freqMaxDiff << " Hz" << '\n';
+    std::cout << "  Max cut:   " << minDiff << " dB at " << freqMinDiff << " Hz" << '\n';
 
     if (std::abs(maxDiff) < 0.5 && std::abs(minDiff) < 0.5) {
-        std::cout << "\n*** WARNING: EQ effect is very small (<0.5 dB) ***" << std::endl;
-        std::cout << "*** This may indicate EQ is not being applied correctly ***" << std::endl;
+        std::cout << "\n*** WARNING: EQ effect is very small (<0.5 dB) ***" << '\n';
+        std::cout << "*** This may indicate EQ is not being applied correctly ***" << '\n';
     } else {
-        std::cout << "\n*** EQ effect confirmed! ***" << std::endl;
+        std::cout << "\n*** EQ effect confirmed! ***" << '\n';
     }
 
-    std::cout << "\nCSV files saved to test_output/ directory" << std::endl;
-    std::cout << "Use plot_test_results.py to visualize" << std::endl;
+    std::cout << "\nCSV files saved to test_output/ directory" << '\n';
+    std::cout << "Use plot_test_results.py to visualize" << '\n';
 
     return 0;
 }

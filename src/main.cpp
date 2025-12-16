@@ -15,23 +15,22 @@
 #include <vector>
 
 void printUsage(const char* programName) {
-    std::cout << "GPU Audio Upsampler - Phase 2" << std::endl;
-    std::cout << "Usage: " << programName << " <input.wav> <output.wav> [options]" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Options:" << std::endl;
-    std::cout << "  --filter <path>    Path to filter coefficients .bin file" << std::endl;
+    std::cout << "GPU Audio Upsampler - Phase 2" << '\n';
+    std::cout << "Usage: " << programName << " <input.wav> <output.wav> [options]" << '\n';
+    std::cout << '\n';
+    std::cout << "Options:" << '\n';
+    std::cout << "  --filter <path>    Path to filter coefficients .bin file" << '\n';
     std::cout
         << "                     (default: data/coefficients/filter_44k_16x_2m_linear_phase.bin)"
-        << std::endl;
-    std::cout << "  --eq <path>        Path to EQ profile file (optional)" << std::endl;
-    std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << std::endl;
-    std::cout << "  --block <size>     Block size for processing (default: 8192)" << std::endl;
-    std::cout << "  --help             Show this help message" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Examples:" << std::endl;
-    std::cout << "  " << programName << " input_44k.wav output_705k.wav" << std::endl;
-    std::cout << "  " << programName << " test.wav upsampled.wav --ratio 16 --block 4096"
-              << std::endl;
+        << '\n';
+    std::cout << "  --eq <path>        Path to EQ profile file (optional)" << '\n';
+    std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << '\n';
+    std::cout << "  --block <size>     Block size for processing (default: 8192)" << '\n';
+    std::cout << "  --help             Show this help message" << '\n';
+    std::cout << '\n';
+    std::cout << "Examples:" << '\n';
+    std::cout << "  " << programName << " input_44k.wav output_705k.wav" << '\n';
+    std::cout << "  " << programName << " test.wav upsampled.wav --ratio 16 --block 4096" << '\n';
 }
 
 struct Config {
@@ -65,12 +64,12 @@ static double linearToDbfs(double value) {
 
 static void printStereoPeaks(const char* label, const std::vector<float>& interleaved) {
     if (interleaved.empty()) {
-        std::cout << label << ": (empty)" << std::endl;
+        std::cout << label << ": (empty)" << '\n';
         return;
     }
     float peak = computePeakLinear(interleaved.data(), interleaved.size());
     std::cout << label << ": peak=" << std::fixed << std::setprecision(6) << peak << " ("
-              << std::setprecision(2) << linearToDbfs(peak) << " dBFS)" << std::endl;
+              << std::setprecision(2) << linearToDbfs(peak) << " dBFS)" << '\n';
 }
 
 bool parseArguments(int argc, char* argv[], Config& config) {
@@ -96,7 +95,7 @@ bool parseArguments(int argc, char* argv[], Config& config) {
         } else if (arg == "--block" && i + 1 < argc) {
             config.blockSize = std::stoi(argv[++i]);
         } else {
-            std::cerr << "Unknown option: " << arg << std::endl;
+            std::cerr << "Unknown option: " << arg << '\n';
             return false;
         }
     }
@@ -105,11 +104,11 @@ bool parseArguments(int argc, char* argv[], Config& config) {
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "========================================" << std::endl;
-    std::cout << "  GPU Audio Upsampler - Phase 2" << std::endl;
-    std::cout << "  High-Precision Audio Oversampling" << std::endl;
-    std::cout << "========================================" << std::endl;
-    std::cout << std::endl;
+    std::cout << "========================================" << '\n';
+    std::cout << "  GPU Audio Upsampler - Phase 2" << '\n';
+    std::cout << "  High-Precision Audio Oversampling" << '\n';
+    std::cout << "========================================" << '\n';
+    std::cout << '\n';
 
     AppConfig appConfig;
     Config config;
@@ -140,7 +139,7 @@ int main(int argc, char* argv[]) {
         auto totalStartTime = std::chrono::high_resolution_clock::now();
 
         // Step 1: Read input WAV file
-        std::cout << "Step 1: Reading input file..." << std::endl;
+        std::cout << "Step 1: Reading input file..." << '\n';
         AudioIO::WavReader reader;
         if (!reader.open(config.inputFile)) {
             return 1;
@@ -161,10 +160,10 @@ int main(int argc, char* argv[]) {
             if (config.upsampleRatio != preset.upsampleRatio) {
                 std::cout << "Info: Overriding upsample ratio to preset value "
                           << preset.upsampleRatio << "x for " << inputAudio.sampleRate
-                          << " Hz input" << std::endl;
+                          << " Hz input" << '\n';
                 config.upsampleRatio = preset.upsampleRatio;
             }
-            std::cout << "Auto-selected filter: " << preset.description << std::endl;
+            std::cout << "Auto-selected filter: " << preset.description << '\n';
             return true;
         };
 
@@ -176,7 +175,7 @@ int main(int argc, char* argv[]) {
                 targetPreset = &FILTER_PRESET_48K;
             } else {
                 std::cerr << "Error: Unsupported input sample rate " << inputAudio.sampleRate
-                          << " Hz. Supported: 44100 Hz or 48000 Hz." << std::endl;
+                          << " Hz. Supported: 44100 Hz or 48000 Hz." << '\n';
                 return 1;
             }
 
@@ -184,51 +183,51 @@ int main(int argc, char* argv[]) {
                 // OK
             } else if (targetPreset == &FILTER_PRESET_48K) {
                 std::cerr << "Warning: 48kHz preset filter missing: " << FILTER_PRESET_48K.path
-                          << std::endl;
+                          << '\n';
                 std::cerr << "To generate: "
                           << "python scripts/filters/generate_minimum_phase.py --input-rate 48000 "
                           << "--stopband-start 24000 --passband-end 21500 "
-                          << "--output-prefix filter_48k_16x_2m_min_phase" << std::endl;
+                          << "--output-prefix filter_48k_16x_2m_min_phase" << '\n';
                 if (!applyPreset(FILTER_PRESET_44K)) {
                     std::cerr << "Error: 44.1kHz fallback filter also missing: "
-                              << FILTER_PRESET_44K.path << std::endl;
+                              << FILTER_PRESET_44K.path << '\n';
                     return 1;
                 }
-                std::cout << "Falling back to 44.1kHz preset filter." << std::endl;
+                std::cout << "Falling back to 44.1kHz preset filter." << '\n';
             } else {
                 std::cerr << "Error: Preset filter file not found: "
-                          << (targetPreset ? targetPreset->path : "") << std::endl;
+                          << (targetPreset ? targetPreset->path : "") << '\n';
                 std::cerr << "Generate it via scripts/filters/generate_minimum_phase.py or specify "
                              "with --filter."
-                          << std::endl;
+                          << '\n';
                 return 1;
             }
         } else {
-            std::cout << "User-specified filter will be used: " << config.filterPath << std::endl;
+            std::cout << "User-specified filter will be used: " << config.filterPath << '\n';
             if (inputAudio.sampleRate != FILTER_PRESET_44K.inputSampleRate &&
                 inputAudio.sampleRate != FILTER_PRESET_48K.inputSampleRate) {
                 std::cerr << "Warning: Input sample rate " << inputAudio.sampleRate
-                          << " Hz is not validated against provided filter." << std::endl;
+                          << " Hz is not validated against provided filter." << '\n';
             }
         }
 
         if (!std::filesystem::exists(config.filterPath)) {
-            std::cerr << "Error: Filter file not found: " << config.filterPath << std::endl;
+            std::cerr << "Error: Filter file not found: " << config.filterPath << '\n';
             if (inputAudio.sampleRate == FILTER_PRESET_48K.inputSampleRate) {
                 std::cerr << "Generate it via: "
                           << "python scripts/filters/generate_minimum_phase.py --input-rate 48000 "
                           << "--stopband-start 24000 --passband-end 21500 "
-                          << "--output-prefix filter_48k_16x_2m_min_phase" << std::endl;
+                          << "--output-prefix filter_48k_16x_2m_min_phase" << '\n';
             } else {
                 std::cerr << "Generate it via scripts/filters/generate_minimum_phase.py or specify "
                              "with --filter."
-                          << std::endl;
+                          << '\n';
             }
             return 1;
         }
 
         // Step 2: Initialize GPU upsampler
-        std::cout << std::endl << "Step 2: Initializing GPU engine..." << std::endl;
+        std::cout << '\n' << "Step 2: Initializing GPU engine..." << '\n';
         ConvolutionEngine::GPUUpsampler upsampler;
         if (!upsampler.initialize(config.filterPath, config.upsampleRatio, config.blockSize)) {
             return 1;
@@ -236,14 +235,14 @@ int main(int argc, char* argv[]) {
 
         // Optional: Apply EQ profile
         if (!config.eqPath.empty()) {
-            std::cout << std::endl << "Step 2b: Loading EQ profile..." << std::endl;
+            std::cout << '\n' << "Step 2b: Loading EQ profile..." << '\n';
             EQ::EqProfile eqProfile;
             if (!EQ::parseEqFile(config.eqPath, eqProfile)) {
-                std::cerr << "Error: Failed to parse EQ file: " << config.eqPath << std::endl;
+                std::cerr << "Error: Failed to parse EQ file: " << config.eqPath << '\n';
                 return 1;
             }
             std::cout << "  EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
-                      << " bands, preamp " << eqProfile.preampDb << " dB)" << std::endl;
+                      << " bands, preamp " << eqProfile.preampDb << " dB)" << '\n';
 
             size_t filterFftSize = upsampler.getFilterFftSize();
             size_t fullFftSize = upsampler.getFullFftSize();
@@ -260,23 +259,23 @@ int main(int argc, char* argv[]) {
             }
             std::cout << "  EQ magnitude: max=" << std::setprecision(6) << maxMag << " ("
                       << std::setprecision(2) << 20.0 * std::log10(std::max(maxMag, 1e-30))
-                      << " dB), min=" << std::setprecision(6) << minMag << std::endl;
+                      << " dB), min=" << std::setprecision(6) << minMag << '\n';
 
             if (!upsampler.applyEqMagnitude(eqMagnitude)) {
-                std::cerr << "Error: Failed to apply EQ magnitude" << std::endl;
+                std::cerr << "Error: Failed to apply EQ magnitude" << '\n';
                 return 1;
             }
         }
 
         // Step 3: Process audio
-        std::cout << std::endl << "Step 3: Processing audio..." << std::endl;
+        std::cout << '\n' << "Step 3: Processing audio..." << '\n';
 
         std::vector<float> outputLeft, outputRight;
         bool success = false;
 
         if (inputAudio.channels == 1) {
             // Mono input
-            std::cout << "  Processing mono channel..." << std::endl;
+            std::cout << "  Processing mono channel..." << '\n';
             success =
                 upsampler.processChannel(inputAudio.data.data(), inputAudio.frames, outputLeft);
 
@@ -285,7 +284,7 @@ int main(int argc, char* argv[]) {
 
         } else if (inputAudio.channels == 2) {
             // Stereo input - separate channels
-            std::cout << "  Processing stereo (L/R) channels..." << std::endl;
+            std::cout << "  Processing stereo (L/R) channels..." << '\n';
 
             std::vector<float> inputLeft(inputAudio.frames);
             std::vector<float> inputRight(inputAudio.frames);
@@ -297,17 +296,17 @@ int main(int argc, char* argv[]) {
                                               inputAudio.frames, outputLeft, outputRight);
 
         } else {
-            std::cerr << "Error: Unsupported channel count: " << inputAudio.channels << std::endl;
+            std::cerr << "Error: Unsupported channel count: " << inputAudio.channels << '\n';
             return 1;
         }
 
         if (!success) {
-            std::cerr << "Error: Audio processing failed" << std::endl;
+            std::cerr << "Error: Audio processing failed" << '\n';
             return 1;
         }
 
         // Step 4: Interleave stereo output
-        std::cout << std::endl << "Step 4: Preparing output..." << std::endl;
+        std::cout << '\n' << "Step 4: Preparing output..." << '\n';
 
         size_t outputFrames = outputLeft.size();
         std::vector<float> outputInterleaved(outputFrames * 2);
@@ -315,12 +314,12 @@ int main(int argc, char* argv[]) {
         AudioIO::Utils::separateToInterleaved(outputLeft.data(), outputRight.data(),
                                               outputInterleaved.data(), outputFrames);
 
-        std::cout << std::endl << "Level check (peak dBFS):" << std::endl;
+        std::cout << '\n' << "Level check (peak dBFS):" << '\n';
         printStereoPeaks("  Input ", inputAudio.data);
         printStereoPeaks("  Output", outputInterleaved);
 
         // Step 5: Write output WAV file
-        std::cout << std::endl << "Step 5: Writing output file..." << std::endl;
+        std::cout << '\n' << "Step 5: Writing output file..." << '\n';
 
         int outputSampleRate = inputAudio.sampleRate * config.upsampleRatio;
 
@@ -344,9 +343,9 @@ int main(int argc, char* argv[]) {
         std::chrono::duration<double> totalElapsed = totalEndTime - totalStartTime;
 
         // Print statistics
-        std::cout << std::endl << "========================================" << std::endl;
-        std::cout << "Processing completed successfully!" << std::endl;
-        std::cout << "========================================" << std::endl;
+        std::cout << '\n' << "========================================" << '\n';
+        std::cout << "Processing completed successfully!" << '\n';
+        std::cout << "========================================" << '\n';
 
         const auto& stats = upsampler.getStats();
         double inputDuration = static_cast<double>(inputAudio.frames) / inputAudio.sampleRate;
@@ -354,22 +353,22 @@ int main(int argc, char* argv[]) {
 
         std::cout << std::fixed << std::setprecision(2);
         std::cout << "Input:  " << inputAudio.frames << " frames @ " << inputAudio.sampleRate
-                  << " Hz (" << inputDuration << " sec)" << std::endl;
+                  << " Hz (" << inputDuration << " sec)" << '\n';
         std::cout << "Output: " << outputFrames << " frames @ " << outputSampleRate << " Hz"
-                  << std::endl;
-        std::cout << std::endl;
-        std::cout << "Performance:" << std::endl;
-        std::cout << "  Processing time: " << stats.totalProcessingTime << " sec" << std::endl;
-        std::cout << "  Total time:      " << totalElapsed.count() << " sec" << std::endl;
-        std::cout << "  Speed:           " << processingSpeed << "x realtime" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Output file: " << config.outputFile << std::endl;
-        std::cout << "========================================" << std::endl;
+                  << '\n';
+        std::cout << '\n';
+        std::cout << "Performance:" << '\n';
+        std::cout << "  Processing time: " << stats.totalProcessingTime << " sec" << '\n';
+        std::cout << "  Total time:      " << totalElapsed.count() << " sec" << '\n';
+        std::cout << "  Speed:           " << processingSpeed << "x realtime" << '\n';
+        std::cout << '\n';
+        std::cout << "Output file: " << config.outputFile << '\n';
+        std::cout << "========================================" << '\n';
 
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        std::cerr << "Fatal error: " << e.what() << '\n';
         return 1;
     }
 }

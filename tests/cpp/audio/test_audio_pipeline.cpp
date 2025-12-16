@@ -63,8 +63,8 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     deps.currentOutputRate = []() { return 48000; };
 
     deps.upsampler.available = true;
-    deps.upsampler.streamLeft = 0;
-    deps.upsampler.streamRight = 0;
+    deps.upsampler.streamLeft = nullptr;
+    deps.upsampler.streamRight = nullptr;
     deps.upsampler.process =
         [](const float* inputData, size_t inputFrames,
            ConvolutionEngine::StreamFloatVector& outputData, cudaStream_t /*stream*/,
@@ -160,8 +160,8 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     deps.currentOutputRate = []() { return 48000; };
 
     deps.upsampler.available = true;
-    deps.upsampler.streamLeft = 0;
-    deps.upsampler.streamRight = 0;
+    deps.upsampler.streamLeft = nullptr;
+    deps.upsampler.streamRight = nullptr;
     deps.upsampler.process =
         [](const float* inputData, size_t inputFrames,
            ConvolutionEngine::StreamFloatVector& outputData, cudaStream_t /*stream*/,

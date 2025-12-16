@@ -51,14 +51,14 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
     std::filesystem::path metaPath(info.metadataPath);
     if (!std::filesystem::exists(metaPath)) {
         std::cerr << "Headroom: metadata not found for " << coefficientPath << " (expected "
-                  << info.metadataPath << ")" << std::endl;
+                  << info.metadataPath << ")" << '\n';
         return info;
     }
 
     try {
         std::ifstream ifs(metaPath);
         if (!ifs) {
-            std::cerr << "Headroom: failed to open metadata " << info.metadataPath << std::endl;
+            std::cerr << "Headroom: failed to open metadata " << info.metadataPath << '\n';
             return info;
         }
 
@@ -77,11 +77,11 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
         info.metadataFound = true;
 
         std::cout << "Headroom: metadata loaded for " << coefficientPath << " (max coeff "
-                  << info.maxCoefficient << ", L1 " << info.l1Norm << ")" << std::endl;
+                  << info.maxCoefficient << ", L1 " << info.l1Norm << ")" << '\n';
 
     } catch (const std::exception& e) {
         std::cerr << "Headroom: failed to parse metadata " << info.metadataPath << " - " << e.what()
-                  << std::endl;
+                  << '\n';
     }
 
     return info;

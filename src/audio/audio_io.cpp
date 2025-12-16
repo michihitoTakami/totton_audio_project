@@ -17,17 +17,17 @@ WavReader::~WavReader() {
 bool WavReader::open(const std::string& filename) {
     file_ = sf_open(filename.c_str(), SFM_READ, &info_);
     if (!file_) {
-        std::cerr << "Error opening input file: " << filename << std::endl;
-        std::cerr << "libsndfile error: " << sf_strerror(nullptr) << std::endl;
+        std::cerr << "Error opening input file: " << filename << '\n';
+        std::cerr << "libsndfile error: " << sf_strerror(nullptr) << '\n';
         return false;
     }
 
-    std::cout << "Opened: " << filename << std::endl;
-    std::cout << "  Sample Rate: " << info_.samplerate << " Hz" << std::endl;
-    std::cout << "  Channels: " << info_.channels << std::endl;
-    std::cout << "  Frames: " << info_.frames << std::endl;
+    std::cout << "Opened: " << filename << '\n';
+    std::cout << "  Sample Rate: " << info_.samplerate << " Hz" << '\n';
+    std::cout << "  Channels: " << info_.channels << '\n';
+    std::cout << "  Frames: " << info_.frames << '\n';
     std::cout << "  Duration: " << static_cast<double>(info_.frames) / info_.samplerate
-              << " seconds" << std::endl;
+              << " seconds" << '\n';
 
     return true;
 }
@@ -41,7 +41,7 @@ void WavReader::close() {
 
 bool WavReader::readAll(AudioFile& output) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << std::endl;
+        std::cerr << "Error: File not opened" << '\n';
         return false;
     }
 
@@ -57,8 +57,8 @@ bool WavReader::readAll(AudioFile& output) {
     sf_count_t framesRead = sf_readf_float(file_, output.data.data(), info_.frames);
     if (framesRead != info_.frames) {
         std::cerr << "Error: Incomplete read. Expected " << info_.frames << " frames, read "
-                  << framesRead << std::endl;
-        std::cerr << "File may be corrupted or truncated." << std::endl;
+                  << framesRead << '\n';
+        std::cerr << "File may be corrupted or truncated." << '\n';
         return false;
     }
 
@@ -67,7 +67,7 @@ bool WavReader::readAll(AudioFile& output) {
 
 bool WavReader::readBlock(float* buffer, sf_count_t frames) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << std::endl;
+        std::cerr << "Error: File not opened" << '\n';
         return false;
     }
 
@@ -91,14 +91,14 @@ bool WavWriter::open(const std::string& filename, int sampleRate, int channels) 
 
     file_ = sf_open(filename.c_str(), SFM_WRITE, &info_);
     if (!file_) {
-        std::cerr << "Error opening output file: " << filename << std::endl;
-        std::cerr << "libsndfile error: " << sf_strerror(nullptr) << std::endl;
+        std::cerr << "Error opening output file: " << filename << '\n';
+        std::cerr << "libsndfile error: " << sf_strerror(nullptr) << '\n';
         return false;
     }
 
-    std::cout << "Created output file: " << filename << std::endl;
-    std::cout << "  Sample Rate: " << sampleRate << " Hz" << std::endl;
-    std::cout << "  Channels: " << channels << std::endl;
+    std::cout << "Created output file: " << filename << '\n';
+    std::cout << "  Sample Rate: " << sampleRate << " Hz" << '\n';
+    std::cout << "  Channels: " << channels << '\n';
 
     return true;
 }
@@ -112,14 +112,14 @@ void WavWriter::close() {
 
 bool WavWriter::writeAll(const AudioFile& input) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << std::endl;
+        std::cerr << "Error: File not opened" << '\n';
         return false;
     }
 
     sf_count_t framesWritten = sf_writef_float(file_, input.data.data(), input.frames);
     if (framesWritten != input.frames) {
         std::cerr << "Error: Expected to write " << input.frames << " frames, wrote "
-                  << framesWritten << std::endl;
+                  << framesWritten << '\n';
         return false;
     }
 
@@ -128,7 +128,7 @@ bool WavWriter::writeAll(const AudioFile& input) {
 
 bool WavWriter::writeBlock(const float* buffer, sf_count_t frames) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << std::endl;
+        std::cerr << "Error: File not opened" << '\n';
         return false;
     }
 

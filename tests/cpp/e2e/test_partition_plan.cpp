@@ -4,8 +4,8 @@
 #include <gtest/gtest.h>
 #include <string>
 
-using ConvolutionEngine::PartitionPlan;
 using ConvolutionEngine::PartitionDescriptor;
+using ConvolutionEngine::PartitionPlan;
 
 class PartitionPlanTest : public ::testing::Test {
    protected:
@@ -88,4 +88,3 @@ TEST_F(PartitionPlanTest, TailFftMultipleExpandsFftSize) {
     EXPECT_EQ(tail.fftSize, expectedFft);
     EXPECT_FALSE(tail.realtime);
 }
-

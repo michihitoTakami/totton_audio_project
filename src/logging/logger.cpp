@@ -98,7 +98,7 @@ bool initializeEarly() {
 
         return true;
     } catch (const spdlog::spdlog_ex& ex) {
-        std::cerr << "Early logger initialization failed: " << ex.what() << std::endl;
+        std::cerr << "Early logger initialization failed: " << ex.what() << '\n';
         return false;
     }
 }
@@ -156,12 +156,12 @@ bool initialize(const LogConfig& config) {
         LOG_INFO("Logging initialized (level={})", levelToString(config.level));
         if (!config.filePath.empty()) {
             LOG_INFO("Log file: {} (max {}MB x {} backups)", config.filePath,
-                     config.maxFileSize / (1024 * 1024), config.maxBackups);
+                     config.maxFileSize / static_cast<size_t>(1024 * 1024), config.maxBackups);
         }
 
         return true;
     } catch (const spdlog::spdlog_ex& ex) {
-        std::cerr << "Logger initialization failed: " << ex.what() << std::endl;
+        std::cerr << "Logger initialization failed: " << ex.what() << '\n';
         return false;
     }
 }
@@ -212,7 +212,7 @@ bool initializeFromConfig(const std::string& configPath) {
             }
         }
     } catch (const nlohmann::json::exception& ex) {
-        std::cerr << "Failed to parse logging config: " << ex.what() << std::endl;
+        std::cerr << "Failed to parse logging config: " << ex.what() << '\n';
         // Continue with default config
     }
 
@@ -291,20 +291,27 @@ LogLevel stringToLevel(std::string_view str) {
         lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
 
-    if (lower == "trace")
+    if (lower == "trace") {
         return LogLevel::Trace;
-    if (lower == "debug")
+    }
+    if (lower == "debug") {
         return LogLevel::Debug;
-    if (lower == "info")
+    }
+    if (lower == "info") {
         return LogLevel::Info;
-    if (lower == "warn" || lower == "warning")
+    }
+    if (lower == "warn" || lower == "warning") {
         return LogLevel::Warn;
-    if (lower == "error" || lower == "err")
+    }
+    if (lower == "error" || lower == "err") {
         return LogLevel::Error;
-    if (lower == "critical" || lower == "fatal")
+    }
+    if (lower == "critical" || lower == "fatal") {
         return LogLevel::Critical;
-    if (lower == "off" || lower == "none")
+    }
+    if (lower == "off" || lower == "none") {
         return LogLevel::Off;
+    }
 
     return LogLevel::Info;  // Default
 }

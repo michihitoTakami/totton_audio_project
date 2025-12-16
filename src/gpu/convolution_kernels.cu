@@ -42,7 +42,8 @@ __global__ void scaleKernel(DeviceSample* data, int size, DeviceScale scale) {
 // CUDA kernel to upconvert float samples to active precision samples
 __global__ void upconvertFromFloatKernel(const float* input, DeviceSample* output, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= size) return;
+    if (idx >= size) { return;
+}
     output[idx] = static_cast<DeviceSample>(input[idx]);
 }
 
@@ -51,7 +52,8 @@ __global__ void upconvertFromFloatKernel(const float* input, DeviceSample* outpu
 // Plus causality: c[0] unchanged, c[1..N/2-1] *= 2, c[N/2] unchanged, c[N/2+1..N-1] = 0
 __global__ void applyCausalityWindowKernel(cufftDoubleReal* cepstrum, int fullN) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= fullN) return;
+    if (idx >= fullN) { return;
+}
 
     double invN = 1.0 / static_cast<double>(fullN);
 
@@ -71,7 +73,8 @@ __global__ void applyCausalityWindowKernel(cufftDoubleReal* cepstrum, int fullN)
 // CUDA kernel to exponentiate complex values
 __global__ void exponentiateComplexKernel(cufftDoubleComplex* data, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
+    if (idx >= n) { return;
+}
 
     double re = data[idx].x;
     double im = data[idx].y;
@@ -84,7 +87,8 @@ __global__ void exponentiateComplexKernel(cufftDoubleComplex* data, int n) {
 __global__ void doubleToFloatComplexKernel(DeviceFftComplex* out, const cufftDoubleComplex* in,
                                            int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
+    if (idx >= n) { return;
+}
 
     out[idx].x = static_cast<DeviceSample>(in[idx].x);
     out[idx].y = static_cast<DeviceSample>(in[idx].y);
@@ -94,9 +98,10 @@ __global__ void doubleToFloatComplexKernel(DeviceFftComplex* out, const cufftDou
 __global__ void downconvertToFloatKernel(const DeviceSample* input, float* output, int size,
                                          float clipMin, float clipMax) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= size) return;
+    if (idx >= size) { return;
+}
 
-    float value = static_cast<float>(input[idx]);
+    auto value = static_cast<float>(input[idx]);
     if (value > clipMax) {
         value = clipMax;
     } else if (value < clipMin) {
