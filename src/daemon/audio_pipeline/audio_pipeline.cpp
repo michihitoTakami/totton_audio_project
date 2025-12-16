@@ -17,6 +17,26 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     if (!deps_.currentOutputRate) {
         deps_.currentOutputRate = []() { return DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE; };
     }
+
+    // 典型的には nFrames は ALSA/I2S の周期で固定。RT パスでの再確保を避けるため、
+    // 初期化時点で十分な容量を確保しておく (Issue #894)。
+    size_t initialFrames = static_cast<size_t>(DaemonConstants::DEFAULT_BLOCK_SIZE);
+    if (deps_.config) {
+        if (deps_.config->blockSize > 0) {
+            initialFrames = std::max(initialFrames, static_cast<size_t>(deps_.config->blockSize));
+        }
+        if (deps_.config->periodSize > 0) {
+            initialFrames = std::max(initialFrames, static_cast<size_t>(deps_.config->periodSize));
+        }
+        if (deps_.config->loopback.periodFrames > 0) {
+            initialFrames =
+                std::max(initialFrames, static_cast<size_t>(deps_.config->loopback.periodFrames));
+        }
+    }
+    workLeft_.reserve(initialFrames);
+    workRight_.reserve(initialFrames);
+    workLeft_.resize(initialFrames);
+    workRight_.resize(initialFrames);
 }
 
 bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
@@ -38,10 +58,11 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
 
     std::lock_guard<std::mutex> inputLock(*deps_.inputMutex);
 
-    std::vector<float> left(nFrames);
-    std::vector<float> right(nFrames);
-    AudioUtils::deinterleaveStereo(inputSamples, left.data(), right.data(), nFrames);
-    float inputPeak = computeStereoPeak(left.data(), right.data(), nFrames);
+    const size_t frames = static_cast<size_t>(nFrames);
+    workLeft_.resize(frames);
+    workRight_.resize(frames);
+    AudioUtils::deinterleaveStereo(inputSamples, workLeft_.data(), workRight_.data(), nFrames);
+    float inputPeak = computeStereoPeak(workLeft_.data(), workRight_.data(), frames);
     runtime_stats::updateInputPeak(inputPeak);
 
     auto* outputLeft = deps_.upsamplerOutputLeft;
@@ -57,14 +78,14 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
             return false;
         }
         auto ratio = static_cast<size_t>(deps_.config->upsampleRatio);
-        size_t outputFrames = static_cast<size_t>(nFrames) * ratio;
+        size_t outputFrames = frames * ratio;
         outputLeft->assign(outputFrames, 0.0f);
         outputRight->assign(outputFrames, 0.0f);
-        for (size_t i = 0; i < nFrames; ++i) {
+        for (size_t i = 0; i < frames; ++i) {
             size_t index = i * ratio;
             if (index < outputLeft->size()) {
-                (*outputLeft)[index] = left[i];
-                (*outputRight)[index] = right[i];
+                (*outputLeft)[index] = workLeft_[i];
+                (*outputRight)[index] = workRight_[i];
             }
         }
         leftGenerated = true;
@@ -73,11 +94,11 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         if (!deps_.upsampler.process) {
             return false;
         }
-        leftGenerated =
-            deps_.upsampler.process(left.data(), nFrames, *outputLeft, deps_.upsampler.streamLeft,
-                                    *deps_.streamInputLeft, *deps_.streamAccumulatedLeft);
+        leftGenerated = deps_.upsampler.process(workLeft_.data(), nFrames, *outputLeft,
+                                                deps_.upsampler.streamLeft, *deps_.streamInputLeft,
+                                                *deps_.streamAccumulatedLeft);
         rightGenerated = deps_.upsampler.process(
-            right.data(), nFrames, *outputRight, deps_.upsampler.streamRight,
+            workRight_.data(), nFrames, *outputRight, deps_.upsampler.streamRight,
             *deps_.streamInputRight, *deps_.streamAccumulatedRight);
     }
 
