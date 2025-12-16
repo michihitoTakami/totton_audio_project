@@ -521,11 +521,7 @@ static void reset_crossfeed_stream_state_locked() {
 static void initialize_streaming_cache_manager() {
     streaming_cache::StreamingCacheDependencies deps;
     deps.inputMutex = &g_input_process_mutex;
-    auto& buffer = playback_buffer();
-    deps.outputBufferLeft = &buffer.left();
-    deps.outputBufferRight = &buffer.right();
-    deps.bufferMutex = &buffer.mutex();
-    deps.outputReadPos = &buffer.readPos();
+    deps.resetPlaybackBuffer = []() { playback_buffer().reset(); };
 
     deps.streamInputLeft = &g_stream_input_left;
     deps.streamInputRight = &g_stream_input_right;
@@ -1709,12 +1705,7 @@ int main(int argc, char* argv[]) {
             pipelineDeps.crossfeedEnabled = &g_crossfeed_enabled;
             pipelineDeps.crossfeedProcessor = g_hrtf_processor;
             pipelineDeps.crossfeedMutex = &g_crossfeed_mutex;
-            auto& buffer = playback_buffer();
-            pipelineDeps.buffer.outputBufferLeft = &buffer.left();
-            pipelineDeps.buffer.outputBufferRight = &buffer.right();
-            pipelineDeps.buffer.outputReadPos = &buffer.readPos();
-            pipelineDeps.buffer.bufferMutex = &buffer.mutex();
-            pipelineDeps.buffer.bufferCv = &buffer.cv();
+            pipelineDeps.buffer.playbackBuffer = &playback_buffer();
             pipelineDeps.maxOutputBufferFrames = []() { return get_max_output_buffer_frames(); };
             pipelineDeps.currentOutputRate = []() {
                 return g_current_output_rate.load(std::memory_order_acquire);

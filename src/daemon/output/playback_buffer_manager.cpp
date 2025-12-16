@@ -5,24 +5,13 @@
 #include "logging/logger.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace daemon_output {
 
 PlaybackBufferManager::PlaybackBufferManager(CapacityProvider capacityProvider)
     : capacityProvider_(std::move(capacityProvider)),
       lastThrottleWarn_(std::chrono::steady_clock::now() - std::chrono::seconds(10)) {}
-
-std::vector<float>& PlaybackBufferManager::left() {
-    return outputLeft_;
-}
-
-std::vector<float>& PlaybackBufferManager::right() {
-    return outputRight_;
-}
-
-size_t& PlaybackBufferManager::readPos() {
-    return readPos_;
-}
 
 std::mutex& PlaybackBufferManager::mutex() {
     return bufferMutex_;
@@ -33,17 +22,119 @@ std::condition_variable& PlaybackBufferManager::cv() {
 }
 
 size_t PlaybackBufferManager::queuedFramesLocked() const {
-    if (outputLeft_.size() <= readPos_) {
-        return 0;
-    }
-    return outputLeft_.size() - readPos_;
+    size_t left = outputLeft_.availableToRead();
+    size_t right = outputRight_.availableToRead();
+    return std::min(left, right);
 }
 
 void PlaybackBufferManager::reset() {
     std::lock_guard<std::mutex> lock(bufferMutex_);
+    ensureCapacityLocked();
     outputLeft_.clear();
     outputRight_.clear();
-    readPos_ = 0;
+}
+
+void PlaybackBufferManager::ensureCapacityLocked() {
+    size_t desired = capacityProvider_ ? capacityProvider_() : 0;
+    if (desired == 0 || desired == capacityFrames_) {
+        return;
+    }
+    capacityFrames_ = desired;
+    outputLeft_.init(capacityFrames_);
+    outputRight_.init(capacityFrames_);
+}
+
+void PlaybackBufferManager::dropFramesLocked(size_t frames) {
+    if (frames == 0) {
+        return;
+    }
+    std::vector<float> scratch(std::min<size_t>(frames, capacityFrames_), 0.0f);
+    size_t remaining = frames;
+    while (remaining > 0) {
+        size_t chunk = std::min(remaining, scratch.size());
+        outputLeft_.read(scratch.data(), chunk);
+        outputRight_.read(scratch.data(), chunk);
+        remaining -= chunk;
+    }
+}
+
+bool PlaybackBufferManager::enqueue(const float* left, const float* right, size_t frames,
+                                    int outputRate, size_t& storedFrames, size_t& droppedFrames) {
+    std::lock_guard<std::mutex> lock(bufferMutex_);
+    storedFrames = 0;
+    droppedFrames = 0;
+
+    if (!left || !right || frames == 0) {
+        return false;
+    }
+
+    ensureCapacityLocked();
+    if (capacityFrames_ == 0) {
+        return false;
+    }
+
+    size_t current = queuedFramesLocked();
+    auto decision = PlaybackBuffer::planCapacityEnforcement(current, frames, capacityFrames_);
+    droppedFrames = decision.dropFromExisting + decision.newDataOffset;
+
+    if (decision.dropFromExisting > 0) {
+        dropFramesLocked(decision.dropFromExisting);
+    }
+
+    if (decision.framesToStore == 0) {
+        if (droppedFrames > 0 && outputRate > 0) {
+            double seconds = static_cast<double>(droppedFrames) / static_cast<double>(outputRate);
+            LOG_WARN(
+                "Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, "
+                "max={}]",
+                droppedFrames, seconds, current, frames, capacityFrames_);
+        }
+        return true;
+    }
+
+    size_t startIndex = frames - decision.framesToStore;
+    const float* leftPtr = left + startIndex;
+    const float* rightPtr = right + startIndex;
+
+    // AudioRingBuffer::write returns false if insufficient space (should not happen after drop).
+    bool leftOk = outputLeft_.write(leftPtr, decision.framesToStore);
+    bool rightOk = outputRight_.write(rightPtr, decision.framesToStore);
+    if (!leftOk || !rightOk) {
+        return false;
+    }
+
+    storedFrames = decision.framesToStore;
+
+    if (droppedFrames > 0 && outputRate > 0) {
+        double seconds = static_cast<double>(droppedFrames) / static_cast<double>(outputRate);
+        LOG_WARN(
+            "Output buffer overflow: dropping {} frames ({:.3f}s) [queued={}, incoming={}, max={}]",
+            droppedFrames, seconds, current, frames, capacityFrames_);
+    }
+
+    return true;
+}
+
+bool PlaybackBufferManager::readInterleaved(float* dstInterleaved, size_t frames) {
+    std::lock_guard<std::mutex> lock(bufferMutex_);
+    if (!dstInterleaved || frames == 0) {
+        return false;
+    }
+    if (queuedFramesLocked() < frames) {
+        return false;
+    }
+
+    std::vector<float> left(frames);
+    std::vector<float> right(frames);
+    if (!outputLeft_.read(left.data(), frames) || !outputRight_.read(right.data(), frames)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < frames; ++i) {
+        dstInterleaved[i * 2] = left[i];
+        dstInterleaved[i * 2 + 1] = right[i];
+    }
+    return true;
 }
 
 void PlaybackBufferManager::throttleProducerIfFull(const std::atomic<bool>& running,

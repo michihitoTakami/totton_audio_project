@@ -135,12 +135,9 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
                                                  deps_.cfOutputRight->data(), cfFrames);
                 runtime_stats::updatePostCrossfeedPeak(cfPeak);
             }
-            if (deps_.buffer.bufferMutex) {
-                std::lock_guard<std::mutex> lock(*deps_.buffer.bufferMutex);
-                enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
-            }
-            if (deps_.buffer.bufferCv) {
-                deps_.buffer.bufferCv->notify_one();
+            size_t stored = enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
+            if (stored > 0 && deps_.buffer.playbackBuffer) {
+                deps_.buffer.playbackBuffer->cv().notify_one();
             }
             return true;
         }
@@ -152,12 +149,9 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         return true;
     }
 
-    if (deps_.buffer.bufferMutex) {
-        std::lock_guard<std::mutex> lock(*deps_.buffer.bufferMutex);
-        enqueueOutputFramesLocked(*outputLeft, *outputRight);
-    }
-    if (deps_.buffer.bufferCv) {
-        deps_.buffer.bufferCv->notify_one();
+    size_t stored = enqueueOutputFramesLocked(*outputLeft, *outputRight);
+    if (stored > 0 && deps_.buffer.playbackBuffer) {
+        deps_.buffer.playbackBuffer->cv().notify_one();
     }
 
     if (framesGenerated > 0) {
@@ -174,7 +168,7 @@ RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& in
                                          SoftMute::Controller* softMute) {
     RenderResult result;
     result.framesRequested = frames;
-    if (frames == 0 || !hasBufferState() || !deps_.buffer.bufferMutex) {
+    if (frames == 0 || !hasBufferState()) {
         return result;
     }
 
@@ -184,22 +178,8 @@ RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& in
     const float baseGain =
         (deps_.output.outputGain) ? deps_.output.outputGain->load(std::memory_order_relaxed) : 1.0f;
 
-    bool hasAudio = false;
-    {
-        std::lock_guard<std::mutex> lock(*deps_.buffer.bufferMutex);
-        size_t readable = deps_.buffer.outputBufferLeft->size();
-        size_t readPos = *deps_.buffer.outputReadPos;
-        if (readable >= readPos + frames) {
-            hasAudio = true;
-            floatScratch.resize(frames * 2);
-            AudioUtils::interleaveStereoWithGain(deps_.buffer.outputBufferLeft->data() + readPos,
-                                                 deps_.buffer.outputBufferRight->data() + readPos,
-                                                 floatScratch.data(), frames, baseGain);
-            *deps_.buffer.outputReadPos += frames;
-            size_t cleanupFrames = std::max(frames * 4, static_cast<size_t>(1));
-            trimInternal(cleanupFrames);
-        }
-    }
+    bool hasAudio = deps_.buffer.playbackBuffer &&
+                    deps_.buffer.playbackBuffer->readInterleaved(floatScratch.data(), frames);
 
     if (!hasAudio) {
         // Output buffer underflow at daemon level (not necessarily ALSA XRUN).
@@ -255,11 +235,7 @@ RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& in
 }
 
 void AudioPipeline::trimOutputBuffer(size_t minFramesToRemove) {
-    if (!hasBufferState() || !deps_.buffer.bufferMutex) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(*deps_.buffer.bufferMutex);
-    trimInternal(minFramesToRemove);
+    (void)minFramesToRemove;
 }
 
 const BufferResources& AudioPipeline::bufferResources() const {
@@ -267,8 +243,7 @@ const BufferResources& AudioPipeline::bufferResources() const {
 }
 
 bool AudioPipeline::hasBufferState() const {
-    return deps_.buffer.outputBufferLeft && deps_.buffer.outputBufferRight &&
-           deps_.buffer.outputReadPos && deps_.buffer.bufferMutex;
+    return deps_.buffer.playbackBuffer != nullptr;
 }
 
 bool AudioPipeline::isUpsamplerAvailable() const {
@@ -288,34 +263,7 @@ void AudioPipeline::logDroppingInput() {
 }
 
 void AudioPipeline::trimInternal(size_t minFramesToRemove) {
-    if (!hasBufferState()) {
-        return;
-    }
-
-    auto& buffers = deps_.buffer;
-    size_t readable = buffers.outputBufferLeft->size();
-    if (readable == 0) {
-        *buffers.outputReadPos = 0;
-        return;
-    }
-
-    if (*buffers.outputReadPos == 0) {
-        return;
-    }
-
-    if (*buffers.outputReadPos > readable) {
-        *buffers.outputReadPos = readable;
-    }
-
-    if ((minFramesToRemove > 0 && *buffers.outputReadPos >= minFramesToRemove) ||
-        *buffers.outputReadPos == readable) {
-        auto eraseCount = static_cast<std::ptrdiff_t>(*buffers.outputReadPos);
-        buffers.outputBufferLeft->erase(buffers.outputBufferLeft->begin(),
-                                        buffers.outputBufferLeft->begin() + eraseCount);
-        buffers.outputBufferRight->erase(buffers.outputBufferRight->begin(),
-                                         buffers.outputBufferRight->begin() + eraseCount);
-        *buffers.outputReadPos = 0;
-    }
+    (void)minFramesToRemove;
 }
 
 float AudioPipeline::computeStereoPeak(const float* left, const float* right, size_t frames) const {
