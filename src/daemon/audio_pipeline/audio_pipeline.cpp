@@ -52,11 +52,41 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         return false;
     }
 
+    auto logLockSkipped = [&](const char* name, std::chrono::steady_clock::time_point& lastWarn) {
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastWarn > std::chrono::seconds(5)) {
+            LOG_WARN("AudioPipeline::process skipping block: {} mutex busy", name);
+            lastWarn = now;
+        }
+    };
+
     if (deps_.streamingCacheManager) {
         deps_.streamingCacheManager->handleInputBlock();
     }
 
-    std::lock_guard<std::mutex> inputLock(*deps_.inputMutex);
+    std::unique_lock<std::mutex> inputLock(*deps_.inputMutex, std::try_to_lock);
+    if (!inputLock.owns_lock()) {
+        logLockSkipped("input", lastInputLockWarn_);
+
+        // RT で待たない: ロックが取れない場合でもタイムラインを維持するため無音を出力。
+        if (!deps_.config || !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
+            return false;
+        }
+        auto ratio = static_cast<size_t>(deps_.config->upsampleRatio);
+        size_t outputFrames = static_cast<size_t>(nFrames) * ratio;
+        if (ratio == 0 || outputFrames == 0) {
+            return false;
+        }
+        deps_.upsamplerOutputLeft->assign(outputFrames, 0.0f);
+        deps_.upsamplerOutputRight->assign(outputFrames, 0.0f);
+
+        size_t stored =
+            enqueueOutputFramesLocked(*deps_.upsamplerOutputLeft, *deps_.upsamplerOutputRight);
+        if (stored > 0 && deps_.buffer.playbackBuffer) {
+            deps_.buffer.playbackBuffer->cv().notify_one();
+        }
+        return true;
+    }
 
     const size_t frames = static_cast<size_t>(nFrames);
     if (frames > workLeft_.capacity() || frames > workRight_.capacity()) {
@@ -154,30 +184,36 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     if (crossfeedActive && deps_.crossfeedProcessor && deps_.crossfeedMutex && deps_.cfOutputLeft &&
         deps_.cfOutputRight && deps_.cfStreamInputLeft && deps_.cfStreamInputRight &&
         deps_.cfStreamAccumulatedLeft && deps_.cfStreamAccumulatedRight) {
-        std::lock_guard<std::mutex> cfLock(*deps_.crossfeedMutex);
-        bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
-            outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,
-            *deps_.cfOutputRight, nullptr, *deps_.cfStreamInputLeft, *deps_.cfStreamInputRight,
-            *deps_.cfStreamAccumulatedLeft, *deps_.cfStreamAccumulatedRight);
-        if (cfGenerated) {
-            size_t cfFrames = std::min(deps_.cfOutputLeft->size(), deps_.cfOutputRight->size());
-            if (cfFrames > 0) {
-                float cfPeak = computeStereoPeak(deps_.cfOutputLeft->data(),
-                                                 deps_.cfOutputRight->data(), cfFrames);
-                runtime_stats::updatePostCrossfeedPeak(cfPeak);
+        std::unique_lock<std::mutex> cfLock(*deps_.crossfeedMutex, std::try_to_lock);
+        if (cfLock.owns_lock()) {
+            bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
+                outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,
+                *deps_.cfOutputRight, nullptr, *deps_.cfStreamInputLeft, *deps_.cfStreamInputRight,
+                *deps_.cfStreamAccumulatedLeft, *deps_.cfStreamAccumulatedRight);
+            if (cfGenerated) {
+                size_t cfFrames = std::min(deps_.cfOutputLeft->size(), deps_.cfOutputRight->size());
+                if (cfFrames > 0) {
+                    float cfPeak = computeStereoPeak(deps_.cfOutputLeft->data(),
+                                                     deps_.cfOutputRight->data(), cfFrames);
+                    runtime_stats::updatePostCrossfeedPeak(cfPeak);
+                }
+                size_t stored =
+                    enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
+                if (stored > 0 && deps_.buffer.playbackBuffer) {
+                    deps_.buffer.playbackBuffer->cv().notify_one();
+                }
+                return true;
             }
-            size_t stored = enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
-            if (stored > 0 && deps_.buffer.playbackBuffer) {
-                deps_.buffer.playbackBuffer->cv().notify_one();
-            }
+
+            // クロスフィード有効時はストリーミングバッファへ蓄積だけ行い、
+            // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
+            // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
+            // クラッシュするのを防ぐ。
             return true;
         }
 
-        // クロスフィード有効時はストリーミングバッファへ蓄積だけ行い、
-        // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
-        // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
-        // クラッシュするのを防ぐ。
-        return true;
+        // ロック取得に失敗した場合はブロックせずアップサンプル出力をそのまま進める
+        logLockSkipped("crossfeed", lastCrossfeedLockWarn_);
     }
 
     size_t stored = enqueueOutputFramesLocked(*outputLeft, *outputRight);
