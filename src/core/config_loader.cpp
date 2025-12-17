@@ -1,6 +1,7 @@
 #include "core/config_loader.h"
 
 #include "core/daemon_constants.h"
+#include "logging/logger.h"
 
 #include <algorithm>
 #include <cctype>
@@ -110,8 +111,8 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                         normalized.begin(), normalized.end(), normalized.begin(),
                         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                     if (normalized != "usb" && verbose) {
-                        std::cerr << "Config: Unsupported output.mode '" << modeStr
-                                  << "', falling back to 'usb'" << '\n';
+                        LOG_WARN("Config: Unsupported output.mode '{}', falling back to 'usb'",
+                                 modeStr);
                     }
                     outConfig.output.mode = parsed;
                 }
@@ -128,8 +129,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 }
             } catch (const std::exception& e) {
                 if (verbose) {
-                    std::cerr << "Config: Invalid output settings, using defaults: " << e.what()
-                              << '\n';
+                    LOG_WARN("Config: Invalid output settings, using defaults: {}", e.what());
                 }
                 outConfig.output = OutputConfig{};
             }
@@ -188,8 +188,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 }
             } catch (const std::exception& e) {
                 if (verbose) {
-                    std::cerr << "Config: Invalid loopback settings, using defaults: " << e.what()
-                              << '\n';
+                    LOG_WARN("Config: Invalid loopback settings, using defaults: {}", e.what());
                 }
                 outConfig.loopback = AppConfig::LoopbackInputConfig{};
             }
@@ -231,8 +230,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 }
             } catch (const std::exception& e) {
                 if (verbose) {
-                    std::cerr << "Config: Invalid i2s settings, using defaults: " << e.what()
-                              << '\n';
+                    LOG_WARN("Config: Invalid i2s settings, using defaults: {}", e.what());
                 }
                 outConfig.i2s = AppConfig::I2sInputConfig{};
             }
@@ -275,8 +273,8 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 }
             } catch (const std::exception& e) {
                 if (verbose) {
-                    std::cerr << "Config: Invalid partitionedConvolution settings, using defaults: "
-                              << e.what() << '\n';
+                    LOG_WARN("Config: Invalid partitionedConvolution settings, using defaults: {}",
+                             e.what());
                 }
                 outConfig.partitionedConvolution = AppConfig::PartitionedConvolutionConfig{};
             }
@@ -307,8 +305,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             } catch (const std::exception& e) {
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {
-                    std::cerr << "Config: Invalid crossfeed settings, using defaults: " << e.what()
-                              << '\n';
+                    LOG_WARN("Config: Invalid crossfeed settings, using defaults: {}", e.what());
                 }
             }
         }
@@ -362,8 +359,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
             } catch (const std::exception& e) {
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {
-                    std::cerr << "Config: Invalid fallback settings, using defaults: " << e.what()
-                              << '\n';
+                    LOG_WARN("Config: Invalid fallback settings, using defaults: {}", e.what());
                 }
             }
         }
@@ -399,7 +395,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         return true;
     } catch (const std::exception& e) {
         if (verbose) {
-            std::cerr << "Config: Failed to parse " << configPath << ": " << e.what() << '\n';
+            LOG_ERROR("Config: Failed to parse {}: {}", configPath.string(), e.what());
         }
         return false;
     }

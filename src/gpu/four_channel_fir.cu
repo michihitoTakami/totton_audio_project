@@ -2,6 +2,7 @@
 
 #include "gpu/convolution_kernels.h"
 #include "gpu/cuda_utils.h"
+#include "logging/logger.h"
 
 #include <nlohmann/json.hpp>
 
@@ -86,23 +87,26 @@ bool FourChannelFIR::loadHrtfConfig(const std::string& binPath, const std::strin
     try {
         metaFile >> meta;
     } catch (const std::exception& e) {
-        std::cerr << "[FourChannelFIR] Failed to parse metadata " << jsonPath << ": " << e.what()
-                  << std::endl;
+        LOG_ERROR("[FourChannelFIR] Failed to parse metadata {}: {}", jsonPath, e.what());
         return false;
     }
 
     int taps = meta.value("n_taps", 0);
     int channels = meta.value("n_channels", 0);
     if (channels != kChannelCount || taps <= 0) {
-        std::cerr << "[FourChannelFIR] Invalid metadata in " << jsonPath << " (channels=" << channels
-                  << ", taps=" << taps << ")\n";
+        LOG_ERROR("[FourChannelFIR] Invalid metadata in {} (channels={}, taps={})",
+                  jsonPath,
+                  channels,
+                  taps);
         return false;
     }
 
     int enforcedTaps = (expectedTaps > 0) ? expectedTaps : taps;
     if (taps != enforcedTaps) {
-        std::cerr << "[FourChannelFIR] Tap mismatch: " << binPath << " expected " << enforcedTaps
-                  << " got " << taps << std::endl;
+        LOG_ERROR("[FourChannelFIR] Tap mismatch: {} expected {} got {}",
+                  binPath,
+                  enforcedTaps,
+                  taps);
         return false;
     }
     filterTaps_ = enforcedTaps;
@@ -117,15 +121,17 @@ bool FourChannelFIR::loadHrtfConfig(const std::string& binPath, const std::strin
 
     size_t expectedBytes = static_cast<size_t>(kChannelCount) * filterTaps_ * sizeof(float);
     if (fileSize != expectedBytes) {
-        std::cerr << "[FourChannelFIR] File size mismatch: " << binPath << " expected "
-                  << expectedBytes << " got " << fileSize << std::endl;
+        LOG_ERROR("[FourChannelFIR] File size mismatch: {} expected {} got {}",
+                  binPath,
+                  expectedBytes,
+                  fileSize);
         return false;
     }
 
     std::vector<float> raw(static_cast<size_t>(kChannelCount) * filterTaps_);
     binFile.read(reinterpret_cast<char*>(raw.data()), expectedBytes);
     if (!binFile) {
-        std::cerr << "[FourChannelFIR] Failed to read " << binPath << std::endl;
+        LOG_ERROR("[FourChannelFIR] Failed to read {}", binPath);
         return false;
     }
 
@@ -274,7 +280,7 @@ bool FourChannelFIR::setupGpuResources() {
         }
 
         if (activeIdx < 0) {
-            std::cerr << "[FourChannelFIR] No valid filter configuration loaded\n";
+            LOG_ERROR("[FourChannelFIR] No valid filter configuration loaded");
             return false;
         }
 
@@ -284,7 +290,7 @@ bool FourChannelFIR::setupGpuResources() {
 
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[FourChannelFIR] setupGpuResources failed: " << e.what() << std::endl;
+        LOG_ERROR("[FourChannelFIR] setupGpuResources failed: {}", e.what());
         return false;
     }
 }
@@ -340,7 +346,7 @@ bool FourChannelFIR::initialize(const std::string& hrtfDir, int blockSize, HeadS
     }
 
     if (!anyLoaded) {
-        std::cerr << "[FourChannelFIR] No HRTF files found under " << hrtfDir << std::endl;
+        LOG_ERROR("[FourChannelFIR] No HRTF files found under {}", hrtfDir);
         cleanup();
         return false;
     }
@@ -437,7 +443,7 @@ bool FourChannelFIR::processStreamBlock(const float* inputL, const float* inputR
     const size_t requiredL = streamInputAccumulatedL + inputFrames;
     const size_t requiredR = streamInputAccumulatedR + inputFrames;
     if (requiredL > streamInputBufferL.size() || requiredR > streamInputBufferR.size()) {
-        std::cerr << "[FourChannelFIR] Input buffer too small for streaming block" << std::endl;
+        LOG_EVERY_N(ERROR, 100, "[FourChannelFIR] Input buffer too small for streaming block");
         outputL.clear();
         outputR.clear();
         return false;
@@ -459,7 +465,7 @@ bool FourChannelFIR::processStreamBlock(const float* inputL, const float* inputR
 
     if (outputL.capacity() < static_cast<size_t>(validOutputPerBlock_) ||
         outputR.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
-        std::cerr << "[FourChannelFIR] Output buffer capacity too small" << std::endl;
+        LOG_EVERY_N(ERROR, 100, "[FourChannelFIR] Output buffer capacity too small");
         outputL.clear();
         outputR.clear();
         return false;

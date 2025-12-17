@@ -1,6 +1,7 @@
 #include "convolution_engine.h"
 #include "gpu/convolution_kernels.h"
 #include "gpu/cuda_utils.h"
+#include "logging/logger.h"
 #include <fstream>
 #include <iostream>
 #include <algorithm>
@@ -254,7 +255,7 @@ bool GPUUpsampler::loadFilterCoefficients(const std::string& path) {
 
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) {
-        std::cerr << "Error: Cannot open filter coefficients file: " << path << std::endl;
+        LOG_ERROR("Cannot open filter coefficients file: {}", path);
         return false;
     }
 
@@ -271,7 +272,7 @@ bool GPUUpsampler::loadFilterCoefficients(const std::string& path) {
     ifs.read(reinterpret_cast<char*>(h_filterCoeffs_.data()), fileSize);
 
     if (!ifs) {
-        std::cerr << "Error reading filter coefficients" << std::endl;
+        LOG_ERROR("Error reading filter coefficients");
         return false;
     }
 
@@ -297,8 +298,7 @@ void GPUUpsampler::setPartitionedConvolutionConfig(
 
     partitionPlan_ = buildPartitionPlan(filterTaps_, upsampleRatio_, partitionConfig_);
     if (!partitionPlan_.enabled || partitionPlan_.partitions.empty()) {
-        std::cerr << "[Partition] Failed to build partition plan (taps=" << filterTaps_ << ")"
-                  << std::endl;
+        LOG_WARN("[Partition] Failed to build partition plan (taps={})", filterTaps_);
         partitionPlan_ = PartitionPlan{};
         return;
     }
@@ -507,7 +507,7 @@ bool GPUUpsampler::setupGPUResources() {
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in setupGPUResources: " << e.what() << std::endl;
+        LOG_ERROR("Error in setupGPUResources: {}", e.what());
         cleanup();
         return false;
     }
@@ -752,8 +752,10 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
                 );
 
                 if (blockCount < 3) {
-                    fprintf(stderr, "[DEBUG] Block %zu: Loaded overlap - first sample=%.6f, last sample=%.6f\n",
-                            blockCount, overlapBuffer[0], overlapBuffer[overlapUse-1]);
+                    LOG_DEBUG("[DEBUG] Block {}: Loaded overlap - first sample={:.6f}, last sample={:.6f}",
+                              blockCount,
+                              overlapBuffer[0],
+                              overlapBuffer[overlapUse - 1]);
                 }
             }
 
@@ -840,8 +842,12 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
             }
 
             if (blockCount < 3) {
-                fprintf(stderr, "[DEBUG] Block %zu: inputPos=%zu, outputPos=%zu, validOutputSize=%zu, currentBlockSize=%zu\n",
-                        blockCount, inputPos, outputPos, validOutputSize, currentBlockSize);
+                LOG_DEBUG("[DEBUG] Block {}: inputPos={}, outputPos={}, validOutputSize={}, currentBlockSize={}",
+                          blockCount,
+                          inputPos,
+                          outputPos,
+                          validOutputSize,
+                          currentBlockSize);
             }
 
             // Advance positions
@@ -865,7 +871,7 @@ bool GPUUpsampler::processChannelWithStream(const float* inputData,
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in processChannelWithStream: " << e.what() << std::endl;
+        LOG_ERROR("Error in processChannelWithStream: {}", e.what());
 
         // Clean up all allocated GPU memory
         if (d_upsampledInput) cudaFree(d_upsampledInput);
@@ -1342,8 +1348,7 @@ bool GPUUpsampler::setupPartitionStates() {
     }
 
     if (h_filterCoeffs_.empty()) {
-        std::cerr << "[Partition] Host filter coefficients unavailable; disabling partition mode"
-                  << std::endl;
+        LOG_WARN("[Partition] Host filter coefficients unavailable; disabling partition mode");
         partitionPlan_ = PartitionPlan{};
         return false;
     }
@@ -1362,15 +1367,14 @@ bool GPUUpsampler::setupPartitionStates() {
         state.sampleOffset = static_cast<int64_t>(coeffOffset);
 
         if (descriptor.taps <= 0 || descriptor.fftSize <= 0 || state.validOutput <= 0) {
-            std::cerr << "[Partition] Invalid descriptor at index " << idx << std::endl;
+            LOG_ERROR("[Partition] Invalid descriptor at index {}", idx);
             freePartitionStates();
             partitionPlan_ = PartitionPlan{};
             return false;
         }
 
         if (coeffOffset + descriptor.taps > h_filterCoeffs_.size()) {
-            std::cerr << "[Partition] Descriptor taps exceed available coefficients (idx=" << idx
-                      << ")" << std::endl;
+            LOG_ERROR("[Partition] Descriptor taps exceed available coefficients (idx={})", idx);
             freePartitionStates();
             partitionPlan_ = PartitionPlan{};
             return false;
@@ -1476,7 +1480,7 @@ bool GPUUpsampler::initializePartitionedStreaming() {
     }
 
     if (partitionStates_.empty()) {
-        std::cerr << "[Partition] No partition states available" << std::endl;
+        LOG_ERROR("[Partition] No partition states available");
         return false;
     }
 
@@ -1491,9 +1495,9 @@ bool GPUUpsampler::initializePartitionedStreaming() {
     for (auto& state : partitionStates_) {
         int maxValid = state.descriptor.fftSize - state.overlapSize;
         if (maxValid <= 0) {
-            std::cerr << "[Partition] Descriptor FFT too small for overlap (taps="
-                      << state.descriptor.taps << ", fft=" << state.descriptor.fftSize << ")"
-                      << std::endl;
+            LOG_ERROR("[Partition] Descriptor FFT too small for overlap (taps={}, fft={})",
+                      state.descriptor.taps,
+                      state.descriptor.fftSize);
             return false;
         }
         state.validOutput = std::min(adjustedValid, maxValid);
@@ -1502,7 +1506,7 @@ bool GPUUpsampler::initializePartitionedStreaming() {
 
     int fastInput = blockSamples / upsampleRatio_;
     if (fastInput <= 0) {
-        std::cerr << "[Partition] Invalid fast partition configuration (input=0)" << std::endl;
+        LOG_ERROR("[Partition] Invalid fast partition configuration (input=0)");
         return false;
     }
 
@@ -1739,7 +1743,7 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "[Partition] Error: " << e.what() << std::endl;
+        LOG_ERROR("[Partition] Error: {}", e.what());
         return false;
     }
 }
@@ -1800,8 +1804,7 @@ bool GPUUpsampler::refreshPartitionFiltersFromHost() {
         return true;
     }
     if (h_filterCoeffs_.empty()) {
-        std::cerr << "[Partition] Host coefficients unavailable; cannot refresh spectra"
-                  << std::endl;
+        LOG_WARN("[Partition] Host coefficients unavailable; cannot refresh spectra");
         return false;
     }
 
@@ -1818,8 +1821,7 @@ bool GPUUpsampler::refreshPartitionFiltersFromHost() {
     for (auto& state : partitionStates_) {
         const size_t taps = static_cast<size_t>(state.descriptor.taps);
         if (coeffOffset + taps > h_filterCoeffs_.size()) {
-            std::cerr << "[Partition] Refresh failed: tap window exceeds host coefficients"
-                      << std::endl;
+            LOG_ERROR("[Partition] Refresh failed: tap window exceeds host coefficients");
             cudaFree(d_tempTime);
             return false;
         }

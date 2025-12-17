@@ -7,6 +7,7 @@
 #include "audio/eq_parser.h"
 #include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
+#include "logging/logger.h"
 
 #include <cmath>
 #include <complex>
@@ -84,6 +85,8 @@ void saveSpectrumCSV(const std::string& filename, const std::vector<float>& spec
 }
 
 int main(int argc, char* argv[]) {
+    gpu_upsampler::logging::initializeEarly();
+
     std::cout << "========================================" << '\n';
     std::cout << "  EQ Effect Verification Test" << '\n';
     std::cout << "========================================" << '\n';
@@ -103,7 +106,7 @@ int main(int argc, char* argv[]) {
     ConvolutionEngine::GPUUpsampler upsampler;
 
     if (!upsampler.initialize(filterPath, UPSAMPLE_RATIO, BLOCK_SIZE)) {
-        std::cerr << "Failed to initialize GPU upsampler" << '\n';
+        LOG_ERROR("Failed to initialize GPU upsampler");
         return 1;
     }
     std::cout << "   GPU upsampler initialized" << '\n';
@@ -132,7 +135,7 @@ int main(int argc, char* argv[]) {
     std::cout << "\n4. Loading EQ profile: " << eqPath << '\n';
     EQ::EqProfile eqProfile;
     if (!EQ::parseEqFile(eqPath, eqProfile)) {
-        std::cerr << "Failed to parse EQ file" << '\n';
+        LOG_ERROR("Failed to parse EQ file");
         return 1;
     }
     std::cout << "   EQ: " << eqProfile.name << " (" << eqProfile.bands.size() << " bands, preamp "
@@ -148,7 +151,7 @@ int main(int argc, char* argv[]) {
         EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize, outputSampleRate, eqProfile);
 
     if (!upsampler.applyEqMagnitude(eqMagnitude)) {
-        std::cerr << "Failed to apply EQ magnitude" << '\n';
+        LOG_ERROR("Failed to apply EQ magnitude");
         return 1;
     }
     std::cout << "   EQ applied with minimum phase reconstruction" << '\n';

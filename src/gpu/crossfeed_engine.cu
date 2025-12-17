@@ -1,5 +1,6 @@
 #include "crossfeed_engine.h"
 #include "gpu/cuda_utils.h"
+#include "logging/logger.h"
 
 #include <algorithm>
 #include <chrono>
@@ -113,8 +114,7 @@ bool HRTFProcessor::registerStreamBuffer(std::vector<float>& buffer, void** trac
     // If already registered, caller changed pointer/capacity unexpectedly.
     // Do not unregister here (RT safety). Require re-init / explicit prepare call.
     if (*trackedPtr != nullptr) {
-        std::cerr << "[Crossfeed] Stream buffer pointer/capacity changed; re-init required"
-                  << std::endl;
+        LOG_EVERY_N(WARN, 100, "[Crossfeed] Stream buffer pointer/capacity changed; re-init required");
         return false;
     }
 
@@ -146,12 +146,12 @@ bool HRTFProcessor::prepareStreamingHostBuffers(std::vector<float>& streamInputB
                                   "cudaHostRegister crossfeed stream output L") ||
             !registerStreamBuffer(outputR, &pinnedStreamOutputR_, &pinnedStreamOutputRBytes_,
                                   "cudaHostRegister crossfeed stream output R")) {
-            std::cerr << "[Crossfeed] Failed to prepare pinned host buffers" << std::endl;
+            LOG_ERROR("[Crossfeed] Failed to prepare pinned host buffers");
             return false;
         }
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[Crossfeed] prepareStreamingHostBuffers failed: " << e.what() << std::endl;
+        LOG_ERROR("[Crossfeed] prepareStreamingHostBuffers failed: {}", e.what());
         return false;
     }
 }
@@ -279,12 +279,11 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize, HeadSi
     }
 
     if (!anyLoaded) {
-        std::cerr << "Error: No HRTF files loaded from " << hrtfDir << std::endl;
+        LOG_ERROR("No HRTF files loaded from {}", hrtfDir);
         return false;
     }
     if (tapMismatchDetected) {
-        std::cerr << "Error: HRTF tap count mismatch across rate families or sizes. "
-                  << "Ensure all HRTF filters share the same n_taps." << std::endl;
+        LOG_ERROR("HRTF tap count mismatch across rate families or sizes. Ensure all HRTF filters share the same n_taps.");
         // Clear partially loaded host data to avoid inconsistent state on retry
         filterTaps_ = 0;
         for (int i = 0; i < NUM_CONFIGS; ++i) {
@@ -304,7 +303,7 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize, HeadSi
     // Set initial active filter
     int initialConfig = getFilterIndex(initialSize, initialFamily);
     if (d_filterFFT_[initialConfig][0] == nullptr) {
-        std::cerr << "Error: Initial HRTF config not available" << std::endl;
+        LOG_ERROR("Initial HRTF config not available");
         return false;
     }
     activeFilterConfig_ = initialConfig;
@@ -369,8 +368,10 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath, const std::
         int enforcedTaps =
             (expectedTaps > 0) ? expectedTaps : (filterTaps_ > 0 ? filterTaps_ : md.nTaps);
         if (md.nTaps != enforcedTaps) {
-            std::cerr << "Error: HRTF tap count mismatch for " << binPath << " (expected "
-                      << enforcedTaps << ", got " << md.nTaps << ")" << std::endl;
+            LOG_ERROR("HRTF tap count mismatch for {} (expected {}, got {})",
+                      binPath,
+                      enforcedTaps,
+                      md.nTaps);
             return false;
         }
         filterTaps_ = enforcedTaps;
@@ -383,8 +384,7 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath, const std::
         // Expected: 4 channels * nTaps * sizeof(float)
         size_t expectedSize = static_cast<size_t>(md.nChannels) * md.nTaps * sizeof(float);
         if (fileSize != expectedSize) {
-            std::cerr << "Error: HRTF file size mismatch: expected " << expectedSize << ", got "
-                      << fileSize << std::endl;
+            LOG_ERROR("HRTF file size mismatch: expected {}, got {}", expectedSize, fileSize);
             return false;
         }
 
@@ -392,15 +392,15 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath, const std::
         std::vector<float> raw(totalFloats);
         binFile.read(reinterpret_cast<char*>(raw.data()), totalFloats * sizeof(float));
         if (!binFile) {
-            std::cerr << "Error: Failed to read HRTF binary data (" << binPath << ")" << std::endl;
+            LOG_ERROR("Failed to read HRTF binary data ({})", binPath);
             return false;
         }
 
         bool channelMajor = (md.storageFormat == "channel_major_v1");
         bool tapInterleaved = (md.storageFormat == "tap_interleaved_v1");
         if (!channelMajor && !tapInterleaved) {
-            std::cerr << "Warning: Unknown HRTF storage format '" << md.storageFormat
-                      << "', defaulting to tap_interleaved_v1" << std::endl;
+            LOG_WARN("Unknown HRTF storage format '{}', defaulting to tap_interleaved_v1",
+                     md.storageFormat);
             tapInterleaved = true;
         }
 
@@ -425,7 +425,7 @@ bool HRTFProcessor::loadHRTFCoefficients(const std::string& binPath, const std::
 
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "Error loading HRTF: " << e.what() << std::endl;
+        LOG_ERROR("Error loading HRTF: {}", e.what());
         return false;
     }
 }
@@ -559,7 +559,7 @@ bool HRTFProcessor::setupGPUResources() {
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in setupGPUResources: " << e.what() << std::endl;
+        LOG_ERROR("Error in setupGPUResources: {}", e.what());
         cleanup();
         return false;
     }
@@ -572,7 +572,7 @@ bool HRTFProcessor::switchHeadSize(HeadSize targetSize) {
 
     int targetConfig = getFilterIndex(targetSize, currentRateFamily_);
     if (d_filterFFT_[targetConfig][0] == nullptr) {
-        std::cerr << "Error: Target HRTF config not available" << std::endl;
+        LOG_ERROR("Target HRTF config not available");
         return false;
     }
 
@@ -618,7 +618,7 @@ bool HRTFProcessor::switchRateFamily(RateFamily targetFamily) {
 
     // Fall back to predefined filter (no combined filter for this family)
     if (d_filterFFT_[targetConfig][0] == nullptr) {
-        std::cerr << "Error: Target HRTF config not available" << std::endl;
+        LOG_ERROR("Target HRTF config not available");
         return false;
     }
 
@@ -842,7 +842,7 @@ bool HRTFProcessor::processStereo(const float* inputL, const float* inputR, size
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in processStereo: " << e.what() << std::endl;
+        LOG_ERROR("Error in processStereo: {}", e.what());
         return false;
     }
 }
@@ -860,9 +860,11 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     if (!enabled_) {
         // Passthrough
         if (outputL.capacity() < inputFrames || outputR.capacity() < inputFrames) {
-            std::cerr << "[Crossfeed] Output buffer capacity too small (passthrough): need "
-                      << inputFrames << " (L cap=" << outputL.capacity()
-                      << ", R cap=" << outputR.capacity() << ")" << std::endl;
+            LOG_EVERY_N(ERROR, 100,
+                        "[Crossfeed] Output buffer capacity too small (passthrough): need {} (L cap={}, R cap={})",
+                        inputFrames,
+                        outputL.capacity(),
+                        outputR.capacity());
             outputL.clear();
             outputR.clear();
             return false;
@@ -880,8 +882,11 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
         (void)trackedPtr;
         (void)trackedBytes;
         if (buffer.capacity() < requiredSamples) {
-            std::cerr << "[Crossfeed] Buffer capacity exceeded (" << requiredSamples << " > "
-                      << buffer.capacity() << "): " << context << std::endl;
+            LOG_EVERY_N(ERROR, 100,
+                        "[Crossfeed] Buffer capacity exceeded ({} > {}): {}",
+                        requiredSamples,
+                        buffer.capacity(),
+                        context);
             return false;
         }
         if (buffer.size() < requiredSamples) {
@@ -893,28 +898,28 @@ bool HRTFProcessor::processStreamBlock(const float* inputL, const float* inputR,
     auto validatePinned = [&](std::vector<float>& buffer, void* trackedPtr, size_t trackedBytes,
                               const char* name) -> bool {
         if (trackedPtr == nullptr) {
-            std::cerr << "[Crossfeed] Host buffers not prepared (missing pin): " << name
-                      << std::endl;
+            LOG_EVERY_N(ERROR, 100, "[Crossfeed] Host buffers not prepared (missing pin): {}", name);
             return false;
         }
         void* ptr = buffer.data();
         size_t bytes = buffer.capacity() * sizeof(float);
         if (ptr != trackedPtr || bytes != trackedBytes) {
-            std::cerr << "[Crossfeed] Pinned buffer mismatch: " << name
-                      << " (ptr/capacity changed)" << std::endl;
+            LOG_EVERY_N(ERROR, 100,
+                        "[Crossfeed] Pinned buffer mismatch: {} (ptr/capacity changed)",
+                        name);
             return false;
         }
         return true;
     };
 
     if (pinnedStreamOutputL_ != nullptr && pinnedStreamOutputL_ != outputL.data()) {
-        std::cerr << "[Crossfeed] Output buffer instance changed (L)" << std::endl;
+        LOG_EVERY_N(ERROR, 100, "[Crossfeed] Output buffer instance changed (L)");
         outputL.clear();
         outputR.clear();
         return false;
     }
     if (pinnedStreamOutputR_ != nullptr && pinnedStreamOutputR_ != outputR.data()) {
-        std::cerr << "[Crossfeed] Output buffer instance changed (R)" << std::endl;
+        LOG_EVERY_N(ERROR, 100, "[Crossfeed] Output buffer instance changed (R)");
         outputL.clear();
         outputR.clear();
         return false;
@@ -1231,19 +1236,20 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily, const cufftComplex*
                                       const cufftComplex* combinedRL,
                                       const cufftComplex* combinedRR, size_t filterComplexCount) {
     if (!initialized_) {
-        std::cerr << "HRTFProcessor::setCombinedFilter: Not initialized" << std::endl;
+        LOG_ERROR("HRTFProcessor::setCombinedFilter: Not initialized");
         return false;
     }
 
     if (rateFamily == RateFamily::RATE_UNKNOWN) {
-        std::cerr << "HRTFProcessor::setCombinedFilter: Invalid rate family" << std::endl;
+        LOG_ERROR("HRTFProcessor::setCombinedFilter: Invalid rate family");
         return false;
     }
 
     // Validate filter size matches expected FFT size
     if (filterComplexCount != filterFftSize_) {
-        std::cerr << "HRTFProcessor::setCombinedFilter: Filter size mismatch. " << "Expected "
-                  << filterFftSize_ << " complex values, got " << filterComplexCount << std::endl;
+        LOG_ERROR("HRTFProcessor::setCombinedFilter: Filter size mismatch. Expected {} complex values, got {}",
+                  filterFftSize_,
+                  filterComplexCount);
         return false;
     }
 
@@ -1255,8 +1261,9 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily, const cufftComplex*
         if (d_combinedFilterFFT_[familyIdx][c] == nullptr) {
             cudaError_t err = cudaMalloc(&d_combinedFilterFFT_[familyIdx][c], filterBytes);
             if (err != cudaSuccess) {
-                std::cerr << "HRTFProcessor::setCombinedFilter: cudaMalloc failed for channel " << c
-                          << ": " << cudaGetErrorString(err) << std::endl;
+                LOG_ERROR("HRTFProcessor::setCombinedFilter: cudaMalloc failed for channel {}: {}",
+                          c,
+                          cudaGetErrorString(err));
                 // Clean up any partially allocated memory
                 for (int cc = 0; cc < c; ++cc) {
                     if (d_combinedFilterFFT_[familyIdx][cc]) {
@@ -1275,8 +1282,9 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily, const cufftComplex*
         cudaError_t err = cudaMemcpy(d_combinedFilterFFT_[familyIdx][c], srcFilters[c], filterBytes,
                                      cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            std::cerr << "HRTFProcessor::setCombinedFilter: cudaMemcpy failed for channel " << c
-                      << ": " << cudaGetErrorString(err) << std::endl;
+            LOG_ERROR("HRTFProcessor::setCombinedFilter: cudaMemcpy failed for channel {}: {}",
+                      c,
+                      cudaGetErrorString(err));
             // Rollback: invalidate this combined filter to prevent use of corrupted data
             combinedFilterLoaded_[familyIdx] = false;
             // If this was the active filter, revert to predefined
@@ -1289,8 +1297,7 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily, const cufftComplex*
                 }
                 usingCombinedFilter_ = false;
                 resetStreaming();
-                std::cerr << "HRTFProcessor::setCombinedFilter: Reverted to predefined filter"
-                          << std::endl;
+                LOG_WARN("HRTFProcessor::setCombinedFilter: Reverted to predefined filter");
             }
             return false;
         }
@@ -1316,16 +1323,15 @@ bool HRTFProcessor::setCombinedFilter(RateFamily rateFamily, const cufftComplex*
 bool HRTFProcessor::generateWoodworthProfile(RateFamily rateFamily, float azimuthDeg,
                                              const HRTF::WoodworthParams& params) {
     if (!initialized_) {
-        std::cerr << "HRTFProcessor::generateWoodworthProfile: Not initialized" << std::endl;
+        LOG_ERROR("HRTFProcessor::generateWoodworthProfile: Not initialized");
         return false;
     }
     if (rateFamily == RateFamily::RATE_UNKNOWN) {
-        std::cerr << "HRTFProcessor::generateWoodworthProfile: Invalid rate family" << std::endl;
+        LOG_ERROR("HRTFProcessor::generateWoodworthProfile: Invalid rate family");
         return false;
     }
     if (filterTaps_ <= 0 || fftSize_ <= 0) {
-        std::cerr << "HRTFProcessor::generateWoodworthProfile: Invalid filter geometry"
-                  << std::endl;
+        LOG_ERROR("HRTFProcessor::generateWoodworthProfile: Invalid filter geometry");
         return false;
     }
 
@@ -1333,7 +1339,7 @@ bool HRTFProcessor::generateWoodworthProfile(RateFamily rateFamily, float azimut
     tuned.taps = static_cast<size_t>(filterTaps_);
     int familyOutputRate = getOutputSampleRate(rateFamily);
     if (familyOutputRate <= 0) {
-        std::cerr << "HRTFProcessor::generateWoodworthProfile: Unknown rate family" << std::endl;
+        LOG_ERROR("HRTFProcessor::generateWoodworthProfile: Unknown rate family");
         return false;
     }
     tuned.sampleRate = static_cast<float>(familyOutputRate);
@@ -1416,7 +1422,7 @@ bool HRTFProcessor::generateWoodworthProfile(RateFamily rateFamily, float azimut
         return success;
 
     } catch (const std::exception& e) {
-        std::cerr << "HRTFProcessor::generateWoodworthProfile failed: " << e.what() << std::endl;
+        LOG_ERROR("HRTFProcessor::generateWoodworthProfile failed: {}", e.what());
         cleanup();
         return false;
     }

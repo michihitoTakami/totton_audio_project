@@ -1,9 +1,10 @@
 #include "convolution_engine.h"
 #include "gpu/convolution_kernels.h"
 #include "gpu/cuda_utils.h"
-#include <iostream>
+#include "logging/logger.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 namespace ConvolutionEngine {
 
@@ -37,10 +38,10 @@ void GPUUpsampler::restoreOriginalFilter() {
         eqApplied_ = false;
         std::cout << "EQ: Restored original filter (ping-pong)" << std::endl;
         if (!refreshPartitionFiltersFromActiveSpectrum()) {
-            std::cerr << "EQ: Failed to refresh partition filters after restore" << std::endl;
+            LOG_WARN("EQ: Failed to refresh partition filters after restore");
         }
     } catch (const std::exception& e) {
-        std::cerr << "EQ: Failed to restore: " << e.what() << std::endl;
+        LOG_ERROR("EQ: Failed to restore: {}", e.what());
     }
 }
 
@@ -60,13 +61,14 @@ bool GPUUpsampler::applyEqMagnitude(const std::vector<double>& eqMagnitude) {
 // Multiplies filter magnitude by EQ magnitude, preserves original phase
 bool GPUUpsampler::applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude) {
     if (!d_filterFFT_A_ || !d_filterFFT_B_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
-        std::cerr << "EQ: Filter not initialized" << std::endl;
+        LOG_ERROR("EQ: Filter not initialized");
         return false;
     }
 
     if (eqMagnitude.size() != filterFftSize_) {
-        std::cerr << "EQ: Magnitude size mismatch: expected " << filterFftSize_
-                  << ", got " << eqMagnitude.size() << std::endl;
+        LOG_ERROR("EQ: Magnitude size mismatch: expected {}, got {}",
+                  filterFftSize_,
+                  eqMagnitude.size());
         return false;
     }
 
@@ -118,13 +120,13 @@ bool GPUUpsampler::applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude) 
         eqApplied_ = true;
         std::cout << "EQ: Applied with magnitude-only (linear phase preserved, ping-pong)" << std::endl;
         if (!refreshPartitionFiltersFromActiveSpectrum()) {
-            std::cerr << "EQ: Failed to refresh partition filters after linear-phase EQ" << std::endl;
+            LOG_ERROR("EQ: Failed to refresh partition filters after linear-phase EQ");
             return false;
         }
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "EQ: Failed to apply magnitude-only: " << e.what() << std::endl;
+        LOG_ERROR("EQ: Failed to apply magnitude-only: {}", e.what());
         return false;
     }
 }
@@ -135,19 +137,20 @@ bool GPUUpsampler::applyEqMagnitudeOnly(const std::vector<double>& eqMagnitude) 
 // because we reconstruct minimum phase from combined magnitude |H_filter| × |H_eq|.
 bool GPUUpsampler::applyEqMagnitudeMinPhase(const std::vector<double>& eqMagnitude) {
     if (!d_filterFFT_A_ || !d_filterFFT_B_ || !d_originalFilterFFT_ || filterFftSize_ == 0) {
-        std::cerr << "EQ: Filter not initialized" << std::endl;
+        LOG_ERROR("EQ: Filter not initialized");
         return false;
     }
 
     if (eqMagnitude.size() != filterFftSize_) {
-        std::cerr << "EQ: Magnitude size mismatch: expected " << filterFftSize_
-                  << ", got " << eqMagnitude.size() << std::endl;
+        LOG_ERROR("EQ: Magnitude size mismatch: expected {}, got {}",
+                  filterFftSize_,
+                  eqMagnitude.size());
         return false;
     }
 
     // Verify persistent EQ resources are initialized
     if (!eqPlanD2Z_ || !eqPlanZ2D_ || !d_eqLogMag_ || !d_eqComplexSpec_) {
-        std::cerr << "EQ: Persistent EQ resources not initialized" << std::endl;
+        LOG_ERROR("EQ: Persistent EQ resources not initialized");
         return false;
     }
 
@@ -233,14 +236,13 @@ bool GPUUpsampler::applyEqMagnitudeMinPhase(const std::vector<double>& eqMagnitu
         eqApplied_ = true;
         std::cout << "EQ: Applied with minimum phase reconstruction (GPU, ping-pong)" << std::endl;
         if (!refreshPartitionFiltersFromActiveSpectrum()) {
-            std::cerr << "EQ: Failed to refresh partition filters after minimum-phase EQ"
-                      << std::endl;
+            LOG_ERROR("EQ: Failed to refresh partition filters after minimum-phase EQ");
             return false;
         }
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "EQ: Failed to apply minimum phase: " << e.what() << std::endl;
+        LOG_ERROR("EQ: Failed to apply minimum phase: {}", e.what());
         return false;
     }
 }

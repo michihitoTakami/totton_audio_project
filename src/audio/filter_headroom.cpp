@@ -1,5 +1,7 @@
 #include "audio/filter_headroom.h"
 
+#include "logging/logger.h"
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -50,15 +52,15 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
 
     std::filesystem::path metaPath(info.metadataPath);
     if (!std::filesystem::exists(metaPath)) {
-        std::cerr << "Headroom: metadata not found for " << coefficientPath << " (expected "
-                  << info.metadataPath << ")" << '\n';
+        LOG_WARN("Headroom: metadata not found for {} (expected {})", coefficientPath,
+                 info.metadataPath);
         return info;
     }
 
     try {
         std::ifstream ifs(metaPath);
         if (!ifs) {
-            std::cerr << "Headroom: failed to open metadata " << info.metadataPath << '\n';
+            LOG_WARN("Headroom: failed to open metadata {}", info.metadataPath);
             return info;
         }
 
@@ -80,8 +82,7 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
                   << info.maxCoefficient << ", L1 " << info.l1Norm << ")" << '\n';
 
     } catch (const std::exception& e) {
-        std::cerr << "Headroom: failed to parse metadata " << info.metadataPath << " - " << e.what()
-                  << '\n';
+        LOG_WARN("Headroom: failed to parse metadata {} - {}", info.metadataPath, e.what());
     }
 
     return info;

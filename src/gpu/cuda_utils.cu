@@ -1,5 +1,5 @@
 #include "gpu/cuda_utils.h"
-#include <iostream>
+#include "logging/logger.h"
 
 #ifdef HAVE_NVML
 #include <nvml.h>
@@ -30,16 +30,14 @@ namespace Utils {
 
 void checkCudaError(cudaError_t error, const char* context) {
     if (error != cudaSuccess) {
-        std::cerr << "CUDA Error in " << context << ": "
-                  << cudaGetErrorString(error) << std::endl;
+        LOG_ERROR("CUDA Error in {}: {}", context, cudaGetErrorString(error));
         throw std::runtime_error("CUDA error");
     }
 }
 
 void checkCufftError(cufftResult result, const char* context) {
     if (result != CUFFT_SUCCESS) {
-        std::cerr << "cuFFT Error in " << context << ": "
-                  << static_cast<int>(result) << std::endl;
+        LOG_ERROR("cuFFT Error in {}: {}", context, static_cast<int>(result));
         throw std::runtime_error("cuFFT error");
     }
 }
@@ -61,14 +59,15 @@ cudaStream_t createPrioritizedStream(const char* context,
         if (createStatus == cudaSuccess) {
             createdHighPriority = true;
         } else {
-            std::cerr << "Warning: Failed to create high-priority CUDA stream (" << context
-                      << "): " << cudaGetErrorString(createStatus)
-                      << " - falling back to default priority" << std::endl;
+            LOG_WARN(
+                "Failed to create high-priority CUDA stream ({}): {} - falling back to default priority",
+                context,
+                cudaGetErrorString(createStatus));
         }
     } else {
-        std::cerr << "Warning: Unable to query CUDA stream priority range: "
-                  << cudaGetErrorString(rangeStatus)
-                  << " - falling back to default priority for " << context << std::endl;
+        LOG_WARN("Unable to query CUDA stream priority range: {} - falling back to default priority for {}",
+                 cudaGetErrorString(rangeStatus),
+                 context);
     }
 
     if (!createdHighPriority) {
@@ -142,10 +141,9 @@ AudioEngine::ErrorCode checkCudaErrorCode(cudaError_t error, const char* context
 
     // Log the error
     if (context) {
-        std::cerr << "CUDA Error in " << context << ": "
-                  << cudaGetErrorString(error) << std::endl;
+        LOG_ERROR("CUDA Error in {}: {}", context, cudaGetErrorString(error));
     } else {
-        std::cerr << "CUDA Error: " << cudaGetErrorString(error) << std::endl;
+        LOG_ERROR("CUDA Error: {}", cudaGetErrorString(error));
     }
 
     return cudaErrorToErrorCode(error);
@@ -158,10 +156,9 @@ AudioEngine::ErrorCode checkCufftErrorCode(cufftResult result, const char* conte
 
     // Log the error
     if (context) {
-        std::cerr << "cuFFT Error in " << context << ": "
-                  << static_cast<int>(result) << std::endl;
+        LOG_ERROR("cuFFT Error in {}: {}", context, static_cast<int>(result));
     } else {
-        std::cerr << "cuFFT Error: " << static_cast<int>(result) << std::endl;
+        LOG_ERROR("cuFFT Error: {}", static_cast<int>(result));
     }
 
     return AudioEngine::ErrorCode::GPU_CUFFT_ERROR;
@@ -176,16 +173,14 @@ double getGPUUtilization() {
     if (!nvmlInitialized) {
         nvmlReturn_t result = nvmlInit();
         if (result != NVML_SUCCESS) {
-            std::cerr << "Warning: Failed to initialize NVML: "
-                      << nvmlErrorString(result) << std::endl;
+            LOG_WARN("Failed to initialize NVML: {}", nvmlErrorString(result));
             return -1.0;
         }
 
         // Get device handle for GPU 0
         result = nvmlDeviceGetHandleByIndex(0, &device);
         if (result != NVML_SUCCESS) {
-            std::cerr << "Warning: Failed to get NVML device handle: "
-                      << nvmlErrorString(result) << std::endl;
+            LOG_WARN("Failed to get NVML device handle: {}", nvmlErrorString(result));
             nvmlShutdown();
             return -1.0;
         }
@@ -197,8 +192,7 @@ double getGPUUtilization() {
     nvmlUtilization_t utilization;
     nvmlReturn_t result = nvmlDeviceGetUtilizationRates(device, &utilization);
     if (result != NVML_SUCCESS) {
-        std::cerr << "Warning: Failed to query GPU utilization: "
-                  << nvmlErrorString(result) << std::endl;
+        LOG_WARN("Failed to query GPU utilization: {}", nvmlErrorString(result));
         return -1.0;
     }
 

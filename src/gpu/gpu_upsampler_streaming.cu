@@ -1,7 +1,7 @@
 #include "convolution_engine.h"
 #include "gpu/convolution_kernels.h"
 #include "gpu/cuda_utils.h"
-#include <iostream>
+#include "logging/logger.h"
 #include <algorithm>
 
 namespace ConvolutionEngine {
@@ -18,13 +18,13 @@ bool GPUUpsampler::initializeStreaming() {
         if (initializePartitionedStreaming()) {
             return true;
         }
-        std::cerr << "[Partition] WARNING: Falling back to legacy streaming mode" << std::endl;
+        LOG_WARN("[Partition] Falling back to legacy streaming mode");
         partitionPlan_ = PartitionPlan{};
         partitionConfig_.enabled = false;
     }
 
     if (fftSize_ == 0 || overlapSize_ == 0) {
-        std::cerr << "ERROR: GPU resources not initialized. Call initialize() first." << std::endl;
+        LOG_ERROR("GPU resources not initialized. Call initialize() first.");
         return false;
     }
 
@@ -32,7 +32,7 @@ bool GPUUpsampler::initializeStreaming() {
 
     // Free existing streaming buffers if re-initializing (prevents memory leak on rate switch)
     if (streamInitialized_) {
-        fprintf(stderr, "[Streaming] Re-initializing: freeing existing buffers\n");
+        LOG_INFO("[Streaming] Re-initializing: freeing existing buffers");
         freeStreamingBuffers();
     }
 
@@ -41,13 +41,14 @@ bool GPUUpsampler::initializeStreaming() {
     validOutputPerBlock_ = (idealValidOutput / upsampleRatio_) * upsampleRatio_;
     streamOverlapSize_ = overlapSize_;
 
-    fprintf(stderr, "Streaming parameters:\n");
-    fprintf(stderr, "  FFT size: %d\n", fftSize_);
-    fprintf(stderr, "  Filter overlap (L-1): %d\n", overlapSize_);
-    fprintf(stderr, "  Ideal valid output: %d (not divisible by %d)\n", idealValidOutput, upsampleRatio_);
-    fprintf(stderr, "  Actual valid output: %d (rounded to multiple of %d)\n", validOutputPerBlock_, upsampleRatio_);
-    fprintf(stderr, "  Stream overlap size: %d (exact L-1)\n", streamOverlapSize_);
-    fprintf(stderr, "  Zero-padding at end: %d sample(s)\n", fftSize_ - streamOverlapSize_ - validOutputPerBlock_);
+    LOG_INFO("Streaming parameters:");
+    LOG_INFO("  FFT size: {}", fftSize_);
+    LOG_INFO("  Filter overlap (L-1): {}", overlapSize_);
+    LOG_INFO("  Ideal valid output: {} (not divisible by {})", idealValidOutput, upsampleRatio_);
+    LOG_INFO("  Actual valid output: {} (rounded to multiple of {})", validOutputPerBlock_, upsampleRatio_);
+    LOG_INFO("  Stream overlap size: {} (exact L-1)", streamOverlapSize_);
+    LOG_INFO("  Zero-padding at end: {} sample(s)",
+             fftSize_ - streamOverlapSize_ - validOutputPerBlock_);
 
     // Calculate input samples needed per block
     streamValidInputPerBlock_ = validOutputPerBlock_ / upsampleRatio_;
@@ -147,12 +148,12 @@ bool GPUUpsampler::initializeStreaming() {
 
     streamInitialized_ = true;
 
-    fprintf(stderr, "[Streaming] Initialized:\n");
-    fprintf(stderr, "  - Input samples per block: %zu\n", streamValidInputPerBlock_);
-    fprintf(stderr, "  - Output samples per block: %d\n", validOutputPerBlock_);
-    fprintf(stderr, "  - Overlap (stream): %d samples\n", streamOverlapSize_);
-    fprintf(stderr, "  - GPU streaming buffers pre-allocated\n");
-    fprintf(stderr, "  - Device-resident overlap buffers allocated (no H↔D in RT path)\n");
+    LOG_INFO("[Streaming] Initialized:");
+    LOG_INFO("  - Input samples per block: {}", streamValidInputPerBlock_);
+    LOG_INFO("  - Output samples per block: {}", validOutputPerBlock_);
+    LOG_INFO("  - Overlap (stream): {} samples", streamOverlapSize_);
+    LOG_INFO("  - GPU streaming buffers pre-allocated");
+    LOG_INFO("  - Device-resident overlap buffers allocated (no H↔D in RT path)");
 
     return true;
 }
@@ -180,7 +181,7 @@ void GPUUpsampler::resetStreaming() {
     streamingStereoLeftQueued_ = false;
     streamingStereoInFlight_ = false;
     streamingStereoDeliveredMask_ = 0;
-    fprintf(stderr, "[Streaming] Reset: device overlap buffers cleared\n");
+    LOG_INFO("[Streaming] Reset: device overlap buffers cleared");
 }
 
 void GPUUpsampler::freeStreamingBuffers() {
@@ -188,7 +189,7 @@ void GPUUpsampler::freeStreamingBuffers() {
         return;
     }
 
-    fprintf(stderr, "[Streaming] Freeing streaming buffers\n");
+    LOG_INFO("[Streaming] Freeing streaming buffers");
 
     for (int i = 0; i < kStreamingChannelCount; ++i) {
         auto& ch = streamingChannels_[i];
@@ -256,7 +257,7 @@ void GPUUpsampler::freeStreamingBuffers() {
     if (partitionPlan_.enabled) {
         partitionStreamingInitialized_ = false;
     }
-    fprintf(stderr, "[Streaming] Streaming buffers freed\n");
+    LOG_INFO("[Streaming] Streaming buffers freed");
 }
 
 bool GPUUpsampler::processStreamBlock(const float* inputData,
@@ -282,8 +283,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         // When EQ is applied, we need convolution to apply the EQ filter
         if (upsampleRatio_ == 1 && !eqApplied_) {
             if (outputData.capacity() < inputFrames) {
-                std::cerr << "[Streaming] Output buffer capacity too small (bypass): need "
-                          << inputFrames << ", cap=" << outputData.capacity() << std::endl;
+                LOG_EVERY_N(ERROR, 100,
+                            "[Streaming] Output buffer capacity too small (bypass): need {}, cap={}",
+                            inputFrames,
+                            outputData.capacity());
                 outputData.clear();
                 streamInputAccumulated = 0;
                 return false;
@@ -296,7 +299,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         }
 
         if (!streamInitialized_) {
-            std::cerr << "ERROR: Streaming mode not initialized. Call initializeStreaming() first." << std::endl;
+            LOG_ERROR("Streaming mode not initialized. Call initializeStreaming() first.");
             return false;
         }
 
@@ -311,14 +314,16 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             }
 
             if (streamInputBuffer.empty()) {
-                std::cerr << "ERROR: Streaming input buffer not allocated" << std::endl;
+                LOG_EVERY_N(ERROR, 100, "Streaming input buffer not allocated");
                 return false;
             }
 
             size_t required = streamInputAccumulated + inputFrames;
             if (required > streamInputBuffer.size()) {
-                std::cerr << "[Streaming] Input buffer capacity exceeded: required=" << required
-                          << ", capacity=" << streamInputBuffer.size() << std::endl;
+                LOG_EVERY_N(ERROR, 100,
+                            "[Streaming] Input buffer capacity exceeded: required={}, capacity={}",
+                            required,
+                            streamInputBuffer.size());
                 outputData.clear();
                 return false;
             }
@@ -455,9 +460,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize legacy streaming");
 
             if (outputData.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
-                std::cerr << "[Streaming] Output buffer capacity too small: need "
-                          << validOutputPerBlock_ << ", cap=" << outputData.capacity()
-                          << std::endl;
+                LOG_EVERY_N(ERROR, 100,
+                            "[Streaming] Output buffer capacity too small: need {}, cap={}",
+                            validOutputPerBlock_,
+                            outputData.capacity());
                 outputData.clear();
                 return false;
             }
@@ -494,9 +500,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                 const uint8_t bit = isLeft ? 0x1 : 0x2;
                 if ((streamingStereoDeliveredMask_ & bit) == 0) {
                     if (outputData.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
-                        std::cerr << "[Streaming] Output buffer capacity too small: need "
-                                  << validOutputPerBlock_ << ", cap=" << outputData.capacity()
-                                  << std::endl;
+                        LOG_EVERY_N(ERROR, 100,
+                                    "[Streaming] Output buffer capacity too small: need {}, cap={}",
+                                    validOutputPerBlock_,
+                                    outputData.capacity());
                         outputData.clear();
                         return false;
                     }
@@ -514,9 +521,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         } else {
             if (ch.inFlight && ch.doneEvent && cudaEventQuery(ch.doneEvent) == cudaSuccess) {
                 if (outputData.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
-                    std::cerr << "[Streaming] Output buffer capacity too small: need "
-                              << validOutputPerBlock_ << ", cap=" << outputData.capacity()
-                              << std::endl;
+                    LOG_EVERY_N(ERROR, 100,
+                                "[Streaming] Output buffer capacity too small: need {}, cap={}",
+                                validOutputPerBlock_,
+                                outputData.capacity());
                     outputData.clear();
                     return false;
                 }
@@ -545,14 +553,16 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
         // 1. Accumulate input samples
         if (streamInputBuffer.empty()) {
-            std::cerr << "ERROR: Streaming input buffer not allocated" << std::endl;
+            LOG_EVERY_N(ERROR, 100, "Streaming input buffer not allocated");
             return false;
         }
 
         size_t required = streamInputAccumulated + inputFrames;
         if (required > streamInputBuffer.size()) {
-            std::cerr << "[Streaming] Input buffer capacity exceeded: required=" << required
-                      << ", capacity=" << streamInputBuffer.size() << std::endl;
+            LOG_EVERY_N(ERROR, 100,
+                        "[Streaming] Input buffer capacity exceeded: required={}, capacity={}",
+                        required,
+                        streamInputBuffer.size());
             outputData.clear();
             return false;
         }
@@ -786,7 +796,7 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         return producedOutput;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in processStreamBlock: " << e.what() << std::endl;
+        LOG_ERROR("Error in processStreamBlock: {}", e.what());
         return false;
     }
 }
@@ -803,8 +813,10 @@ bool GPUUpsampler::processPartitionedStreamBlock(
 
         if (upsampleRatio_ == 1 && !eqApplied_) {
             if (outputData.capacity() < inputFrames) {
-                std::cerr << "[Partition] Output buffer capacity too small (bypass): need "
-                          << inputFrames << ", cap=" << outputData.capacity() << std::endl;
+                LOG_EVERY_N(ERROR, 100,
+                            "[Partition] Output buffer capacity too small (bypass): need {}, cap={}",
+                            inputFrames,
+                            outputData.capacity());
                 outputData.clear();
                 streamInputAccumulated = 0;
                 return false;
@@ -816,8 +828,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         }
 
         if (!partitionStreamingInitialized_) {
-            std::cerr << "ERROR: Partitioned streaming mode not initialized. Call initializeStreaming() first."
-                      << std::endl;
+            LOG_ERROR("Partitioned streaming mode not initialized. Call initializeStreaming() first.");
             return false;
         }
 
@@ -825,14 +836,16 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         // This is used by offline tools/tests. RT playback enables non-blocking explicitly.
         if (!streamingNonBlockingEnabled_) {
             if (streamInputBuffer.empty()) {
-                std::cerr << "ERROR: Streaming input buffer not allocated" << std::endl;
+                LOG_EVERY_N(ERROR, 100, "Streaming input buffer not allocated");
                 return false;
             }
 
             size_t required = streamInputAccumulated + inputFrames;
             if (required > streamInputBuffer.size()) {
-                std::cerr << "[Partition] Input buffer capacity exceeded: required=" << required
-                          << ", capacity=" << streamInputBuffer.size() << std::endl;
+                LOG_EVERY_N(ERROR, 100,
+                            "[Partition] Input buffer capacity exceeded: required={}, capacity={}",
+                            required,
+                            streamInputBuffer.size());
                 outputData.clear();
                 return false;
             }
@@ -864,8 +877,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
 
             const int newSamples = validOutputPerBlock_;
             if (ch.stagedPartitionOutputs.size() != partitionStates_.size()) {
-                std::cerr << "[Partition] Staged partition output size mismatch; re-init required"
-                          << std::endl;
+                LOG_ERROR("[Partition] Staged partition output size mismatch; re-init required");
                 return false;
             }
             for (size_t idx = 0; idx < partitionStates_.size(); ++idx) {
@@ -880,8 +892,10 @@ bool GPUUpsampler::processPartitionedStreamBlock(
             Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize partition");
 
             if (outputData.capacity() < static_cast<size_t>(newSamples)) {
-                std::cerr << "[Partition] Output buffer capacity too small: need " << newSamples
-                          << ", cap=" << outputData.capacity() << std::endl;
+                LOG_EVERY_N(ERROR, 100,
+                            "[Partition] Output buffer capacity too small: need {}, cap={}",
+                            newSamples,
+                            outputData.capacity());
                 outputData.clear();
                 return false;
             }
@@ -912,9 +926,10 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                 const uint8_t bit = isLeft ? 0x1 : 0x2;
                 if ((streamingStereoDeliveredMask_ & bit) == 0) {
                     if (outputData.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
-                        std::cerr << "[Partition] Output buffer capacity too small: need "
-                                  << validOutputPerBlock_ << ", cap=" << outputData.capacity()
-                                  << std::endl;
+                        LOG_EVERY_N(ERROR, 100,
+                                    "[Partition] Output buffer capacity too small: need {}, cap={}",
+                                    validOutputPerBlock_,
+                                    outputData.capacity());
                         outputData.clear();
                         return false;
                     }
@@ -937,9 +952,10 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         } else {
             if (ch.inFlight && ch.doneEvent && cudaEventQuery(ch.doneEvent) == cudaSuccess) {
                 if (outputData.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
-                    std::cerr << "[Partition] Output buffer capacity too small: need "
-                              << validOutputPerBlock_ << ", cap=" << outputData.capacity()
-                              << std::endl;
+                    LOG_EVERY_N(ERROR, 100,
+                                "[Partition] Output buffer capacity too small: need {}, cap={}",
+                                validOutputPerBlock_,
+                                outputData.capacity());
                     outputData.clear();
                     return false;
                 }
@@ -960,14 +976,16 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         }
 
         if (streamInputBuffer.empty()) {
-            std::cerr << "ERROR: Streaming input buffer not allocated" << std::endl;
+            LOG_EVERY_N(ERROR, 100, "Streaming input buffer not allocated");
             return false;
         }
 
         size_t required = streamInputAccumulated + inputFrames;
         if (required > streamInputBuffer.size()) {
-            std::cerr << "[Partition] Input buffer capacity exceeded: required=" << required
-                      << ", capacity=" << streamInputBuffer.size() << std::endl;
+            LOG_EVERY_N(ERROR, 100,
+                        "[Partition] Input buffer capacity exceeded: required={}, capacity={}",
+                        required,
+                        streamInputBuffer.size());
             outputData.clear();
             return false;
         }
@@ -1014,16 +1032,16 @@ bool GPUUpsampler::processPartitionedStreamBlock(
 
         const int newSamples = validOutputPerBlock_;
         if (static_cast<size_t>(newSamples) > ch.stagedOutput.size()) {
-            std::cerr << "[Partition] Internal staging buffer too small: need " << newSamples
-                      << ", staged=" << ch.stagedOutput.size() << std::endl;
+            LOG_ERROR("[Partition] Internal staging buffer too small: need {}, staged={}",
+                      newSamples,
+                      ch.stagedOutput.size());
             return false;
         }
 
         // Enqueue all partitions and copy each partition's output into pinned staging buffers.
         // The CPU sum happens only after doneEvent completes (next callback), avoiding RT blocking.
         if (ch.stagedPartitionOutputs.size() != partitionStates_.size()) {
-            std::cerr << "[Partition] Staged partition output size mismatch; re-init required"
-                      << std::endl;
+            LOG_ERROR("[Partition] Staged partition output size mismatch; re-init required");
             return false;
         }
         for (size_t idx = 0; idx < partitionStates_.size(); ++idx) {
@@ -1077,7 +1095,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         return producedOutput;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in processPartitionedStreamBlock: " << e.what() << std::endl;
+        LOG_ERROR("Error in processPartitionedStreamBlock: {}", e.what());
         return false;
     }
 }
