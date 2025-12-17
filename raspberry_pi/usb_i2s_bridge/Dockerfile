@@ -4,17 +4,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libasound2 \
         alsa-utils \
-        gstreamer1.0-alsa \
-        gstreamer1.0-tools \
-        gstreamer1.0-plugins-base \
-        gstreamer1.0-plugins-good \
-        gstreamer1.0-plugins-bad \
-        gstreamer1.0-plugins-ugly \
         python3 \
         python3-zmq \
-        python3-gi \
-        gir1.2-gstreamer-1.0 \
-        gir1.2-gst-plugins-base-1.0 \
         ca-certificates \
         bash \
         util-linux \
