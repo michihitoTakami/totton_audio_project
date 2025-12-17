@@ -9,6 +9,8 @@ services:
     ulimits:
       rtprio: 95
       memlock: -1
+    ports:
+      - "60100:60100"
     devices:
       - "/dev/snd:/dev/snd"
     group_add:
@@ -28,6 +30,11 @@ services:
       USB_I2S_ALSA_BUFFER_TIME_US: ${USB_I2S_ALSA_BUFFER_TIME_US:-200000}
       USB_I2S_ALSA_LATENCY_TIME_US: ${USB_I2S_ALSA_LATENCY_TIME_US:-20000}
       USB_I2S_QUEUE_TIME_NS: ${USB_I2S_QUEUE_TIME_NS:-100000000}
+      USB_I2S_CONTROL_ENDPOINT: ${USB_I2S_CONTROL_ENDPOINT:-tcp://0.0.0.0:60100}
+      USB_I2S_CONTROL_PEER: ${USB_I2S_CONTROL_PEER:-tcp://jetson:60101}
+      USB_I2S_CONTROL_REQUIRE_PEER: ${USB_I2S_CONTROL_REQUIRE_PEER:-true}
+      USB_I2S_CONTROL_POLL_INTERVAL_SEC: ${USB_I2S_CONTROL_POLL_INTERVAL_SEC:-1.0}
+      USB_I2S_CONTROL_TIMEOUT_MS: ${USB_I2S_CONTROL_TIMEOUT_MS:-2000}
     restart: always
     logging:
       driver: "json-file"
