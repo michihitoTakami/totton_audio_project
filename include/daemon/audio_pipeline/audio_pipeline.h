@@ -4,7 +4,6 @@
 #include "convolution_engine.h"
 #include "core/config_loader.h"
 #include "core/daemon_constants.h"
-#include "crossfeed_engine.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/playback_buffer_manager.h"
@@ -53,14 +52,14 @@ struct Dependencies {
     std::atomic<bool>* fallbackActive = nullptr;
     std::atomic<bool>* outputReady = nullptr;
     std::atomic<bool>* crossfeedEnabled = nullptr;
-    CrossfeedEngine::HRTFProcessor* crossfeedProcessor = nullptr;
+    ConvolutionEngine::FourChannelFIR* crossfeedProcessor = nullptr;
     std::mutex* crossfeedMutex = nullptr;
-    std::vector<float>* cfStreamInputLeft = nullptr;
-    std::vector<float>* cfStreamInputRight = nullptr;
+    ConvolutionEngine::StreamFloatVector* cfStreamInputLeft = nullptr;
+    ConvolutionEngine::StreamFloatVector* cfStreamInputRight = nullptr;
     size_t* cfStreamAccumulatedLeft = nullptr;
     size_t* cfStreamAccumulatedRight = nullptr;
-    std::vector<float>* cfOutputLeft = nullptr;
-    std::vector<float>* cfOutputRight = nullptr;
+    ConvolutionEngine::StreamFloatVector* cfOutputLeft = nullptr;
+    ConvolutionEngine::StreamFloatVector* cfOutputRight = nullptr;
 
     ConvolutionEngine::StreamFloatVector* streamInputLeft = nullptr;
     ConvolutionEngine::StreamFloatVector* streamInputRight = nullptr;

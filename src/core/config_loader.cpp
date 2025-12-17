@@ -47,7 +47,7 @@ const char* outputModeToString(OutputMode mode) {
 
 // Validate headSize string, returns default "m" for invalid values
 static std::string validateHeadSize(const std::string& str) {
-    if (str == "s" || str == "m" || str == "l" || str == "xl") {
+    if (str == "xs" || str == "s" || str == "m" || str == "l" || str == "xl") {
         return str;
     }
     return "m";  // Default to medium for invalid values

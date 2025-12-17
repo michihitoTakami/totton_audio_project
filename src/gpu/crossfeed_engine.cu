@@ -247,7 +247,7 @@ bool HRTFProcessor::initialize(const std::string& hrtfDir, int blockSize, HeadSi
     std::cout << "  HRTF directory: " << hrtfDir << std::endl;
     std::cout << "  Block size: " << blockSize_ << " samples" << std::endl;
 
-    // Load all HRTF configurations (4 sizes * 2 rate families)
+    // Load all HRTF configurations (5 sizes * 2 rate families)
     bool anyLoaded = false;
     bool tapMismatchDetected = false;
     int expectedTapCount = -1;

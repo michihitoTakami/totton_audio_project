@@ -506,7 +506,7 @@ TEST_F(ConfigLoaderTest, LoadConfigWithoutCrossfeedKeepsDefaults) {
 
 TEST_F(ConfigLoaderTest, LoadConfigWithAllHeadSizes) {
     // Test all valid headSize values
-    const char* headSizes[] = {"s", "m", "l", "xl"};
+    const char* headSizes[] = {"xs", "s", "m", "l", "xl"};
     for (const char* size : headSizes) {
         std::string json = R"({"crossfeed": {"headSize": ")" + std::string(size) + R"("}})";
         writeConfig(json);
@@ -521,7 +521,7 @@ TEST_F(ConfigLoaderTest, LoadConfigWithAllHeadSizes) {
 
 TEST_F(ConfigLoaderTest, LoadConfigWithInvalidHeadSizeDefaultsToMedium) {
     // Test invalid headSize values - should fallback to "m"
-    const char* invalidSizes[] = {"xs", "xxl", "medium", "large", "", "123"};
+    const char* invalidSizes[] = {"xxl", "medium", "large", "", "123"};
     for (const char* size : invalidSizes) {
         std::string json = R"({"crossfeed": {"headSize": ")" + std::string(size) + R"("}})";
         writeConfig(json);

@@ -530,6 +530,7 @@ TEST_F(HRTFProcessorTest, SetCombinedFilterAutoRestore) {
 
 // Test: Helper functions
 TEST(CrossfeedHelperTest, HeadSizeToString) {
+    EXPECT_STREQ(headSizeToString(HeadSize::XS), "xs");
     EXPECT_STREQ(headSizeToString(HeadSize::S), "s");
     EXPECT_STREQ(headSizeToString(HeadSize::M), "m");
     EXPECT_STREQ(headSizeToString(HeadSize::L), "l");

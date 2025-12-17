@@ -5,7 +5,6 @@
 #include "convolution_engine.h"
 #include "core/config_loader.h"
 #include "core/daemon_constants.h"
-#include "crossfeed_engine.h"
 #include "daemon/api/dependencies.h"
 
 #include <alsa/asoundlib.h>
@@ -98,16 +97,16 @@ struct StreamingState {
 };
 
 struct CrossfeedState {
-    CrossfeedEngine::HRTFProcessor* processor = nullptr;
+    ConvolutionEngine::FourChannelFIR* processor = nullptr;
     std::atomic<bool> enabled{false};
-    std::vector<float> cfStreamInputLeft;
-    std::vector<float> cfStreamInputRight;
+    ConvolutionEngine::StreamFloatVector cfStreamInputLeft;
+    ConvolutionEngine::StreamFloatVector cfStreamInputRight;
     size_t cfStreamAccumulatedLeft = 0;
     size_t cfStreamAccumulatedRight = 0;
-    std::vector<float> cfOutputLeft;
-    std::vector<float> cfOutputRight;
-    std::vector<float> cfOutputBufferLeft;
-    std::vector<float> cfOutputBufferRight;
+    ConvolutionEngine::StreamFloatVector cfOutputLeft;
+    ConvolutionEngine::StreamFloatVector cfOutputRight;
+    ConvolutionEngine::StreamFloatVector cfOutputBufferLeft;
+    ConvolutionEngine::StreamFloatVector cfOutputBufferRight;
     std::mutex crossfeedMutex;
 };
 
