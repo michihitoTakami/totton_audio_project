@@ -810,6 +810,8 @@ class FourChannelFIR {
     // Working buffers
     DeviceSample* d_paddedInputL_ = nullptr;
     DeviceSample* d_paddedInputR_ = nullptr;
+    float* d_inputScratchL_ = nullptr;
+    float* d_inputScratchR_ = nullptr;
     DeviceFftComplex* d_fftInputL_ = nullptr;
     DeviceFftComplex* d_fftInputR_ = nullptr;
     DeviceFftComplex* d_convLL_ = nullptr;

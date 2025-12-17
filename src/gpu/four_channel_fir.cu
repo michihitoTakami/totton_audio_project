@@ -188,6 +188,14 @@ bool FourChannelFIR::setupGpuResources() {
                               "cudaMalloc padded input L");
         Utils::checkCudaError(cudaMalloc(&d_paddedInputR_, fftSize_ * sizeof(Sample)),
                               "cudaMalloc padded input R");
+#if defined(GPU_UPSAMPLER_USE_FLOAT64)
+        Utils::checkCudaError(
+            cudaMalloc(&d_inputScratchL_, streamValidInputPerBlock_ * sizeof(float)),
+            "cudaMalloc input scratch L");
+        Utils::checkCudaError(
+            cudaMalloc(&d_inputScratchR_, streamValidInputPerBlock_ * sizeof(float)),
+            "cudaMalloc input scratch R");
+#endif
         Utils::checkCudaError(cudaMalloc(&d_fftInputL_, fftComplexSize * sizeof(Complex)),
                               "cudaMalloc fft input L");
         Utils::checkCudaError(cudaMalloc(&d_fftInputR_, fftComplexSize * sizeof(Complex)),
@@ -280,6 +288,27 @@ bool FourChannelFIR::setupGpuResources() {
         return false;
     }
 }
+
+namespace {
+cudaError_t copyHostFloatToDeviceSamplesAsync(Sample* dst, const float* src, size_t count,
+                                             cudaStream_t stream, float* dScratch) {
+#if defined(GPU_UPSAMPLER_USE_FLOAT64)
+    cudaError_t err =
+        cudaMemcpyAsync(dScratch, src, count * sizeof(float), cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+        return err;
+    }
+    const int threadsPerBlock = 256;
+    const int blocks = static_cast<int>((count + threadsPerBlock - 1) / threadsPerBlock);
+    upconvertFromFloatKernel<<<blocks, threadsPerBlock, 0, stream>>>(dScratch, dst,
+                                                                     static_cast<int>(count));
+    return cudaGetLastError();
+#else
+    (void)dScratch;
+    return cudaMemcpyAsync(dst, src, count * sizeof(float), cudaMemcpyHostToDevice, stream);
+#endif
+}
+}  // namespace
 
 bool FourChannelFIR::initialize(const std::string& hrtfDir, int blockSize, HeadSize initialSize,
                                 RateFamily initialFamily) {
@@ -463,12 +492,12 @@ bool FourChannelFIR::processStreamBlock(const float* inputL, const float* inputR
     }
 
     Utils::checkCudaError(
-        copyHostToDeviceSamples<Precision>(d_paddedInputL_ + overlapSize_,
-                                           streamInputBufferL.data(), streamValidInputPerBlock_),
+        copyHostFloatToDeviceSamplesAsync(d_paddedInputL_ + overlapSize_, streamInputBufferL.data(),
+                                          streamValidInputPerBlock_, workStream, d_inputScratchL_),
         "copy input L to device");
     Utils::checkCudaError(
-        copyHostToDeviceSamples<Precision>(d_paddedInputR_ + overlapSize_,
-                                           streamInputBufferR.data(), streamValidInputPerBlock_),
+        copyHostFloatToDeviceSamplesAsync(d_paddedInputR_ + overlapSize_, streamInputBufferR.data(),
+                                          streamValidInputPerBlock_, workStream, d_inputScratchR_),
         "copy input R to device");
 
     Utils::checkCufftError(cufftSetStream(fftPlanForward_, workStream),
@@ -611,6 +640,10 @@ void FourChannelFIR::cleanup() {
 
     freeIf(d_paddedInputL_);
     freeIf(d_paddedInputR_);
+#if defined(GPU_UPSAMPLER_USE_FLOAT64)
+    freeIf(d_inputScratchL_);
+    freeIf(d_inputScratchR_);
+#endif
     freeIf(d_fftInputL_);
     freeIf(d_fftInputR_);
     freeIf(d_convLL_);

@@ -491,6 +491,7 @@ gtest_discover_tests(cpu_tests)
 # GPU integration tests (requires CUDA GPU)
 add_executable(gpu_tests
     tests/gpu/test_convolution_engine.cu
+    tests/gpu/test_four_channel_fir.cu
 )
 target_link_libraries(gpu_tests
     GTest::gtest_main
@@ -650,7 +651,6 @@ gtest_discover_tests(audio_input_stall_tests)
 # Crossfeed Engine tests (GPU required)
 add_executable(crossfeed_tests
     tests/gpu/test_crossfeed_engine.cu
-    tests/gpu/test_four_channel_fir.cu
 )
 target_link_libraries(crossfeed_tests
     GTest::gtest_main
