@@ -11,6 +11,7 @@ RUN apt-get update \
         gstreamer1.0-plugins-bad \
         gstreamer1.0-plugins-ugly \
         python3 \
+        python3-zmq \
         python3-gi \
         gir1.2-gstreamer-1.0 \
         gir1.2-gst-plugins-base-1.0 \

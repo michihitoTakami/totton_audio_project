@@ -87,6 +87,17 @@ Magic Box Web UI からのレイテンシ変更を Pi に伝える場合に使�
 
 > 再起動ポリシー: `docker-compose.yml` では `restart: always` を指定しています。裸運用する場合も systemd で `Restart=always` を付け、片側クラッシュ時も自動復帰させてください。
 
+### I2S 制御プレーン (Issue #824)
+
+I2S のレート/フォーマット/チャンネルを Pi-Jetson 間で同期させ、どちらかが切断中でも復帰後に共通パラメータになるまで capture を待機します。
+
+- REP (Pi): `USB_I2S_CONTROL_ENDPOINT` (既定 `tcp://0.0.0.0:60100`)
+- REQ (Jetson 側など): `USB_I2S_CONTROL_PEER` (既定 `tcp://jetson:60101`)
+- 待機ポリシー: `USB_I2S_CONTROL_REQUIRE_PEER=true` で peer 同期完了まで capture を禁止
+- タイムアウト/ポーリング: `USB_I2S_CONTROL_TIMEOUT_MS` / `USB_I2S_CONTROL_POLL_INTERVAL_SEC`
+
+Jetson 側も `raspberry_pi/usb_i2s_bridge/control_agent.py` を `python3 -m raspberry_pi.usb_i2s_bridge.control_agent` で起動すると、同じ仕組みでステータスを提供できます。
+
 ## 参考: 生の GStreamer コマンド
 
 Python ラッパーの出力と同等の gst-launch 例です。

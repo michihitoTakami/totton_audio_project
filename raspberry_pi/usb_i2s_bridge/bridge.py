@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
 
+from .control_plane import ControlPlaneSync
+
 _DEFAULT_CAPTURE_DEVICE = "hw:2,0"  # USB Audio in (typical)
 _DEFAULT_PLAYBACK_DEVICE = "hw:0,0"  # I2S out (typical)
 _DEFAULT_CHANNELS = 2
@@ -43,6 +45,17 @@ _DEFAULT_RESTART_BACKOFF_SEC = 0.5
 _DEFAULT_POLL_INTERVAL_SEC = 1.0
 _DEFAULT_STATUS_PATH = Path("/var/run/usb-i2s-bridge/status.json")
 _DEFAULT_PASSTHROUGH = True
+
+# LAN 制御プレーン（Issue #824）
+_DEFAULT_CONTROL_ENDPOINT = os.getenv("USB_I2S_CONTROL_ENDPOINT", "tcp://0.0.0.0:60100")
+_DEFAULT_CONTROL_PEER = os.getenv("USB_I2S_CONTROL_PEER", "")
+_DEFAULT_CONTROL_REQUIRE_PEER = os.getenv(
+    "USB_I2S_CONTROL_REQUIRE_PEER", "1"
+).strip().lower() not in {"0", "false", "no", "off"}
+_DEFAULT_CONTROL_POLL_INTERVAL = float(
+    os.getenv("USB_I2S_CONTROL_POLL_INTERVAL_SEC", "1.0")
+)
+_DEFAULT_CONTROL_TIMEOUT_MS = int(os.getenv("USB_I2S_CONTROL_TIMEOUT_MS", "2000"))
 
 # ALSA hw_params (e.g. S24_3LE) -> GStreamer audio/x-raw format token
 _ALSA_TO_GST_FORMAT: dict[str, str] = {
@@ -71,6 +84,11 @@ class UsbI2sBridgeConfig:
     keep_silence_when_no_capture: bool = True
     passthrough: bool = _DEFAULT_PASSTHROUGH
     status_path: Path | None = _DEFAULT_STATUS_PATH
+    control_endpoint: str | None = _DEFAULT_CONTROL_ENDPOINT
+    control_peer: str | None = _DEFAULT_CONTROL_PEER or None
+    control_require_peer: bool = _DEFAULT_CONTROL_REQUIRE_PEER
+    control_poll_interval_sec: float = _DEFAULT_CONTROL_POLL_INTERVAL
+    control_timeout_ms: int = _DEFAULT_CONTROL_TIMEOUT_MS
     dry_run: bool = False
 
     def validate(self) -> None:
@@ -91,6 +109,10 @@ class UsbI2sBridgeConfig:
 
         if self.status_path is not None and not isinstance(self.status_path, Path):
             raise ValueError("status_path must be a Path or None")
+        if self.control_poll_interval_sec <= 0:
+            raise ValueError("control_poll_interval_sec must be > 0")
+        if self.control_timeout_ms <= 0:
+            raise ValueError("control_timeout_ms must be > 0")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -238,6 +260,19 @@ def _persist_status(
         pass
 
 
+def _build_control_sync(cfg: UsbI2sBridgeConfig) -> ControlPlaneSync | None:
+    endpoint = (cfg.control_endpoint or "").strip()
+    if not endpoint:
+        return None
+    return ControlPlaneSync(
+        endpoint=endpoint,
+        peer_endpoint=(cfg.control_peer or "").strip() or None,
+        require_peer=bool(cfg.control_require_peer),
+        poll_interval_sec=cfg.control_poll_interval_sec,
+        timeout_ms=cfg.control_timeout_ms,
+    )
+
+
 def _choose_raw_caps(
     cfg: UsbI2sBridgeConfig,
     *,
@@ -360,13 +395,16 @@ def _try_import_gi_gst():
         return None, None
 
 
-def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
+def _run_with_gst_launch(
+    cfg: UsbI2sBridgeConfig, control: ControlPlaneSync | None = None
+) -> None:
     """GI無し環境のフォールバック: gst-launch を再起動し続ける."""
     last_rate = cfg.fallback_rate
     last_observed_capture_format: Optional[str] = None
     current_mode = "silence" if cfg.keep_silence_when_no_capture else "capture"
     conversion = False
     proc_holder: dict[str, subprocess.Popen | None] = {"proc": None}
+    last_capture_allowed = control.capture_allowed() if control else True
 
     # Docker/systemd からの SIGTERM で子プロセスが残らないようにする
     def _handle_term(signum: int, frame) -> None:  # noqa: ANN001
@@ -389,6 +427,7 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
     while True:
         capture_present = _device_present(cfg.capture_device, "c")
         rate, fmt = _probe_capture_params(cfg.capture_device)
+        capture_allowed = control.capture_allowed() if control else True
         if not capture_present and not cfg.keep_silence_when_no_capture:
             # キャプチャデバイスが無いなら待機しつつリトライ（出力停止）
             time.sleep(cfg.poll_interval_sec)
@@ -402,7 +441,11 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
         if fmt is not None:
             last_observed_capture_format = fmt
 
-        desired_mode = "capture" if capture_present else "silence"
+        desired_mode = "capture" if capture_present and capture_allowed else "silence"
+        if capture_present and not capture_allowed:
+            print(
+                "[usb_i2s_bridge] peer not synced; holding capture and sending silence"
+            )
         current_mode = desired_mode
 
         # passthrough で rate/format が未確定な段階は、まず conversion で安全に立ち上げる
@@ -439,6 +482,7 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
         if cfg.dry_run:
             print(" ".join(cmd))
             return
+        last_capture_allowed = capture_allowed
 
         if cfg.status_path:
             _persist_status(
@@ -447,6 +491,14 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
                 mode=current_mode,
                 sample_rate=last_rate,
                 alsa_format=status_alsa_format,
+                channels=cfg.channels,
+            )
+        if control:
+            control.update_local(
+                running=True,
+                mode=current_mode,
+                sample_rate=last_rate,
+                fmt=status_alsa_format,
                 channels=cfg.channels,
             )
 
@@ -468,17 +520,20 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
                 except subprocess.TimeoutExpired:
                     new_present = _device_present(cfg.capture_device, "c")
                     new_rate, new_fmt = _probe_capture_params(cfg.capture_device)
+                    new_capture_allowed = control.capture_allowed() if control else True
                     if (
                         new_present != capture_present
                         or new_rate != rate
                         or new_fmt != fmt
                         or (rate is None and new_rate is not None)
                         or (fmt is None and new_fmt is not None)
+                        or new_capture_allowed != last_capture_allowed
                     ):
                         print(
                             "[usb_i2s_bridge] detected capture change "
                             f"(present {capture_present}->{new_present}, "
-                            f"rate {rate}->{new_rate}, fmt {fmt}->{new_fmt}); restarting"
+                            f"rate {rate}->{new_rate}, fmt {fmt}->{new_fmt}, "
+                            f"capture_allowed {last_capture_allowed}->{new_capture_allowed}); restarting"
                         )
                         proc.terminate()
                         try:
@@ -486,6 +541,7 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
                         except subprocess.TimeoutExpired:
                             proc.kill()
                         break
+                    last_capture_allowed = new_capture_allowed
                     # USBが抜けた場合はサイレンスに切替（keep_silence=trueのみ）
                     if (
                         cfg.keep_silence_when_no_capture
@@ -518,11 +574,13 @@ def _run_with_gst_launch(cfg: UsbI2sBridgeConfig) -> None:
         time.sleep(cfg.restart_backoff_sec)
 
 
-def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
+def _run_with_gi(
+    cfg: UsbI2sBridgeConfig, control: ControlPlaneSync | None = None
+) -> None:
     """GI+GStreamer でフェード付きの再起動を行う本実装."""
     GLib, Gst = _try_import_gi_gst()
     if GLib is None or Gst is None:
-        _run_with_gst_launch(cfg)
+        _run_with_gst_launch(cfg, control)
         return
 
     Gst.init(None)
@@ -540,6 +598,7 @@ def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
             self.current_capture_fmt: Optional[str] = None
             self.conversion_enabled: bool = False
             self._restart_scheduled = False
+            self._control = control
 
         def _pipeline_str(
             self, mode: str, rate: int, capture_fmt: Optional[str]
@@ -657,6 +716,14 @@ def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
                     alsa_format=status_alsa_format,
                     channels=self.cfg.channels,
                 )
+            if self._control:
+                self._control.update_local(
+                    running=True,
+                    mode=mode,
+                    sample_rate=rate,
+                    fmt=status_alsa_format,
+                    channels=self.cfg.channels,
+                )
             self._fade(0.0, 1.0, self.cfg.fade_ms, lambda: None)
 
         def _stop_then(self, then) -> None:  # noqa: ANN001
@@ -694,6 +761,15 @@ def _run_with_gi(cfg: UsbI2sBridgeConfig) -> None:
                 return
 
             desired_mode = "capture" if capture_present else "silence"
+            if (
+                desired_mode == "capture"
+                and self._control
+                and not self._control.capture_allowed()
+            ):
+                print(
+                    "[usb_i2s_bridge] peer not synced; holding capture and sending silence"
+                )
+                desired_mode = "silence"
             desired_rate = rate if capture_present else self.current_rate
             if desired_rate is None:
                 desired_rate = self.cfg.fallback_rate
@@ -858,6 +934,34 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
         help="現在の rate/format/ch をJSONで書き出すパス（Issue #824 連携用）。空なら無効。",
     )
     parser.add_argument(
+        "--control-endpoint",
+        default=_env_str("USB_I2S_CONTROL_ENDPOINT", _DEFAULT_CONTROL_ENDPOINT),
+        help="ZeroMQ REP エンドポイント (I2S 制御プレーン)。空文字で無効化。",
+    )
+    parser.add_argument(
+        "--control-peer",
+        default=_env_str("USB_I2S_CONTROL_PEER", _DEFAULT_CONTROL_PEER),
+        help="制御プレーンの相手先 REQ エンドポイント（例: tcp://jetson:60101）。",
+    )
+    parser.add_argument(
+        "--control-require-peer",
+        action="store_true",
+        default=_DEFAULT_CONTROL_REQUIRE_PEER,
+        help="peer と同期できるまで capture を許可しない",
+    )
+    parser.add_argument(
+        "--control-poll-interval",
+        type=float,
+        default=_DEFAULT_CONTROL_POLL_INTERVAL,
+        help="制御プレーン同期のポーリング間隔 (秒)",
+    )
+    parser.add_argument(
+        "--control-timeout-ms",
+        type=int,
+        default=_DEFAULT_CONTROL_TIMEOUT_MS,
+        help="制御プレーン送受信タイムアウト (ms)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=os.getenv("USB_I2S_DRY_RUN", "false").lower() in {"1", "true", "yes"},
@@ -879,6 +983,11 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
         keep_silence_when_no_capture=bool(args.keep_silence_when_no_capture),
         passthrough=bool(args.passthrough),
         status_path=args.status_path,
+        control_endpoint=str(args.control_endpoint or "").strip() or None,
+        control_peer=str(args.control_peer or "").strip() or None,
+        control_require_peer=bool(args.control_require_peer),
+        control_poll_interval_sec=max(0.2, float(args.control_poll_interval)),
+        control_timeout_ms=max(1, int(args.control_timeout_ms)),
         dry_run=bool(args.dry_run),
     )
 
@@ -888,7 +997,14 @@ def main(argv: list[str] | None = None) -> None:
     cfg.validate()
 
     # NOTE: GI が無い場合でも最低限動くようフォールバック実装を用意
-    _run_with_gi(cfg)
+    control = _build_control_sync(cfg)
+    if control:
+        control.start()
+    try:
+        _run_with_gi(cfg, control)
+    finally:
+        if control:
+            control.stop()
 
 
 if __name__ == "__main__":
