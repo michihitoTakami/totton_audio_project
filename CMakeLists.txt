@@ -538,6 +538,7 @@ add_executable(zmq_server_tests
 target_link_libraries(zmq_server_tests
     GTest::gtest_main
     nlohmann_json::nlohmann_json
+    logging
     ${ZMQ_LIBRARIES}
 )
 target_include_directories(zmq_server_tests PRIVATE
