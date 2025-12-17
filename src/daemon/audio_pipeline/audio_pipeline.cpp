@@ -67,7 +67,25 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     std::unique_lock<std::mutex> inputLock(*deps_.inputMutex, std::try_to_lock);
     if (!inputLock.owns_lock()) {
         logLockSkipped("input", lastInputLockWarn_);
-        return false;
+
+        // RT で待たない: ロックが取れない場合でもタイムラインを維持するため無音を出力。
+        if (!deps_.config || !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
+            return false;
+        }
+        auto ratio = static_cast<size_t>(deps_.config->upsampleRatio);
+        size_t outputFrames = static_cast<size_t>(nFrames) * ratio;
+        if (ratio == 0 || outputFrames == 0) {
+            return false;
+        }
+        deps_.upsamplerOutputLeft->assign(outputFrames, 0.0f);
+        deps_.upsamplerOutputRight->assign(outputFrames, 0.0f);
+
+        size_t stored =
+            enqueueOutputFramesLocked(*deps_.upsamplerOutputLeft, *deps_.upsamplerOutputRight);
+        if (stored > 0 && deps_.buffer.playbackBuffer) {
+            deps_.buffer.playbackBuffer->cv().notify_one();
+        }
+        return true;
     }
 
     const size_t frames = static_cast<size_t>(nFrames);

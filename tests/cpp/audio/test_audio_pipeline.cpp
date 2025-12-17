@@ -30,6 +30,8 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     size_t streamAccumRight = 0;
     ConvolutionEngine::StreamFloatVector upsamplerOutputLeft;
     ConvolutionEngine::StreamFloatVector upsamplerOutputRight;
+    upsamplerOutputLeft.reserve(16);
+    upsamplerOutputRight.reserve(16);
 
     std::vector<float> cfStreamInputLeft;
     std::vector<float> cfStreamInputRight;
@@ -195,4 +197,88 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     EXPECT_DOUBLE_EQ(peaks["post_gain"]["linear"], 1.0);
     EXPECT_EQ(runtime_stats::clipCount(), 0u);
     EXPECT_EQ(runtime_stats::totalSamples(), static_cast<size_t>(4));
+}
+
+TEST(AudioPipeline, ContinuesWithSilenceWhenInputLockContended) {
+    runtime_stats::reset();
+
+    AppConfig config;
+    config.upsampleRatio = 2;
+
+    daemon_output::PlaybackBufferManager playbackBuffer([]() { return static_cast<size_t>(64); });
+
+    std::atomic<bool> fallbackActive{false};
+    std::atomic<bool> outputReady{true};
+    std::atomic<bool> crossfeedEnabled{false};
+
+    std::mutex inputMutex;
+    std::mutex crossfeedMutex;
+
+    ConvolutionEngine::StreamFloatVector streamInputLeft;
+    ConvolutionEngine::StreamFloatVector streamInputRight;
+    size_t streamAccumLeft = 0;
+    size_t streamAccumRight = 0;
+    ConvolutionEngine::StreamFloatVector upsamplerOutputLeft;
+    ConvolutionEngine::StreamFloatVector upsamplerOutputRight;
+
+    std::vector<float> cfStreamInputLeft;
+    std::vector<float> cfStreamInputRight;
+    size_t cfAccumLeft = 0;
+    size_t cfAccumRight = 0;
+    std::vector<float> cfOutputLeft;
+    std::vector<float> cfOutputRight;
+
+    audio_pipeline::Dependencies deps{};
+    deps.config = &config;
+    deps.fallbackActive = &fallbackActive;
+    deps.outputReady = &outputReady;
+    deps.crossfeedEnabled = &crossfeedEnabled;
+    deps.crossfeedProcessor = nullptr;
+    deps.crossfeedMutex = &crossfeedMutex;
+    deps.cfStreamInputLeft = &cfStreamInputLeft;
+    deps.cfStreamInputRight = &cfStreamInputRight;
+    deps.cfStreamAccumulatedLeft = &cfAccumLeft;
+    deps.cfStreamAccumulatedRight = &cfAccumRight;
+    deps.cfOutputLeft = &cfOutputLeft;
+    deps.cfOutputRight = &cfOutputRight;
+    deps.streamInputLeft = &streamInputLeft;
+    deps.streamInputRight = &streamInputRight;
+    deps.streamAccumulatedLeft = &streamAccumLeft;
+    deps.streamAccumulatedRight = &streamAccumRight;
+    deps.upsamplerOutputLeft = &upsamplerOutputLeft;
+    deps.upsamplerOutputRight = &upsamplerOutputRight;
+    deps.streamingCacheManager = nullptr;
+    deps.inputMutex = &inputMutex;
+    deps.buffer.playbackBuffer = &playbackBuffer;
+    deps.currentOutputRate = []() { return 48000; };
+
+    deps.upsampler.available = true;
+    deps.upsampler.streamLeft = nullptr;
+    deps.upsampler.streamRight = nullptr;
+    deps.upsampler.process =
+        [](const float* /*inputData*/, size_t /*inputFrames*/,
+           ConvolutionEngine::StreamFloatVector& /*outputData*/, cudaStream_t /*stream*/,
+           ConvolutionEngine::StreamFloatVector& /*streamInput*/, size_t& /*streamAccumulated*/) {
+            return false;  // should not be called when lock is contended
+        };
+
+    audio_pipeline::AudioPipeline pipeline(std::move(deps));
+
+    // Hold the input mutex to force try_lock failure inside process().
+    std::unique_lock<std::mutex> guard(inputMutex);
+
+    std::vector<float> input = {0.1f, -0.1f, 0.2f, -0.2f};
+    ASSERT_TRUE(pipeline.process(input.data(), 2));
+
+    guard.unlock();
+
+    std::vector<float> left(4);
+    std::vector<float> right(4);
+    ASSERT_TRUE(playbackBuffer.readPlanar(left.data(), right.data(), 4));
+    for (float v : left) {
+        EXPECT_FLOAT_EQ(v, 0.0f);
+    }
+    for (float v : right) {
+        EXPECT_FLOAT_EQ(v, 0.0f);
+    }
 }
