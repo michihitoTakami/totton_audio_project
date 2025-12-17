@@ -116,6 +116,7 @@ add_library(gpu_upsampler_core STATIC
     src/gpu/gpu_upsampler_multi_rate.cu
     src/gpu/gpu_upsampler_streaming.cu
     src/gpu/gpu_upsampler_eq.cu
+    src/gpu/four_channel_fir.cu
     src/gpu/crossfeed_engine.cu
     src/audio/phase_alignment.cpp
     src/hrtf/woodworth_model.cpp
@@ -490,6 +491,7 @@ gtest_discover_tests(cpu_tests)
 # GPU integration tests (requires CUDA GPU)
 add_executable(gpu_tests
     tests/gpu/test_convolution_engine.cu
+    tests/gpu/test_four_channel_fir.cu
 )
 target_link_libraries(gpu_tests
     GTest::gtest_main

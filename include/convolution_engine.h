@@ -26,6 +26,26 @@ enum class RateFamily {
     RATE_UNKNOWN = -1
 };
 
+// Head size categories for HRTF-based crossfeed FIR
+enum class HeadSize { XS = 0, S = 1, M = 2, L = 3, XL = 4, COUNT = 5 };
+
+inline const char* headSizeToString(HeadSize size) {
+    switch (size) {
+    case HeadSize::XS:
+        return "xs";
+    case HeadSize::S:
+        return "s";
+    case HeadSize::M:
+        return "m";
+    case HeadSize::L:
+        return "l";
+    case HeadSize::XL:
+        return "xl";
+    default:
+        return "m";
+    }
+}
+
 // Detect rate family from sample rate
 inline RateFamily detectRateFamily(int sampleRate) {
     if (sampleRate % 44100 == 0) {
@@ -696,6 +716,122 @@ class GPUUpsampler {
    public:
     // Note: streaming I/O buffers are caller-owned. For RT safety, caller must pre-size them so
     // processStreamBlock never grows capacity.
+};
+
+// HRTF 4ch FIR (LL/LR/RL/RR) executed on the convolution engine.
+//
+// 入力: アップサンプル済みステレオ (705.6k / 768k)
+// 出力: L = L*LL + R*RL, R = L*LR + R*RR
+// 特徴: 最小限のストリーミング経路（イベント非依存のブロッキング実行）を提供し、RTパスでの
+//       cudaHostRegister 再実行を避けるため CudaPinnedVector を前提とする。
+class FourChannelFIR {
+   public:
+    FourChannelFIR();
+    ~FourChannelFIR();
+
+    FourChannelFIR(const FourChannelFIR&) = delete;
+    FourChannelFIR& operator=(const FourChannelFIR&) = delete;
+
+    bool initialize(const std::string& hrtfDir, int blockSize = 8192,
+                    HeadSize initialSize = HeadSize::M,
+                    RateFamily initialFamily = RateFamily::RATE_44K);
+    bool initializeStreaming();
+    void resetStreaming();
+
+    bool switchHeadSize(HeadSize targetSize);
+    bool switchRateFamily(RateFamily targetFamily);
+
+    bool processStreamBlock(const float* inputL, const float* inputR, size_t inputFrames,
+                            StreamFloatVector& outputL, StreamFloatVector& outputR,
+                            cudaStream_t stream, StreamFloatVector& streamInputBufferL,
+                            StreamFloatVector& streamInputBufferR, size_t& streamInputAccumulatedL,
+                            size_t& streamInputAccumulatedR);
+
+    size_t getStreamValidInputPerBlock() const {
+        return streamValidInputPerBlock_;
+    }
+    size_t getValidOutputPerBlock() const {
+        return static_cast<size_t>(validOutputPerBlock_);
+    }
+    int getFilterTaps() const {
+        return filterTaps_;
+    }
+    HeadSize getCurrentHeadSize() const {
+        return currentHeadSize_;
+    }
+    RateFamily getCurrentRateFamily() const {
+        return currentRateFamily_;
+    }
+    bool isInitialized() const {
+        return initialized_;
+    }
+    void setEnabled(bool enabled) {
+        enabled_ = enabled;
+    }
+    bool isEnabled() const {
+        return enabled_;
+    }
+
+   private:
+    bool loadHrtfConfig(const std::string& binPath, const std::string& jsonPath, HeadSize size,
+                        RateFamily family, int expectedTaps);
+    bool setupGpuResources();
+    void cleanup();
+    int getConfigIndex(HeadSize size, RateFamily family) const;
+    int getFamilyIndex(RateFamily family) const;
+
+    // Config/metadata
+    std::string hrtfDir_;
+    int blockSize_ = 0;
+    int filterTaps_ = 0;
+    int fftSize_ = 0;
+    int overlapSize_ = 0;
+    int validOutputPerBlock_ = 0;
+    size_t streamValidInputPerBlock_ = 0;
+    bool initialized_ = false;
+    bool streamInitialized_ = false;
+    bool enabled_ = true;
+
+    HeadSize currentHeadSize_ = HeadSize::M;
+    RateFamily currentRateFamily_ = RateFamily::RATE_44K;
+
+    static constexpr int kHeadSizeCount = static_cast<int>(HeadSize::COUNT);
+    static constexpr int kChannelCount = 4;
+    static constexpr int kRateFamilyCount = 2;
+    static constexpr int kConfigCount = kHeadSizeCount * kRateFamilyCount;
+
+    std::array<std::array<std::vector<float>, kChannelCount>, kConfigCount> h_filterCoeffs_;
+    std::array<std::array<DeviceFftComplex*, kChannelCount>, kConfigCount> d_filterFFTs_{};
+    std::array<bool, kConfigCount> configLoaded_{};
+
+    // Active filter (points into d_filterFFTs_ for the current size/family)
+    std::array<DeviceFftComplex*, kChannelCount> d_activeFilterFFT_{};
+
+    // Working buffers
+    DeviceSample* d_paddedInputL_ = nullptr;
+    DeviceSample* d_paddedInputR_ = nullptr;
+    float* d_inputScratchL_ = nullptr;
+    float* d_inputScratchR_ = nullptr;
+    DeviceFftComplex* d_fftInputL_ = nullptr;
+    DeviceFftComplex* d_fftInputR_ = nullptr;
+    DeviceFftComplex* d_convLL_ = nullptr;
+    DeviceFftComplex* d_convLR_ = nullptr;
+    DeviceFftComplex* d_convRL_ = nullptr;
+    DeviceFftComplex* d_convRR_ = nullptr;
+    DeviceSample* d_outputL_ = nullptr;
+    DeviceSample* d_outputR_ = nullptr;
+    DeviceSample* d_tempTime_ = nullptr;
+    DeviceSample* d_overlapInputL_ = nullptr;
+    DeviceSample* d_overlapInputR_ = nullptr;
+
+    // Host staging
+    StreamFloatVector stagedOutputL_;
+    StreamFloatVector stagedOutputR_;
+
+    // cuFFT + stream
+    cufftHandle fftPlanForward_ = 0;
+    cufftHandle fftPlanInverse_ = 0;
+    cudaStream_t stream_ = nullptr;
 };
 
 // Utility functions
