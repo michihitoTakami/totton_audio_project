@@ -35,4 +35,4 @@ EPIC #884 で掲げた既存畳み込みエンジンへの Crossfeed/HRTF 4ch FI
 - 以上で定義したストリーミング経路に 4ch FIR 実行ルート（Issue #886）を挿入し、**クロスフィード有効時は 4ch FIR 出力のみを enqueue**する（未処理音声との混在禁止）。
 - 切替時のソフトミュートと underflow/overflow 対応（Issue #888）では `streaming_cache` を介した再試行と `PlaybackBuffer` しきい値の調整を使って実装。
 - テスト・観測（切替ログ/ready threshold/`runtime_stats` 等）は各Issueの Done に内包する（独立Issueは作らない）。
-- 旧 `crossfeed_engine` 経路（Issue #890）は十分に検証されたら段階的に対象外にする（ただし HRTFデータと生成スクリプトは維持）。
+- 旧 `crossfeed_engine` 経路は Issue #890 で撤去済（HUTUBS由来HRTFデータと生成スクリプトは継続利用）。

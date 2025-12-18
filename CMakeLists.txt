@@ -117,7 +117,6 @@ add_library(gpu_upsampler_core STATIC
     src/gpu/gpu_upsampler_streaming.cu
     src/gpu/gpu_upsampler_eq.cu
     src/gpu/four_channel_fir.cu
-    src/gpu/crossfeed_engine.cu
     src/audio/phase_alignment.cpp
     src/hrtf/woodworth_model.cpp
 )
@@ -653,21 +652,3 @@ target_include_directories(audio_input_stall_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(audio_input_stall_tests)
-
-# Crossfeed Engine tests (GPU required)
-add_executable(crossfeed_tests
-    tests/gpu/test_crossfeed_engine.cu
-)
-target_link_libraries(crossfeed_tests
-    GTest::gtest_main
-    gpu_upsampler_core
-    nlohmann_json::nlohmann_json
-)
-target_include_directories(crossfeed_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-set_target_properties(crossfeed_tests PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
-)
-gtest_discover_tests(crossfeed_tests)
