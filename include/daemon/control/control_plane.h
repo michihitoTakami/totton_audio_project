@@ -44,6 +44,9 @@ struct ControlPlaneDependencies {
     std::function<runtime_stats::Dependencies()> buildRuntimeStats;
     std::function<size_t()> bufferCapacityFrames;
     std::function<void(std::function<bool()>)> applySoftMuteForFilterSwitch;
+    // Clear playback + streaming caches without touching soft mute (caller wraps with soft mute).
+    // Used for glitch-free transitions that must not mix old/new audio blocks (Issue #888).
+    std::function<bool()> resetStreamingCachesForSwitch;
     std::function<void(const std::string&)> refreshHeadroom;
     std::function<bool()> reinitializeStreamingForLegacyMode;
     std::function<void(AppConfig&, const std::string&)> setPreferredOutputDevice;

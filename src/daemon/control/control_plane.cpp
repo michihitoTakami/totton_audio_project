@@ -90,6 +90,38 @@ SoftMute::Controller* softMute(ControlPlaneDependencies& deps) {
     return *deps.softMute;
 }
 
+bool applySoftMuteForCrossfeedSwitch(ControlPlaneDependencies& deps,
+                                     const std::function<bool()>& switchFunc) {
+    auto* mute = softMute(deps);
+    if (!mute) {
+        return switchFunc();
+    }
+
+    mute->startFadeOut();
+
+    auto fadeStart = std::chrono::steady_clock::now();
+    const auto quickTimeout = std::chrono::milliseconds(250);
+    while (true) {
+        SoftMute::MuteState st = mute->getState();
+        float gain = mute->getCurrentGain();
+        if (st == SoftMute::MuteState::MUTED || gain < 0.05f) {
+            break;
+        }
+        if (std::chrono::steady_clock::now() - fadeStart > quickTimeout) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    bool ok = switchFunc();
+    if (ok) {
+        mute->startFadeIn();
+    } else {
+        mute->setPlaying();
+    }
+    return ok;
+}
+
 }  // namespace
 
 ControlPlane::ControlPlane(ControlPlaneDependencies deps) : deps_(std::move(deps)) {}
@@ -240,34 +272,71 @@ std::string ControlPlane::handleCrossfeedEnable(const daemon_ipc::ZmqRequest& re
                                   "Crossfeed not available in low-latency mode");
     }
 
-    std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-    auto* processor = crossfeedProcessor(deps_.crossfeed);
-    if (!processor || !processor->isInitialized()) {
-        return buildErrorResponse(request, "CROSSFEED_NOT_INITIALIZED",
-                                  "HRTF processor not initialized");
+    // Preflight: avoid starting fade if enable will fail.
+    {
+        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
+        auto* processor = crossfeedProcessor(deps_.crossfeed);
+        if (!processor || !processor->isInitialized()) {
+            return buildErrorResponse(request, "CROSSFEED_NOT_INITIALIZED",
+                                      "HRTF processor not initialized");
+        }
     }
 
-    if (deps_.crossfeed.resetStreamingState) {
-        deps_.crossfeed.resetStreamingState();
-    }
-    processor->setEnabled(true);
-    if (deps_.crossfeed.enabledFlag) {
-        deps_.crossfeed.enabledFlag->store(true);
+    bool enabled = applySoftMuteForCrossfeedSwitch(deps_, [&]() {
+        if (deps_.resetStreamingCachesForSwitch) {
+            if (!deps_.resetStreamingCachesForSwitch()) {
+                return false;
+            }
+        }
+
+        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
+        auto* processor = crossfeedProcessor(deps_.crossfeed);
+        if (!processor || !processor->isInitialized()) {
+            return false;
+        }
+
+        if (deps_.crossfeed.resetStreamingState) {
+            deps_.crossfeed.resetStreamingState();
+        }
+        processor->setEnabled(true);
+        if (deps_.crossfeed.enabledFlag) {
+            deps_.crossfeed.enabledFlag->store(true);
+        }
+        return true;
+    });
+
+    if (!enabled) {
+        return buildErrorResponse(request, "CROSSFEED_ENABLE_FAILED",
+                                  "Failed to enable crossfeed safely");
     }
     return buildOkResponse(request, "Crossfeed enabled");
 }
 
 std::string ControlPlane::handleCrossfeedDisable(const daemon_ipc::ZmqRequest& request) {
-    std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-    if (deps_.crossfeed.enabledFlag) {
-        deps_.crossfeed.enabledFlag->store(false);
-    }
-    auto* processor = crossfeedProcessor(deps_.crossfeed);
-    if (processor) {
-        processor->setEnabled(false);
-    }
-    if (deps_.crossfeed.resetStreamingState) {
-        deps_.crossfeed.resetStreamingState();
+    bool disabled = applySoftMuteForCrossfeedSwitch(deps_, [&]() {
+        if (deps_.resetStreamingCachesForSwitch) {
+            if (!deps_.resetStreamingCachesForSwitch()) {
+                return false;
+            }
+        }
+
+        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
+        if (deps_.crossfeed.enabledFlag) {
+            deps_.crossfeed.enabledFlag->store(false);
+        }
+        auto* processor = crossfeedProcessor(deps_.crossfeed);
+        if (processor) {
+            processor->setEnabled(false);
+        }
+        if (deps_.crossfeed.resetStreamingState) {
+            deps_.crossfeed.resetStreamingState();
+        }
+        return true;
+    });
+
+    if (!disabled) {
+        return buildErrorResponse(request, "CROSSFEED_DISABLE_FAILED",
+                                  "Failed to disable crossfeed safely");
     }
     return buildOkResponse(request, "Crossfeed disabled");
 }
