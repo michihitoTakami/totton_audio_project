@@ -253,37 +253,88 @@ def _device_present(device: str, stream: str) -> bool:
 
 
 def _parse_hw_params_rate(text: str) -> Optional[int]:
-    if "closed" in text:
-        return None
+    # hw_params が未オープンの場合は "closed" のみが入る。
+    # ただし環境によっては行頭に空白が入るので strip して判定する。
     for line in text.splitlines():
-        if line.startswith("rate:"):
-            for token in line.split():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("closed"):
+            return None
+        break
+
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("rate:"):
+            # e.g. "rate: 44100 (44100/1)"
+            for token in s.split():
                 if token.isdigit():
                     return int(token)
     return None
 
 
 def _parse_hw_params_format(text: str) -> Optional[str]:
-    if "closed" in text:
-        return None
     for line in text.splitlines():
-        if line.startswith("format:"):
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("closed"):
+            return None
+        break
+
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("format:"):
             # e.g. "format: S32_LE"
-            parts = line.split()
+            parts = s.split()
             if len(parts) >= 2:
                 return parts[1].strip()
     return None
 
 
 def _probe_capture_params(device: str) -> Tuple[Optional[int], Optional[str]]:
-    path = _hw_params_path(device, "c")
-    if path is None or not path.exists():
+    # 注意:
+    # - /proc/asound/.../hw_params は「開いている substream」に紐づくため、
+    #   sub0 固定だと常に "closed" を読んでしまう環境がある。
+    # - その場合、rate/fmt が None のままになり、fallback_rate + plughw に固定される。
+    parsed = _parse_alsa_hw_device(device)
+    if parsed is None:
         return None, None
+    card, pcm = parsed
+
+    base = Path(f"/proc/asound/card{card}/pcm{pcm}c")
+    candidates: list[Path] = []
+
+    # 互換性のため従来の sub0 を最優先で試す
+    p0 = base / "sub0" / "hw_params"
+    if p0.exists():
+        candidates.append(p0)
+
+    # 次に sub* を総当りする（どれか一つが active ならそこに rate/fmt が出る）
     try:
-        text = path.read_text()
+        for p in sorted(base.glob("sub*/hw_params")):
+            if p not in candidates and p.exists():
+                candidates.append(p)
     except OSError:
-        return None, None
-    return _parse_hw_params_rate(text), _parse_hw_params_format(text)
+        pass
+
+    best_rate: Optional[int] = None
+    best_fmt: Optional[str] = None
+    for p in candidates:
+        try:
+            text = p.read_text()
+        except OSError:
+            continue
+        r = _parse_hw_params_rate(text)
+        f = _parse_hw_params_format(text)
+        if r is not None:
+            best_rate = r
+        if f is not None:
+            best_fmt = f
+        if best_rate is not None and best_fmt is not None:
+            break
+
+    return best_rate, best_fmt
 
 
 def _gst_raw_format_from_alsa(alsa_format: Optional[str], preferred: str) -> str:

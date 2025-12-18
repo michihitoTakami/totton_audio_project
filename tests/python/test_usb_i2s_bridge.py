@@ -10,6 +10,11 @@ def test_parse_hw_params_rate_returns_value() -> None:
     assert bridge._parse_hw_params_rate(content) == 44100
 
 
+def test_parse_hw_params_rate_tolerates_leading_spaces() -> None:
+    content = "access: RW_INTERLEAVED\n   rate: 44100 (44100/1)\n"
+    assert bridge._parse_hw_params_rate(content) == 44100
+
+
 def test_parse_hw_params_rate_closed_is_none() -> None:
     assert bridge._parse_hw_params_rate("closed\nrate: 48000") is None
 
@@ -17,6 +22,11 @@ def test_parse_hw_params_rate_closed_is_none() -> None:
 def test_parse_hw_params_format_returns_value() -> None:
     content = "access: RW_INTERLEAVED\nformat: S24_3LE\nrate: 48000\n"
     assert bridge._parse_hw_params_format(content) == "S24_3LE"
+
+
+def test_parse_hw_params_format_tolerates_leading_spaces() -> None:
+    content = "access: RW_INTERLEAVED\n  format: S32_LE\nrate: 48000\n"
+    assert bridge._parse_hw_params_format(content) == "S32_LE"
 
 
 def test_parse_hw_params_format_closed_is_none() -> None:
