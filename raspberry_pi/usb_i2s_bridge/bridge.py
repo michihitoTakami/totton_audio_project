@@ -36,7 +36,10 @@ from .control_plane import ControlPlaneSync
 _DEFAULT_CAPTURE_DEVICE = "hw:2,0"  # USB Audio in (typical)
 _DEFAULT_PLAYBACK_DEVICE = "hw:0,0"  # I2S out (typical)
 _DEFAULT_CHANNELS = 2
-_DEFAULT_FALLBACK_RATE = 48000
+# 重要: 44.1k/48k を勝手に変換しないことが最優先。
+# hw_params が未確定/closed の間に fallback へ倒れる場合は、
+# 48k 固定よりも 44.1k をデフォルトに寄せた方が害が少ない（Issue #949）。
+_DEFAULT_FALLBACK_RATE = 44100
 _DEFAULT_PREFERRED_FORMAT = "S32_LE"  # 24in32 を推奨
 
 _DEFAULT_ALSA_BUFFER_TIME_US = 200_000
