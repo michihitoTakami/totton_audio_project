@@ -8,7 +8,6 @@
 #include "core/config_loader.h"
 #include "core/daemon_constants.h"
 #include "core/partition_runtime_utils.h"
-#include "crossfeed_engine.h"
 #include "daemon/api/dependencies.h"
 #include "daemon/api/events.h"
 #include "daemon/app/runtime_state.h"
@@ -293,7 +292,7 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
         g_state.softMute.restorePending.store(true, std::memory_order_release);
     } else {
         // If switch failed, restore original state immediately
-        LOG_ERROR("[Filter Switch] Switch failed, restoring audio state");
+        std::cerr << "[Filter Switch] Switch failed, restoring audio state" << '\n';
         g_state.softMute.controller->setPlaying();
         g_state.softMute.controller->setFadeDuration(originalFadeDuration);
         g_state.softMute.controller->setSampleRate(outputSampleRate);
@@ -430,8 +429,14 @@ static size_t get_playback_ready_threshold(size_t period_size) {
 // Resets crossfeed streaming buffers and GPU overlap state.
 // Caller must hold g_state.crossfeed.crossfeedMutex.
 static void reset_crossfeed_stream_state_locked() {
-    g_state.crossfeed.cfStreamInputLeft.clear();
-    g_state.crossfeed.cfStreamInputRight.clear();
+    if (!g_state.crossfeed.cfStreamInputLeft.empty()) {
+        std::fill(g_state.crossfeed.cfStreamInputLeft.begin(),
+                  g_state.crossfeed.cfStreamInputLeft.end(), 0.0f);
+    }
+    if (!g_state.crossfeed.cfStreamInputRight.empty()) {
+        std::fill(g_state.crossfeed.cfStreamInputRight.begin(),
+                  g_state.crossfeed.cfStreamInputRight.end(), 0.0f);
+    }
     g_state.crossfeed.cfStreamAccumulatedLeft = 0;
     g_state.crossfeed.cfStreamAccumulatedRight = 0;
     g_state.crossfeed.cfOutputLeft.clear();
@@ -686,7 +691,7 @@ static bool reinitialize_streaming_for_legacy_mode() {
     // Rebuild legacy streams so the buffers match the full FFT (avoids invalid cudaMemset after
     // disabling partitions).
     if (!g_state.upsampler->initializeStreaming()) {
-        LOG_ERROR("[Partition] Failed to initialize legacy streaming buffers");
+        std::cerr << "[Partition] Failed to initialize legacy streaming buffers" << '\n';
         return false;
     }
 
@@ -707,7 +712,7 @@ static bool reinitialize_streaming_for_legacy_mode() {
 
 static bool handle_rate_switch(int newInputRate) {
     if (!g_state.upsampler || !g_state.upsampler->isMultiRateEnabled()) {
-        LOG_ERROR("[Rate] Multi-rate mode not enabled");
+        std::cerr << "[Rate] Multi-rate mode not enabled" << '\n';
         return false;
     }
 
@@ -728,7 +733,7 @@ static bool handle_rate_switch(int newInputRate) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             if (elapsed > std::chrono::milliseconds(200)) {
-                LOG_WARN("[Rate] Fade-out timeout");
+                std::cerr << "[Rate] Warning: Fade-out timeout" << '\n';
                 break;
             }
         }
@@ -753,12 +758,12 @@ static bool handle_rate_switch(int newInputRate) {
         g_state.streaming.streamAccumulatedRight = 0;
 
         if (!g_state.upsampler->switchToInputRate(newInputRate)) {
-            LOG_ERROR("[Rate] Failed to switch rate, rolling back");
+            std::cerr << "[Rate] Failed to switch rate, rolling back" << '\n';
             if (g_state.upsampler->switchToInputRate(savedRate)) {
                 std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
                           << '\n';
             } else {
-                LOG_ERROR("[Rate] Rollback failed!");
+                std::cerr << "[Rate] ERROR: Rollback failed!" << '\n';
             }
             if (g_state.softMute.controller) {
                 g_state.softMute.controller->startFadeIn();
@@ -767,7 +772,7 @@ static bool handle_rate_switch(int newInputRate) {
         }
 
         if (!g_state.upsampler->initializeStreaming()) {
-            LOG_ERROR("[Rate] Failed to re-initialize streaming mode, rolling back");
+            std::cerr << "[Rate] Failed to re-initialize streaming mode, rolling back" << '\n';
             if (g_state.upsampler->switchToInputRate(savedRate)) {
                 if (g_state.upsampler->initializeStreaming()) {
                     std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
@@ -1626,8 +1631,8 @@ int main(int argc, char* argv[]) {
             std::cout << "  Coefficient directory: " << g_state.config.coefficientDir << '\n';
 
             if (!std::filesystem::exists(g_state.config.coefficientDir)) {
-                LOG_ERROR("Config error: Coefficient directory not found: {}",
-                          g_state.config.coefficientDir);
+                std::cerr << "Config error: Coefficient directory not found: "
+                          << g_state.config.coefficientDir << '\n';
                 delete g_state.upsampler;
                 exitCode = 1;
                 break;
@@ -1653,7 +1658,7 @@ int main(int argc, char* argv[]) {
                  {g_state.config.filterPath44kMin, g_state.config.filterPath48kMin,
                   g_state.config.filterPath44kLinear, g_state.config.filterPath48kLinear}) {
                 if (!std::filesystem::exists(path)) {
-                    LOG_ERROR("Config error: Filter file not found: {}", path);
+                    std::cerr << "Config error: Filter file not found: " << path << '\n';
                     allFilesExist = false;
                 }
             }
@@ -1676,7 +1681,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (!initSuccess) {
-            LOG_ERROR("Failed to initialize GPU upsampler");
+            std::cerr << "Failed to initialize GPU upsampler" << '\n';
             delete g_state.upsampler;
             exitCode = 1;
             break;
@@ -1731,7 +1736,7 @@ int main(int argc, char* argv[]) {
 
         // Initialize streaming mode to preserve overlap buffers across input callbacks
         if (!g_state.upsampler->initializeStreaming()) {
-            LOG_ERROR("Failed to initialize streaming mode");
+            std::cerr << "Failed to initialize streaming mode" << '\n';
             delete g_state.upsampler;
             exitCode = 1;
             break;
@@ -1778,10 +1783,11 @@ int main(int argc, char* argv[]) {
                 if (g_state.upsampler->applyEqMagnitude(eqMagnitude)) {
                     // Log message depends on phase type (already logged by applyEqMagnitude)
                 } else {
-                    LOG_ERROR("  EQ: Failed to apply frequency response");
+                    std::cerr << "  EQ: Failed to apply frequency response" << '\n';
                 }
             } else {
-                LOG_ERROR("  EQ: Failed to parse profile: {}", g_state.config.eqProfilePath);
+                std::cerr << "  EQ: Failed to parse profile: " << g_state.config.eqProfilePath
+                          << '\n';
             }
         }
 
@@ -1806,21 +1812,25 @@ int main(int argc, char* argv[]) {
             std::string hrtfDir = "data/crossfeed/hrtf";
             if (std::filesystem::exists(hrtfDir)) {
                 std::cout << "Initializing HRTF processor for crossfeed..." << '\n';
-                g_state.crossfeed.processor = new CrossfeedEngine::HRTFProcessor();
+                g_state.crossfeed.processor = new ConvolutionEngine::FourChannelFIR();
 
                 // Determine rate family based on input sample rate
-                CrossfeedEngine::RateFamily rateFamily =
-                    (g_state.rates.inputSampleRate == 48000)
-                        ? CrossfeedEngine::RateFamily::RATE_48K
-                        : CrossfeedEngine::RateFamily::RATE_44K;
+                ConvolutionEngine::RateFamily rateFamily =
+                    ConvolutionEngine::detectRateFamily(g_state.rates.inputSampleRate);
+                if (rateFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
+                    rateFamily = ConvolutionEngine::RateFamily::RATE_44K;
+                }
+                ConvolutionEngine::HeadSize initialHeadSize =
+                    ConvolutionEngine::stringToHeadSize(g_state.config.crossfeed.headSize);
 
                 if (g_state.crossfeed.processor->initialize(hrtfDir, g_state.config.blockSize,
-                                                            CrossfeedEngine::HeadSize::M,
-                                                            rateFamily)) {
+                                                            initialHeadSize, rateFamily)) {
                     if (g_state.crossfeed.processor->initializeStreaming()) {
-                        std::cout << "  HRTF processor ready (head size: M, rate family: "
-                                  << (rateFamily == CrossfeedEngine::RateFamily::RATE_44K ? "44k"
-                                                                                          : "48k")
+                        std::cout << "  HRTF processor ready (head size: "
+                                  << ConvolutionEngine::headSizeToString(initialHeadSize)
+                                  << ", rate family: "
+                                  << (rateFamily == ConvolutionEngine::RateFamily::RATE_44K ? "44k"
+                                                                                            : "48k")
                                   << ")" << '\n';
 
                         // Pre-allocate crossfeed streaming buffers
@@ -1832,7 +1842,7 @@ int main(int argc, char* argv[]) {
                         g_state.crossfeed.cfStreamAccumulatedRight = 0;
                         size_t cf_output_capacity =
                             std::max(cf_buffer_capacity,
-                                     g_state.crossfeed.processor->getStreamValidOutputPerBlock());
+                                     g_state.crossfeed.processor->getValidOutputPerBlock());
                         g_state.crossfeed.cfOutputLeft.reserve(cf_output_capacity);
                         g_state.crossfeed.cfOutputRight.reserve(cf_output_capacity);
                         g_state.crossfeed.cfOutputBufferLeft.reserve(cf_output_capacity);
@@ -1840,27 +1850,21 @@ int main(int argc, char* argv[]) {
                         std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity
                                   << " samples" << '\n';
 
-                        if (!g_state.crossfeed.processor->prepareStreamingHostBuffers(
-                                g_state.crossfeed.cfStreamInputLeft,
-                                g_state.crossfeed.cfStreamInputRight,
-                                g_state.crossfeed.cfOutputLeft, g_state.crossfeed.cfOutputRight)) {
-                            LOG_ERROR("  Crossfeed: Failed to prepare pinned host buffers");
-                        }
-
                         // Crossfeed is initialized but disabled by default
                         g_state.crossfeed.enabled.store(false);
                         g_state.crossfeed.processor->setEnabled(false);
                         std::cout << "  Crossfeed: initialized (disabled by default)" << '\n';
                     } else {
-                        LOG_ERROR("  HRTF: Failed to initialize streaming mode");
+                        std::cerr << "  HRTF: Failed to initialize streaming mode" << '\n';
                         delete g_state.crossfeed.processor;
                         g_state.crossfeed.processor = nullptr;
                     }
                 } else {
-                    LOG_ERROR("  HRTF: Failed to initialize processor");
-                    LOG_INFO(
-                        "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to generate "
-                        "HRTF filters");
+                    std::cerr << "  HRTF: Failed to initialize processor" << '\n';
+                    std::cerr << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
+                                 "generate HRTF "
+                                 "filters"
+                              << '\n';
                     delete g_state.crossfeed.processor;
                     g_state.crossfeed.processor = nullptr;
                 }
@@ -1968,7 +1972,7 @@ int main(int argc, char* argv[]) {
                           << (fbConfig.xrunTriggersFallback ? "enabled" : "disabled") << ")"
                           << '\n';
             } else {
-                LOG_WARN("Failed to initialize fallback manager");
+                std::cerr << "Warning: Failed to initialize fallback manager" << '\n';
                 delete g_state.fallbackManager;
                 g_state.fallbackManager = nullptr;
                 g_state.fallbackActive.store(false, std::memory_order_relaxed);
@@ -1986,7 +1990,7 @@ int main(int argc, char* argv[]) {
                 std::make_unique<dac::DacManager>(make_dac_dependencies());
         }
         if (!g_state.managers.dacManager) {
-            LOG_ERROR("Failed to initialize DAC manager");
+            std::cerr << "Failed to initialize DAC manager" << '\n';
             exitCode = 1;
             break;
         }
@@ -2176,7 +2180,7 @@ int main(int argc, char* argv[]) {
         };
 
         if (g_state.flags.zmqBindFailed.load()) {
-            LOG_ERROR("Startup aborted due to ZeroMQ bind failure.");
+            std::cerr << "Startup aborted due to ZeroMQ bind failure." << '\n';
         } else {
             runMainLoop();
         }
@@ -2223,7 +2227,7 @@ int main(int argc, char* argv[]) {
 
         // Don't reload if ZMQ bind failed - exit completely
         if (g_state.flags.zmqBindFailed.load()) {
-            LOG_ERROR("Exiting due to ZeroMQ initialization failure.");
+            std::cerr << "Exiting due to ZeroMQ initialization failure." << '\n';
             exitCode = 1;
             break;
         }

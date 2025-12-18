@@ -10,7 +10,9 @@
 #include <cuda_runtime.h>
 #include <cufft.h>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <complex>
 #include <string>
 #include <vector>
@@ -44,6 +46,28 @@ inline const char* headSizeToString(HeadSize size) {
     default:
         return "m";
     }
+}
+
+inline HeadSize stringToHeadSize(const std::string& str) {
+    std::string normalized = str;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (normalized == "xs") {
+        return HeadSize::XS;
+    }
+    if (normalized == "s") {
+        return HeadSize::S;
+    }
+    if (normalized == "m") {
+        return HeadSize::M;
+    }
+    if (normalized == "l") {
+        return HeadSize::L;
+    }
+    if (normalized == "xl") {
+        return HeadSize::XL;
+    }
+    return HeadSize::M;
 }
 
 // Detect rate family from sample rate

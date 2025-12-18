@@ -4,10 +4,7 @@
 #include "audio/eq_parser.h"
 #include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
-#include "core/base64.h"
-#include "crossfeed_engine.h"
 #include "daemon/api/events.h"
-#include "hrtf/woodworth_model.h"
 #include "logging/logger.h"
 
 #include <algorithm>
@@ -72,31 +69,7 @@ bool isSupportedOutputMode(const std::string& normalized) {
     return false;
 }
 
-bool validateCrossfeedParams(const nlohmann::json& params, std::string& rateFamily,
-                             std::string& combinedLL, std::string& combinedLR,
-                             std::string& combinedRL, std::string& combinedRR,
-                             std::string& errorMessage, std::string& errorCode) {
-    rateFamily = params.value("rate_family", "");
-    combinedLL = params.value("combined_ll", "");
-    combinedLR = params.value("combined_lr", "");
-    combinedRL = params.value("combined_rl", "");
-    combinedRR = params.value("combined_rr", "");
-
-    if (rateFamily.empty() || combinedLL.empty() || combinedLR.empty() || combinedRL.empty() ||
-        combinedRR.empty()) {
-        errorCode = "IPC_INVALID_PARAMS";
-        errorMessage = "Missing required filter data";
-        return false;
-    }
-    if (rateFamily != "44k" && rateFamily != "48k") {
-        errorCode = "CROSSFEED_INVALID_RATE_FAMILY";
-        errorMessage = "Invalid rate family: " + rateFamily + " (expected 44k or 48k)";
-        return false;
-    }
-    return true;
-}
-
-CrossfeedEngine::HRTFProcessor* hrtfProcessor(const CrossfeedControls& controls) {
+ConvolutionEngine::FourChannelFIR* crossfeedProcessor(const CrossfeedControls& controls) {
     if (!controls.processor) {
         return nullptr;
     }
@@ -268,8 +241,8 @@ std::string ControlPlane::handleCrossfeedEnable(const daemon_ipc::ZmqRequest& re
     }
 
     std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-    auto* processor = hrtfProcessor(deps_.crossfeed);
-    if (!processor) {
+    auto* processor = crossfeedProcessor(deps_.crossfeed);
+    if (!processor || !processor->isInitialized()) {
         return buildErrorResponse(request, "CROSSFEED_NOT_INITIALIZED",
                                   "HRTF processor not initialized");
     }
@@ -289,7 +262,7 @@ std::string ControlPlane::handleCrossfeedDisable(const daemon_ipc::ZmqRequest& r
     if (deps_.crossfeed.enabledFlag) {
         deps_.crossfeed.enabledFlag->store(false);
     }
-    auto* processor = hrtfProcessor(deps_.crossfeed);
+    auto* processor = crossfeedProcessor(deps_.crossfeed);
     if (processor) {
         processor->setEnabled(false);
     }
@@ -302,10 +275,10 @@ std::string ControlPlane::handleCrossfeedDisable(const daemon_ipc::ZmqRequest& r
 std::string ControlPlane::handleCrossfeedStatus(const daemon_ipc::ZmqRequest& request,
                                                 bool includeHeadSize) {
     std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-    auto* processor = hrtfProcessor(deps_.crossfeed);
+    auto* processor = crossfeedProcessor(deps_.crossfeed);
     bool enabled =
         deps_.crossfeed.enabledFlag && deps_.crossfeed.enabledFlag->load(std::memory_order_relaxed);
-    bool initialized = (processor != nullptr);
+    bool initialized = (processor != nullptr && processor->isInitialized());
 
     nlohmann::json data;
     data["enabled"] = enabled;
@@ -313,8 +286,8 @@ std::string ControlPlane::handleCrossfeedStatus(const daemon_ipc::ZmqRequest& re
 
     if (includeHeadSize) {
         if (processor != nullptr) {
-            CrossfeedEngine::HeadSize currentSize = processor->getCurrentHeadSize();
-            data["head_size"] = CrossfeedEngine::headSizeToString(currentSize);
+            ConvolutionEngine::HeadSize currentSize = processor->getCurrentHeadSize();
+            data["head_size"] = ConvolutionEngine::headSizeToString(currentSize);
         } else {
             data["head_size"] = nullptr;
         }
@@ -328,213 +301,13 @@ std::string ControlPlane::handleCrossfeedGetStatus(const daemon_ipc::ZmqRequest&
 }
 
 std::string ControlPlane::handleCrossfeedSetCombined(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params")) {
-        return buildErrorResponse(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    bool processorReady = false;
-    {
-        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        processorReady = (hrtfProcessor(deps_.crossfeed) != nullptr);
-    }
-    if (!processorReady) {
-        return buildErrorResponse(request, "CROSSFEED_NOT_INITIALIZED",
-                                  "HRTF processor not initialized");
-    }
-
-    auto params = (*request.json)["params"];
-    std::string rateFamily;
-    std::string combinedLL;
-    std::string combinedLR;
-    std::string combinedRL;
-    std::string combinedRR;
-    std::string errorMessage;
-    std::string errorCode;
-
-    if (!validateCrossfeedParams(params, rateFamily, combinedLL, combinedLR, combinedRL, combinedRR,
-                                 errorMessage, errorCode)) {
-        return buildErrorResponse(request, errorCode, errorMessage);
-    }
-
-    auto decodedLL = Base64::decode(combinedLL);
-    auto decodedLR = Base64::decode(combinedLR);
-    auto decodedRL = Base64::decode(combinedRL);
-    auto decodedRR = Base64::decode(combinedRR);
-
-    constexpr size_t CUFFT_COMPLEX_SIZE = 8;
-    constexpr size_t MAX_FILTER_BYTES = static_cast<const size_t>(256 * 1024);
-
-    bool sizeValid = (decodedLL.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedLR.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedRL.size() % CUFFT_COMPLEX_SIZE == 0) &&
-                     (decodedRR.size() % CUFFT_COMPLEX_SIZE == 0);
-
-    bool sizesMatch = (decodedLL.size() == decodedLR.size()) &&
-                      (decodedLL.size() == decodedRL.size()) &&
-                      (decodedLL.size() == decodedRR.size());
-
-    bool withinLimit = (decodedLL.size() <= MAX_FILTER_BYTES);
-
-    if (!sizeValid) {
-        return buildErrorResponse(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                  "Filter size must be multiple of 8 (cufftComplex)");
-    }
-    if (!sizesMatch) {
-        return buildErrorResponse(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                  "All 4 channel filters must have same size");
-    }
-    if (!withinLimit) {
-        return buildErrorResponse(request, "CROSSFEED_INVALID_FILTER_SIZE",
-                                  "Filter size exceeds maximum (256KB per channel)");
-    }
-
-    CrossfeedEngine::RateFamily family = (rateFamily == "44k")
-                                             ? CrossfeedEngine::RateFamily::RATE_44K
-                                             : CrossfeedEngine::RateFamily::RATE_48K;
-    size_t complexCount = decodedLL.size() / CUFFT_COMPLEX_SIZE;
-    const auto* filterLL = reinterpret_cast<const cufftComplex*>(decodedLL.data());
-    const auto* filterLR = reinterpret_cast<const cufftComplex*>(decodedLR.data());
-    const auto* filterRL = reinterpret_cast<const cufftComplex*>(decodedRL.data());
-    const auto* filterRR = reinterpret_cast<const cufftComplex*>(decodedRR.data());
-
-    bool applySuccess = false;
-    if (deps_.applySoftMuteForFilterSwitch) {
-        deps_.applySoftMuteForFilterSwitch([&]() {
-            std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-            auto* processor = hrtfProcessor(deps_.crossfeed);
-            if (!processor) {
-                return false;
-            }
-            applySuccess = processor->setCombinedFilter(family, filterLL, filterLR, filterRL,
-                                                        filterRR, complexCount);
-            return applySuccess;
-        });
-    } else {
-        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        auto* processor = hrtfProcessor(deps_.crossfeed);
-        if (processor) {
-            applySuccess = processor->setCombinedFilter(family, filterLL, filterLR, filterRL,
-                                                        filterRR, complexCount);
-        }
-    }
-
-    if (!applySuccess) {
-        size_t expectedSize = 0;
-        {
-            std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-            auto* processor = hrtfProcessor(deps_.crossfeed);
-            if (processor) {
-                expectedSize = processor->getFilterFftSize();
-            }
-        }
-        nlohmann::json errorData;
-        errorData["rate_family"] = rateFamily;
-        errorData["complex_count"] = complexCount;
-        errorData["expected_size"] = expectedSize;
-        nlohmann::json resp;
-        resp["status"] = "error";
-        resp["error_code"] = "CROSSFEED_INVALID_FILTER_SIZE";
-        resp["message"] = "Filter size mismatch or application failed";
-        resp["data"] = errorData;
-        return resp.dump();
-    }
-
-    {
-        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        if (deps_.crossfeed.resetStreamingState) {
-            deps_.crossfeed.resetStreamingState();
-        }
-    }
-
-    nlohmann::json data;
-    data["rate_family"] = rateFamily;
-    data["complex_count"] = complexCount;
-    std::cout << "ZeroMQ: CROSSFEED_SET_COMBINED applied for " << rateFamily << " (" << complexCount
-              << " complex values)" << '\n';
-    return buildOkResponse(request, "Combined filter applied", data);
+    return buildErrorResponse(request, "CROSSFEED_NOT_IMPLEMENTED",
+                              "Combined filter is not supported in the integrated crossfeed path");
 }
 
 std::string ControlPlane::handleCrossfeedGenerate(const daemon_ipc::ZmqRequest& request) {
-    if (!request.json || !request.json->contains("params") ||
-        !(*request.json)["params"].is_object()) {
-        return buildErrorResponse(request, "IPC_INVALID_PARAMS", "Missing params field");
-    }
-
-    bool processorReady = false;
-    {
-        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        processorReady = (hrtfProcessor(deps_.crossfeed) != nullptr);
-    }
-    if (!processorReady) {
-        return buildErrorResponse(request, "CROSSFEED_NOT_INITIALIZED",
-                                  "HRTF processor not initialized");
-    }
-
-    auto params = (*request.json)["params"];
-    std::string rateFamily = params.value("rate_family", "");
-    double azimuth = params.value("azimuth_deg", 30.0);
-
-    if (rateFamily != "44k" && rateFamily != "48k") {
-        return buildErrorResponse(request, "CROSSFEED_INVALID_RATE_FAMILY",
-                                  "Invalid rate family: " + rateFamily);
-    }
-
-    HRTF::WoodworthParams modelParams;
-    if (params.contains("model") && params["model"].is_object()) {
-        auto model = params["model"];
-        modelParams.headRadiusMeters = model.value("head_radius_m", modelParams.headRadiusMeters);
-        modelParams.earSpacingMeters = model.value("ear_spacing_m", modelParams.earSpacingMeters);
-        modelParams.farEarShadowDb = model.value("far_shadow_db", modelParams.farEarShadowDb);
-        modelParams.diffuseFieldTiltDb =
-            model.value("diffuse_tilt_db", modelParams.diffuseFieldTiltDb);
-    }
-
-    CrossfeedEngine::RateFamily family = (rateFamily == "44k")
-                                             ? CrossfeedEngine::RateFamily::RATE_44K
-                                             : CrossfeedEngine::RateFamily::RATE_48K;
-    bool success = false;
-    if (deps_.applySoftMuteForFilterSwitch) {
-        deps_.applySoftMuteForFilterSwitch([&]() {
-            std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-            auto* processor = hrtfProcessor(deps_.crossfeed);
-            if (!processor) {
-                return false;
-            }
-            success = processor->generateWoodworthProfile(family, static_cast<float>(azimuth),
-                                                          modelParams);
-            return success;
-        });
-    } else {
-        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        auto* processor = hrtfProcessor(deps_.crossfeed);
-        if (processor) {
-            success = processor->generateWoodworthProfile(family, static_cast<float>(azimuth),
-                                                          modelParams);
-        }
-    }
-
-    if (!success) {
-        return buildErrorResponse(request, "CROSSFEED_WOODWORTH_FAILED",
-                                  "Failed to generate Woodworth profile");
-    }
-
-    {
-        std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        if (deps_.crossfeed.resetStreamingState) {
-            deps_.crossfeed.resetStreamingState();
-        }
-    }
-
-    nlohmann::json data;
-    data["rate_family"] = rateFamily;
-    data["azimuth_deg"] = azimuth;
-    data["head_radius_m"] = modelParams.headRadiusMeters;
-    data["ear_spacing_m"] = modelParams.earSpacingMeters;
-    data["far_shadow_db"] = modelParams.farEarShadowDb;
-    data["diffuse_tilt_db"] = modelParams.diffuseFieldTiltDb;
-    std::cout << "ZeroMQ: Generated Woodworth HRTF (" << rateFamily << ", az=" << azimuth << " deg)"
-              << '\n';
-    return buildOkResponse(request, "Woodworth profile generated", data);
+    return buildErrorResponse(request, "CROSSFEED_NOT_IMPLEMENTED",
+                              "Woodworth HRTF generation is not supported in this path");
 }
 
 std::string ControlPlane::handleCrossfeedSetSize(const daemon_ipc::ZmqRequest& request) {
@@ -544,7 +317,8 @@ std::string ControlPlane::handleCrossfeedSetSize(const daemon_ipc::ZmqRequest& r
 
     {
         std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        if (!hrtfProcessor(deps_.crossfeed)) {
+        auto* processor = crossfeedProcessor(deps_.crossfeed);
+        if (!processor || !processor->isInitialized()) {
             return buildErrorResponse(request, "CROSSFEED_NOT_INITIALIZED",
                                       "HRTF processor not initialized");
         }
@@ -556,13 +330,13 @@ std::string ControlPlane::handleCrossfeedSetSize(const daemon_ipc::ZmqRequest& r
         return buildErrorResponse(request, "IPC_INVALID_PARAMS", "Missing head_size parameter");
     }
 
-    CrossfeedEngine::HeadSize targetSize = CrossfeedEngine::stringToHeadSize(sizeStr);
+    ConvolutionEngine::HeadSize targetSize = ConvolutionEngine::stringToHeadSize(sizeStr);
     bool switchSuccess = false;
     if (deps_.applySoftMuteForFilterSwitch) {
         deps_.applySoftMuteForFilterSwitch([&]() {
             std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-            auto* processor = hrtfProcessor(deps_.crossfeed);
-            if (!processor) {
+            auto* processor = crossfeedProcessor(deps_.crossfeed);
+            if (!processor || !processor->isInitialized()) {
                 return false;
             }
             switchSuccess = processor->switchHeadSize(targetSize);
@@ -570,7 +344,7 @@ std::string ControlPlane::handleCrossfeedSetSize(const daemon_ipc::ZmqRequest& r
         });
     } else {
         std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
-        auto* processor = hrtfProcessor(deps_.crossfeed);
+        auto* processor = crossfeedProcessor(deps_.crossfeed);
         if (processor) {
             switchSuccess = processor->switchHeadSize(targetSize);
         }
@@ -588,7 +362,7 @@ std::string ControlPlane::handleCrossfeedSetSize(const daemon_ipc::ZmqRequest& r
         }
     }
     nlohmann::json data;
-    data["head_size"] = CrossfeedEngine::headSizeToString(targetSize);
+    data["head_size"] = ConvolutionEngine::headSizeToString(targetSize);
     return buildOkResponse(request, "", data);
 }
 

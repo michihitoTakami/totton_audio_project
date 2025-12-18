@@ -13,16 +13,19 @@ namespace CrossfeedEngine {
 
 // Head size categories matching HRTF filter files
 enum class HeadSize {
-    S = 0,   // Small
-    M = 1,   // Medium
-    L = 2,   // Large
-    XL = 3,  // Extra Large
-    COUNT = 4
+    XS = 0,  // Extra Small
+    S = 1,   // Small
+    M = 2,   // Medium
+    L = 3,   // Large
+    XL = 4,  // Extra Large
+    COUNT = 5
 };
 
 // Convert HeadSize to string for file paths
 inline const char* headSizeToString(HeadSize size) {
     switch (size) {
+    case HeadSize::XS:
+        return "xs";
     case HeadSize::S:
         return "s";
     case HeadSize::M:
@@ -39,8 +42,7 @@ inline const char* headSizeToString(HeadSize size) {
 // Convert string to HeadSize (for API commands)
 inline HeadSize stringToHeadSize(const std::string& str) {
     if (str == "xs" || str == "XS") {
-        // Note: xs is not in enum, map to S for now
-        return HeadSize::S;
+        return HeadSize::XS;
     } else if (str == "s" || str == "S") {
         return HeadSize::S;
     } else if (str == "m" || str == "M") {
@@ -125,7 +127,7 @@ class HRTFProcessor {
     //
     // Parameters:
     //   hrtfDir: Directory containing HRTF filter files
-    //            Expected files: hrtf_{s,m,l,xl}_{44k,48k}.bin/.json
+    //            Expected files: hrtf_{xs,s,m,l,xl}_{44k,48k}.bin/.json
     //   blockSize: FFT processing block size (default: 8192)
     //   initialSize: Initial head size to use (default: M)
     //   initialFamily: Initial rate family (default: 44k)
@@ -306,9 +308,9 @@ class HRTFProcessor {
     HeadSize currentHeadSize_;
     RateFamily currentRateFamily_;
 
-    // HRTF coefficients (4 sizes * 2 rate families = 8 configs)
+    // HRTF coefficients (5 sizes * 2 rate families = 10 configs)
     // Each config has 4 channels (LL, LR, RL, RR)
-    static constexpr int NUM_CONFIGS = 8;
+    static constexpr int NUM_CONFIGS = 10;
     static constexpr int NUM_CHANNELS = 4;
 
     // Host coefficients: [config][channel]

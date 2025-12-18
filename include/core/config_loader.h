@@ -84,7 +84,7 @@ struct AppConfig {
     // Crossfeed settings (nested struct for clarity)
     struct CrossfeedConfig {
         bool enabled = false;
-        std::string headSize = "m";  // "s", "m", "l", "xl"
+        std::string headSize = "m";  // "xs", "s", "m", "l", "xl"
         std::string hrtfPath = "data/crossfeed/hrtf/";
     } crossfeed;
 

@@ -33,12 +33,12 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     upsamplerOutputLeft.reserve(16);
     upsamplerOutputRight.reserve(16);
 
-    std::vector<float> cfStreamInputLeft;
-    std::vector<float> cfStreamInputRight;
+    ConvolutionEngine::StreamFloatVector cfStreamInputLeft;
+    ConvolutionEngine::StreamFloatVector cfStreamInputRight;
     size_t cfAccumLeft = 0;
     size_t cfAccumRight = 0;
-    std::vector<float> cfOutputLeft;
-    std::vector<float> cfOutputRight;
+    ConvolutionEngine::StreamFloatVector cfOutputLeft;
+    ConvolutionEngine::StreamFloatVector cfOutputRight;
 
     audio_pipeline::Dependencies deps{};
     deps.config = &config;
@@ -123,12 +123,12 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     ConvolutionEngine::StreamFloatVector upsamplerOutputLeft;
     ConvolutionEngine::StreamFloatVector upsamplerOutputRight;
 
-    std::vector<float> cfStreamInputLeft;
-    std::vector<float> cfStreamInputRight;
+    ConvolutionEngine::StreamFloatVector cfStreamInputLeft;
+    ConvolutionEngine::StreamFloatVector cfStreamInputRight;
     size_t cfAccumLeft = 0;
     size_t cfAccumRight = 0;
-    std::vector<float> cfOutputLeft;
-    std::vector<float> cfOutputRight;
+    ConvolutionEngine::StreamFloatVector cfOutputLeft;
+    ConvolutionEngine::StreamFloatVector cfOutputRight;
 
     std::atomic<float> outputGain{2.0f};
     std::atomic<float> limiterGain{1.0f};
@@ -221,12 +221,12 @@ TEST(AudioPipeline, ContinuesWithSilenceWhenInputLockContended) {
     ConvolutionEngine::StreamFloatVector upsamplerOutputLeft;
     ConvolutionEngine::StreamFloatVector upsamplerOutputRight;
 
-    std::vector<float> cfStreamInputLeft;
-    std::vector<float> cfStreamInputRight;
+    ConvolutionEngine::StreamFloatVector cfStreamInputLeft;
+    ConvolutionEngine::StreamFloatVector cfStreamInputRight;
     size_t cfAccumLeft = 0;
     size_t cfAccumRight = 0;
-    std::vector<float> cfOutputLeft;
-    std::vector<float> cfOutputRight;
+    ConvolutionEngine::StreamFloatVector cfOutputLeft;
+    ConvolutionEngine::StreamFloatVector cfOutputRight;
 
     audio_pipeline::Dependencies deps{};
     deps.config = &config;

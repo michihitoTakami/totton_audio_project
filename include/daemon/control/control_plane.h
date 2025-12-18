@@ -16,18 +16,13 @@
 
 namespace ConvolutionEngine {
 class GPUUpsampler;
-}
-
-namespace CrossfeedEngine {
-class HRTFProcessor;
-enum class HeadSize;
-enum class RateFamily;
-}  // namespace CrossfeedEngine
+class FourChannelFIR;
+}  // namespace ConvolutionEngine
 
 namespace daemon_control {
 
 struct CrossfeedControls {
-    CrossfeedEngine::HRTFProcessor** processor = nullptr;
+    ConvolutionEngine::FourChannelFIR** processor = nullptr;
     std::atomic<bool>* enabledFlag = nullptr;
     std::mutex* mutex = nullptr;
     std::function<void()> resetStreamingState;
