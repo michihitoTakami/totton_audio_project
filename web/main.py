@@ -11,7 +11,6 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from .exceptions import register_exception_handlers
 from .i18n import normalize_lang
@@ -25,10 +24,7 @@ from .routers import (
     output_mode_router,
     partitioned_router,
     status_router,
-    rtp_router,
-    rtp_input_router,
 )
-from .services.rtp_input import get_rtp_receiver_manager
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
@@ -85,6 +81,8 @@ def _env_flag(name: str, default: bool) -> bool:
 
 def _resolve_rtp_manager(app: FastAPI):
     """DIのオーバーライドを考慮してRTPマネージャを取得."""
+    from .services.rtp_input import get_rtp_receiver_manager
+
     override = app.dependency_overrides.get(get_rtp_receiver_manager)
     if override:
         return override()
@@ -169,10 +167,6 @@ No authentication required (local network only).
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-    # Setup Jinja2 templates
-    templates_dir = Path(__file__).parent / "templates"
-    templates = Jinja2Templates(directory=str(templates_dir))
-
     # Include routers
     app.include_router(status_router)
     app.include_router(daemon_router)
@@ -183,11 +177,11 @@ No authentication required (local network only).
     app.include_router(partitioned_router)
     app.include_router(output_mode_router)
     if resolved_enable_rtp:
+        from .routers.rtp import router as rtp_router
+        from .routers.rtp_input import router as rtp_input_router
+
         app.include_router(rtp_router)
         app.include_router(rtp_input_router)
-
-    # expose templates for import-time usage (kept for backward compatibility)
-    globals()["templates"] = templates
 
     return app
 

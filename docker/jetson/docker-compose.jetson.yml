@@ -33,7 +33,8 @@ services:
     devices:
       - /dev/snd:/dev/snd
 
-    # Web UI + RTP受信 (UDP 46000, RTCP 46001/46002)
+    # Web UI
+    # RTP はデフォルト無効。必要なら MAGICBOX_ENABLE_RTP=true にし、UDP(46000/46001/46002) を公開する。
     ports:
       - "80:80"
 
