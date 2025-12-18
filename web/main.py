@@ -69,14 +69,6 @@ tags_metadata = [
         "name": "legacy",
         "description": "Deprecated endpoints - use alternatives instead",
     },
-    {
-        "name": "rtp",
-        "description": "RTP ZeroMQブリッジのステータス/制御",
-    },
-    {
-        "name": "rtp-input",
-        "description": "RTP入力のステータス取得と制御 (GStreamer)",
-    },
 ]
 
 
@@ -99,31 +91,59 @@ def _resolve_rtp_manager(app: FastAPI):
     return get_rtp_receiver_manager()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Manage application lifecycle."""
-    rtp_manager = _resolve_rtp_manager(app)
-    rtp_autostart = _env_flag("MAGICBOX_RTP_AUTOSTART", True)
-    if rtp_autostart:
-        try:
-            await rtp_manager.start()
-            _logger.info("RTP input autostarted (MAGICBOX_RTP_AUTOSTART=true)")
-        except Exception as exc:  # noqa: BLE001
-            _logger.warning("RTP autostart failed: %s", exc)
-    else:
-        _logger.info("RTP autostart disabled via MAGICBOX_RTP_AUTOSTART")
+def create_app(*, enable_rtp: bool | None = None) -> FastAPI:
+    """
+    FastAPIアプリを生成する。
 
-    yield
-    try:
-        await rtp_manager.shutdown()
-    except Exception as exc:  # noqa: BLE001
-        _logger.warning("RTP shutdown encountered an error: %s", exc)
+    - RTP はデフォルト無効（I2Sメイン運用のため）。
+    - `MAGICBOX_ENABLE_RTP=true`（または enable_rtp=True）でのみ API 露出/自動起動対象になる。
+    """
+    resolved_enable_rtp = (
+        _env_flag("MAGICBOX_ENABLE_RTP", False) if enable_rtp is None else enable_rtp
+    )
 
+    effective_tags = list(tags_metadata)
+    if resolved_enable_rtp:
+        effective_tags.extend(
+            [
+                {
+                    "name": "rtp",
+                    "description": "RTP ZeroMQブリッジのステータス/制御",
+                },
+                {
+                    "name": "rtp-input",
+                    "description": "RTP入力のステータス取得と制御 (GStreamer)",
+                },
+            ]
+        )
 
-app = FastAPI(
-    lifespan=lifespan,
-    title="GPU Upsampler Control",
-    description="""
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """Manage application lifecycle."""
+        if resolved_enable_rtp:
+            rtp_manager = _resolve_rtp_manager(app)
+            rtp_autostart = _env_flag("MAGICBOX_RTP_AUTOSTART", False)
+            if rtp_autostart:
+                try:
+                    await rtp_manager.start()
+                    _logger.info("RTP input autostarted (MAGICBOX_RTP_AUTOSTART=true)")
+                except Exception as exc:  # noqa: BLE001
+                    _logger.warning("RTP autostart failed: %s", exc)
+            else:
+                _logger.info("RTP autostart disabled (MAGICBOX_ENABLE_RTP=true)")
+
+        yield
+        if resolved_enable_rtp:
+            try:
+                rtp_manager = _resolve_rtp_manager(app)
+                await rtp_manager.shutdown()
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning("RTP shutdown encountered an error: %s", exc)
+
+    app = FastAPI(
+        lifespan=lifespan,
+        title="GPU Upsampler Control",
+        description="""
 ## GPU Audio Upsampler Web API
 
 Control interface for the GPU-accelerated audio upsampler daemon.
@@ -137,33 +157,42 @@ Control interface for the GPU-accelerated audio upsampler daemon.
 ### Authentication
 No authentication required (local network only).
     """,
-    version="1.0.0",
-    openapi_tags=tags_metadata,
-)
+        version="1.0.0",
+        openapi_tags=effective_tags,
+    )
 
-# Register exception handlers for unified error responses
-register_exception_handlers(app)
+    # Register exception handlers for unified error responses
+    register_exception_handlers(app)
 
-# Mount static files
-static_dir = Path(__file__).parent / "static"
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    # Mount static files
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-# Setup Jinja2 templates
-templates_dir = Path(__file__).parent / "templates"
-templates = Jinja2Templates(directory=str(templates_dir))
+    # Setup Jinja2 templates
+    templates_dir = Path(__file__).parent / "templates"
+    templates = Jinja2Templates(directory=str(templates_dir))
 
-# Include routers
-app.include_router(status_router)
-app.include_router(daemon_router)
-app.include_router(eq_router)
-app.include_router(opra_router)
-app.include_router(dac_router)
-app.include_router(crossfeed_router)
-app.include_router(partitioned_router)
-app.include_router(output_mode_router)
-app.include_router(rtp_router)
-app.include_router(rtp_input_router)
+    # Include routers
+    app.include_router(status_router)
+    app.include_router(daemon_router)
+    app.include_router(eq_router)
+    app.include_router(opra_router)
+    app.include_router(dac_router)
+    app.include_router(crossfeed_router)
+    app.include_router(partitioned_router)
+    app.include_router(output_mode_router)
+    if resolved_enable_rtp:
+        app.include_router(rtp_router)
+        app.include_router(rtp_input_router)
+
+    # expose templates for import-time usage (kept for backward compatibility)
+    globals()["templates"] = templates
+
+    return app
+
+
+app = create_app()
 
 
 # Legacy restart endpoint (forwards to daemon restart)

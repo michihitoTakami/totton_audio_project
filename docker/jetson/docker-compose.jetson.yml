@@ -35,9 +35,6 @@ services:
 
     # Web UI + RTP受信 (UDP 46000, RTCP 46001/46002)
     ports:
-      - "46000:46000/udp"
-      - "46001:46001/udp"
-      - "46002:46002/udp"
       - "80:80"
 
     # Shared memory for audio buffers
@@ -56,7 +53,10 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - MAGICBOX_RTP_AUTOSTART=true
+      # RTP はコードとして残すが、I2Sメイン運用ではデフォルトで無効化する。
+      # 必要な場合のみ MAGICBOX_ENABLE_RTP=true にし、必要ならポートも公開する。
+      - MAGICBOX_ENABLE_RTP=false
+      - MAGICBOX_RTP_AUTOSTART=false
       # USB直結構成では mDNS(raspberrypi.local) が見えないことがあるため、IPで固定
       - MAGICBOX_RTP_SENDER_HOST=192.168.55.100
       # ZeroMQ ブリッジを使う場合（任意）
