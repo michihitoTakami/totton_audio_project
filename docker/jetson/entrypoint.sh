@@ -40,6 +40,92 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
 }
 
+wait_for_alsa() {
+    local timeout="${MAGICBOX_WAIT_AUDIO_SECS:-0}"
+    if [[ -z "${timeout}" ]]; then
+        timeout=0
+    fi
+    if [[ "${timeout}" == "0" ]]; then
+        return 0
+    fi
+    log_info "Waiting for ALSA devices (timeout=${timeout}s)..."
+    local start
+    start="$(date +%s)"
+    while true; do
+        if [[ -d "/dev/snd" ]] && [[ -r "/proc/asound/cards" ]]; then
+            # Require at least one card line.
+            if grep -qE '^[[:space:]]*[0-9]+[[:space:]]+\[' /proc/asound/cards 2>/dev/null; then
+                log_info "ALSA cards detected"
+                return 0
+            fi
+        fi
+        local now
+        now="$(date +%s)"
+        if (( now - start >= timeout )); then
+            log_warn "Timed out waiting for ALSA devices"
+            return 0
+        fi
+        sleep 1
+    done
+}
+
+_find_card_index_by_id() {
+    local card_id="$1"
+    if [[ -z "${card_id}" ]]; then
+        return 1
+    fi
+    if [[ ! -r "/proc/asound/cards" ]]; then
+        return 1
+    fi
+    awk -v id="${card_id}" '
+        $0 ~ "\\[" id "\\]" {print $1; exit 0}
+        END {exit 1}
+    ' /proc/asound/cards 2>/dev/null
+}
+
+configure_jetson_ape_i2s() {
+    # Best-effort only: control names vary by L4T/kernel, and some environments don't expose APE.
+    if ! command -v amixer >/dev/null 2>&1; then
+        log_warn "amixer not available; skipping APE/I2S routing"
+        return 0
+    fi
+    local ape
+    ape="$(_find_card_index_by_id "APE" || true)"
+    if [[ -z "${ape}" ]]; then
+        # Some systems may expose "ape" / "tegra-ape"
+        ape="$(_find_card_index_by_id "ape" || true)"
+    fi
+    if [[ -z "${ape}" ]]; then
+        ape="$(_find_card_index_by_id "tegra-ape" || true)"
+    fi
+    if [[ -z "${ape}" ]]; then
+        log_warn "ALSA card 'APE' not found; skipping APE/I2S routing"
+        return 0
+    fi
+
+    log_info "Applying Jetson APE/I2S routing (card=${ape})..."
+
+    # Helper to apply a cset only if the control exists.
+    _cset_if_exists() {
+        local name="$1"
+        local value="$2"
+        if amixer -c "${ape}" cget name="${name}" >/dev/null 2>&1; then
+            if amixer -c "${ape}" cset name="${name}" "${value}" >/dev/null 2>&1; then
+                log_info "amixer: set '${name}' = '${value}'"
+            else
+                log_warn "amixer: failed to set '${name}' = '${value}'"
+            fi
+        else
+            log_warn "amixer: control not found: '${name}' (skipped)"
+        fi
+    }
+
+    # Recommended sequence for I2S2 RX (Issue #961)
+    _cset_if_exists "ADMAIF1 Mux" "I2S2"
+    _cset_if_exists "I2S2 codec master mode" "cbm-cfm"
+    _cset_if_exists "I2S2 codec frame mode" "i2s"
+}
+
 prepare_config() {
     mkdir -p "$CONFIG_DIR"
 
@@ -171,6 +257,13 @@ start_daemon() {
         log_error "Config file not found: $CONFIG_FILE"
         exit 1
     fi
+    # Ensure ALSA is ready (cold boot / device enumeration delay).
+    wait_for_alsa
+
+    # If I2S capture is enabled, apply Jetson APE routing in container (best-effort).
+    if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+        configure_jetson_ape_i2s || true
+    fi
     exec "$DAEMON"
 }
 
@@ -179,6 +272,14 @@ start_all() {
     log_info "Starting Magic Box in production mode..."
     log_info "RTP enabled: ${MAGICBOX_ENABLE_RTP}"
     log_info "RTP autostart flag: ${MAGICBOX_RTP_AUTOSTART}"
+
+    # Ensure ALSA is ready (cold boot / device enumeration delay).
+    wait_for_alsa
+
+    # If I2S capture is enabled, apply Jetson APE routing in container (best-effort).
+    if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+        configure_jetson_ape_i2s || true
+    fi
 
     # Start daemon in background
     log_info "Starting Audio Daemon in background..."

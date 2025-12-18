@@ -1157,7 +1157,17 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
 static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t format,
                                    unsigned int requested_rate, unsigned int channels,
                                    snd_pcm_uframes_t period_frames, unsigned int& actual_rate) {
-    actual_rate = requested_rate;
+    // For I2S in external-clock/slave scenarios, forcing a sample rate can be harmful.
+    // When requested_rate == 0, we intentionally skip snd_pcm_hw_params_set_rate_near()
+    // and rely on the driver + external clocking, then best-effort query the actual rate.
+    unsigned int fallback_rate = requested_rate;
+    if (fallback_rate == 0) {
+        int current = g_state.rates.inputSampleRate;
+        fallback_rate = (current == 44100 || current == 48000)
+                            ? static_cast<unsigned int>(current)
+                            : static_cast<unsigned int>(DEFAULT_INPUT_SAMPLE_RATE);
+    }
+    actual_rate = fallback_rate;
     snd_pcm_t* handle = nullptr;
     // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
     int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
@@ -1210,7 +1220,7 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
     if ((err = snd_pcm_hw_params_get_rate(hw_params, &got_rate, &dir)) >= 0 && got_rate > 0) {
         actual_rate = got_rate;
     } else {
-        actual_rate = rate_near;
+        actual_rate = (rate_near > 0) ? rate_near : fallback_rate;
     }
 
     if ((err = snd_pcm_prepare(handle)) < 0) {
@@ -1222,8 +1232,15 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
     // Ensure non-blocking is effective even if driver flips it.
     snd_pcm_nonblock(handle, 1);
 
-    LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames)", device,
-             actual_rate, channels, snd_pcm_format_name(format), period_frames);
+    if (requested_rate == 0) {
+        LOG_INFO(
+            "[I2S] Capture device {} configured ({} Hz detected, {} ch, fmt={}, period {} frames; "
+            "rate=auto)",
+            device, actual_rate, channels, snd_pcm_format_name(format), period_frames);
+    } else {
+        LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames)",
+                 device, actual_rate, channels, snd_pcm_format_name(format), period_frames);
+    }
     return handle;
 }
 
@@ -2205,11 +2222,13 @@ int main(int argc, char* argv[]) {
                 break;
             }
             snd_pcm_format_t i2s_format = parse_i2s_format(g_state.config.i2s.format);
+            // If i2s.sampleRate == 0, don't force ALSA rate; let the external clock drive it.
             unsigned int i2s_rate = (g_state.config.i2s.sampleRate != 0)
                                         ? static_cast<unsigned int>(g_state.config.i2s.sampleRate)
-                                        : static_cast<unsigned int>(g_state.rates.inputSampleRate);
+                                        : 0U;
             std::cout << "Starting I2S capture thread (" << g_state.config.i2s.device
-                      << ", fmt=" << g_state.config.i2s.format << ", rate=" << i2s_rate
+                      << ", fmt=" << g_state.config.i2s.format << ", rate="
+                      << (i2s_rate == 0 ? std::string("auto") : std::to_string(i2s_rate))
                       << ", period=" << g_state.config.i2s.periodFrames << ")" << '\n';
             i2s_thread =
                 std::thread(i2s_capture_thread, g_state.config.i2s.device, i2s_format, i2s_rate,
