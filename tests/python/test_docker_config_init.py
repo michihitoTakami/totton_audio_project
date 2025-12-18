@@ -52,7 +52,10 @@ def test_config_init_seeds_default_when_missing(tmp_path: Path) -> None:
 
 
 def test_config_init_preserves_existing_without_reset(tmp_path: Path) -> None:
-    """Existing config should be kept unless reset is requested."""
+    """Existing config should be kept unless reset is requested.
+
+    Note: entrypoint merges missing keys from default config (existing wins).
+    """
     default_file = tmp_path / "default" / "config.json"
     default_file.parent.mkdir(parents=True)
     default_file.write_text(json.dumps({"default": True}))
@@ -73,7 +76,37 @@ def test_config_init_preserves_existing_without_reset(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(config_file.read_text()) == {"custom": "keep"}
+    assert json.loads(config_file.read_text()) == {"default": True, "custom": "keep"}
+
+
+def test_config_init_prefers_i2s_when_both_enabled(tmp_path: Path) -> None:
+    """If both loopback.enabled and i2s.enabled are true, entrypoint disables loopback.
+
+    This prevents a legacy loopback-only config from causing silence on Jetson.
+    """
+    default_file = tmp_path / "default" / "config.json"
+    default_file.parent.mkdir(parents=True)
+    default_file.write_text(json.dumps({"i2s": {"enabled": True}}))
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True)
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"loopback": {"enabled": True}}))
+
+    result = _run_entrypoint(
+        tmp_path,
+        {
+            "MAGICBOX_CONFIG_DIR": str(config_dir),
+            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
+        },
+        "config-init",
+    )
+
+    assert result.returncode == 0, result.stderr
+    config_data = json.loads(config_file.read_text())
+    assert config_data["i2s"]["enabled"] is True
+    assert config_data["loopback"]["enabled"] is False
 
 
 def test_config_init_resets_when_flag_true(tmp_path: Path) -> None:

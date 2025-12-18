@@ -51,5 +51,23 @@
     "consoleOutput": true,
     "coloredOutput": true
   },
+  "_comment_inputs": "Jetsonでは I2S 入力が主経路です。古い設定で loopback.enabled=true のままだと無音になるため、デフォルトでは loopback を無効化し、I2S を有効化します。",
+  "i2s": {
+    "enabled": true,
+    "_comment_device": "Jetson Orin Nano の APE(=I2S RX) を想定。環境により 'hw:APE,0' などに調整してください。",
+    "device": "hw:APE,0,0",
+    "sampleRate": 0,
+    "channels": 2,
+    "format": "S32_LE",
+    "periodFrames": 1024
+  },
+  "loopback": {
+    "enabled": false,
+    "device": "hw:Loopback,1,0",
+    "sampleRate": 44100,
+    "channels": 2,
+    "format": "S16_LE",
+    "periodFrames": 1024
+  },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }
