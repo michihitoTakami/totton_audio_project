@@ -397,6 +397,14 @@ static void initialize_streaming_cache_manager();
 
 static void elevate_realtime_priority(const char* name, int priority = 65) {
 #ifdef __linux__
+    // RT scheduling can freeze remote shells if something spins.
+    // Allow disabling via env for containerized debugging.
+    // - MAGICBOX_ENABLE_RT=0 disables SCHED_FIFO attempts.
+    const char* enableRt = std::getenv("MAGICBOX_ENABLE_RT");
+    if (enableRt && std::string(enableRt) == "0") {
+        LOG_WARN("[RT] {} thread: SCHED_FIFO disabled via MAGICBOX_ENABLE_RT=0", name);
+        return;
+    }
     sched_param params{};
     params.sched_priority = priority;
     int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &params);
@@ -2203,146 +2211,134 @@ int main(int argc, char* argv[]) {
 
         std::thread loopback_thread;
         std::thread i2s_thread;
+        bool startupFailed = false;
 
-        if (g_state.config.i2s.enabled && g_state.config.loopback.enabled) {
-            LOG_ERROR("Config error: i2s.enabled and loopback.enabled cannot both be true");
+        auto failStartup = [&](const std::string& reason) {
+            LOG_ERROR("Startup failed: {}", reason);
             exitCode = 1;
+            startupFailed = true;
             g_state.flags.running = false;
             playback_buffer().cv().notify_all();
-            alsa_thread.join();
-            break;
-        }
-
-        if (g_state.config.i2s.enabled) {
-            if (!validate_i2s_config(g_state.config)) {
-                exitCode = 1;
-                g_state.flags.running = false;
-                playback_buffer().cv().notify_all();
-                alsa_thread.join();
-                break;
-            }
-            snd_pcm_format_t i2s_format = parse_i2s_format(g_state.config.i2s.format);
-            // If i2s.sampleRate == 0, don't force ALSA rate; let the external clock drive it.
-            unsigned int i2s_rate = (g_state.config.i2s.sampleRate != 0)
-                                        ? static_cast<unsigned int>(g_state.config.i2s.sampleRate)
-                                        : 0U;
-            std::cout << "Starting I2S capture thread (" << g_state.config.i2s.device
-                      << ", fmt=" << g_state.config.i2s.format << ", rate="
-                      << (i2s_rate == 0 ? std::string("auto") : std::to_string(i2s_rate))
-                      << ", period=" << g_state.config.i2s.periodFrames << ")" << '\n';
-            i2s_thread =
-                std::thread(i2s_capture_thread, g_state.config.i2s.device, i2s_format, i2s_rate,
-                            g_state.config.i2s.channels,
-                            static_cast<snd_pcm_uframes_t>(g_state.config.i2s.periodFrames));
-
-            // Wait briefly for I2S thread to become ready
-            bool i2s_ready = false;
-            for (int i = 0; i < 40; ++i) {  // up to ~2s
-                if (g_state.i2s.captureReady.load(std::memory_order_acquire)) {
-                    i2s_ready = true;
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            if (!i2s_ready) {
-                LOG_ERROR("[I2S] Failed to start capture thread (not ready)");
-                g_state.flags.running = false;
-                playback_buffer().cv().notify_all();
-                if (i2s_thread.joinable()) {
-                    i2s_thread.join();
-                }
-                alsa_thread.join();
-                exitCode = 1;
-                break;
-            }
-        }
-        if (g_state.config.loopback.enabled) {
-            if (!validate_loopback_config(g_state.config)) {
-                exitCode = 1;
-                g_state.flags.running = false;
-                alsa_thread.join();
-                break;
-            }
-            snd_pcm_format_t lb_format = parse_loopback_format(g_state.config.loopback.format);
-            std::cout << "Starting loopback capture thread (" << g_state.config.loopback.device
-                      << ", fmt=" << g_state.config.loopback.format
-                      << ", rate=" << g_state.config.loopback.sampleRate
-                      << ", period=" << g_state.config.loopback.periodFrames << ")" << '\n';
-            loopback_thread =
-                std::thread(loopback_capture_thread, g_state.config.loopback.device, lb_format,
-                            g_state.config.loopback.sampleRate, g_state.config.loopback.channels,
-                            static_cast<snd_pcm_uframes_t>(g_state.config.loopback.periodFrames));
-
-            // Wait briefly for loopback thread to become ready
-            bool loopback_ready = false;
-            for (int i = 0; i < 40; ++i) {  // up to ~2s
-                if (g_state.loopback.captureReady.load(std::memory_order_acquire)) {
-                    loopback_ready = true;
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            if (!loopback_ready) {
-                LOG_ERROR("[Loopback] Failed to start capture thread (not ready)");
-                g_state.flags.running = false;
-                playback_buffer().cv().notify_all();
-                if (loopback_thread.joinable()) {
-                    loopback_thread.join();
-                }
-                alsa_thread.join();
-                exitCode = 1;
-                break;
-            }
-        }
-
-        double outputRateKHz =
-            g_state.rates.inputSampleRate * g_state.config.upsampleRatio / 1000.0;
-        std::cout << '\n';
-        if (g_state.config.loopback.enabled) {
-            std::cout << "System ready (Loopback capture mode). Audio routing configured:" << '\n';
-            std::cout << "  1. Loopback capture → GPU Upsampler (" << g_state.config.upsampleRatio
-                      << "x upsampling)" << '\n';
-            std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
-                      << '\n';
-        } else if (g_state.config.i2s.enabled) {
-            std::cout << "System ready (I2S capture mode). Audio routing configured:" << '\n';
-            std::cout << "  1. I2S capture → GPU Upsampler (" << g_state.config.upsampleRatio
-                      << "x upsampling)" << '\n';
-            std::cout << "  2. GPU Upsampler → ALSA → DAC (" << outputRateKHz << "kHz direct)"
-                      << '\n';
-        } else {
-            std::cout << "System ready (TCP/loopback input). Audio routing configured:" << '\n';
-            std::cout << "  1. Network or loopback source → GPU Upsampler ("
-                      << g_state.config.upsampleRatio << "x upsampling)" << '\n';
-            std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz << "kHz direct)"
-                      << '\n';
-        }
-        std::cout << "Press Ctrl+C to stop." << '\n';
-        std::cout << "========================================" << '\n';
-
-        shutdownManager.notifyReady();
-
-        auto runMainLoop = [&]() {
-            while (g_state.flags.running.load() && !g_state.flags.reloadRequested.load() &&
-                   !g_state.flags.zmqBindFailed.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                if (g_state.managers.streamingCacheManager) {
-                    (void)g_state.managers.streamingCacheManager->drainFlushRequests();
-                }
-                // Input rate follow-up hook (Issue #906; network-driven detection is #824)
-                int pending =
-                    g_state.rates.pendingRateChange.exchange(0, std::memory_order_acq_rel);
-                if (pending > 0 && (pending == 44100 || pending == 48000)) {
-                    (void)handle_rate_switch(pending);
-                }
-                shutdownManager.tick();
-            }
         };
 
-        if (g_state.flags.zmqBindFailed.load()) {
-            std::cerr << "Startup aborted due to ZeroMQ bind failure." << '\n';
-        } else {
-            runMainLoop();
+        if (g_state.config.i2s.enabled && g_state.config.loopback.enabled) {
+            failStartup("Config error: i2s.enabled and loopback.enabled cannot both be true");
+        }
+
+        if (!startupFailed && g_state.config.i2s.enabled) {
+            if (!validate_i2s_config(g_state.config)) {
+                failStartup("Invalid I2S config");
+            } else {
+                snd_pcm_format_t i2s_format = parse_i2s_format(g_state.config.i2s.format);
+                // i2s.sampleRate==0 means "follow engine/runtime negotiated input rate".
+                // ALSA hw_params typically requires an explicit rate, so default to current engine
+                // rate.
+                unsigned int i2s_rate =
+                    (g_state.config.i2s.sampleRate != 0)
+                        ? static_cast<unsigned int>(g_state.config.i2s.sampleRate)
+                        : static_cast<unsigned int>(g_state.rates.inputSampleRate);
+                std::cout << "Starting I2S capture thread (" << g_state.config.i2s.device
+                          << ", fmt=" << g_state.config.i2s.format << ", rate=" << i2s_rate
+                          << ", period=" << g_state.config.i2s.periodFrames << ")" << '\n';
+                i2s_thread =
+                    std::thread(i2s_capture_thread, g_state.config.i2s.device, i2s_format, i2s_rate,
+                                g_state.config.i2s.channels,
+                                static_cast<snd_pcm_uframes_t>(g_state.config.i2s.periodFrames));
+
+                // Wait briefly for I2S thread to become ready
+                bool i2s_ready = false;
+                for (int i = 0; i < 40; ++i) {  // up to ~2s
+                    if (g_state.i2s.captureReady.load(std::memory_order_acquire)) {
+                        i2s_ready = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                if (!i2s_ready) {
+                    failStartup("[I2S] Failed to start capture thread (not ready)");
+                }
+            }
+        }
+        if (!startupFailed && g_state.config.loopback.enabled) {
+            if (!validate_loopback_config(g_state.config)) {
+                failStartup("Invalid loopback config");
+            } else {
+                snd_pcm_format_t lb_format = parse_loopback_format(g_state.config.loopback.format);
+                std::cout << "Starting loopback capture thread (" << g_state.config.loopback.device
+                          << ", fmt=" << g_state.config.loopback.format
+                          << ", rate=" << g_state.config.loopback.sampleRate
+                          << ", period=" << g_state.config.loopback.periodFrames << ")" << '\n';
+                loopback_thread = std::thread(
+                    loopback_capture_thread, g_state.config.loopback.device, lb_format,
+                    g_state.config.loopback.sampleRate, g_state.config.loopback.channels,
+                    static_cast<snd_pcm_uframes_t>(g_state.config.loopback.periodFrames));
+
+                // Wait briefly for loopback thread to become ready
+                bool loopback_ready = false;
+                for (int i = 0; i < 40; ++i) {  // up to ~2s
+                    if (g_state.loopback.captureReady.load(std::memory_order_acquire)) {
+                        loopback_ready = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                if (!loopback_ready) {
+                    failStartup("[Loopback] Failed to start capture thread (not ready)");
+                }
+            }
+        }
+
+        if (!startupFailed) {
+            double outputRateKHz =
+                g_state.rates.inputSampleRate * g_state.config.upsampleRatio / 1000.0;
+            std::cout << '\n';
+            if (g_state.config.loopback.enabled) {
+                std::cout << "System ready (Loopback capture mode). Audio routing configured:"
+                          << '\n';
+                std::cout << "  1. Loopback capture → GPU Upsampler ("
+                          << g_state.config.upsampleRatio << "x upsampling)" << '\n';
+                std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz
+                          << "kHz direct)" << '\n';
+            } else if (g_state.config.i2s.enabled) {
+                std::cout << "System ready (I2S capture mode). Audio routing configured:" << '\n';
+                std::cout << "  1. I2S capture → GPU Upsampler (" << g_state.config.upsampleRatio
+                          << "x upsampling)" << '\n';
+                std::cout << "  2. GPU Upsampler → ALSA → DAC (" << outputRateKHz << "kHz direct)"
+                          << '\n';
+            } else {
+                std::cout << "System ready (TCP/loopback input). Audio routing configured:" << '\n';
+                std::cout << "  1. Network or loopback source → GPU Upsampler ("
+                          << g_state.config.upsampleRatio << "x upsampling)" << '\n';
+                std::cout << "  2. GPU Upsampler → ALSA → SMSL DAC (" << outputRateKHz
+                          << "kHz direct)" << '\n';
+            }
+            std::cout << "Press Ctrl+C to stop." << '\n';
+            std::cout << "========================================" << '\n';
+
+            shutdownManager.notifyReady();
+
+            auto runMainLoop = [&]() {
+                while (g_state.flags.running.load() && !g_state.flags.reloadRequested.load() &&
+                       !g_state.flags.zmqBindFailed.load()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    if (g_state.managers.streamingCacheManager) {
+                        (void)g_state.managers.streamingCacheManager->drainFlushRequests();
+                    }
+                    // Input rate follow-up hook (Issue #906; network-driven detection is #824)
+                    int pending =
+                        g_state.rates.pendingRateChange.exchange(0, std::memory_order_acq_rel);
+                    if (pending > 0 && (pending == 44100 || pending == 48000)) {
+                        (void)handle_rate_switch(pending);
+                    }
+                    shutdownManager.tick();
+                }
+            };
+
+            if (g_state.flags.zmqBindFailed.load()) {
+                std::cerr << "Startup aborted due to ZeroMQ bind failure." << '\n';
+            } else {
+                runMainLoop();
+            }
         }
 
         shutdownManager.runShutdownSequence();

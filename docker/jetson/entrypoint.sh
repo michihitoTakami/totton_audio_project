@@ -52,10 +52,11 @@ wait_for_alsa() {
     local start
     start="$(date +%s)"
     while true; do
-        if [[ -d "/dev/snd" ]] && [[ -r "/proc/asound/cards" ]]; then
-            # Require at least one card line.
-            if grep -qE '^[[:space:]]*[0-9]+[[:space:]]+\[' /proc/asound/cards 2>/dev/null; then
-                log_info "ALSA cards detected"
+        # /proc/asound はコンテナ環境によっては見えない/空になることがあるため、
+        # /dev/snd のデバイスノードを主判定にする。
+        if [[ -d "/dev/snd" ]]; then
+            if ls /dev/snd/controlC* >/dev/null 2>&1; then
+                log_info "ALSA devices detected (/dev/snd/controlC*)"
                 return 0
             fi
         fi
@@ -83,47 +84,37 @@ _find_card_index_by_id() {
     ' /proc/asound/cards 2>/dev/null
 }
 
+_amixer_try_card() {
+    local card="$1"
+    if [[ -z "${card}" ]]; then
+        return 1
+    fi
+    # Avoid hangs (rt driver / kernel quirks) - best effort.
+    timeout 2 amixer -c "${card}" controls >/dev/null 2>&1
+}
+
 configure_jetson_ape_i2s() {
-    # Best-effort only: control names vary by L4T/kernel, and some environments don't expose APE.
+    # Best-effort only.
+    # First priority: do the simple thing (explicit APE card) and just log failures.
     if ! command -v amixer >/dev/null 2>&1; then
         log_warn "amixer not available; skipping APE/I2S routing"
         return 0
     fi
-    local ape
-    ape="$(_find_card_index_by_id "APE" || true)"
-    if [[ -z "${ape}" ]]; then
-        # Some systems may expose "ape" / "tegra-ape"
-        ape="$(_find_card_index_by_id "ape" || true)"
-    fi
-    if [[ -z "${ape}" ]]; then
-        ape="$(_find_card_index_by_id "tegra-ape" || true)"
-    fi
-    if [[ -z "${ape}" ]]; then
-        log_warn "ALSA card 'APE' not found; skipping APE/I2S routing"
-        return 0
-    fi
+    local ape="${MAGICBOX_APE_CARD:-APE}"
 
     log_info "Applying Jetson APE/I2S routing (card=${ape})..."
 
-    # Helper to apply a cset only if the control exists.
-    _cset_if_exists() {
-        local name="$1"
-        local value="$2"
-        if amixer -c "${ape}" cget name="${name}" >/dev/null 2>&1; then
-            if amixer -c "${ape}" cset name="${name}" "${value}" >/dev/null 2>&1; then
-                log_info "amixer: set '${name}' = '${value}'"
-            else
-                log_warn "amixer: failed to set '${name}' = '${value}'"
-            fi
-        else
-            log_warn "amixer: control not found: '${name}' (skipped)"
-        fi
-    }
+    # NOTE: First, apply routing.
+    if timeout 2 amixer -c "${ape}" cset name="ADMAIF1 Mux" "I2S2" >/dev/null 2>&1; then
+        log_info "amixer: ADMAIF1 Mux = I2S2"
+    else
+        log_warn "amixer failed: ADMAIF1 Mux = I2S2 (skipped)"
+        timeout 2 amixer -c "${ape}" cset name="ADMAIF1 Mux" "I2S2" || true
+    fi
 
-    # Recommended sequence for I2S2 RX (Issue #961)
-    _cset_if_exists "ADMAIF1 Mux" "I2S2"
-    _cset_if_exists "I2S2 codec master mode" "cbm-cfm"
-    _cset_if_exists "I2S2 codec frame mode" "i2s"
+    # Then, just report current modes (debug visibility).
+    timeout 2 amixer -c "${ape}" cget name="I2S2 codec master mode" || true
+    timeout 2 amixer -c "${ape}" cget name="I2S2 codec frame mode" || true
 }
 
 prepare_config() {
