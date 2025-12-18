@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from web.main import app
+from web.main import create_app
 from web.services.rtp_input import (
     get_rtp_receiver_manager,
     load_default_settings,
@@ -36,6 +36,7 @@ class _FakeManager:
 
 def test_rtp_status_and_start_stop(monkeypatch):
     manager = _FakeManager()
+    app = create_app(enable_rtp=True)
     app.dependency_overrides[get_rtp_receiver_manager] = lambda: manager
 
     client = TestClient(app)
@@ -56,6 +57,7 @@ def test_rtp_status_and_start_stop(monkeypatch):
 
 def test_rtp_config_update(monkeypatch):
     manager = _FakeManager()
+    app = create_app(enable_rtp=True)
     app.dependency_overrides[get_rtp_receiver_manager] = lambda: manager
 
     client = TestClient(app)

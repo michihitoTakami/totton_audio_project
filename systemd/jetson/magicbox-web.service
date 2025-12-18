@@ -13,6 +13,10 @@ Type=simple
 User=magicbox
 Group=magicbox
 
+# RTP はコードとして残すが、I2Sメイン運用ではデフォルトで無効化する
+Environment=MAGICBOX_ENABLE_RTP=false
+Environment=MAGICBOX_RTP_AUTOSTART=false
+
 # Execution
 WorkingDirectory=/opt/magicbox
 ExecStart=/opt/magicbox/venv/bin/uvicorn web.main:app \

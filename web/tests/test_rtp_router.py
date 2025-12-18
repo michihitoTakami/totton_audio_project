@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from web.main import app
+from web.main import create_app
 from web.models import RtpBridgeStatus, RtpLatencyResponse
 from web.routers import rtp as rtp_router
 from web.services.rtp_bridge_client import (
@@ -49,6 +49,7 @@ def test_rtp_status_success(monkeypatch):
         rtp_router, "get_rtp_bridge_client", lambda: _FakeBridgeClient(status=expected)
     )
 
+    app = create_app(enable_rtp=True)
     client = TestClient(app)
     resp = client.get("/api/rtp/status")
     assert resp.status_code == 200
@@ -66,6 +67,7 @@ def test_rtp_latency_success(monkeypatch):
         ),
     )
 
+    app = create_app(enable_rtp=True)
     client = TestClient(app)
     resp = client.post("/api/rtp/latency", json={"latency_ms": 150})
     assert resp.status_code == 200
@@ -79,6 +81,7 @@ def test_rtp_latency_connection_error(monkeypatch):
         lambda: _FakeBridgeClient(error=RtpBridgeConnectionError("down")),
     )
 
+    app = create_app(enable_rtp=True)
     client = TestClient(app)
     resp = client.post("/api/rtp/latency", json={"latency_ms": 120})
     assert resp.status_code == 502
@@ -91,6 +94,7 @@ def test_rtp_latency_bridge_error(monkeypatch):
         lambda: _FakeBridgeClient(error=RtpBridgeResponseError("bad request")),
     )
 
+    app = create_app(enable_rtp=True)
     client = TestClient(app)
     resp = client.post("/api/rtp/latency", json={"latency_ms": 9})
     # request validation runs first, so ensure valid input to trigger bridge error

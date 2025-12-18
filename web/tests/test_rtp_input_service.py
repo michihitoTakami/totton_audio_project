@@ -30,7 +30,8 @@ def test_build_gst_command_supports_encodings():
     assert any("rtcp" in part for part in l24)
     l24_str = " ".join(l24)
     # sink -> src を '!' で連結している
-    assert "rtpbin.recv_rtp_src_0 !" in l24_str
+    assert "rtpbin.recv_rtp_sink_0" in l24_str
+    assert "rtpbin. !" in l24_str
 
 
 def test_config_update_merges_and_validates():
