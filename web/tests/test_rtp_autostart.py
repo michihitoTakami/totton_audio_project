@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from web.main import app
+from web.main import create_app
 from web.services.rtp_input import get_rtp_receiver_manager
 
 
@@ -16,19 +16,41 @@ class _SpyRtpManager:
         self.shutdown_called += 1
 
 
-def _make_client(monkeypatch, autostart_env: str | None):
+def _make_client(monkeypatch, autostart_env: str | None, enable_env: str | None):
     manager = _SpyRtpManager()
     if autostart_env is None:
         monkeypatch.delenv("MAGICBOX_RTP_AUTOSTART", raising=False)
     else:
         monkeypatch.setenv("MAGICBOX_RTP_AUTOSTART", autostart_env)
+
+    enable_rtp = enable_env is not None and enable_env.strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    app = create_app(enable_rtp=enable_rtp)
     app.dependency_overrides[get_rtp_receiver_manager] = lambda: manager
     client = TestClient(app)
-    return client, manager
+    return client, manager, app
 
 
-def test_autostart_enabled_by_default(monkeypatch):
-    client, manager = _make_client(monkeypatch, autostart_env=None)
+def test_autostart_disabled_by_default(monkeypatch):
+    client, manager, app = _make_client(
+        monkeypatch, autostart_env=None, enable_env=None
+    )
+    try:
+        with client:
+            assert manager.start_called == 0
+        assert manager.shutdown_called == 0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_autostart_can_be_enabled(monkeypatch):
+    client, manager, app = _make_client(
+        monkeypatch, autostart_env="true", enable_env="true"
+    )
     try:
         with client:
             assert manager.start_called == 1
@@ -37,8 +59,10 @@ def test_autostart_enabled_by_default(monkeypatch):
         app.dependency_overrides.clear()
 
 
-def test_autostart_can_be_disabled(monkeypatch):
-    client, manager = _make_client(monkeypatch, autostart_env="false")
+def test_autostart_can_be_disabled_even_if_enabled(monkeypatch):
+    client, manager, app = _make_client(
+        monkeypatch, autostart_env="false", enable_env="true"
+    )
     try:
         with client:
             assert manager.start_called == 0
