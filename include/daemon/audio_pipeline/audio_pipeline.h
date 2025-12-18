@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace audio_pipeline {
@@ -87,6 +88,7 @@ class AudioPipeline {
     void requestRtPause();
     void resumeRtPause();
     bool waitForRtPaused(std::chrono::milliseconds timeout) const;
+    bool waitForRtQuiescent(std::chrono::milliseconds timeout) const;
     RenderResult renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,
                               std::vector<float>& floatScratch, SoftMute::Controller* softMute);
     void trimOutputBuffer(size_t minFramesToRemove);
@@ -109,6 +111,7 @@ class AudioPipeline {
                                                         std::chrono::seconds(6)};
     std::atomic<int> pauseRequestCount_{0};
     std::atomic<bool> rtPaused_{false};
+    std::atomic<bool> rtInProcess_{false};
     bool lastCrossfeedEnabledApplied_ = false;
 
     // RT パスで毎回 std::vector を生成しないためのワークバッファ (Issue #894)

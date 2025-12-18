@@ -41,6 +41,16 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
 }
 
 bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
+    struct RtScopeGuard {
+        std::atomic<bool>& flag;
+        explicit RtScopeGuard(std::atomic<bool>& f) : flag(f) {
+            flag.store(true, std::memory_order_release);
+        }
+        ~RtScopeGuard() {
+            flag.store(false, std::memory_order_release);
+        }
+    } rtScope(rtInProcess_);
+
     if (!inputSamples || nFrames == 0 || !isUpsamplerAvailable() || !hasBufferState() ||
         !deps_.streamInputLeft || !deps_.streamInputRight || !deps_.streamAccumulatedLeft ||
         !deps_.streamAccumulatedRight || !deps_.upsamplerOutputLeft ||
@@ -51,6 +61,9 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     const bool pauseRequested = (pauseRequestCount_.load(std::memory_order_acquire) > 0);
     rtPaused_.store(pauseRequested, std::memory_order_release);
 
+    const bool cacheFlushPending =
+        deps_.streamingCacheManager && deps_.streamingCacheManager->hasPendingFlush();
+
     if (!pauseRequested && deps_.streamingCacheManager) {
         deps_.streamingCacheManager->handleInputBlock();
     }
@@ -60,7 +73,7 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         return false;
     }
 
-    if (pauseRequested) {
+    if (pauseRequested || cacheFlushPending) {
         // RT 側はブロッキングせず、要求中は無音を供給してタイムラインを維持する。
         if (!deps_.config || !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
             return false;
@@ -258,6 +271,21 @@ bool AudioPipeline::waitForRtPaused(std::chrono::milliseconds timeout) const {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return rtPaused_.load(std::memory_order_acquire);
+}
+
+bool AudioPipeline::waitForRtQuiescent(std::chrono::milliseconds timeout) const {
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < timeout) {
+        if (rtPaused_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        if (!rtInProcess_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return rtPaused_.load(std::memory_order_acquire) ||
+           !rtInProcess_.load(std::memory_order_acquire);
 }
 
 RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,

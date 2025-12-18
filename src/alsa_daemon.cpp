@@ -278,13 +278,20 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
     }
 
     // Perform filter switch while fade-out is progressing
+    bool pauseOk = true;
     if (g_state.audioPipeline) {
         g_state.audioPipeline->requestRtPause();
-        if (!g_state.audioPipeline->waitForRtPaused(std::chrono::milliseconds(500))) {
-            LOG_WARN("[Filter Switch] RT pause handshake timed out (continuing)");
+        pauseOk = g_state.audioPipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
+        if (!pauseOk) {
+            LOG_ERROR("[Filter Switch] RT pause handshake timed out (aborting switch)");
         }
     }
-    bool switch_success = filterSwitchFunc();
+
+    bool switch_success = false;
+    if (pauseOk) {
+        switch_success = filterSwitchFunc();
+    }
+
     if (g_state.audioPipeline) {
         g_state.audioPipeline->resumeRtPause();
     }
@@ -457,9 +464,27 @@ static void reset_crossfeed_stream_state_locked() {
 
 static void initialize_streaming_cache_manager() {
     streaming_cache::StreamingCacheDependencies deps;
-    deps.flushAction = [](std::chrono::nanoseconds /*gap*/) {
+    deps.flushAction = [](std::chrono::nanoseconds /*gap*/) -> bool {
         // DAC 切断/入力ギャップ後の復帰で「古いオーバーラップ状態」を引きずらないよう、
-        // 次のRTブロック処理内でキャッシュをまとめてフラッシュする。
+        // 制御系スレッドで RT を静止させた上でキャッシュをフラッシュする。
+        if (g_state.audioPipeline) {
+            g_state.audioPipeline->requestRtPause();
+            if (!g_state.audioPipeline->waitForRtQuiescent(std::chrono::milliseconds(500))) {
+                g_state.audioPipeline->resumeRtPause();
+                return false;
+            }
+        }
+
+        struct RtPauseReleaseGuard {
+            audio_pipeline::AudioPipeline* pipeline = nullptr;
+            explicit RtPauseReleaseGuard(audio_pipeline::AudioPipeline* p) : pipeline(p) {}
+            ~RtPauseReleaseGuard() {
+                if (pipeline) {
+                    pipeline->resumeRtPause();
+                }
+            }
+        } pauseRelease(g_state.audioPipeline.get());
+
         if (g_state.softMute.controller) {
             g_state.softMute.controller->startFadeOut();
         }
@@ -491,6 +516,7 @@ static void initialize_streaming_cache_manager() {
         if (g_state.softMute.controller) {
             g_state.softMute.controller->startFadeIn();
         }
+        return true;
     };
     g_state.managers.streamingCacheManager =
         std::make_unique<streaming_cache::StreamingCacheManager>(deps);
@@ -774,12 +800,15 @@ static bool handle_rate_switch(int newInputRate) {
 
     struct RtPauseGuard {
         audio_pipeline::AudioPipeline* pipeline = nullptr;
+        bool ok = true;
         explicit RtPauseGuard(audio_pipeline::AudioPipeline* p) : pipeline(p) {
-            if (pipeline) {
-                pipeline->requestRtPause();
-                if (!pipeline->waitForRtPaused(std::chrono::milliseconds(500))) {
-                    LOG_WARN("[Rate] RT pause handshake timed out (continuing)");
-                }
+            if (!pipeline) {
+                return;
+            }
+            pipeline->requestRtPause();
+            ok = pipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
+            if (!ok) {
+                LOG_ERROR("[Rate] RT pause handshake timed out (aborting rate switch)");
             }
         }
         ~RtPauseGuard() {
@@ -788,6 +817,13 @@ static bool handle_rate_switch(int newInputRate) {
             }
         }
     } pauseGuard(g_state.audioPipeline.get());
+
+    if (!pauseGuard.ok) {
+        if (g_state.softMute.controller) {
+            g_state.softMute.controller->setPlaying();
+        }
+        return false;
+    }
 
     {
         std::lock_guard<std::mutex> streamLock(g_state.streaming.streamingMutex);
@@ -2213,6 +2249,9 @@ int main(int argc, char* argv[]) {
             while (g_state.flags.running.load() && !g_state.flags.reloadRequested.load() &&
                    !g_state.flags.zmqBindFailed.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (g_state.managers.streamingCacheManager) {
+                    (void)g_state.managers.streamingCacheManager->drainFlushRequests();
+                }
                 // Input rate follow-up hook (Issue #906; network-driven detection is #824)
                 int pending =
                     g_state.rates.pendingRateChange.exchange(0, std::memory_order_acq_rel);

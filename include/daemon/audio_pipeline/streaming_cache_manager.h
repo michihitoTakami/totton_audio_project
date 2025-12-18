@@ -8,13 +8,13 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
-#include <thread>
 
 namespace streaming_cache {
 
 struct StreamingCacheDependencies {
-    // RT スレッドで実行される。ブロッキング/長時間処理は避けること。
-    std::function<void(std::chrono::nanoseconds gap)> flushAction;
+    // 非RTスレッドで実行される。重いリセット/ロック取得はここで行う。
+    // 戻り値=false の場合、flush は未完了として次の drain で再試行される。
+    std::function<bool(std::chrono::nanoseconds gap)> flushAction;
 };
 
 class StreamingCacheManager {
@@ -30,25 +30,22 @@ class StreamingCacheManager {
             std::int64_t expected = 0;
             (void)firstInputTimestampNs_.compare_exchange_strong(expected, nowNs,
                                                                  std::memory_order_acq_rel);
-            // 外部フラッシュ要求だけは初回でも処理できる
-            maybeFlushExternal(std::chrono::nanoseconds::zero());
             return;
         }
 
         std::int64_t startNs = firstInputTimestampNs_.load(std::memory_order_acquire);
         if (startNs > 0 && (nowNs - startNs) < kInitialStallGraceNs) {
             // 起動直後のギャップは無視してポップノイズを回避
-            maybeFlushExternal(std::chrono::nanoseconds::zero());
             return;
         }
 
         if (AudioInput::shouldResetAfterStall(previousNs, nowNs)) {
             std::chrono::nanoseconds gap(nowNs - previousNs);
-            flushInternal(gap);
+            flushCaches(gap);
             return;
         }
 
-        maybeFlushExternal(std::chrono::nanoseconds::zero());
+        // Non-RT thread will drain pending flush requests.
     }
 
     void flushCaches(std::chrono::nanoseconds gap = std::chrono::nanoseconds::zero()) {
@@ -56,29 +53,40 @@ class StreamingCacheManager {
         externalFlushRequested_.store(true, std::memory_order_release);
     }
 
-   private:
-    void maybeFlushExternal(std::chrono::nanoseconds fallbackGap) {
-        if (!externalFlushRequested_.exchange(false, std::memory_order_acq_rel)) {
-            return;
-        }
-        std::int64_t gapNs = pendingGapNs_.exchange(0, std::memory_order_acq_rel);
-        std::chrono::nanoseconds gap(gapNs > 0 ? gapNs : fallbackGap.count());
-        flushInternal(gap);
+    bool hasPendingFlush() const {
+        return externalFlushRequested_.load(std::memory_order_acquire);
     }
 
-    void flushInternal(std::chrono::nanoseconds gap) {
-        // リセット後に再度グレース期間を適用するため、入力タイムスタンプを初期化
+    // Call from a non-RT thread (e.g., main loop).
+    bool drainFlushRequests() {
+        if (!externalFlushRequested_.load(std::memory_order_acquire)) {
+            return false;
+        }
+
+        std::int64_t gapNs = pendingGapNs_.exchange(0, std::memory_order_acq_rel);
+        std::chrono::nanoseconds gap(gapNs > 0 ? gapNs : 0);
+
+        // Reset timestamps so a fresh grace window applies after flush.
         lastInputTimestampNs_.store(0, std::memory_order_release);
         firstInputTimestampNs_.store(0, std::memory_order_release);
 
+        bool ok = true;
         if (deps_.flushAction) {
-            deps_.flushAction(gap);
+            ok = deps_.flushAction(gap);
         }
-
-        double gapMs = static_cast<double>(gap.count()) / 1'000'000.0;
-        LOG_INFO("[Stream] Input gap {:.3f}ms detected → flushing streaming cache", gapMs);
+        if (ok) {
+            externalFlushRequested_.store(false, std::memory_order_release);
+            double gapMs = static_cast<double>(gap.count()) / 1'000'000.0;
+            LOG_INFO("[Stream] Flush requested (gap {:.3f}ms) → completed", gapMs);
+        } else {
+            externalFlushRequested_.store(true, std::memory_order_release);
+            pendingGapNs_.store(static_cast<std::int64_t>(gap.count()), std::memory_order_release);
+            LOG_WARN("[Stream] Flush requested but could not complete (will retry)");
+        }
+        return true;
     }
 
+   private:
     StreamingCacheDependencies deps_;
     std::atomic<std::int64_t> lastInputTimestampNs_{0};
     std::atomic<std::int64_t> firstInputTimestampNs_{0};
