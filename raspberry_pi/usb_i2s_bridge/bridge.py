@@ -26,7 +26,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import IO, Optional, Tuple
 
 from .control_plane import ControlPlaneSync
 
@@ -65,6 +65,15 @@ _ALSA_TO_GST_FORMAT: dict[str, str] = {
     "S16_BE": "S16BE",
     "S24_3BE": "S24BE",
     "S32_BE": "S32BE",
+}
+
+_ALSA_BYTES_PER_SAMPLE: dict[str, int] = {
+    "S16_LE": 2,
+    "S24_3LE": 3,
+    "S32_LE": 4,
+    "S16_BE": 2,
+    "S24_3BE": 3,
+    "S32_BE": 4,
 }
 
 
@@ -156,16 +165,69 @@ def _env_path(name: str, default: Path | None) -> Path | None:
     return Path(raw)
 
 
+def _resolve_card_index(card_id: str) -> Optional[int]:
+    """ALSA card ID (e.g. 'UAC2Gadget') -> card number.
+
+    - /proc/asound/cards の [ID] 部分を優先
+    - 読めない/見つからない場合は None
+    """
+    wanted = card_id.strip()
+    if not wanted:
+        return None
+    try:
+        text = Path("/proc/asound/cards").read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*(\d+)\s+\[(?P<id>[^\]]+)\]", line)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        cid = m.group("id").strip()
+        if cid == wanted:
+            return idx
+    return None
+
+
+def _parse_alsa_hw_device(device: str) -> Optional[tuple[int, int]]:
+    """ALSA device string -> (card, pcm).
+
+    Supported:
+    - hw:2,0 / plughw:2,0
+    - hw:Pi2Jetson,0
+    - hw:CARD=UAC2Gadget,DEV=0 (and plughw:...)
+    """
+    # hw:2,0
+    m = re.match(r"^(?:plughw:|hw:)(?P<card>\d+),(?P<pcm>\d+)$", device)
+    if m:
+        return int(m.group("card")), int(m.group("pcm"))
+
+    # hw:CARD=UAC2Gadget,DEV=0
+    m = re.match(
+        r"^(?:plughw:|hw:)(?:CARD=)?(?P<card>[^,]+),(?:DEV=)?(?P<pcm>\d+)$",
+        device,
+    )
+    if not m:
+        return None
+    card_raw = m.group("card").strip()
+    pcm = int(m.group("pcm"))
+    if card_raw.isdigit():
+        return int(card_raw), pcm
+    idx = _resolve_card_index(card_raw)
+    if idx is None:
+        return None
+    return idx, pcm
+
+
 def _hw_params_path(device: str, stream: str) -> Optional[Path]:
     """ALSA device string -> /proc/asound/.../hw_params.
 
     stream: 'c' for capture, 'p' for playback
     """
-    match = re.match(r"^(?:plughw:|hw:)(?P<card>\\d+),(?P<pcm>\\d+)", device)
-    if not match:
+    parsed = _parse_alsa_hw_device(device)
+    if parsed is None:
         return None
-    card = match.group("card")
-    pcm = match.group("pcm")
+    card, pcm = parsed
     return Path(f"/proc/asound/card{card}/pcm{pcm}{stream}/sub0/hw_params")
 
 
@@ -175,11 +237,10 @@ def _pcm_device_node(device: str, stream: str) -> Optional[Path]:
     電源断復帰やUSB抜き差しなどでは hw_params が "closed" のままでも、
     デバイスノードの出現で「デバイスとして存在する」ことは判定できる。
     """
-    match = re.match(r"^(?:plughw:|hw:)(?P<card>\d+),(?P<pcm>\d+)", device)
-    if not match:
+    parsed = _parse_alsa_hw_device(device)
+    if parsed is None:
         return None
-    card = match.group("card")
-    pcm = match.group("pcm")
+    card, pcm = parsed
     suffix = "c" if stream == "c" else "p"
     return Path(f"/dev/snd/pcmC{card}D{pcm}{suffix}")
 
@@ -379,6 +440,404 @@ def build_gst_launch_command(
         "async=false",
     ]
     return pipeline
+
+
+def _alsa_bytes_per_sample(fmt: str) -> int:
+    return _ALSA_BYTES_PER_SAMPLE.get(fmt, 4)
+
+
+def _as_plughw(device: str) -> str:
+    # ALSA plugin layer for format/rate conversion
+    if device.startswith("hw:"):
+        return f"plughw:{device[3:]}"
+    if device.startswith("plughw:"):
+        return device
+    return device
+
+
+def _build_arecord_command(
+    cfg: UsbI2sBridgeConfig, *, sample_rate: int, alsa_format: str, conversion: bool
+) -> list[str]:
+    dev = _as_plughw(cfg.capture_device) if conversion else cfg.capture_device
+    # NOTE: -t raw でヘッダ無しPCM
+    return [
+        "arecord",
+        "-q",
+        "-D",
+        dev,
+        "-t",
+        "raw",
+        "-c",
+        str(cfg.channels),
+        "-r",
+        str(int(sample_rate)),
+        "-f",
+        str(alsa_format),
+        "--buffer-time",
+        str(int(cfg.alsa_buffer_time_us)),
+        "--period-time",
+        str(int(cfg.alsa_latency_time_us)),
+    ]
+
+
+def _build_aplay_command(
+    cfg: UsbI2sBridgeConfig, *, sample_rate: int, alsa_format: str, conversion: bool
+) -> list[str]:
+    dev = _as_plughw(cfg.playback_device) if conversion else cfg.playback_device
+    return [
+        "aplay",
+        "-q",
+        "-D",
+        dev,
+        "-t",
+        "raw",
+        "-c",
+        str(cfg.channels),
+        "-r",
+        str(int(sample_rate)),
+        "-f",
+        str(alsa_format),
+        "--buffer-time",
+        str(int(cfg.alsa_buffer_time_us)),
+        "--period-time",
+        str(int(cfg.alsa_latency_time_us)),
+    ]
+
+
+def _terminate_process(
+    proc: subprocess.Popen | None, *, timeout_sec: float = 2.0
+) -> None:
+    if proc is None:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=timeout_sec)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _run_with_arecord_aplay(
+    cfg: UsbI2sBridgeConfig, control: ControlPlaneSync | None = None
+) -> None:
+    """arecord|aplay パイプでUSB->I2Sを維持しつつ、切断時も自動復旧する.
+
+    - GStreamer を使わず、標準 ALSA ツールでシンプルに構成する（Issue #919）
+    - USB切断/復帰や XRUN で落ちても再起動
+    - keep_silence=true の場合、入力が無い時はサイレンス送出で I2S を維持
+    """
+    cfg.validate()
+
+    # 状態
+    last_rate = int(cfg.fallback_rate)
+    last_observed_capture_format: Optional[str] = None
+    current_mode = "none"  # capture / silence / none
+    current_rate = int(cfg.fallback_rate)
+    current_fmt = str(cfg.preferred_format)
+    conversion_enabled = not cfg.passthrough
+
+    aplay_proc: subprocess.Popen | None = None
+    arecord_proc: subprocess.Popen | None = None
+    arecord_out: IO[bytes] | None = None
+    aplay_in: IO[bytes] | None = None
+
+    def _write_status(mode: str, rate: int, fmt: str) -> None:
+        if cfg.status_path:
+            _persist_status(
+                cfg.status_path,
+                running=(mode != "none"),
+                mode=mode if mode != "none" else "none",
+                sample_rate=rate,
+                alsa_format=fmt,
+                channels=cfg.channels,
+            )
+        if control:
+            control.update_local(
+                running=(mode != "none"),
+                mode=mode if mode != "none" else "none",
+                sample_rate=rate,
+                fmt=fmt,
+                channels=cfg.channels,
+            )
+
+    def _restart_aplay(*, rate: int, fmt: str, conversion: bool) -> None:
+        nonlocal aplay_proc, aplay_in, current_rate, current_fmt
+        _terminate_process(aplay_proc)
+        aplay_proc = None
+        aplay_in = None
+        cmd = _build_aplay_command(
+            cfg, sample_rate=rate, alsa_format=fmt, conversion=conversion
+        )
+        if cfg.dry_run:
+            print(f"[usb_i2s_bridge] aplay cmd: {' '.join(cmd)}")
+            return
+        print(
+            f"[usb_i2s_bridge] start aplay rate={rate} fmt={fmt} conversion={conversion} cmd={' '.join(cmd)}"
+        )
+        try:
+            aplay_proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+            assert aplay_proc.stdin is not None
+            aplay_in = aplay_proc.stdin
+            current_rate = int(rate)
+            current_fmt = str(fmt)
+        except FileNotFoundError as e:
+            print(f"[usb_i2s_bridge] aplay not found: {e}; retrying")
+            aplay_proc = None
+            aplay_in = None
+        except Exception as e:
+            print(f"[usb_i2s_bridge] failed to start aplay: {e}; retrying")
+            aplay_proc = None
+            aplay_in = None
+
+    def _restart_arecord(*, rate: int, fmt: str, conversion: bool) -> None:
+        nonlocal arecord_proc, arecord_out
+        _terminate_process(arecord_proc)
+        arecord_proc = None
+        arecord_out = None
+        cmd = _build_arecord_command(
+            cfg, sample_rate=rate, alsa_format=fmt, conversion=conversion
+        )
+        if cfg.dry_run:
+            print(f"[usb_i2s_bridge] arecord cmd: {' '.join(cmd)}")
+            return
+        print(
+            f"[usb_i2s_bridge] start arecord rate={rate} fmt={fmt} conversion={conversion} cmd={' '.join(cmd)}"
+        )
+        try:
+            arecord_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            assert arecord_proc.stdout is not None
+            arecord_out = arecord_proc.stdout
+        except FileNotFoundError as e:
+            print(f"[usb_i2s_bridge] arecord not found: {e}; retrying")
+            arecord_proc = None
+            arecord_out = None
+        except Exception as e:
+            print(f"[usb_i2s_bridge] failed to start arecord: {e}; retrying")
+            arecord_proc = None
+            arecord_out = None
+
+    def _stop_arecord() -> None:
+        nonlocal arecord_proc, arecord_out
+        _terminate_process(arecord_proc)
+        arecord_proc = None
+        arecord_out = None
+
+    def _stop_all() -> None:
+        nonlocal aplay_proc, aplay_in
+        _stop_arecord()
+        _terminate_process(aplay_proc)
+        aplay_proc = None
+        aplay_in = None
+
+    def _handle_term(signum: int, frame) -> None:  # noqa: ANN001
+        _ = signum, frame
+        _stop_all()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_term)
+    signal.signal(signal.SIGINT, _handle_term)
+
+    # 初期: keep_silence=true ならサイレンスで I2S を立ち上げる
+    if cfg.keep_silence_when_no_capture:
+        current_mode = "silence"
+        _restart_aplay(
+            rate=current_rate, fmt=current_fmt, conversion=conversion_enabled
+        )
+        _write_status(current_mode, current_rate, current_fmt)
+
+    # 送出チャンク（小さめにして、切断検知/再起動の反応性を上げる）
+    chunk_ms = 10
+    next_poll = 0.0
+
+    while True:
+        now = time.monotonic()
+        if now >= next_poll:
+            capture_present = _device_present(cfg.capture_device, "c")
+            rate, fmt = _probe_capture_params(cfg.capture_device)
+            capture_allowed = control.capture_allowed() if control else True
+
+            if not capture_present and not cfg.keep_silence_when_no_capture:
+                desired_mode = "none"
+            else:
+                desired_mode = (
+                    "capture" if capture_present and capture_allowed else "silence"
+                )
+
+            if rate is not None:
+                last_rate = int(rate)
+            elif capture_present and desired_mode == "capture":
+                # デバイスはあるが hw_params がまだ取れない場合は一旦フォールバック
+                last_rate = int(cfg.fallback_rate)
+
+            if fmt is not None:
+                last_observed_capture_format = fmt
+
+            # passthrough で未確定な段階は conversion（plughw + preferred）で安全に立ち上げる
+            if (
+                cfg.passthrough
+                and desired_mode == "capture"
+                and (rate is None or fmt is None)
+            ):
+                conversion_enabled = True
+
+            # hw_params が揃ったら passthrough を試す（失敗時はプロセス異常終了で conversion に戻す）
+            if (
+                cfg.passthrough
+                and desired_mode == "capture"
+                and conversion_enabled
+                and rate is not None
+                and fmt is not None
+            ):
+                conversion_enabled = False
+
+            desired_rate = int(last_rate)
+            if desired_mode == "capture" and cfg.passthrough and not conversion_enabled:
+                desired_fmt = str(
+                    fmt or last_observed_capture_format or cfg.preferred_format
+                )
+            else:
+                desired_fmt = str(cfg.preferred_format)
+
+            if capture_present and not capture_allowed:
+                print(
+                    "[usb_i2s_bridge] peer not synced; holding capture and sending silence"
+                )
+
+            if cfg.dry_run:
+                print(
+                    f"[usb_i2s_bridge] mode={desired_mode} rate={desired_rate} fmt={desired_fmt} "
+                    f"passthrough={cfg.passthrough} conversion={conversion_enabled}"
+                )
+                _restart_aplay(
+                    rate=desired_rate, fmt=desired_fmt, conversion=conversion_enabled
+                )
+                if desired_mode == "capture":
+                    _restart_arecord(
+                        rate=desired_rate,
+                        fmt=desired_fmt,
+                        conversion=conversion_enabled,
+                    )
+                return
+
+            # aplay は必ず起動（none 以外）
+            if desired_mode == "none":
+                if current_mode != "none":
+                    print(
+                        "[usb_i2s_bridge] no capture and keep_silence=false; stopping"
+                    )
+                    _stop_all()
+                    current_mode = "none"
+                    _write_status(current_mode, current_rate, current_fmt)
+                next_poll = now + cfg.poll_interval_sec
+                time.sleep(cfg.poll_interval_sec)
+                continue
+
+            need_restart_aplay = (
+                aplay_proc is None
+                or aplay_proc.poll() is not None
+                or current_rate != desired_rate
+                or current_fmt != desired_fmt
+            )
+            if need_restart_aplay:
+                # aplay が passthrough 形式を受け付けずに即死するケースでは、
+                # plughw + preferred_format へ切り替えて継続送出する（最優先は安定動作）
+                if (
+                    aplay_proc is not None
+                    and aplay_proc.poll() is not None
+                    and cfg.passthrough
+                    and not conversion_enabled
+                ):
+                    rc = aplay_proc.poll()
+                    print(
+                        "[usb_i2s_bridge] aplay exited unexpectedly in passthrough; "
+                        f"enabling conversion fallback rc={rc}"
+                    )
+                    conversion_enabled = True
+                    desired_fmt = str(cfg.preferred_format)
+                _restart_aplay(
+                    rate=desired_rate, fmt=desired_fmt, conversion=conversion_enabled
+                )
+
+            # arecord は capture の時だけ起動
+            if desired_mode == "capture":
+                need_restart_arecord = (
+                    arecord_proc is None or arecord_proc.poll() is not None
+                )
+                if need_restart_arecord:
+                    _restart_arecord(
+                        rate=desired_rate,
+                        fmt=desired_fmt,
+                        conversion=conversion_enabled,
+                    )
+            else:
+                _stop_arecord()
+
+            current_mode = desired_mode
+            _write_status(current_mode, desired_rate, desired_fmt)
+            next_poll = now + cfg.poll_interval_sec
+
+        # 出力先が無ければ待つ
+        if aplay_in is None or aplay_proc is None or aplay_proc.poll() is not None:
+            # ここでも passthrough での即死を拾って安全側へ倒す
+            if (
+                aplay_proc is not None
+                and aplay_proc.poll() is not None
+                and cfg.passthrough
+                and not conversion_enabled
+            ):
+                rc = aplay_proc.poll()
+                print(
+                    "[usb_i2s_bridge] aplay exited unexpectedly; enabling conversion fallback "
+                    f"rc={rc}"
+                )
+                conversion_enabled = True
+                next_poll = 0.0
+            time.sleep(cfg.restart_backoff_sec)
+            continue
+
+        frame_bytes = int(cfg.channels) * _alsa_bytes_per_sample(current_fmt)
+        frames_per_chunk = max(1, int(current_rate * chunk_ms / 1000))
+        chunk_bytes = max(frame_bytes, frames_per_chunk * frame_bytes)
+
+        try:
+            if (
+                current_mode == "capture"
+                and arecord_out is not None
+                and arecord_proc is not None
+            ):
+                data = arecord_out.read(chunk_bytes)
+                if not data:
+                    rc = arecord_proc.poll()
+                    print(
+                        f"[usb_i2s_bridge] arecord EOF/exit rc={rc}; switching to silence and restarting"
+                    )
+                    _stop_arecord()
+                    conversion_enabled = True  # 次回は安全側で起動
+                    current_mode = (
+                        "silence" if cfg.keep_silence_when_no_capture else "none"
+                    )
+                    time.sleep(cfg.restart_backoff_sec)
+                    continue
+                aplay_in.write(data)
+            else:
+                aplay_in.write(b"\x00" * chunk_bytes)
+        except BrokenPipeError:
+            print("[usb_i2s_bridge] aplay broken pipe; restarting")
+            _terminate_process(aplay_proc)
+            aplay_proc = None
+            aplay_in = None
+            if cfg.passthrough and not conversion_enabled:
+                conversion_enabled = True
+                next_poll = 0.0
+            time.sleep(cfg.restart_backoff_sec)
+        except OSError as e:
+            print(f"[usb_i2s_bridge] I/O error: {e}; restarting aplay/arecord")
+            _stop_all()
+            time.sleep(cfg.restart_backoff_sec)
 
 
 def _try_import_gi_gst():
@@ -627,7 +1086,7 @@ def _run_with_gi(
             return (
                 f"{src} ! queue max-size-time={self.cfg.queue_time_ns} "
                 f"max-size-bytes=0 max-size-buffers=0 ! {convert}"
-                f"{caps} ! volume name=vol volume=0.0 ! "
+                f"{caps} ! volume name=vol volume=1.0 ! "
                 f"alsasink device={self.cfg.playback_device} sync=true async=false"
             ), status_alsa_format
 
@@ -996,12 +1455,12 @@ def main(argv: list[str] | None = None) -> None:
     cfg = _parse_args(argv)
     cfg.validate()
 
-    # NOTE: GI が無い場合でも最低限動くようフォールバック実装を用意
+    # NOTE: Issue #919: GStreamer を経由せず arecord|aplay パイプで動かす
     control = _build_control_sync(cfg)
     if control:
         control.start()
     try:
-        _run_with_gi(cfg, control)
+        _run_with_arecord_aplay(cfg, control)
     finally:
         if control:
             control.stop()

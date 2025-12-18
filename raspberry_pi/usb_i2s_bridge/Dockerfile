@@ -4,17 +4,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libasound2 \
         alsa-utils \
-        gstreamer1.0-alsa \
-        gstreamer1.0-tools \
-        gstreamer1.0-plugins-base \
-        gstreamer1.0-plugins-good \
-        gstreamer1.0-plugins-bad \
-        gstreamer1.0-plugins-ugly \
         python3 \
         python3-zmq \
-        python3-gi \
-        gir1.2-gstreamer-1.0 \
-        gir1.2-gst-plugins-base-1.0 \
         ca-certificates \
         bash \
         util-linux \
@@ -31,8 +22,8 @@ RUN chmod +x /usr/local/bin/usb-i2s-bridge-entrypoint.sh
 ENV PYTHONPATH=/opt/usb-i2s-bridge:${PYTHONPATH}
 
 # Defaults (override via env / compose)
-ENV USB_I2S_CAPTURE_DEVICE=hw:2,0 \
-    USB_I2S_PLAYBACK_DEVICE=hw:0,0 \
+ENV USB_I2S_CAPTURE_DEVICE=hw:3,0 \
+    USB_I2S_PLAYBACK_DEVICE=hw:2,0 \
     USB_I2S_CHANNELS=2 \
     USB_I2S_FALLBACK_RATE=48000 \
     USB_I2S_PREFERRED_FORMAT=S32_LE \
