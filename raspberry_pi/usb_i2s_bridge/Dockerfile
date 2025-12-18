@@ -22,8 +22,8 @@ RUN chmod +x /usr/local/bin/usb-i2s-bridge-entrypoint.sh
 ENV PYTHONPATH=/opt/usb-i2s-bridge:${PYTHONPATH}
 
 # Defaults (override via env / compose)
-ENV USB_I2S_CAPTURE_DEVICE=hw:2,0 \
-    USB_I2S_PLAYBACK_DEVICE=hw:0,0 \
+ENV USB_I2S_CAPTURE_DEVICE=hw:3,0 \
+    USB_I2S_PLAYBACK_DEVICE=hw:2,0 \
     USB_I2S_CHANNELS=2 \
     USB_I2S_FALLBACK_RATE=48000 \
     USB_I2S_PREFERRED_FORMAT=S32_LE \

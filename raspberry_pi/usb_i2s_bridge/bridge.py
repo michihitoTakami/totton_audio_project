@@ -165,16 +165,69 @@ def _env_path(name: str, default: Path | None) -> Path | None:
     return Path(raw)
 
 
+def _resolve_card_index(card_id: str) -> Optional[int]:
+    """ALSA card ID (e.g. 'UAC2Gadget') -> card number.
+
+    - /proc/asound/cards の [ID] 部分を優先
+    - 読めない/見つからない場合は None
+    """
+    wanted = card_id.strip()
+    if not wanted:
+        return None
+    try:
+        text = Path("/proc/asound/cards").read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*(\d+)\s+\[(?P<id>[^\]]+)\]", line)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        cid = m.group("id").strip()
+        if cid == wanted:
+            return idx
+    return None
+
+
+def _parse_alsa_hw_device(device: str) -> Optional[tuple[int, int]]:
+    """ALSA device string -> (card, pcm).
+
+    Supported:
+    - hw:2,0 / plughw:2,0
+    - hw:Pi2Jetson,0
+    - hw:CARD=UAC2Gadget,DEV=0 (and plughw:...)
+    """
+    # hw:2,0
+    m = re.match(r"^(?:plughw:|hw:)(?P<card>\d+),(?P<pcm>\d+)$", device)
+    if m:
+        return int(m.group("card")), int(m.group("pcm"))
+
+    # hw:CARD=UAC2Gadget,DEV=0
+    m = re.match(
+        r"^(?:plughw:|hw:)(?:CARD=)?(?P<card>[^,]+),(?:DEV=)?(?P<pcm>\d+)$",
+        device,
+    )
+    if not m:
+        return None
+    card_raw = m.group("card").strip()
+    pcm = int(m.group("pcm"))
+    if card_raw.isdigit():
+        return int(card_raw), pcm
+    idx = _resolve_card_index(card_raw)
+    if idx is None:
+        return None
+    return idx, pcm
+
+
 def _hw_params_path(device: str, stream: str) -> Optional[Path]:
     """ALSA device string -> /proc/asound/.../hw_params.
 
     stream: 'c' for capture, 'p' for playback
     """
-    match = re.match(r"^(?:plughw:|hw:)(?P<card>\\d+),(?P<pcm>\\d+)", device)
-    if not match:
+    parsed = _parse_alsa_hw_device(device)
+    if parsed is None:
         return None
-    card = match.group("card")
-    pcm = match.group("pcm")
+    card, pcm = parsed
     return Path(f"/proc/asound/card{card}/pcm{pcm}{stream}/sub0/hw_params")
 
 
@@ -184,11 +237,10 @@ def _pcm_device_node(device: str, stream: str) -> Optional[Path]:
     電源断復帰やUSB抜き差しなどでは hw_params が "closed" のままでも、
     デバイスノードの出現で「デバイスとして存在する」ことは判定できる。
     """
-    match = re.match(r"^(?:plughw:|hw:)(?P<card>\d+),(?P<pcm>\d+)", device)
-    if not match:
+    parsed = _parse_alsa_hw_device(device)
+    if parsed is None:
         return None
-    card = match.group("card")
-    pcm = match.group("pcm")
+    card, pcm = parsed
     suffix = "c" if stream == "c" else "p"
     return Path(f"/dev/snd/pcmC{card}D{pcm}{suffix}")
 
