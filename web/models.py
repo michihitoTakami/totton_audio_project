@@ -210,6 +210,30 @@ class PhaseTypeUpdateRequest(BaseModel):
 
 
 # ============================================================================
+# I2S Peer Status Models (#950)
+# ============================================================================
+
+
+class I2sPeerStatusUpdate(BaseModel):
+    """Pi(usb-i2s-bridge) から Jetson Web へ送るステータス（更新用）."""
+
+    running: bool = False
+    mode: str = "none"  # capture / silence / none
+    sample_rate: int = 0
+    format: str = ""
+    channels: int = 0
+    generation: int = 0
+    updated_at_unix_ms: int = 0
+    note: Optional[str] = None
+
+
+class I2sPeerStatus(I2sPeerStatusUpdate):
+    """保存済みの peer status（参照用）."""
+
+    received_at_unix_ms: int = 0
+
+
+# ============================================================================
 # RTP Input Models
 # ============================================================================
 
