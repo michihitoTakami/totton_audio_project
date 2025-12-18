@@ -691,6 +691,21 @@ def _run_with_arecord_aplay(
                 or current_fmt != desired_fmt
             )
             if need_restart_aplay:
+                # aplay が passthrough 形式を受け付けずに即死するケースでは、
+                # plughw + preferred_format へ切り替えて継続送出する（最優先は安定動作）
+                if (
+                    aplay_proc is not None
+                    and aplay_proc.poll() is not None
+                    and cfg.passthrough
+                    and not conversion_enabled
+                ):
+                    rc = aplay_proc.poll()
+                    print(
+                        "[usb_i2s_bridge] aplay exited unexpectedly in passthrough; "
+                        f"enabling conversion fallback rc={rc}"
+                    )
+                    conversion_enabled = True
+                    desired_fmt = str(cfg.preferred_format)
                 _restart_aplay(
                     rate=desired_rate, fmt=desired_fmt, conversion=conversion_enabled
                 )
@@ -715,6 +730,20 @@ def _run_with_arecord_aplay(
 
         # 出力先が無ければ待つ
         if aplay_in is None or aplay_proc is None or aplay_proc.poll() is not None:
+            # ここでも passthrough での即死を拾って安全側へ倒す
+            if (
+                aplay_proc is not None
+                and aplay_proc.poll() is not None
+                and cfg.passthrough
+                and not conversion_enabled
+            ):
+                rc = aplay_proc.poll()
+                print(
+                    "[usb_i2s_bridge] aplay exited unexpectedly; enabling conversion fallback "
+                    f"rc={rc}"
+                )
+                conversion_enabled = True
+                next_poll = 0.0
             time.sleep(cfg.restart_backoff_sec)
             continue
 
@@ -749,6 +778,9 @@ def _run_with_arecord_aplay(
             _terminate_process(aplay_proc)
             aplay_proc = None
             aplay_in = None
+            if cfg.passthrough and not conversion_enabled:
+                conversion_enabled = True
+                next_poll = 0.0
             time.sleep(cfg.restart_backoff_sec)
         except OSError as e:
             print(f"[usb_i2s_bridge] I/O error: {e}; restarting aplay/arecord")
