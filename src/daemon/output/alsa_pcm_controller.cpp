@@ -46,6 +46,7 @@ void AlsaPcmController::markDisconnected(const std::string& device, const char* 
     }
     if (deps_.streamingCacheManager) {
         deps_.streamingCacheManager->flushCaches();
+        (void)deps_.streamingCacheManager->drainFlushRequests();
     }
     if (logMessage && *logMessage) {
         LOG_INFO("{}", logMessage);

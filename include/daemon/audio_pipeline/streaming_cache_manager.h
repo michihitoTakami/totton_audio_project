@@ -2,44 +2,19 @@
 #define STREAMING_CACHE_MANAGER_H
 
 #include "audio/input_stall_detector.h"
-#include "audio/soft_mute.h"
-#include "convolution_engine.h"
 #include "logging/logger.h"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
-#include <mutex>
-#include <vector>
 
 namespace streaming_cache {
 
 struct StreamingCacheDependencies {
-    // Serialize cache flush against AudioPipeline::process() to avoid resetting
-    // streaming overlap state while the producer thread is actively using it.
-    // Optional: when null, flushing proceeds without this outer lock.
-    std::mutex* inputMutex = nullptr;
-
-    // Optional callback to reset playback/output buffers.
-    // If set、下記のoutputBufferLeft/Rightのクリアは呼ばれない。
-    std::function<void()> resetPlaybackBuffer;
-    std::vector<float>* outputBufferLeft = nullptr;
-    std::vector<float>* outputBufferRight = nullptr;
-    std::mutex* bufferMutex = nullptr;
-    size_t* outputReadPos = nullptr;
-
-    ConvolutionEngine::StreamFloatVector* streamInputLeft = nullptr;
-    ConvolutionEngine::StreamFloatVector* streamInputRight = nullptr;
-    size_t* streamAccumulatedLeft = nullptr;
-    size_t* streamAccumulatedRight = nullptr;
-    std::mutex* streamingMutex = nullptr;
-
-    ConvolutionEngine::GPUUpsampler** upsamplerPtr = nullptr;
-    SoftMute::Controller** softMute = nullptr;
-
-    std::function<void()> onCrossfeedReset;
+    // 非RTスレッドで実行される。重いリセット/ロック取得はここで行う。
+    // 戻り値=false の場合、flush は未完了として次の drain で再試行される。
+    std::function<bool(std::chrono::nanoseconds gap)> flushAction;
 };
 
 class StreamingCacheManager {
@@ -63,111 +38,60 @@ class StreamingCacheManager {
             // 起動直後のギャップは無視してポップノイズを回避
             return;
         }
+
         if (AudioInput::shouldResetAfterStall(previousNs, nowNs)) {
             std::chrono::nanoseconds gap(nowNs - previousNs);
-            flushCachesInternal(gap);
+            flushCaches(gap);
+            return;
         }
+
+        // Non-RT thread will drain pending flush requests.
     }
 
     void flushCaches(std::chrono::nanoseconds gap = std::chrono::nanoseconds::zero()) {
-        flushCachesInternal(gap);
+        pendingGapNs_.store(static_cast<std::int64_t>(gap.count()), std::memory_order_release);
+        externalFlushRequested_.store(true, std::memory_order_release);
     }
 
-   private:
-    void flushCachesInternal(std::chrono::nanoseconds gap) {
-        // Prevent concurrent modifications from the producer (AudioPipeline::process).
-        std::unique_lock<std::mutex> inputLock;
-        if (deps_.inputMutex) {
-            inputLock = std::unique_lock<std::mutex>(*deps_.inputMutex);
+    bool hasPendingFlush() const {
+        return externalFlushRequested_.load(std::memory_order_acquire);
+    }
+
+    // Call from a non-RT thread (e.g., main loop).
+    bool drainFlushRequests() {
+        if (!externalFlushRequested_.load(std::memory_order_acquire)) {
+            return false;
         }
 
-        // リセット後に再度グレース期間を適用するため、入力タイムスタンプを初期化
+        std::int64_t gapNs = pendingGapNs_.exchange(0, std::memory_order_acq_rel);
+        std::chrono::nanoseconds gap(gapNs > 0 ? gapNs : 0);
+
+        // Reset timestamps so a fresh grace window applies after flush.
         lastInputTimestampNs_.store(0, std::memory_order_release);
         firstInputTimestampNs_.store(0, std::memory_order_release);
 
-        auto resetPlaybackBuffers = [&]() {
-            if (deps_.resetPlaybackBuffer) {
-                deps_.resetPlaybackBuffer();
-                return;
-            }
-            if (deps_.outputBufferLeft && deps_.outputBufferRight) {
-                deps_.outputBufferLeft->clear();
-                deps_.outputBufferRight->clear();
-            }
-            if (deps_.outputReadPos) {
-                *deps_.outputReadPos = 0;
-            }
-        };
-
-        auto resetStreamingBuffers = [&]() {
-            if (deps_.streamInputLeft) {
-                std::fill(deps_.streamInputLeft->begin(), deps_.streamInputLeft->end(), 0.0f);
-            }
-            if (deps_.streamInputRight) {
-                std::fill(deps_.streamInputRight->begin(), deps_.streamInputRight->end(), 0.0f);
-            }
-            if (deps_.streamAccumulatedLeft) {
-                *deps_.streamAccumulatedLeft = 0;
-            }
-            if (deps_.streamAccumulatedRight) {
-                *deps_.streamAccumulatedRight = 0;
-            }
-        };
-
-        auto resetStreamingEngine = [&]() {
-            if (deps_.upsamplerPtr && *deps_.upsamplerPtr) {
-                (*deps_.upsamplerPtr)->resetStreaming();
-            }
-        };
-
-        auto beginSoftMute = [&]() {
-            if (deps_.softMute && *deps_.softMute) {
-                (*deps_.softMute)->startFadeOut();
-            }
-        };
-
-        auto endSoftMute = [&]() {
-            if (deps_.softMute && *deps_.softMute) {
-                (*deps_.softMute)->startFadeIn();
-            }
-        };
-
-        bool hasStreamingLock = deps_.streamingMutex != nullptr;
-        bool hasBufferLock = deps_.bufferMutex != nullptr;
-
-        beginSoftMute();
-
-        if (hasStreamingLock && hasBufferLock) {
-            std::scoped_lock<std::mutex, std::mutex> lock(*deps_.streamingMutex,
-                                                          *deps_.bufferMutex);
-            resetPlaybackBuffers();
-            resetStreamingBuffers();
-            resetStreamingEngine();
+        bool ok = true;
+        if (deps_.flushAction) {
+            ok = deps_.flushAction(gap);
+        }
+        if (ok) {
+            externalFlushRequested_.store(false, std::memory_order_release);
+            double gapMs = static_cast<double>(gap.count()) / 1'000'000.0;
+            LOG_INFO("[Stream] Flush requested (gap {:.3f}ms) → completed", gapMs);
         } else {
-            if (hasBufferLock) {
-                std::lock_guard<std::mutex> lock(*deps_.bufferMutex);
-                resetPlaybackBuffers();
-            }
-            if (hasStreamingLock) {
-                std::lock_guard<std::mutex> streamLock(*deps_.streamingMutex);
-                resetStreamingBuffers();
-                resetStreamingEngine();
-            }
+            externalFlushRequested_.store(true, std::memory_order_release);
+            pendingGapNs_.store(static_cast<std::int64_t>(gap.count()), std::memory_order_release);
+            LOG_WARN("[Stream] Flush requested but could not complete (will retry)");
         }
-
-        endSoftMute();
-
-        if (deps_.onCrossfeedReset) {
-            deps_.onCrossfeedReset();
-        }
-
-        double gapMs = static_cast<double>(gap.count()) / 1'000'000.0;
-        LOG_INFO("[Stream] Input gap {:.3f}ms detected → flushing streaming cache", gapMs);
+        return true;
     }
 
+   private:
     StreamingCacheDependencies deps_;
     std::atomic<std::int64_t> lastInputTimestampNs_{0};
     std::atomic<std::int64_t> firstInputTimestampNs_{0};
+    std::atomic<bool> externalFlushRequested_{false};
+    std::atomic<std::int64_t> pendingGapNs_{0};
 
     static constexpr std::int64_t kInitialStallGraceNs = 1'500'000'000;  // 1.5s
 };

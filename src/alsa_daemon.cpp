@@ -278,7 +278,23 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
     }
 
     // Perform filter switch while fade-out is progressing
-    bool switch_success = filterSwitchFunc();
+    bool pauseOk = true;
+    if (g_state.audioPipeline) {
+        g_state.audioPipeline->requestRtPause();
+        pauseOk = g_state.audioPipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
+        if (!pauseOk) {
+            LOG_ERROR("[Filter Switch] RT pause handshake timed out (aborting switch)");
+        }
+    }
+
+    bool switch_success = false;
+    if (pauseOk) {
+        switch_success = filterSwitchFunc();
+    }
+
+    if (g_state.audioPipeline) {
+        g_state.audioPipeline->resumeRtPause();
+    }
 
     if (switch_success) {
         // Start fade-in after filter switch
@@ -403,7 +419,7 @@ static size_t get_playback_ready_threshold(size_t period_size) {
 
     if (g_state.crossfeed.enabled.load(std::memory_order_relaxed)) {
         std::lock_guard<std::mutex> cf_lock(g_state.crossfeed.crossfeedMutex);
-        if (g_state.crossfeed.processor && g_state.crossfeed.processor->isEnabled()) {
+        if (g_state.crossfeed.processor) {
             crossfeedActive = true;
             crossfeedBlockSize = g_state.crossfeed.processor->getStreamValidInputPerBlock();
         }
@@ -450,8 +466,29 @@ static void reset_crossfeed_stream_state_locked() {
 // - Avoid mixing pre/post switch audio by clearing playback + streaming caches.
 // - Do not touch SoftMute here; caller wraps this with a fade-out/in.
 static bool reset_streaming_caches_for_switch() {
-    // Prevent concurrent modifications from the producer (AudioPipeline::process).
-    std::lock_guard<std::mutex> inputLock(g_state.inputProcessMutex);
+    struct RtPauseGuard {
+        audio_pipeline::AudioPipeline* pipeline = nullptr;
+        bool ok = true;
+        explicit RtPauseGuard(audio_pipeline::AudioPipeline* p) : pipeline(p) {
+            if (!pipeline) {
+                return;
+            }
+            pipeline->requestRtPause();
+            ok = pipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
+            if (!ok) {
+                pipeline->resumeRtPause();
+            }
+        }
+        ~RtPauseGuard() {
+            if (pipeline && ok) {
+                pipeline->resumeRtPause();
+            }
+        }
+    } pauseGuard(g_state.audioPipeline.get());
+
+    if (!pauseGuard.ok) {
+        return false;
+    }
 
     playback_buffer().reset();
     playback_buffer().cv().notify_all();
@@ -475,30 +512,66 @@ static bool reset_streaming_caches_for_switch() {
         }
     }
 
-    {
-        std::lock_guard<std::mutex> cfLock(g_state.crossfeed.crossfeedMutex);
-        reset_crossfeed_stream_state_locked();
-    }
+    { g_state.crossfeed.resetRequested.store(true, std::memory_order_release); }
 
     return true;
 }
 
 static void initialize_streaming_cache_manager() {
     streaming_cache::StreamingCacheDependencies deps;
-    deps.inputMutex = &g_state.inputProcessMutex;
-    deps.resetPlaybackBuffer = []() { playback_buffer().reset(); };
+    deps.flushAction = [](std::chrono::nanoseconds /*gap*/) -> bool {
+        // DAC 切断/入力ギャップ後の復帰で「古いオーバーラップ状態」を引きずらないよう、
+        // 制御系スレッドで RT を静止させた上でキャッシュをフラッシュする。
+        if (g_state.audioPipeline) {
+            g_state.audioPipeline->requestRtPause();
+            if (!g_state.audioPipeline->waitForRtQuiescent(std::chrono::milliseconds(500))) {
+                g_state.audioPipeline->resumeRtPause();
+                return false;
+            }
+        }
 
-    deps.streamInputLeft = &g_state.streaming.streamInputLeft;
-    deps.streamInputRight = &g_state.streaming.streamInputRight;
-    deps.streamAccumulatedLeft = &g_state.streaming.streamAccumulatedLeft;
-    deps.streamAccumulatedRight = &g_state.streaming.streamAccumulatedRight;
-    deps.streamingMutex = &g_state.streaming.streamingMutex;
+        struct RtPauseReleaseGuard {
+            audio_pipeline::AudioPipeline* pipeline = nullptr;
+            explicit RtPauseReleaseGuard(audio_pipeline::AudioPipeline* p) : pipeline(p) {}
+            ~RtPauseReleaseGuard() {
+                if (pipeline) {
+                    pipeline->resumeRtPause();
+                }
+            }
+        } pauseRelease(g_state.audioPipeline.get());
 
-    deps.upsamplerPtr = &g_state.upsampler;
-    deps.softMute = &g_state.softMute.controller;
-    deps.onCrossfeedReset = []() {
-        std::lock_guard<std::mutex> cf_lock(g_state.crossfeed.crossfeedMutex);
-        reset_crossfeed_stream_state_locked();
+        if (g_state.softMute.controller) {
+            g_state.softMute.controller->startFadeOut();
+        }
+
+        playback_buffer().reset();
+
+        {
+            std::lock_guard<std::mutex> streamLock(g_state.streaming.streamingMutex);
+            if (!g_state.streaming.streamInputLeft.empty()) {
+                std::fill(g_state.streaming.streamInputLeft.begin(),
+                          g_state.streaming.streamInputLeft.end(), 0.0f);
+            }
+            if (!g_state.streaming.streamInputRight.empty()) {
+                std::fill(g_state.streaming.streamInputRight.begin(),
+                          g_state.streaming.streamInputRight.end(), 0.0f);
+            }
+            g_state.streaming.streamAccumulatedLeft = 0;
+            g_state.streaming.streamAccumulatedRight = 0;
+            g_state.streaming.upsamplerOutputLeft.clear();
+            g_state.streaming.upsamplerOutputRight.clear();
+        }
+
+        if (g_state.upsampler) {
+            g_state.upsampler->resetStreaming();
+        }
+
+        g_state.crossfeed.resetRequested.store(true, std::memory_order_release);
+
+        if (g_state.softMute.controller) {
+            g_state.softMute.controller->startFadeIn();
+        }
+        return true;
     };
     g_state.managers.streamingCacheManager =
         std::make_unique<streaming_cache::StreamingCacheManager>(deps);
@@ -780,11 +853,35 @@ static bool handle_rate_switch(int newInputRate) {
     int newUpsampleRatio = g_state.upsampler->getUpsampleRatio();
     size_t buffer_capacity = 0;
 
+    struct RtPauseGuard {
+        audio_pipeline::AudioPipeline* pipeline = nullptr;
+        bool ok = true;
+        explicit RtPauseGuard(audio_pipeline::AudioPipeline* p) : pipeline(p) {
+            if (!pipeline) {
+                return;
+            }
+            pipeline->requestRtPause();
+            ok = pipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
+            if (!ok) {
+                LOG_ERROR("[Rate] RT pause handshake timed out (aborting rate switch)");
+            }
+        }
+        ~RtPauseGuard() {
+            if (pipeline) {
+                pipeline->resumeRtPause();
+            }
+        }
+    } pauseGuard(g_state.audioPipeline.get());
+
+    if (!pauseGuard.ok) {
+        if (g_state.softMute.controller) {
+            g_state.softMute.controller->setPlaying();
+        }
+        return false;
+    }
+
     {
-        // Ensure the input thread (AudioPipeline::process) cannot touch streaming buffers while we
-        // tear them down and re-initialize for a new input rate.
-        // Lock order is handled by std::scoped_lock (avoids deadlocks).
-        std::scoped_lock lock(g_state.inputProcessMutex, g_state.streaming.streamingMutex);
+        std::lock_guard<std::mutex> streamLock(g_state.streaming.streamingMutex);
 
         g_state.upsampler->resetStreaming();
 
@@ -1940,7 +2037,6 @@ int main(int argc, char* argv[]) {
                 };
             pipelineDeps.fallbackActive = &g_state.fallbackActive;
             pipelineDeps.outputReady = &g_state.flags.outputReady;
-            pipelineDeps.inputMutex = &g_state.inputProcessMutex;
             pipelineDeps.streamingCacheManager = g_state.managers.streamingCacheManager.get();
             pipelineDeps.streamInputLeft = &g_state.streaming.streamInputLeft;
             pipelineDeps.streamInputRight = &g_state.streaming.streamInputRight;
@@ -1955,8 +2051,8 @@ int main(int argc, char* argv[]) {
             pipelineDeps.cfOutputLeft = &g_state.crossfeed.cfOutputLeft;
             pipelineDeps.cfOutputRight = &g_state.crossfeed.cfOutputRight;
             pipelineDeps.crossfeedEnabled = &g_state.crossfeed.enabled;
+            pipelineDeps.crossfeedResetRequested = &g_state.crossfeed.resetRequested;
             pipelineDeps.crossfeedProcessor = g_state.crossfeed.processor;
-            pipelineDeps.crossfeedMutex = &g_state.crossfeed.crossfeedMutex;
             pipelineDeps.buffer.playbackBuffer = &playback_buffer();
             pipelineDeps.maxOutputBufferFrames = []() { return get_max_output_buffer_frames(); };
             pipelineDeps.currentOutputRate = []() {
@@ -2067,7 +2163,9 @@ int main(int argc, char* argv[]) {
         controlDeps.crossfeed.processor = &g_state.crossfeed.processor;
         controlDeps.crossfeed.enabledFlag = &g_state.crossfeed.enabled;
         controlDeps.crossfeed.mutex = &g_state.crossfeed.crossfeedMutex;
-        controlDeps.crossfeed.resetStreamingState = []() { reset_crossfeed_stream_state_locked(); };
+        controlDeps.crossfeed.resetStreamingState = []() {
+            g_state.crossfeed.resetRequested.store(true, std::memory_order_release);
+        };
         controlDeps.statsFilePath = STATS_FILE_PATH;
 
         controlPlane = std::make_unique<daemon_control::ControlPlane>(std::move(controlDeps));
@@ -2209,6 +2307,9 @@ int main(int argc, char* argv[]) {
             while (g_state.flags.running.load() && !g_state.flags.reloadRequested.load() &&
                    !g_state.flags.zmqBindFailed.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (g_state.managers.streamingCacheManager) {
+                    (void)g_state.managers.streamingCacheManager->drainFlushRequests();
+                }
                 // Input rate follow-up hook (Issue #906; network-driven detection is #824)
                 int pending =
                     g_state.rates.pendingRateChange.exchange(0, std::memory_order_acq_rel);

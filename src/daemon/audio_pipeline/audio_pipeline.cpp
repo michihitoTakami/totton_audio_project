@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 #include <vector>
 
 namespace audio_pipeline {
@@ -40,11 +41,31 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
 }
 
 bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
+    struct RtScopeGuard {
+        std::atomic<bool>& flag;
+        explicit RtScopeGuard(std::atomic<bool>& f) : flag(f) {
+            flag.store(true, std::memory_order_release);
+        }
+        ~RtScopeGuard() {
+            flag.store(false, std::memory_order_release);
+        }
+    } rtScope(rtInProcess_);
+
     if (!inputSamples || nFrames == 0 || !isUpsamplerAvailable() || !hasBufferState() ||
-        !deps_.inputMutex || !deps_.streamInputLeft || !deps_.streamInputRight ||
-        !deps_.streamAccumulatedLeft || !deps_.streamAccumulatedRight ||
-        !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
+        !deps_.streamInputLeft || !deps_.streamInputRight || !deps_.streamAccumulatedLeft ||
+        !deps_.streamAccumulatedRight || !deps_.upsamplerOutputLeft ||
+        !deps_.upsamplerOutputRight) {
         return false;
+    }
+
+    const bool pauseRequested = (pauseRequestCount_.load(std::memory_order_acquire) > 0);
+    rtPaused_.store(pauseRequested, std::memory_order_release);
+
+    const bool cacheFlushPending =
+        deps_.streamingCacheManager && deps_.streamingCacheManager->hasPendingFlush();
+
+    if (!pauseRequested && deps_.streamingCacheManager) {
+        deps_.streamingCacheManager->handleInputBlock();
     }
 
     if (!isOutputReady()) {
@@ -52,34 +73,18 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
         return false;
     }
 
-    auto logLockSkipped = [&](const char* name, std::chrono::steady_clock::time_point& lastWarn) {
-        auto now = std::chrono::steady_clock::now();
-        if (now - lastWarn > std::chrono::seconds(5)) {
-            LOG_WARN("AudioPipeline::process skipping block: {} mutex busy", name);
-            lastWarn = now;
-        }
-    };
-
-    if (deps_.streamingCacheManager) {
-        deps_.streamingCacheManager->handleInputBlock();
-    }
-
-    std::unique_lock<std::mutex> inputLock(*deps_.inputMutex, std::try_to_lock);
-    if (!inputLock.owns_lock()) {
-        logLockSkipped("input", lastInputLockWarn_);
-
-        // RT で待たない: ロックが取れない場合でもタイムラインを維持するため無音を出力。
+    if (pauseRequested || cacheFlushPending) {
+        // RT 側はブロッキングせず、要求中は無音を供給してタイムラインを維持する。
         if (!deps_.config || !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
             return false;
         }
-        auto ratio = static_cast<size_t>(deps_.config->upsampleRatio);
+        size_t ratio = static_cast<size_t>(deps_.config->upsampleRatio);
         size_t outputFrames = static_cast<size_t>(nFrames) * ratio;
         if (ratio == 0 || outputFrames == 0) {
             return false;
         }
         deps_.upsamplerOutputLeft->assign(outputFrames, 0.0f);
         deps_.upsamplerOutputRight->assign(outputFrames, 0.0f);
-
         size_t stored =
             enqueueOutputFramesLocked(*deps_.upsamplerOutputLeft, *deps_.upsamplerOutputRight);
         if (stored > 0 && deps_.buffer.playbackBuffer) {
@@ -180,40 +185,56 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
 
     const bool crossfeedActive =
         deps_.crossfeedEnabled && deps_.crossfeedEnabled->load(std::memory_order_relaxed);
+    const bool crossfeedReset =
+        deps_.crossfeedResetRequested &&
+        deps_.crossfeedResetRequested->exchange(false, std::memory_order_acq_rel);
 
-    if (crossfeedActive && deps_.crossfeedProcessor && deps_.crossfeedMutex && deps_.cfOutputLeft &&
-        deps_.cfOutputRight && deps_.cfStreamInputLeft && deps_.cfStreamInputRight &&
-        deps_.cfStreamAccumulatedLeft && deps_.cfStreamAccumulatedRight) {
-        std::unique_lock<std::mutex> cfLock(*deps_.crossfeedMutex, std::try_to_lock);
-        if (cfLock.owns_lock()) {
-            bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
-                outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,
-                *deps_.cfOutputRight, nullptr, *deps_.cfStreamInputLeft, *deps_.cfStreamInputRight,
-                *deps_.cfStreamAccumulatedLeft, *deps_.cfStreamAccumulatedRight);
-            if (cfGenerated) {
-                size_t cfFrames = std::min(deps_.cfOutputLeft->size(), deps_.cfOutputRight->size());
-                if (cfFrames > 0) {
-                    float cfPeak = computeStereoPeak(deps_.cfOutputLeft->data(),
-                                                     deps_.cfOutputRight->data(), cfFrames);
-                    runtime_stats::updatePostCrossfeedPeak(cfPeak);
-                }
-                size_t stored =
-                    enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
-                if (stored > 0 && deps_.buffer.playbackBuffer) {
-                    deps_.buffer.playbackBuffer->cv().notify_one();
-                }
-                return true;
+    if (deps_.crossfeedProcessor && deps_.cfOutputLeft && deps_.cfOutputRight &&
+        deps_.cfStreamInputLeft && deps_.cfStreamInputRight && deps_.cfStreamAccumulatedLeft &&
+        deps_.cfStreamAccumulatedRight) {
+        if ((crossfeedActive != lastCrossfeedEnabledApplied_) || crossfeedReset) {
+            deps_.crossfeedProcessor->setEnabled(crossfeedActive);
+            if (!deps_.cfStreamInputLeft->empty()) {
+                std::fill(deps_.cfStreamInputLeft->begin(), deps_.cfStreamInputLeft->end(), 0.0f);
             }
+            if (!deps_.cfStreamInputRight->empty()) {
+                std::fill(deps_.cfStreamInputRight->begin(), deps_.cfStreamInputRight->end(), 0.0f);
+            }
+            *deps_.cfStreamAccumulatedLeft = 0;
+            *deps_.cfStreamAccumulatedRight = 0;
+            deps_.cfOutputLeft->clear();
+            deps_.cfOutputRight->clear();
+            deps_.crossfeedProcessor->resetStreaming();
+            lastCrossfeedEnabledApplied_ = crossfeedActive;
+        }
+    }
 
-            // クロスフィード有効時はストリーミングバッファへ蓄積だけ行い、
-            // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
-            // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
-            // クラッシュするのを防ぐ。
+    if (crossfeedActive && deps_.crossfeedProcessor && deps_.cfOutputLeft && deps_.cfOutputRight &&
+        deps_.cfStreamInputLeft && deps_.cfStreamInputRight && deps_.cfStreamAccumulatedLeft &&
+        deps_.cfStreamAccumulatedRight) {
+        bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
+            outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,
+            *deps_.cfOutputRight, nullptr, *deps_.cfStreamInputLeft, *deps_.cfStreamInputRight,
+            *deps_.cfStreamAccumulatedLeft, *deps_.cfStreamAccumulatedRight);
+        if (cfGenerated) {
+            size_t cfFrames = std::min(deps_.cfOutputLeft->size(), deps_.cfOutputRight->size());
+            if (cfFrames > 0) {
+                float cfPeak = computeStereoPeak(deps_.cfOutputLeft->data(),
+                                                 deps_.cfOutputRight->data(), cfFrames);
+                runtime_stats::updatePostCrossfeedPeak(cfPeak);
+            }
+            size_t stored = enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
+            if (stored > 0 && deps_.buffer.playbackBuffer) {
+                deps_.buffer.playbackBuffer->cv().notify_one();
+            }
             return true;
         }
 
-        // ロック取得に失敗した場合はブロックせずアップサンプル出力をそのまま進める
-        logLockSkipped("crossfeed", lastCrossfeedLockWarn_);
+        // クロスフィード有効時はストリーミングバッファへ蓄積だけ行い、
+        // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
+        // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
+        // クラッシュするのを防ぐ。
+        return true;
     }
 
     size_t stored = enqueueOutputFramesLocked(*outputLeft, *outputRight);
@@ -228,6 +249,43 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     }
 
     return true;
+}
+
+void AudioPipeline::requestRtPause() {
+    pauseRequestCount_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void AudioPipeline::resumeRtPause() {
+    int prev = pauseRequestCount_.fetch_sub(1, std::memory_order_acq_rel);
+    if (prev <= 1) {
+        pauseRequestCount_.store(0, std::memory_order_release);
+    }
+}
+
+bool AudioPipeline::waitForRtPaused(std::chrono::milliseconds timeout) const {
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < timeout) {
+        if (rtPaused_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return rtPaused_.load(std::memory_order_acquire);
+}
+
+bool AudioPipeline::waitForRtQuiescent(std::chrono::milliseconds timeout) const {
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < timeout) {
+        if (rtPaused_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        if (!rtInProcess_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return rtPaused_.load(std::memory_order_acquire) ||
+           !rtInProcess_.load(std::memory_order_acquire);
 }
 
 RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,

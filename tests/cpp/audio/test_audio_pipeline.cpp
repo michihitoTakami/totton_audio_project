@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <vector>
@@ -19,9 +20,8 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     std::atomic<bool> fallbackActive{false};
     std::atomic<bool> outputReady{true};
     std::atomic<bool> crossfeedEnabled{false};
+    std::atomic<bool> crossfeedResetRequested{false};
 
-    std::mutex inputMutex;
-    std::mutex crossfeedMutex;
     daemon_output::PlaybackBufferManager playbackBuffer([]() { return static_cast<size_t>(48); });
 
     ConvolutionEngine::StreamFloatVector streamInputLeft;
@@ -45,8 +45,8 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     deps.fallbackActive = &fallbackActive;
     deps.outputReady = &outputReady;
     deps.crossfeedEnabled = &crossfeedEnabled;
+    deps.crossfeedResetRequested = &crossfeedResetRequested;
     deps.crossfeedProcessor = nullptr;
-    deps.crossfeedMutex = &crossfeedMutex;
     deps.cfStreamInputLeft = &cfStreamInputLeft;
     deps.cfStreamInputRight = &cfStreamInputRight;
     deps.cfStreamAccumulatedLeft = &cfAccumLeft;
@@ -60,7 +60,6 @@ TEST(AudioPipeline, EnqueuesOutputAndUpdatesStats) {
     deps.upsamplerOutputLeft = &upsamplerOutputLeft;
     deps.upsamplerOutputRight = &upsamplerOutputRight;
     deps.streamingCacheManager = nullptr;
-    deps.inputMutex = &inputMutex;
     deps.buffer.playbackBuffer = &playbackBuffer;
     deps.currentOutputRate = []() { return 48000; };
 
@@ -112,9 +111,7 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     std::atomic<bool> fallbackActive{false};
     std::atomic<bool> outputReady{true};
     std::atomic<bool> crossfeedEnabled{false};
-
-    std::mutex inputMutex;
-    std::mutex crossfeedMutex;
+    std::atomic<bool> crossfeedResetRequested{false};
 
     ConvolutionEngine::StreamFloatVector streamInputLeft;
     ConvolutionEngine::StreamFloatVector streamInputRight;
@@ -142,8 +139,8 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     deps.fallbackActive = &fallbackActive;
     deps.outputReady = &outputReady;
     deps.crossfeedEnabled = &crossfeedEnabled;
+    deps.crossfeedResetRequested = &crossfeedResetRequested;
     deps.crossfeedProcessor = nullptr;
-    deps.crossfeedMutex = &crossfeedMutex;
     deps.cfStreamInputLeft = &cfStreamInputLeft;
     deps.cfStreamInputRight = &cfStreamInputRight;
     deps.cfStreamAccumulatedLeft = &cfAccumLeft;
@@ -157,7 +154,6 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     deps.upsamplerOutputLeft = &upsamplerOutputLeft;
     deps.upsamplerOutputRight = &upsamplerOutputRight;
     deps.streamingCacheManager = nullptr;
-    deps.inputMutex = &inputMutex;
     deps.buffer.playbackBuffer = &playbackBuffer;
     deps.currentOutputRate = []() { return 48000; };
 
@@ -199,7 +195,7 @@ TEST(AudioPipeline, RenderOutputAppliesLimiterAndClipping) {
     EXPECT_EQ(runtime_stats::totalSamples(), static_cast<size_t>(4));
 }
 
-TEST(AudioPipeline, ContinuesWithSilenceWhenInputLockContended) {
+TEST(AudioPipeline, ContinuesWithSilenceWhenPaused) {
     runtime_stats::reset();
 
     AppConfig config;
@@ -210,9 +206,7 @@ TEST(AudioPipeline, ContinuesWithSilenceWhenInputLockContended) {
     std::atomic<bool> fallbackActive{false};
     std::atomic<bool> outputReady{true};
     std::atomic<bool> crossfeedEnabled{false};
-
-    std::mutex inputMutex;
-    std::mutex crossfeedMutex;
+    std::atomic<bool> crossfeedResetRequested{false};
 
     ConvolutionEngine::StreamFloatVector streamInputLeft;
     ConvolutionEngine::StreamFloatVector streamInputRight;
@@ -233,8 +227,8 @@ TEST(AudioPipeline, ContinuesWithSilenceWhenInputLockContended) {
     deps.fallbackActive = &fallbackActive;
     deps.outputReady = &outputReady;
     deps.crossfeedEnabled = &crossfeedEnabled;
+    deps.crossfeedResetRequested = &crossfeedResetRequested;
     deps.crossfeedProcessor = nullptr;
-    deps.crossfeedMutex = &crossfeedMutex;
     deps.cfStreamInputLeft = &cfStreamInputLeft;
     deps.cfStreamInputRight = &cfStreamInputRight;
     deps.cfStreamAccumulatedLeft = &cfAccumLeft;
@@ -248,7 +242,6 @@ TEST(AudioPipeline, ContinuesWithSilenceWhenInputLockContended) {
     deps.upsamplerOutputLeft = &upsamplerOutputLeft;
     deps.upsamplerOutputRight = &upsamplerOutputRight;
     deps.streamingCacheManager = nullptr;
-    deps.inputMutex = &inputMutex;
     deps.buffer.playbackBuffer = &playbackBuffer;
     deps.currentOutputRate = []() { return 48000; };
 
@@ -264,13 +257,13 @@ TEST(AudioPipeline, ContinuesWithSilenceWhenInputLockContended) {
 
     audio_pipeline::AudioPipeline pipeline(std::move(deps));
 
-    // Hold the input mutex to force try_lock failure inside process().
-    std::unique_lock<std::mutex> guard(inputMutex);
+    pipeline.requestRtPause();
 
     std::vector<float> input = {0.1f, -0.1f, 0.2f, -0.2f};
     ASSERT_TRUE(pipeline.process(input.data(), 2));
+    EXPECT_TRUE(pipeline.waitForRtPaused(std::chrono::milliseconds(5)));
 
-    guard.unlock();
+    pipeline.resumeRtPause();
 
     std::vector<float> left(4);
     std::vector<float> right(4);

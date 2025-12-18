@@ -99,6 +99,8 @@ struct StreamingState {
 struct CrossfeedState {
     ConvolutionEngine::FourChannelFIR* processor = nullptr;
     std::atomic<bool> enabled{false};
+    // RT thread applies resets to avoid control-plane mutex contention (Issue #901)
+    std::atomic<bool> resetRequested{false};
     ConvolutionEngine::StreamFloatVector cfStreamInputLeft;
     ConvolutionEngine::StreamFloatVector cfStreamInputRight;
     size_t cfStreamAccumulatedLeft = 0;
