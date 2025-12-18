@@ -1,5 +1,7 @@
 #include "daemon/control/zmq_server.h"
 
+#include "logging/logger.h"
+
 #include <cstdio>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -56,7 +58,7 @@ bool ZmqCommandServer::start() {
         std::cout << "ZeroMQ: PUB socket on " << pubEndpoint_ << '\n';
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZeroMQ: Fatal error - " << e.what() << '\n';
+        LOG_ERROR("ZeroMQ: Fatal error - {}", e.what());
         bindFailed_.store(true);
         running_.store(false);
         cleanupSockets();
@@ -95,7 +97,7 @@ bool ZmqCommandServer::publish(const std::string& message) {
         pubSocket_->send(zmq::buffer(message), zmq::send_flags::dontwait);
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZeroMQ: PUB send failed: " << e.what() << '\n';
+        LOG_ERROR("ZeroMQ: PUB send failed: {}", e.what());
         return false;
     }
 }
@@ -193,7 +195,7 @@ void ZmqCommandServer::serverLoop() {
             repSocket_->send(zmq::buffer(response), zmq::send_flags::none);
         } catch (const zmq::error_t& e) {
             if (running_.load()) {
-                std::cerr << "ZeroMQ: Listener error - " << e.what() << '\n';
+                LOG_ERROR("ZeroMQ: Listener error - {}", e.what());
             }
         }
     }

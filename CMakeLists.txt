@@ -264,6 +264,9 @@ if(HAVE_NVML)
     target_compile_definitions(logging PUBLIC HAVE_NVML)
 endif()
 
+# Ensure spdlog headers propagate to targets that include logger.h.
+target_link_libraries(gpu_upsampler_core PUBLIC logging)
+
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
     src/network/zeromq_interface.cpp
@@ -334,6 +337,7 @@ target_include_directories(filter_headroom PUBLIC
 )
 target_link_libraries(filter_headroom PUBLIC
     nlohmann_json::nlohmann_json
+    logging
 )
 target_compile_options(filter_headroom PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
@@ -375,6 +379,7 @@ add_library(eq_support STATIC
 target_link_libraries(eq_support PUBLIC
     nlohmann_json::nlohmann_json
 )
+target_link_libraries(eq_support PUBLIC logging)
 target_include_directories(eq_support PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
@@ -533,6 +538,7 @@ add_executable(zmq_server_tests
 target_link_libraries(zmq_server_tests
     GTest::gtest_main
     nlohmann_json::nlohmann_json
+    logging
     ${ZMQ_LIBRARIES}
 )
 target_include_directories(zmq_server_tests PRIVATE

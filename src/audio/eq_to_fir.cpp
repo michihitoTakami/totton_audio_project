@@ -1,5 +1,7 @@
 #include "audio/eq_to_fir.h"
 
+#include "logging/logger.h"
+
 #include <cmath>
 #include <iostream>
 
@@ -66,8 +68,7 @@ BiquadCoeffs calculateBiquadCoeffs(const EqBand& band, double sampleRate) {
     case FilterType::HP:
     default:
         // Not implemented - return unity
-        std::cerr << "EQ: Filter type " << filterTypeName(band.type)
-                  << " not implemented, using bypass" << '\n';
+        LOG_WARN("EQ: Filter type {} not implemented, using bypass", filterTypeName(band.type));
         return c;
     }
 

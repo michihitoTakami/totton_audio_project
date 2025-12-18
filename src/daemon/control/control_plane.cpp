@@ -800,11 +800,10 @@ std::string ControlPlane::handlePhaseTypeSet(const daemon_ipc::ZmqRequest& reque
                     if (up->applyEqMagnitude(eqMagnitude)) {
                         std::cout << "ZeroMQ: EQ re-applied with " << phaseStr << " phase" << '\n';
                     } else {
-                        std::cerr << "ZeroMQ: Warning - EQ re-apply failed" << '\n';
+                        LOG_WARN("ZeroMQ: EQ re-apply failed");
                     }
                 } else {
-                    std::cerr << "ZeroMQ: Warning - Failed to parse EQ profile: "
-                              << deps_.config->eqProfilePath << '\n';
+                    LOG_WARN("ZeroMQ: Failed to parse EQ profile: {}", deps_.config->eqProfilePath);
                 }
             }
         }

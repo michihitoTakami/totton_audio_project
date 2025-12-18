@@ -1,5 +1,7 @@
 #include "audio/eq_parser.h"
 
+#include "logging/logger.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -302,7 +304,7 @@ bool parseEqString(const std::string& content, EqProfile& profile) {
 bool parseEqFile(const std::string& filePath, EqProfile& profile) {
     std::ifstream file(filePath);
     if (!file.is_open()) {
-        std::cerr << "EQ Parser: Cannot open file: " << filePath << '\n';
+        LOG_ERROR("EQ Parser: Cannot open file: {}", filePath);
         return false;
     }
 

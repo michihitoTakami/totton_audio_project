@@ -1,5 +1,7 @@
 #include "network/zeromq_interface.h"
 
+#include "logging/logger.h"
+
 #include <iostream>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -131,7 +133,7 @@ bool parseCommand(const std::string& jsonStr, CommandType& type, std::string& pa
         }
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "ZMQ JSON parse error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ JSON parse error: {}", e.what());
         return false;
     }
 }
@@ -255,7 +257,7 @@ bool parseResponse(const std::string& jsonStr, ResponseStatus& status, std::stri
         }
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "ZMQ JSON parse error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ JSON parse error: {}", e.what());
         return false;
     }
 }
@@ -290,7 +292,7 @@ bool parseErrorResponse(const std::string& jsonStr, std::string& errorCode, std:
         }
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "ZMQ JSON parse error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ JSON parse error: {}", e.what());
         return false;
     }
 }
@@ -324,7 +326,7 @@ bool parseStatus(const std::string& jsonStr, EngineStatus& status) {
         status.framesProcessed = d.value("frames_processed", 0);
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "ZMQ JSON parse error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ JSON parse error: {}", e.what());
         return false;
     }
 }
@@ -375,7 +377,7 @@ bool ZMQServer::initialize(const std::string& endpoint) {
         std::cout << "ZMQ PUB socket on " << impl_->pubEndpoint << '\n';
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZMQ Server init error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ Server init error: {}", e.what());
         return false;
     }
 }
@@ -437,7 +439,7 @@ void ZMQServer::serverLoop() {
 
         } catch (const zmq::error_t& e) {
             if (running_.load()) {
-                std::cerr << "ZMQ Server error: " << e.what() << '\n';
+                LOG_ERROR("ZMQ Server error: {}", e.what());
             }
         }
     }
@@ -504,7 +506,7 @@ bool ZMQServer::publishStatus(const EngineStatus& status) {
         impl_->pubSocket->send(zmq::buffer(statusJson), zmq::send_flags::dontwait);
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZMQ PUB error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ PUB error: {}", e.what());
         return false;
     }
 }
@@ -536,7 +538,7 @@ bool ZMQClient::connect(const std::string& endpoint) {
         std::cout << "ZMQ Client connected to " << endpoint << '\n';
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZMQ Client connect error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ Client connect error: {}", e.what());
         return false;
     }
 }
@@ -730,7 +732,7 @@ bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, const StatusCall
                 } catch (const zmq::error_t& e) {
                     // EAGAIN is expected on timeout, don't log it
                     if (subRunning_.load() && e.num() != EAGAIN) {
-                        std::cerr << "ZMQ SUB error: " << e.what() << '\n';
+                        LOG_ERROR("ZMQ SUB error: {}", e.what());
                     }
                 }
             }
@@ -738,7 +740,7 @@ bool ZMQClient::subscribeStatus(const std::string& pubEndpoint, const StatusCall
 
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "ZMQ subscribe error: " << e.what() << '\n';
+        LOG_ERROR("ZMQ subscribe error: {}", e.what());
         return false;
     }
 }

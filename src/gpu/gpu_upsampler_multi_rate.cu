@@ -1,8 +1,9 @@
 #include "convolution_engine.h"
 #include "gpu/cuda_utils.h"
+#include "logging/logger.h"
+#include <algorithm>
 #include <fstream>
 #include <iostream>
-#include <algorithm>
 
 namespace ConvolutionEngine {
 
@@ -32,7 +33,7 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
     {
         std::ifstream ifs(filterCoeffPath44k, std::ios::binary);
         if (!ifs) {
-            std::cerr << "Error: Cannot open 44.1kHz coefficients: " << filterCoeffPath44k << std::endl;
+            LOG_ERROR("Cannot open 44.1kHz coefficients: {}", filterCoeffPath44k);
             return false;
         }
         ifs.seekg(0, std::ios::end);
@@ -50,7 +51,7 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
     {
         std::ifstream ifs(filterCoeffPath48k, std::ios::binary);
         if (!ifs) {
-            std::cerr << "Error: Cannot open 48kHz coefficients: " << filterCoeffPath48k << std::endl;
+            LOG_ERROR("Cannot open 48kHz coefficients: {}", filterCoeffPath48k);
             return false;
         }
         ifs.seekg(0, std::ios::end);
@@ -65,8 +66,9 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
 
     // Verify both coefficient sets have the same tap count
     if (h_filterCoeffs44k_.size() != h_filterCoeffs48k_.size()) {
-        std::cerr << "Error: Coefficient tap counts do not match (44k: "
-                  << h_filterCoeffs44k_.size() << ", 48k: " << h_filterCoeffs48k_.size() << ")" << std::endl;
+        LOG_ERROR("Coefficient tap counts do not match (44k: {}, 48k: {})",
+                  h_filterCoeffs44k_.size(),
+                  h_filterCoeffs48k_.size());
         return false;
     }
 
@@ -166,7 +168,7 @@ bool GPUUpsampler::initializeDualRate(const std::string& filterCoeffPath44k,
 
 bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     if (!dualRateEnabled_) {
-        std::cerr << "Error: Dual-rate mode not enabled" << std::endl;
+        LOG_ERROR("Dual-rate mode not enabled");
         return false;
     }
 
@@ -176,7 +178,7 @@ bool GPUUpsampler::switchRateFamily(RateFamily targetFamily) {
     }
 
     if (targetFamily == RateFamily::RATE_UNKNOWN) {
-        std::cerr << "Error: Cannot switch to unknown rate family" << std::endl;
+        LOG_ERROR("Cannot switch to unknown rate family");
         return false;
     }
 
@@ -285,7 +287,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     // Find the config index for the initial input rate
     currentMultiRateIndex_ = findMultiRateConfigIndex(initialInputRate);
     if (currentMultiRateIndex_ < 0) {
-        std::cerr << "Error: Unsupported initial input rate: " << initialInputRate << std::endl;
+        LOG_ERROR("Unsupported initial input rate: {}", initialInputRate);
         return false;
     }
 
@@ -338,15 +340,17 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
         }
 
         if (foundPath.empty()) {
-            std::cerr << "Error: Cannot find coefficient file for " << familyStr << " " << config.ratio
-                      << "x in " << coefficientDir << std::endl;
+            LOG_ERROR("Cannot find coefficient file for {} {}x in {}",
+                      familyStr,
+                      config.ratio,
+                      coefficientDir);
             return false;
         }
 
         // Load coefficients
         std::ifstream ifs(foundPath, std::ios::binary);
         if (!ifs) {
-            std::cerr << "Error: Cannot open coefficient file: " << foundPath << std::endl;
+            LOG_ERROR("Cannot open coefficient file: {}", foundPath);
             return false;
         }
 
@@ -359,7 +363,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
         ifs.read(reinterpret_cast<char*>(h_filterCoeffsMulti_[i].data()), fileSize);
 
         if (!ifs) {
-            std::cerr << "Error: Failed to read coefficient file: " << foundPath << std::endl;
+            LOG_ERROR("Failed to read coefficient file: {}", foundPath);
             return false;
         }
 
@@ -374,7 +378,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
     }
 
     if (loadedCount != MULTI_RATE_CONFIG_COUNT) {
-        std::cerr << "Error: Failed to load all coefficient files" << std::endl;
+        LOG_ERROR("Failed to load all coefficient files");
         return false;
     }
 
@@ -466,13 +470,13 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
 
 bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     if (!multiRateEnabled_) {
-        std::cerr << "Error: Multi-rate mode not enabled" << std::endl;
+        LOG_ERROR("Multi-rate mode not enabled");
         return false;
     }
 
     int targetIndex = findMultiRateConfigIndex(inputSampleRate);
     if (targetIndex < 0) {
-        std::cerr << "Error: Unsupported input sample rate: " << inputSampleRate << std::endl;
+        LOG_ERROR("Unsupported input sample rate: {}", inputSampleRate);
         return false;
     }
 
@@ -513,14 +517,14 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
                                       filterFftSize_ * sizeof(Complex),
                                       cudaMemcpyDeviceToDevice, stream_);
     if (err != cudaSuccess) {
-        std::cerr << "Error: Failed to copy filter FFT: " << cudaGetErrorString(err) << std::endl;
+        LOG_ERROR("Failed to copy filter FFT: {}", cudaGetErrorString(err));
         return false;
     }
 
     // Synchronize to ensure copy is complete before switching
     err = cudaStreamSynchronize(stream_);
     if (err != cudaSuccess) {
-        std::cerr << "Error: Failed to synchronize stream: " << cudaGetErrorString(err) << std::endl;
+        LOG_ERROR("Failed to synchronize stream: {}", cudaGetErrorString(err));
         return false;
     }
 
@@ -531,7 +535,7 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     err = cudaMemcpy(d_originalFilterFFT_, sourceFFT,
                      filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToDevice);
     if (err != cudaSuccess) {
-        std::cerr << "Error: Failed to update original filter FFT: " << cudaGetErrorString(err) << std::endl;
+        LOG_ERROR("Failed to update original filter FFT: {}", cudaGetErrorString(err));
         // Rollback: restore previous filter
         d_activeFilterFFT_ = (backBuffer == d_filterFFT_A_) ? d_filterFFT_B_ : d_filterFFT_A_;
         return false;
@@ -542,7 +546,7 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     err = cudaMemcpy(h_originalFilterFft_.data(), sourceFFT,
                      filterFftSize_ * sizeof(Complex), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        std::cerr << "Error: Failed to update host filter FFT cache: " << cudaGetErrorString(err) << std::endl;
+        LOG_ERROR("Failed to update host filter FFT cache: {}", cudaGetErrorString(err));
         // Rollback: restore previous state
         currentMultiRateIndex_ = savedMultiRateIndex;
         currentInputRate_ = savedInputRate;
@@ -618,7 +622,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     // 44.1kHz minimum phase
     std::cout << "  44.1kHz Minimum: " << filterCoeffPath44kMin << std::endl;
     if (!loadFilterCoefficients(filterCoeffPath44kMin)) {
-        std::cerr << "Error: Failed to load 44.1kHz minimum phase coefficients" << std::endl;
+        LOG_ERROR("Failed to load 44.1kHz minimum phase coefficients");
         return false;
     }
     h_filterCoeffs44k_ = h_filterCoeffs_;
@@ -628,7 +632,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     // 48kHz minimum phase
     std::cout << "  48kHz Minimum: " << filterCoeffPath48kMin << std::endl;
     if (!loadFilterCoefficients(filterCoeffPath48kMin)) {
-        std::cerr << "Error: Failed to load 48kHz minimum phase coefficients" << std::endl;
+        LOG_ERROR("Failed to load 48kHz minimum phase coefficients");
         return false;
     }
     h_filterCoeffs48k_ = h_filterCoeffs_;
@@ -638,7 +642,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     // 44.1kHz linear phase
     std::cout << "  44.1kHz Linear: " << filterCoeffPath44kLinear << std::endl;
     if (!loadFilterCoefficients(filterCoeffPath44kLinear)) {
-        std::cerr << "Error: Failed to load 44.1kHz linear phase coefficients" << std::endl;
+        LOG_ERROR("Failed to load 44.1kHz linear phase coefficients");
         return false;
     }
     h_filterCoeffs44k_linear_ = h_filterCoeffs_;
@@ -648,7 +652,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     // 48kHz linear phase
     std::cout << "  48kHz Linear: " << filterCoeffPath48kLinear << std::endl;
     if (!loadFilterCoefficients(filterCoeffPath48kLinear)) {
-        std::cerr << "Error: Failed to load 48kHz linear phase coefficients" << std::endl;
+        LOG_ERROR("Failed to load 48kHz linear phase coefficients");
         return false;
     }
     h_filterCoeffs48k_linear_ = h_filterCoeffs_;
@@ -662,22 +666,25 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
     size_t taps48kLinear = h_filterCoeffs48k_linear_.size();
 
     if (taps44kMin != taps48kMin) {
-        std::cerr << "Error: Minimum phase tap counts differ between families (44k vs 48k): "
-                  << taps44kMin << " vs " << taps48kMin << std::endl;
+        LOG_ERROR("Minimum phase tap counts differ between families (44k vs 48k): {} vs {}",
+                  taps44kMin,
+                  taps48kMin);
         return false;
     }
 
     if (taps44kLinear != taps48kLinear) {
-        std::cerr << "Error: Linear phase tap counts differ between families (44k vs 48k): "
-                  << taps44kLinear << " vs " << taps48kLinear << std::endl;
+        LOG_ERROR("Linear phase tap counts differ between families (44k vs 48k): {} vs {}",
+                  taps44kLinear,
+                  taps48kLinear);
         return false;
     }
 
     const size_t minTapCount = taps44kMin;
     const size_t linearTapCount = taps44kLinear;
     if (linearTapCount != minTapCount && linearTapCount != minTapCount + 1) {
-        std::cerr << "Error: Unexpected relationship between minimum and linear phase taps: "
-                  << "min=" << minTapCount << ", linear=" << linearTapCount << std::endl;
+        LOG_ERROR("Unexpected relationship between minimum and linear phase taps: min={}, linear={}",
+                  minTapCount,
+                  linearTapCount);
         return false;
     }
 
@@ -686,7 +693,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
 
     // Setup GPU resources (allocates FFT buffers, plans, etc.)
     if (!setupGPUResources()) {
-        std::cerr << "Error: Failed to setup GPU resources" << std::endl;
+        LOG_ERROR("Failed to setup GPU resources");
         return false;
     }
 
@@ -786,8 +793,7 @@ bool GPUUpsampler::initializeQuadPhase(const std::string& filterCoeffPath44kMin,
 
 bool GPUUpsampler::switchPhaseType(PhaseType targetPhase) {
     if (!quadPhaseEnabled_) {
-        std::cerr << "Error: Quad-phase mode not enabled. Use setPhaseType() for non-quad-phase mode."
-                  << std::endl;
+        LOG_ERROR("Quad-phase mode not enabled. Use setPhaseType() for non-quad-phase mode.");
         return false;
     }
 

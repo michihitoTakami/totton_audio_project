@@ -1,5 +1,7 @@
 #include "audio/audio_io.h"
 
+#include "logging/logger.h"
+
 #include <cstring>
 #include <iostream>
 
@@ -17,8 +19,8 @@ WavReader::~WavReader() {
 bool WavReader::open(const std::string& filename) {
     file_ = sf_open(filename.c_str(), SFM_READ, &info_);
     if (!file_) {
-        std::cerr << "Error opening input file: " << filename << '\n';
-        std::cerr << "libsndfile error: " << sf_strerror(nullptr) << '\n';
+        LOG_ERROR("Error opening input file: {}", filename);
+        LOG_ERROR("libsndfile error: {}", sf_strerror(nullptr));
         return false;
     }
 
@@ -41,7 +43,7 @@ void WavReader::close() {
 
 bool WavReader::readAll(AudioFile& output) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << '\n';
+        LOG_ERROR("Error: File not opened");
         return false;
     }
 
@@ -56,9 +58,8 @@ bool WavReader::readAll(AudioFile& output) {
     // Read all frames
     sf_count_t framesRead = sf_readf_float(file_, output.data.data(), info_.frames);
     if (framesRead != info_.frames) {
-        std::cerr << "Error: Incomplete read. Expected " << info_.frames << " frames, read "
-                  << framesRead << '\n';
-        std::cerr << "File may be corrupted or truncated." << '\n';
+        LOG_ERROR("Error: Incomplete read. Expected {} frames, read {}", info_.frames, framesRead);
+        LOG_ERROR("File may be corrupted or truncated.");
         return false;
     }
 
@@ -67,7 +68,7 @@ bool WavReader::readAll(AudioFile& output) {
 
 bool WavReader::readBlock(float* buffer, sf_count_t frames) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << '\n';
+        LOG_ERROR("Error: File not opened");
         return false;
     }
 
@@ -91,8 +92,8 @@ bool WavWriter::open(const std::string& filename, int sampleRate, int channels) 
 
     file_ = sf_open(filename.c_str(), SFM_WRITE, &info_);
     if (!file_) {
-        std::cerr << "Error opening output file: " << filename << '\n';
-        std::cerr << "libsndfile error: " << sf_strerror(nullptr) << '\n';
+        LOG_ERROR("Error opening output file: {}", filename);
+        LOG_ERROR("libsndfile error: {}", sf_strerror(nullptr));
         return false;
     }
 
@@ -112,14 +113,13 @@ void WavWriter::close() {
 
 bool WavWriter::writeAll(const AudioFile& input) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << '\n';
+        LOG_ERROR("Error: File not opened");
         return false;
     }
 
     sf_count_t framesWritten = sf_writef_float(file_, input.data.data(), input.frames);
     if (framesWritten != input.frames) {
-        std::cerr << "Error: Expected to write " << input.frames << " frames, wrote "
-                  << framesWritten << '\n';
+        LOG_ERROR("Error: Expected to write {} frames, wrote {}", input.frames, framesWritten);
         return false;
     }
 
@@ -128,7 +128,7 @@ bool WavWriter::writeAll(const AudioFile& input) {
 
 bool WavWriter::writeBlock(const float* buffer, sf_count_t frames) {
     if (!file_) {
-        std::cerr << "Error: File not opened" << '\n';
+        LOG_ERROR("Error: File not opened");
         return false;
     }
 

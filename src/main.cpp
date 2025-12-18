@@ -4,6 +4,7 @@
 #include "convolution_engine.h"
 #include "core/config_loader.h"
 #include "core/filter_metadata.h"
+#include "logging/logger.h"
 
 #include <chrono>
 #include <cmath>
@@ -95,7 +96,7 @@ bool parseArguments(int argc, char* argv[], Config& config) {
         } else if (arg == "--block" && i + 1 < argc) {
             config.blockSize = std::stoi(argv[++i]);
         } else {
-            std::cerr << "Unknown option: " << arg << '\n';
+            LOG_ERROR("Unknown option: {}", arg);
             return false;
         }
     }
@@ -104,6 +105,8 @@ bool parseArguments(int argc, char* argv[], Config& config) {
 }
 
 int main(int argc, char* argv[]) {
+    gpu_upsampler::logging::initializeEarly();
+
     std::cout << "========================================" << '\n';
     std::cout << "  GPU Audio Upsampler - Phase 2" << '\n';
     std::cout << "  High-Precision Audio Oversampling" << '\n';
@@ -174,54 +177,54 @@ int main(int argc, char* argv[]) {
             } else if (inputAudio.sampleRate == FILTER_PRESET_48K.inputSampleRate) {
                 targetPreset = &FILTER_PRESET_48K;
             } else {
-                std::cerr << "Error: Unsupported input sample rate " << inputAudio.sampleRate
-                          << " Hz. Supported: 44100 Hz or 48000 Hz." << '\n';
+                LOG_ERROR("Unsupported input sample rate {} Hz. Supported: 44100 Hz or 48000 Hz.",
+                          inputAudio.sampleRate);
                 return 1;
             }
 
             if (targetPreset && applyPreset(*targetPreset)) {
                 // OK
             } else if (targetPreset == &FILTER_PRESET_48K) {
-                std::cerr << "Warning: 48kHz preset filter missing: " << FILTER_PRESET_48K.path
-                          << '\n';
-                std::cerr << "To generate: "
-                          << "python scripts/filters/generate_minimum_phase.py --input-rate 48000 "
-                          << "--stopband-start 24000 --passband-end 21500 "
-                          << "--output-prefix filter_48k_16x_2m_min_phase" << '\n';
+                LOG_WARN("48kHz preset filter missing: {}", FILTER_PRESET_48K.path);
+                LOG_INFO(
+                    "To generate: python scripts/filters/generate_minimum_phase.py --input-rate "
+                    "48000 "
+                    "--stopband-start 24000 --passband-end 21500 "
+                    "--output-prefix filter_48k_16x_2m_min_phase");
                 if (!applyPreset(FILTER_PRESET_44K)) {
-                    std::cerr << "Error: 44.1kHz fallback filter also missing: "
-                              << FILTER_PRESET_44K.path << '\n';
+                    LOG_ERROR("44.1kHz fallback filter also missing: {}", FILTER_PRESET_44K.path);
                     return 1;
                 }
                 std::cout << "Falling back to 44.1kHz preset filter." << '\n';
             } else {
-                std::cerr << "Error: Preset filter file not found: "
-                          << (targetPreset ? targetPreset->path : "") << '\n';
-                std::cerr << "Generate it via scripts/filters/generate_minimum_phase.py or specify "
-                             "with --filter."
-                          << '\n';
+                LOG_ERROR("Preset filter file not found: {}",
+                          (targetPreset ? targetPreset->path : ""));
+                LOG_INFO(
+                    "Generate it via scripts/filters/generate_minimum_phase.py or specify with "
+                    "--filter.");
                 return 1;
             }
         } else {
             std::cout << "User-specified filter will be used: " << config.filterPath << '\n';
             if (inputAudio.sampleRate != FILTER_PRESET_44K.inputSampleRate &&
                 inputAudio.sampleRate != FILTER_PRESET_48K.inputSampleRate) {
-                std::cerr << "Warning: Input sample rate " << inputAudio.sampleRate
-                          << " Hz is not validated against provided filter." << '\n';
+                LOG_WARN("Input sample rate {} Hz is not validated against provided filter.",
+                         inputAudio.sampleRate);
             }
         }
 
         if (!std::filesystem::exists(config.filterPath)) {
-            std::cerr << "Error: Filter file not found: " << config.filterPath << '\n';
+            LOG_ERROR("Filter file not found: {}", config.filterPath);
             if (inputAudio.sampleRate == FILTER_PRESET_48K.inputSampleRate) {
-                std::cerr << "Generate it via: "
-                          << "python scripts/filters/generate_minimum_phase.py --input-rate 48000 "
-                          << "--stopband-start 24000 --passband-end 21500 "
-                          << "--output-prefix filter_48k_16x_2m_min_phase" << '\n';
+                LOG_INFO(
+                    "Generate it via: python scripts/filters/generate_minimum_phase.py "
+                    "--input-rate 48000 "
+                    "--stopband-start 24000 --passband-end 21500 "
+                    "--output-prefix filter_48k_16x_2m_min_phase");
             } else {
-                std::cerr << "Generate it via scripts/filters/generate_minimum_phase.py or specify "
-                             "with --filter."
-                          << '\n';
+                LOG_INFO(
+                    "Generate it via scripts/filters/generate_minimum_phase.py or specify with "
+                    "--filter.");
             }
             return 1;
         }
@@ -238,7 +241,7 @@ int main(int argc, char* argv[]) {
             std::cout << '\n' << "Step 2b: Loading EQ profile..." << '\n';
             EQ::EqProfile eqProfile;
             if (!EQ::parseEqFile(config.eqPath, eqProfile)) {
-                std::cerr << "Error: Failed to parse EQ file: " << config.eqPath << '\n';
+                LOG_ERROR("Failed to parse EQ file: {}", config.eqPath);
                 return 1;
             }
             std::cout << "  EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
@@ -262,7 +265,7 @@ int main(int argc, char* argv[]) {
                       << " dB), min=" << std::setprecision(6) << minMag << '\n';
 
             if (!upsampler.applyEqMagnitude(eqMagnitude)) {
-                std::cerr << "Error: Failed to apply EQ magnitude" << '\n';
+                LOG_ERROR("Failed to apply EQ magnitude");
                 return 1;
             }
         }
@@ -296,12 +299,12 @@ int main(int argc, char* argv[]) {
                                               inputAudio.frames, outputLeft, outputRight);
 
         } else {
-            std::cerr << "Error: Unsupported channel count: " << inputAudio.channels << '\n';
+            LOG_ERROR("Unsupported channel count: {}", inputAudio.channels);
             return 1;
         }
 
         if (!success) {
-            std::cerr << "Error: Audio processing failed" << '\n';
+            LOG_ERROR("Audio processing failed");
             return 1;
         }
 
@@ -368,7 +371,7 @@ int main(int argc, char* argv[]) {
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << '\n';
+        LOG_CRITICAL("Fatal error: {}", e.what());
         return 1;
     }
 }
