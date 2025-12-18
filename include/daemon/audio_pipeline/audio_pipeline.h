@@ -52,8 +52,8 @@ struct Dependencies {
     std::atomic<bool>* fallbackActive = nullptr;
     std::atomic<bool>* outputReady = nullptr;
     std::atomic<bool>* crossfeedEnabled = nullptr;
+    std::atomic<bool>* crossfeedResetRequested = nullptr;
     ConvolutionEngine::FourChannelFIR* crossfeedProcessor = nullptr;
-    std::mutex* crossfeedMutex = nullptr;
     ConvolutionEngine::StreamFloatVector* cfStreamInputLeft = nullptr;
     ConvolutionEngine::StreamFloatVector* cfStreamInputRight = nullptr;
     size_t* cfStreamAccumulatedLeft = nullptr;
@@ -72,7 +72,6 @@ struct Dependencies {
     BufferResources buffer;
     std::function<size_t()> maxOutputBufferFrames;
     std::function<int()> currentOutputRate;
-    std::mutex* inputMutex = nullptr;
 };
 
 struct RenderResult {
@@ -85,6 +84,9 @@ class AudioPipeline {
    public:
     explicit AudioPipeline(Dependencies deps);
     bool process(const float* inputSamples, uint32_t nFrames);
+    void requestRtPause();
+    void resumeRtPause();
+    bool waitForRtPaused(std::chrono::milliseconds timeout) const;
     RenderResult renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,
                               std::vector<float>& floatScratch, SoftMute::Controller* softMute);
     void trimOutputBuffer(size_t minFramesToRemove);
@@ -105,10 +107,9 @@ class AudioPipeline {
     Dependencies deps_;
     std::chrono::steady_clock::time_point lastDropWarn_{std::chrono::steady_clock::now() -
                                                         std::chrono::seconds(6)};
-    std::chrono::steady_clock::time_point lastInputLockWarn_{std::chrono::steady_clock::now() -
-                                                             std::chrono::seconds(6)};
-    std::chrono::steady_clock::time_point lastCrossfeedLockWarn_{std::chrono::steady_clock::now() -
-                                                                 std::chrono::seconds(6)};
+    std::atomic<int> pauseRequestCount_{0};
+    std::atomic<bool> rtPaused_{false};
+    bool lastCrossfeedEnabledApplied_ = false;
 
     // RT パスで毎回 std::vector を生成しないためのワークバッファ (Issue #894)
     std::vector<float> workLeft_;

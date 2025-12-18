@@ -247,12 +247,11 @@ std::string ControlPlane::handleCrossfeedEnable(const daemon_ipc::ZmqRequest& re
                                   "HRTF processor not initialized");
     }
 
-    if (deps_.crossfeed.resetStreamingState) {
-        deps_.crossfeed.resetStreamingState();
-    }
-    processor->setEnabled(true);
     if (deps_.crossfeed.enabledFlag) {
         deps_.crossfeed.enabledFlag->store(true);
+    }
+    if (deps_.crossfeed.resetStreamingState) {
+        deps_.crossfeed.resetStreamingState();
     }
     return buildOkResponse(request, "Crossfeed enabled");
 }
@@ -261,10 +260,6 @@ std::string ControlPlane::handleCrossfeedDisable(const daemon_ipc::ZmqRequest& r
     std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);
     if (deps_.crossfeed.enabledFlag) {
         deps_.crossfeed.enabledFlag->store(false);
-    }
-    auto* processor = crossfeedProcessor(deps_.crossfeed);
-    if (processor) {
-        processor->setEnabled(false);
     }
     if (deps_.crossfeed.resetStreamingState) {
         deps_.crossfeed.resetStreamingState();

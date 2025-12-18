@@ -2,44 +2,19 @@
 #define STREAMING_CACHE_MANAGER_H
 
 #include "audio/input_stall_detector.h"
-#include "audio/soft_mute.h"
-#include "convolution_engine.h"
 #include "logging/logger.h"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
-#include <mutex>
-#include <vector>
+#include <thread>
 
 namespace streaming_cache {
 
 struct StreamingCacheDependencies {
-    // Serialize cache flush against AudioPipeline::process() to avoid resetting
-    // streaming overlap state while the producer thread is actively using it.
-    // Optional: when null, flushing proceeds without this outer lock.
-    std::mutex* inputMutex = nullptr;
-
-    // Optional callback to reset playback/output buffers.
-    // If set、下記のoutputBufferLeft/Rightのクリアは呼ばれない。
-    std::function<void()> resetPlaybackBuffer;
-    std::vector<float>* outputBufferLeft = nullptr;
-    std::vector<float>* outputBufferRight = nullptr;
-    std::mutex* bufferMutex = nullptr;
-    size_t* outputReadPos = nullptr;
-
-    ConvolutionEngine::StreamFloatVector* streamInputLeft = nullptr;
-    ConvolutionEngine::StreamFloatVector* streamInputRight = nullptr;
-    size_t* streamAccumulatedLeft = nullptr;
-    size_t* streamAccumulatedRight = nullptr;
-    std::mutex* streamingMutex = nullptr;
-
-    ConvolutionEngine::GPUUpsampler** upsamplerPtr = nullptr;
-    SoftMute::Controller** softMute = nullptr;
-
-    std::function<void()> onCrossfeedReset;
+    // RT スレッドで実行される。ブロッキング/長時間処理は避けること。
+    std::function<void(std::chrono::nanoseconds gap)> flushAction;
 };
 
 class StreamingCacheManager {
@@ -55,110 +30,49 @@ class StreamingCacheManager {
             std::int64_t expected = 0;
             (void)firstInputTimestampNs_.compare_exchange_strong(expected, nowNs,
                                                                  std::memory_order_acq_rel);
+            // 外部フラッシュ要求だけは初回でも処理できる
+            maybeFlushExternal(std::chrono::nanoseconds::zero());
             return;
         }
 
         std::int64_t startNs = firstInputTimestampNs_.load(std::memory_order_acquire);
         if (startNs > 0 && (nowNs - startNs) < kInitialStallGraceNs) {
             // 起動直後のギャップは無視してポップノイズを回避
+            maybeFlushExternal(std::chrono::nanoseconds::zero());
             return;
         }
+
         if (AudioInput::shouldResetAfterStall(previousNs, nowNs)) {
             std::chrono::nanoseconds gap(nowNs - previousNs);
-            flushCachesInternal(gap);
+            flushInternal(gap);
+            return;
         }
+
+        maybeFlushExternal(std::chrono::nanoseconds::zero());
     }
 
     void flushCaches(std::chrono::nanoseconds gap = std::chrono::nanoseconds::zero()) {
-        flushCachesInternal(gap);
+        pendingGapNs_.store(static_cast<std::int64_t>(gap.count()), std::memory_order_release);
+        externalFlushRequested_.store(true, std::memory_order_release);
     }
 
    private:
-    void flushCachesInternal(std::chrono::nanoseconds gap) {
-        // Prevent concurrent modifications from the producer (AudioPipeline::process).
-        std::unique_lock<std::mutex> inputLock;
-        if (deps_.inputMutex) {
-            inputLock = std::unique_lock<std::mutex>(*deps_.inputMutex);
+    void maybeFlushExternal(std::chrono::nanoseconds fallbackGap) {
+        if (!externalFlushRequested_.exchange(false, std::memory_order_acq_rel)) {
+            return;
         }
+        std::int64_t gapNs = pendingGapNs_.exchange(0, std::memory_order_acq_rel);
+        std::chrono::nanoseconds gap(gapNs > 0 ? gapNs : fallbackGap.count());
+        flushInternal(gap);
+    }
 
+    void flushInternal(std::chrono::nanoseconds gap) {
         // リセット後に再度グレース期間を適用するため、入力タイムスタンプを初期化
         lastInputTimestampNs_.store(0, std::memory_order_release);
         firstInputTimestampNs_.store(0, std::memory_order_release);
 
-        auto resetPlaybackBuffers = [&]() {
-            if (deps_.resetPlaybackBuffer) {
-                deps_.resetPlaybackBuffer();
-                return;
-            }
-            if (deps_.outputBufferLeft && deps_.outputBufferRight) {
-                deps_.outputBufferLeft->clear();
-                deps_.outputBufferRight->clear();
-            }
-            if (deps_.outputReadPos) {
-                *deps_.outputReadPos = 0;
-            }
-        };
-
-        auto resetStreamingBuffers = [&]() {
-            if (deps_.streamInputLeft) {
-                std::fill(deps_.streamInputLeft->begin(), deps_.streamInputLeft->end(), 0.0f);
-            }
-            if (deps_.streamInputRight) {
-                std::fill(deps_.streamInputRight->begin(), deps_.streamInputRight->end(), 0.0f);
-            }
-            if (deps_.streamAccumulatedLeft) {
-                *deps_.streamAccumulatedLeft = 0;
-            }
-            if (deps_.streamAccumulatedRight) {
-                *deps_.streamAccumulatedRight = 0;
-            }
-        };
-
-        auto resetStreamingEngine = [&]() {
-            if (deps_.upsamplerPtr && *deps_.upsamplerPtr) {
-                (*deps_.upsamplerPtr)->resetStreaming();
-            }
-        };
-
-        auto beginSoftMute = [&]() {
-            if (deps_.softMute && *deps_.softMute) {
-                (*deps_.softMute)->startFadeOut();
-            }
-        };
-
-        auto endSoftMute = [&]() {
-            if (deps_.softMute && *deps_.softMute) {
-                (*deps_.softMute)->startFadeIn();
-            }
-        };
-
-        bool hasStreamingLock = deps_.streamingMutex != nullptr;
-        bool hasBufferLock = deps_.bufferMutex != nullptr;
-
-        beginSoftMute();
-
-        if (hasStreamingLock && hasBufferLock) {
-            std::scoped_lock<std::mutex, std::mutex> lock(*deps_.streamingMutex,
-                                                          *deps_.bufferMutex);
-            resetPlaybackBuffers();
-            resetStreamingBuffers();
-            resetStreamingEngine();
-        } else {
-            if (hasBufferLock) {
-                std::lock_guard<std::mutex> lock(*deps_.bufferMutex);
-                resetPlaybackBuffers();
-            }
-            if (hasStreamingLock) {
-                std::lock_guard<std::mutex> streamLock(*deps_.streamingMutex);
-                resetStreamingBuffers();
-                resetStreamingEngine();
-            }
-        }
-
-        endSoftMute();
-
-        if (deps_.onCrossfeedReset) {
-            deps_.onCrossfeedReset();
+        if (deps_.flushAction) {
+            deps_.flushAction(gap);
         }
 
         double gapMs = static_cast<double>(gap.count()) / 1'000'000.0;
@@ -168,6 +82,8 @@ class StreamingCacheManager {
     StreamingCacheDependencies deps_;
     std::atomic<std::int64_t> lastInputTimestampNs_{0};
     std::atomic<std::int64_t> firstInputTimestampNs_{0};
+    std::atomic<bool> externalFlushRequested_{false};
+    std::atomic<std::int64_t> pendingGapNs_{0};
 
     static constexpr std::int64_t kInitialStallGraceNs = 1'500'000'000;  // 1.5s
 };
