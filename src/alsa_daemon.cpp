@@ -446,6 +446,43 @@ static void reset_crossfeed_stream_state_locked() {
     }
 }
 
+// Crossfeed enable/disable safety (Issue #888)
+// - Avoid mixing pre/post switch audio by clearing playback + streaming caches.
+// - Do not touch SoftMute here; caller wraps this with a fade-out/in.
+static bool reset_streaming_caches_for_switch() {
+    // Prevent concurrent modifications from the producer (AudioPipeline::process).
+    std::lock_guard<std::mutex> inputLock(g_state.inputProcessMutex);
+
+    playback_buffer().reset();
+    playback_buffer().cv().notify_all();
+
+    {
+        std::lock_guard<std::mutex> lock(g_state.streaming.streamingMutex);
+        if (!g_state.streaming.streamInputLeft.empty()) {
+            std::fill(g_state.streaming.streamInputLeft.begin(),
+                      g_state.streaming.streamInputLeft.end(), 0.0f);
+        }
+        if (!g_state.streaming.streamInputRight.empty()) {
+            std::fill(g_state.streaming.streamInputRight.begin(),
+                      g_state.streaming.streamInputRight.end(), 0.0f);
+        }
+        g_state.streaming.streamAccumulatedLeft = 0;
+        g_state.streaming.streamAccumulatedRight = 0;
+        g_state.streaming.upsamplerOutputLeft.clear();
+        g_state.streaming.upsamplerOutputRight.clear();
+        if (g_state.upsampler) {
+            g_state.upsampler->resetStreaming();
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> cfLock(g_state.crossfeed.crossfeedMutex);
+        reset_crossfeed_stream_state_locked();
+    }
+
+    return true;
+}
+
 static void initialize_streaming_cache_manager() {
     streaming_cache::StreamingCacheDependencies deps;
     deps.inputMutex = &g_state.inputProcessMutex;
@@ -2012,6 +2049,9 @@ int main(int argc, char* argv[]) {
         controlDeps.bufferCapacityFrames = []() { return get_max_output_buffer_frames(); };
         controlDeps.applySoftMuteForFilterSwitch = [](std::function<bool()> fn) {
             applySoftMuteForFilterSwitch(std::move(fn));
+        };
+        controlDeps.resetStreamingCachesForSwitch = []() {
+            return reset_streaming_caches_for_switch();
         };
         controlDeps.refreshHeadroom = [](const std::string& reason) {
             refresh_current_headroom(reason);
