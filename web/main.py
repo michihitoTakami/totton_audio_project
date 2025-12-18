@@ -20,6 +20,7 @@ from .routers import (
     dac_router,
     daemon_router,
     eq_router,
+    i2s_router,
     opra_router,
     output_mode_router,
     partitioned_router,
@@ -169,6 +170,7 @@ No authentication required (local network only).
 
     # Include routers
     app.include_router(status_router)
+    app.include_router(i2s_router)
     app.include_router(daemon_router)
     app.include_router(eq_router)
     app.include_router(opra_router)

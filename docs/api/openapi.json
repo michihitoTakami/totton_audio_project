@@ -92,6 +92,68 @@
         }
       }
     },
+    "/i2s/peer-status": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Get Peer Status",
+        "description": "Get latest reported peer status (best-effort).",
+        "operationId": "get_peer_status_i2s_peer_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/I2sPeerStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "status"
+        ],
+        "summary": "Post Peer Status",
+        "description": "Accept peer status report.\n\nIMPORTANT:\n- 受け取っただけでは daemon 再起動等は行わない（ループ防止）\n- generation / updated_at_unix_ms が古い更新は無視する（stale対策）",
+        "operationId": "post_peer_status_i2s_peer_status_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/I2sPeerStatusUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/daemon/start": {
       "post": {
         "tags": [
@@ -2610,6 +2672,117 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "I2sPeerStatus": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "default": false
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode",
+            "default": "none"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "title": "Sample Rate",
+            "default": 0
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": ""
+          },
+          "channels": {
+            "type": "integer",
+            "title": "Channels",
+            "default": 0
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation",
+            "default": 0
+          },
+          "updated_at_unix_ms": {
+            "type": "integer",
+            "title": "Updated At Unix Ms",
+            "default": 0
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "received_at_unix_ms": {
+            "type": "integer",
+            "title": "Received At Unix Ms",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "I2sPeerStatus",
+        "description": "保存済みの peer status（参照用）."
+      },
+      "I2sPeerStatusUpdate": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "default": false
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode",
+            "default": "none"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "title": "Sample Rate",
+            "default": 0
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": ""
+          },
+          "channels": {
+            "type": "integer",
+            "title": "Channels",
+            "default": 0
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation",
+            "default": 0
+          },
+          "updated_at_unix_ms": {
+            "type": "integer",
+            "title": "Updated At Unix Ms",
+            "default": 0
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "I2sPeerStatusUpdate",
+        "description": "Pi(usb-i2s-bridge) から Jetson Web へ送るステータス（更新用）."
       },
       "OpraEqAttribution": {
         "properties": {

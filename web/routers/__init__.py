@@ -8,12 +8,14 @@ from .opra import router as opra_router
 from .partitioned import router as partitioned_router
 from .status import router as status_router
 from .output_mode import router as output_mode_router
+from .i2s import router as i2s_router
 
 __all__ = [
     "crossfeed_router",
     "dac_router",
     "daemon_router",
     "eq_router",
+    "i2s_router",
     "opra_router",
     "output_mode_router",
     "partitioned_router",

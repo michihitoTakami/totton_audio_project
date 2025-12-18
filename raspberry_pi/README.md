@@ -91,12 +91,20 @@ Magic Box Web UI からのレイテンシ変更を Pi に伝える場合に使�
 
 I2S のレート/フォーマット/チャンネルを Pi-Jetson 間で同期させ、どちらかが切断中でも復帰後に共通パラメータになるまで capture を待機します。
 
-- REP (Pi): `USB_I2S_CONTROL_ENDPOINT` (既定 `tcp://0.0.0.0:60100`)
-- REQ (Jetson 側など): `USB_I2S_CONTROL_PEER` (既定 `tcp://jetson:60101`)
-- 待機ポリシー: `USB_I2S_CONTROL_REQUIRE_PEER=true` で peer 同期完了まで capture を禁止
+- REP (Pi): `USB_I2S_CONTROL_ENDPOINT` (**既定: 空=無効**)
+- REQ (Jetson 側など): `USB_I2S_CONTROL_PEER` (**既定: 空=無効**)
+- 待機ポリシー: `USB_I2S_CONTROL_REQUIRE_PEER=true` で peer 同期完了まで capture を禁止（**既定: false**）
 - タイムアウト/ポーリング: `USB_I2S_CONTROL_TIMEOUT_MS` / `USB_I2S_CONTROL_POLL_INTERVAL_SEC`
 
 Jetson 側も `raspberry_pi/usb_i2s_bridge/control_agent.py` を `python3 -m raspberry_pi.usb_i2s_bridge.control_agent` で起動すると、同じ仕組みでステータスを提供できます。
+
+### Jetson Web(:80) へのステータス送信 (Issue #950)
+
+別ポートを増やさずに Jetson 側へ状態（mode/rate/format/ch）を通知したい場合は、Pi 側で以下を設定します（任意）。
+
+- `USB_I2S_STATUS_REPORT_URL`（例: `http://jetson/i2s/peer-status`）
+- `USB_I2S_STATUS_REPORT_TIMEOUT_MS`（既定 300）
+- `USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC`（既定 1.0）
 
 ## 参考: 生の GStreamer コマンド
 

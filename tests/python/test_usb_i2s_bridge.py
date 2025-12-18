@@ -80,3 +80,8 @@ def test_pcm_device_node_mapping_capture() -> None:
 
 def test_pcm_device_node_mapping_playback() -> None:
     assert str(bridge._pcm_device_node("plughw:0,0", "p")) == "/dev/snd/pcmC0D0p"
+
+
+def test_default_control_endpoint_is_disabled_by_default() -> None:
+    # NOTE(#950): 60100/60101 の制御プレーンはデフォルト無効（空）へ寄せる
+    assert bridge._DEFAULT_CONTROL_ENDPOINT == ""

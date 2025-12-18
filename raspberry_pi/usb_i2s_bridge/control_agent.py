@@ -16,8 +16,14 @@ from .control_plane import ControlPlaneSync, _is_supported_rate
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ENDPOINT = os.getenv("I2S_CONTROL_ENDPOINT", "tcp://0.0.0.0:60101")
-DEFAULT_PEER = os.getenv("I2S_CONTROL_PEER", "tcp://192.168.55.100:60100")
+#
+# NOTE(#950):
+# このエージェントは ZeroMQ 制御プレーン用の補助ツールだが、
+# Jetson 側で常駐させる前提が崩れると「同期できない→Pi側が不安定」になり得るため、
+# デフォルトは無効（空）に寄せる。必要な場合のみ明示的に指定する。
+#
+DEFAULT_ENDPOINT = os.getenv("I2S_CONTROL_ENDPOINT", "").strip()
+DEFAULT_PEER = os.getenv("I2S_CONTROL_PEER", "").strip()
 DEFAULT_DEVICE = os.getenv("I2S_CONTROL_DEVICE", "hw:Loopback,0,0")
 DEFAULT_STREAM = os.getenv("I2S_CONTROL_STREAM", "c")  # c: capture, p: playback
 DEFAULT_CHANNELS = int(os.getenv("I2S_CONTROL_CHANNELS", "2"))
@@ -25,7 +31,7 @@ DEFAULT_FORMAT = os.getenv("I2S_CONTROL_DEFAULT_FORMAT", "S32_LE")
 DEFAULT_RATE = int(os.getenv("I2S_CONTROL_DEFAULT_RATE", "48000"))
 DEFAULT_POLL_SEC = float(os.getenv("I2S_CONTROL_POLL_INTERVAL_SEC", "1.0"))
 DEFAULT_TIMEOUT_MS = int(os.getenv("I2S_CONTROL_TIMEOUT_MS", "2000"))
-DEFAULT_REQUIRE_PEER = os.getenv("I2S_CONTROL_REQUIRE_PEER", "1").lower() not in {
+DEFAULT_REQUIRE_PEER = os.getenv("I2S_CONTROL_REQUIRE_PEER", "0").lower() not in {
     "0",
     "false",
     "no",
@@ -135,8 +141,16 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _setup_logging(args.verbose)
 
+    endpoint = str(args.endpoint or "").strip()
+    if not endpoint:
+        logger.error(
+            "I2S control agent: endpoint が未指定です。"
+            " --endpoint もしくは I2S_CONTROL_ENDPOINT を指定してください。"
+        )
+        return 2
+
     sync = ControlPlaneSync(
-        endpoint=args.endpoint,
+        endpoint=endpoint,
         peer_endpoint=args.peer or None,
         require_peer=not args.allow_without_peer,
         poll_interval_sec=args.poll_interval,
