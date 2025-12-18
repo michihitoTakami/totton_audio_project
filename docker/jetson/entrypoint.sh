@@ -61,6 +61,31 @@ prepare_config() {
         jq empty "$target" >/dev/null 2>&1
     }
 
+    # Helper: merge missing keys from DEFAULT_CONFIG into CONFIG_FILE (existing values win)
+    merge_defaults() {
+        local merged_path="${CONFIG_FILE}.merged"
+        if jq -s '.[0] * .[1]' "$DEFAULT_CONFIG" "$CONFIG_FILE" > "$merged_path" 2>/dev/null; then
+            mv -f "$merged_path" "$CONFIG_FILE"
+        else
+            rm -f "$merged_path" 2>/dev/null || true
+            log_warn "Failed to merge defaults into config (keeping current config as-is)"
+        fi
+    }
+
+    # Helper: Jetson migration - prefer I2S when both are enabled
+    normalize_inputs() {
+        if jq -e '.i2s.enabled == true and .loopback.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+            log_warn "Both i2s.enabled and loopback.enabled are true; disabling loopback (Jetson default)"
+            local migrated_path="${CONFIG_FILE}.migrated"
+            if jq '(.loopback.enabled = false)' "$CONFIG_FILE" > "$migrated_path" 2>/dev/null; then
+                mv -f "$migrated_path" "$CONFIG_FILE"
+            else
+                rm -f "$migrated_path" 2>/dev/null || true
+                log_warn "Failed to normalize input settings (daemon may refuse to start)"
+            fi
+        fi
+    }
+
     # Optional reset via env
     if [[ "$reset_flag" == "true" || "$reset_flag" == "1" ]]; then
         log_warn "Reset requested via MAGICBOX_RESET_CONFIG, restoring default config"
@@ -80,6 +105,12 @@ prepare_config() {
                 cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
             fi
         fi
+    fi
+
+    # Always merge newly introduced default keys (e.g., i2s) into existing config safely.
+    if validate_json "$CONFIG_FILE"; then
+        merge_defaults
+        normalize_inputs
     fi
 
     ln -sf "$CONFIG_FILE" "$CONFIG_SYMLINK"
