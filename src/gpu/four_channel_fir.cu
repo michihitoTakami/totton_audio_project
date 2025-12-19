@@ -443,18 +443,36 @@ bool FourChannelFIR::processStreamBlock(const float* inputL, const float* inputR
     const size_t requiredL = streamInputAccumulatedL + inputFrames;
     const size_t requiredR = streamInputAccumulatedR + inputFrames;
     if (requiredL > streamInputBufferL.size() || requiredR > streamInputBufferR.size()) {
-        LOG_EVERY_N(ERROR, 100, "[FourChannelFIR] Input buffer too small for streaming block");
-        outputL.clear();
-        outputR.clear();
-        return false;
-    }
+        // Safety: the caller is expected to pre-size streamInputBuffer* to avoid RT allocations.
+        // If buffers are undersized (or input arrives in larger bursts than expected), recover by
+        // dropping accumulated samples and keeping only the tail of the current input.
+        const size_t sizeL = streamInputBufferL.size();
+        const size_t sizeR = streamInputBufferR.size();
+        const size_t kept = std::min({inputFrames, sizeL, sizeR});
+        LOG_EVERY_N(ERROR, 100,
+                    "[FourChannelFIR] Input buffer too small (requiredL={}, requiredR={}, sizeL={}, "
+                    "sizeR={}, inputFrames={}). Dropping accumulated stream state (keep={} frames).",
+                    requiredL, requiredR, sizeL, sizeR, inputFrames, kept);
 
-    std::copy(inputL, inputL + inputFrames,
-              streamInputBufferL.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedL));
-    std::copy(inputR, inputR + inputFrames,
-              streamInputBufferR.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedR));
-    streamInputAccumulatedL += inputFrames;
-    streamInputAccumulatedR += inputFrames;
+        streamInputAccumulatedL = 0;
+        streamInputAccumulatedR = 0;
+
+        if (kept > 0 && inputL && inputR) {
+            const float* tailL = inputL + (inputFrames - kept);
+            const float* tailR = inputR + (inputFrames - kept);
+            std::copy(tailL, tailL + kept, streamInputBufferL.begin());
+            std::copy(tailR, tailR + kept, streamInputBufferR.begin());
+            streamInputAccumulatedL = kept;
+            streamInputAccumulatedR = kept;
+        }
+    } else {
+        std::copy(inputL, inputL + inputFrames,
+                  streamInputBufferL.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedL));
+        std::copy(inputR, inputR + inputFrames,
+                  streamInputBufferR.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedR));
+        streamInputAccumulatedL += inputFrames;
+        streamInputAccumulatedR += inputFrames;
+    }
 
     if (streamInputAccumulatedL < streamValidInputPerBlock_ ||
         streamInputAccumulatedR < streamValidInputPerBlock_) {
