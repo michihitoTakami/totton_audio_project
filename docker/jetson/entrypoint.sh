@@ -129,6 +129,7 @@ prepare_config() {
     local backup_path="${CONFIG_FILE}.bak"
     local reset_flag
     reset_flag="$(echo "$RESET_CONFIG" | tr '[:upper:]' '[:lower:]')"
+    local apply_profile_on_seed=false
 
     # Helper: validate JSON file, returns 0 if valid JSON
     validate_json() {
@@ -210,11 +211,13 @@ prepare_config() {
     if [[ "$reset_flag" == "true" || "$reset_flag" == "1" ]]; then
         log_warn "Reset requested via MAGICBOX_RESET_CONFIG, restoring default config"
         cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+        apply_profile_on_seed=true
     else
         # Seed if missing/empty
         if [[ ! -s "$CONFIG_FILE" ]]; then
             log_info "Config not found, seeding default config to $CONFIG_FILE"
             cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+            apply_profile_on_seed=true
         else
             # Validate existing JSON; if invalid, back up and restore defaults
             if validate_json "$CONFIG_FILE"; then
@@ -223,6 +226,7 @@ prepare_config() {
                 log_warn "Config is invalid JSON, backing up to $backup_path and restoring default"
                 cp -f "$CONFIG_FILE" "$backup_path" || true
                 cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+                apply_profile_on_seed=true
             fi
         fi
     fi
@@ -230,7 +234,9 @@ prepare_config() {
     # Always merge newly introduced default keys (e.g., i2s) into existing config safely.
     if validate_json "$CONFIG_FILE"; then
         merge_defaults
-        apply_profile
+        if [[ "${apply_profile_on_seed}" == "true" ]]; then
+            apply_profile
+        fi
         normalize_inputs
     fi
 

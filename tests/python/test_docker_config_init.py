@@ -90,8 +90,6 @@ def test_config_init_prefers_i2s_when_both_enabled(tmp_path: Path) -> None:
 
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True)
-    config_file = config_dir / "config.json"
-    config_file.write_text(json.dumps({"loopback": {"enabled": True}}))
 
     result = _run_entrypoint(
         tmp_path,
@@ -104,6 +102,7 @@ def test_config_init_prefers_i2s_when_both_enabled(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
+    config_file = config_dir / "config.json"
     config_data = json.loads(config_file.read_text())
     assert config_data["i2s"]["enabled"] is True
     assert config_data["loopback"]["enabled"] is False
