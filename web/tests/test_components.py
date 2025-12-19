@@ -404,14 +404,14 @@ class TestFormGroupComponent:
         assert "<select" in html
 
     def test_form_group_with_text_input(self, client):
-        """Verify form group with text input type renders correctly."""
+        """Verify form group with select renders correctly for device choice."""
         response = client.get("/")
         assert response.status_code == 200
 
-        # Output Mode device input should be text type
+        # Output Mode device input should be select type (Issue #1022)
         html = response.text
-        assert 'type="text"' in html
-        assert "placeholder=" in html
+        assert '<select id="preferredDevice"' in html
+        assert 'x-model="outputMode.preferredDevice"' in html
 
     def test_form_group_with_textarea(self, client):
         """Verify form group with textarea type renders correctly."""
