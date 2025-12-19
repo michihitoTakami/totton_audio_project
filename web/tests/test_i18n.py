@@ -161,6 +161,69 @@ class TestDashboardTranslations:
             assert key in TRANSLATIONS["en"], f"Missing EN key: {key}"
             assert key in TRANSLATIONS["ja"], f"Missing JA key: {key}"
 
+
+class TestPiTranslations:
+    """Test Pi Settings translation keys."""
+
+    def test_pi_keys_exist_in_english_and_japanese(self):
+        keys = [
+            "nav.pi",
+            "pi.subtitle",
+            "pi.status.title",
+            "pi.status.running",
+            "pi.status.running_on",
+            "pi.status.running_off",
+            "pi.status.sample_rate",
+            "pi.status.format",
+            "pi.status.last_error",
+            "pi.status.no_error",
+            "pi.status.xruns_none",
+            "pi.status.mode_na",
+            "pi.status.not_available",
+            "pi.peer.title",
+            "pi.peer.running",
+            "pi.peer.running_on",
+            "pi.peer.running_off",
+            "pi.peer.sample_rate",
+            "pi.peer.format",
+            "pi.peer.note",
+            "pi.config.title",
+            "pi.config.description",
+            "pi.config.refresh",
+            "pi.config.restart",
+            "pi.config.apply",
+            "pi.config.latency",
+            "pi.config.latency.low",
+            "pi.config.latency.medium",
+            "pi.config.latency.safe",
+            "pi.config.latency.custom",
+            "pi.config.capture_device",
+            "pi.config.playback_device",
+            "pi.config.channels",
+            "pi.config.fallback_rate",
+            "pi.config.preferred_format",
+            "pi.config.status_report_url",
+            "pi.config.buffer_time_us",
+            "pi.config.latency_time_us",
+            "pi.config.queue_time_ns",
+            "pi.config.poll_interval_sec",
+            "pi.config.restart_backoff_sec",
+            "pi.config.status_report_timeout_ms",
+            "pi.config.status_report_min_interval_sec",
+            "pi.config.passthrough",
+            "pi.config.passthrough_desc",
+            "pi.config.keep_silence",
+            "pi.config.keep_silence_desc",
+            "pi.config.fade_ms",
+            "pi.toast.apply_ok",
+            "pi.toast.apply_error",
+            "pi.toast.restart_ok",
+            "pi.toast.restart_error",
+        ]
+        for key in keys:
+            assert key in TRANSLATIONS["en"], f"Missing EN key: {key}"
+            assert key in TRANSLATIONS["ja"], f"Missing JA key: {key}"
+
     def test_output_mode_keys_exist(self):
         """Test output mode section keys exist in both languages."""
         keys = [

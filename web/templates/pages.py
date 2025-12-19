@@ -78,3 +78,23 @@ def render_system(lang: str = "en", current_page: str = "system") -> str:
         current_page=current_page,
         lang=normalized_lang,
     )
+
+
+def render_pi_settings(lang: str = "en", current_page: str = "pi") -> str:
+    """
+    Render the Pi Settings page.
+
+    Args:
+        lang: Language code ("en" or "ja")
+        current_page: Current page name for sidebar highlighting
+
+    Returns:
+        Rendered HTML string
+    """
+    normalized_lang = normalize_lang(lang)
+    template = env.get_template("pages/pi_settings.html")
+    return template.render(
+        t=get_translations(normalized_lang),
+        current_page=current_page,
+        lang=normalized_lang,
+    )

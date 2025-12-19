@@ -234,6 +234,78 @@ class I2sPeerStatus(I2sPeerStatusUpdate):
 
 
 # ============================================================================
+# Raspberry Pi Control API Models
+# ============================================================================
+
+
+class PiStatus(BaseModel):
+    """Pi(USB-I2S bridge) のステータス."""
+
+    running: bool
+    mode: str
+    sample_rate: int
+    format: str
+    channels: int
+    xruns: int
+    last_error: Optional[str] = None
+    last_error_at_unix_ms: Optional[int] = None
+    uptime_sec: float
+    updated_at_unix_ms: Optional[int] = None
+
+
+class PiUsbI2sConfig(BaseModel):
+    """Pi 側 USB-I2S ブリッジの設定."""
+
+    capture_device: str
+    playback_device: str
+    channels: int = Field(ge=1)
+    fallback_rate: int = Field(ge=1)
+    preferred_format: str
+    passthrough: bool
+    alsa_buffer_time_us: int = Field(ge=1)
+    alsa_latency_time_us: int = Field(ge=1)
+    queue_time_ns: int = Field(ge=1)
+    fade_ms: int = Field(ge=0)
+    poll_interval_sec: float = Field(gt=0)
+    restart_backoff_sec: float = Field(ge=0)
+    keep_silence_when_no_capture: bool
+    status_report_url: Optional[str] = None
+    status_report_timeout_ms: int = Field(ge=1)
+    status_report_min_interval_sec: float = Field(ge=0)
+    control_endpoint: Optional[str] = None
+    control_peer: Optional[str] = None
+    control_require_peer: bool
+    control_poll_interval_sec: float = Field(gt=0)
+    control_timeout_ms: int = Field(ge=1)
+
+
+class PiUsbI2sConfigUpdate(BaseModel):
+    """Pi 側 USB-I2S ブリッジの設定更新."""
+
+    capture_device: Optional[str] = None
+    playback_device: Optional[str] = None
+    channels: Optional[int] = Field(default=None, ge=1)
+    fallback_rate: Optional[int] = Field(default=None, ge=1)
+    preferred_format: Optional[str] = None
+    passthrough: Optional[bool] = None
+    alsa_buffer_time_us: Optional[int] = Field(default=None, ge=1)
+    alsa_latency_time_us: Optional[int] = Field(default=None, ge=1)
+    queue_time_ns: Optional[int] = Field(default=None, ge=1)
+    fade_ms: Optional[int] = Field(default=None, ge=0)
+    poll_interval_sec: Optional[float] = Field(default=None, gt=0)
+    restart_backoff_sec: Optional[float] = Field(default=None, ge=0)
+    keep_silence_when_no_capture: Optional[bool] = None
+    status_report_url: Optional[str] = None
+    status_report_timeout_ms: Optional[int] = Field(default=None, ge=1)
+    status_report_min_interval_sec: Optional[float] = Field(default=None, ge=0)
+    control_endpoint: Optional[str] = None
+    control_peer: Optional[str] = None
+    control_require_peer: Optional[bool] = None
+    control_poll_interval_sec: Optional[float] = Field(default=None, gt=0)
+    control_timeout_ms: Optional[int] = Field(default=None, ge=1)
+
+
+# ============================================================================
 # RTP Input Models
 # ============================================================================
 

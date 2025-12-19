@@ -31,4 +31,12 @@
     >
         <span style="margin-right: 8px;">⚙️</span> {{ t.get('nav.system') }}
     </a>
+    <a
+        href="/pi{{ lang_query }}"
+        class="nav-item {% if current_page == 'pi' %}active{% endif %}"
+        aria-current="{% if current_page == 'pi' %}page{% else %}false{% endif %}"
+        @click="closeMenu()"
+    >
+        <span style="margin-right: 8px;">🍓</span> {{ t.get('nav.pi') }}
+    </a>
 </nav>
