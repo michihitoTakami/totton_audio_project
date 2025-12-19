@@ -65,6 +65,10 @@ services:
       # Wait for ALSA devices to appear after cold boot
       - MAGICBOX_WAIT_AUDIO_SECS=8
       - MAGICBOX_WAIT_LOOPBACK=true
+      # Debug switch: disable Issue #899 non-blocking GPU completion (event-based pipelining).
+      # If disabling this makes #969 symptoms disappear, the root cause is likely in the
+      # non-blocking streaming path (cudaEventQuery-based delivery) rather than ALSA/I2S.
+      - MAGICBOX_GPU_STREAMING_NONBLOCKING=true
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
       # - MAGICBOX_RTP_RTCP_SEND_ENABLED=0
       # - MAGICBOX_RTP_USE_RTPBIN=0

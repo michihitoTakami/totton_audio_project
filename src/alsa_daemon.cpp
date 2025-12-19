@@ -395,6 +395,27 @@ static void publish_filter_switch_event(const std::string& filterPath, PhaseType
 
 static void initialize_streaming_cache_manager();
 
+static bool parse_env_bool(const char* value, bool defaultValue) {
+    if (!value) {
+        return defaultValue;
+    }
+    std::string v(value);
+    std::transform(v.begin(), v.end(), v.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (v == "1" || v == "true" || v == "yes" || v == "y" || v == "on") {
+        return true;
+    }
+    if (v == "0" || v == "false" || v == "no" || v == "n" || v == "off") {
+        return false;
+    }
+    return defaultValue;
+}
+
+static bool env_bool(const char* name, bool defaultValue) {
+    const char* v = std::getenv(name);
+    return parse_env_bool(v, defaultValue);
+}
+
 static void elevate_realtime_priority(const char* name, int priority = 65) {
 #ifdef __linux__
     // RT scheduling can freeze remote shells if something spins.
@@ -2025,7 +2046,10 @@ int main(int argc, char* argv[]) {
         }
         // Issue #899: avoid per-period host blocking on GPU completion in steady-state playback.
         // Keep legacy semantics (blocking) for offline/tests unless explicitly enabled here.
-        g_state.upsampler->setStreamingNonBlocking(true);
+        bool nonBlocking = env_bool("MAGICBOX_GPU_STREAMING_NONBLOCKING", true);
+        g_state.upsampler->setStreamingNonBlocking(nonBlocking);
+        std::cout << "[Streaming] Non-blocking GPU completion: "
+                  << (nonBlocking ? "enabled" : "disabled") << '\n';
         PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_state.upsampler, g_state.config,
                                                "ALSA");
 
