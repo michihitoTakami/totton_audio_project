@@ -9,6 +9,7 @@ from .partitioned import router as partitioned_router
 from .status import router as status_router
 from .output_mode import router as output_mode_router
 from .i2s import router as i2s_router
+from .pi import router as pi_router
 
 __all__ = [
     "crossfeed_router",
@@ -17,6 +18,7 @@ __all__ = [
     "eq_router",
     "i2s_router",
     "opra_router",
+    "pi_router",
     "output_mode_router",
     "partitioned_router",
     "status_router",

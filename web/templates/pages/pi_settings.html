@@ -1,0 +1,440 @@
+{% extends "base.html" %}
+{% import "components/buttons.html" as buttons %}
+{% import "components/card_panel.html" as panels %}
+{% import "components/status_card.html" as status_card %}
+{% import "components/slider_input.html" as sliders %}
+
+{% block title %}{{ t.get('nav.pi') }} - {{ t.get('app.title') }}{% endblock %}
+
+{% block content %}
+<div x-data="piSettingsPage()" x-init="init()">
+    <div class="page-header">
+        <h1 class="page-title">{{ t.get('nav.pi') }}</h1>
+        <p class="page-subtitle">{{ t.get('pi.subtitle') }}</p>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">{{ t.get('pi.status.title') }}</h2>
+        <div class="card-grid">
+            {% set status_icon = "🧠" %}
+            {% set status_title = t.get('pi.status.running') %}
+            {% set status_class = "piStatus.running ? 'status-ok' : 'status-error'" %}
+            {% set status_text = "piStatus.running ? '" ~ t.get('pi.status.running_on') ~ "' : '" ~ t.get('pi.status.running_off') ~ "'" %}
+            {% set status_subtext = "formatTimestamp(piStatus.updated_at_unix_ms)" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "🎛️" %}
+            {% set status_title = t.get('pi.status.sample_rate') %}
+            {% set status_class = "piStatus.sample_rate > 0 ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "piStatus.sample_rate ? `${piStatus.sample_rate} Hz` : '" ~ t.get('system.health.na') ~ "'" %}
+            {% set status_subtext = "piStatus.mode || '" ~ t.get('pi.status.mode_na') ~ "'" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "🧾" %}
+            {% set status_title = t.get('pi.status.format') %}
+            {% set status_class = "piStatus.format ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "piStatus.format || '" ~ t.get('system.health.na') ~ "'" %}
+            {% set status_subtext = "piStatus.channels ? `${piStatus.channels} ch` : '" ~ t.get('system.health.na') ~ "'" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "⚠️" %}
+            {% set status_title = t.get('pi.status.last_error') %}
+            {% set status_class = "piStatus.last_error ? 'status-error' : 'status-ok'" %}
+            {% set status_text = "piStatus.last_error || '" ~ t.get('pi.status.no_error') ~ "'" %}
+            {% set status_subtext = "piStatus.xruns ? `XRuns: ${piStatus.xruns}` : '" ~ t.get('pi.status.xruns_none') ~ "'" %}
+            {% include 'components/status_card.html' %}
+        </div>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">{{ t.get('pi.peer.title') }}</h2>
+        <div class="card-grid">
+            {% set status_icon = "📡" %}
+            {% set status_title = t.get('pi.peer.running') %}
+            {% set status_class = "peerStatus.running ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "peerStatus.running ? '" ~ t.get('pi.peer.running_on') ~ "' : '" ~ t.get('pi.peer.running_off') ~ "'" %}
+            {% set status_subtext = "formatTimestamp(peerStatus.updated_at_unix_ms)" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "🎚️" %}
+            {% set status_title = t.get('pi.peer.sample_rate') %}
+            {% set status_class = "peerStatus.sample_rate > 0 ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "peerStatus.sample_rate ? `${peerStatus.sample_rate} Hz` : '" ~ t.get('system.health.na') ~ "'" %}
+            {% set status_subtext = "peerStatus.mode || '" ~ t.get('pi.status.mode_na') ~ "'" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "🔉" %}
+            {% set status_title = t.get('pi.peer.format') %}
+            {% set status_class = "peerStatus.format ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "peerStatus.format || '" ~ t.get('system.health.na') ~ "'" %}
+            {% set status_subtext = "peerStatus.channels ? `${peerStatus.channels} ch` : '" ~ t.get('system.health.na') ~ "'" %}
+            {% include 'components/status_card.html' %}
+        </div>
+        {% set info_message = t.get('pi.peer.note') %}
+        {% set info_show = "peerStatus.updated_at_unix_ms === 0" %}
+        {% include 'components/info_text.html' %}
+    </div>
+
+    {% call panels.card_panel(t.get('pi.config.title')) %}
+        <div class="card-row wrap">
+            <div class="stack">
+                <div class="muted">{{ t.get('pi.config.description') }}</div>
+            </div>
+            {{ buttons.btn_primary(t.get('pi.config.refresh'), icon='🔄', click='fetchConfig()', disabled='actionInProgress || config.loading', extra_class='btn-secondary') }}
+            {{ buttons.btn_primary(t.get('pi.config.restart'), icon='⏻', click='restartBridge()', disabled='actionInProgress') }}
+        </div>
+
+        <div class="form-grid">
+            {% set form_label = t.get('pi.config.latency') %}
+            {% set form_input_type = "select" %}
+            {% set form_input_model = "latencyPreset" %}
+            {% set form_on_change = "applyLatencyPreset()" %}
+            {% set form_select_options %}
+            <option value="low">{{ t.get('pi.config.latency.low') }}</option>
+            <option value="medium">{{ t.get('pi.config.latency.medium') }}</option>
+            <option value="safe">{{ t.get('pi.config.latency.safe') }}</option>
+            <option value="custom">{{ t.get('pi.config.latency.custom') }}</option>
+            {% endset %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.capture_device') %}
+            {% set form_input_model = "config.capture_device" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.playback_device') %}
+            {% set form_input_model = "config.playback_device" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.channels') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.channels" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.fallback_rate') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.fallback_rate" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.preferred_format') %}
+            {% set form_input_model = "config.preferred_format" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.status_report_url') %}
+            {% set form_input_model = "config.status_report_url" %}
+            {% set form_input_placeholder = "http://192.168.55.1/i2s/peer-status" %}
+            {% include 'components/form_group.html' %}
+        </div>
+
+        <div class="form-grid">
+            {% set form_label = t.get('pi.config.buffer_time_us') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.alsa_buffer_time_us" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.latency_time_us') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.alsa_latency_time_us" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.queue_time_ns') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.queue_time_ns" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.poll_interval_sec') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.poll_interval_sec" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.restart_backoff_sec') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.restart_backoff_sec" %}
+            {% include 'components/form_group.html' %}
+
+            {% set form_label = t.get('pi.config.status_report_timeout_ms') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.status_report_timeout_ms" %}
+            {% include 'components/form_group.html' %}
+        </div>
+
+        <div class="card-row wrap">
+            {% set toggle_id = "pi-passthrough" %}
+            {% set toggle_label = t.get('pi.config.passthrough') %}
+            {% set toggle_desc = t.get('pi.config.passthrough_desc') %}
+            {% set alpine_model = "config.passthrough" %}
+            {% set alpine_click = "togglePassthrough()" %}
+            {% include 'components/toggle_switch.html' %}
+
+            {% set toggle_id = "pi-keep-silence" %}
+            {% set toggle_label = t.get('pi.config.keep_silence') %}
+            {% set toggle_desc = t.get('pi.config.keep_silence_desc') %}
+            {% set alpine_model = "config.keep_silence_when_no_capture" %}
+            {% set alpine_click = "toggleKeepSilence()" %}
+            {% include 'components/toggle_switch.html' %}
+        </div>
+
+        <div class="form-grid">
+            {{ sliders.slider_input(
+                label=t.get('pi.config.fade_ms'),
+                min=0,
+                max=200,
+                step=5,
+                model="config.fade_ms"
+            ) }}
+
+            {% set form_label = t.get('pi.config.status_report_min_interval_sec') %}
+            {% set form_input_type = "number" %}
+            {% set form_input_model = "config.status_report_min_interval_sec" %}
+            {% include 'components/form_group.html' %}
+        </div>
+
+        <div class="btn-row">
+            {{ buttons.btn_primary(t.get('pi.config.apply'), icon='💾', click='applyConfig()', disabled='actionInProgress || config.loading') }}
+        </div>
+    {% endcall %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function piSettingsPage() {
+    return {
+        piStatus: {
+            running: false,
+            mode: '',
+            sample_rate: 0,
+            format: '',
+            channels: 0,
+            xruns: 0,
+            last_error: null,
+            last_error_at_unix_ms: null,
+            uptime_sec: 0,
+            updated_at_unix_ms: 0,
+        },
+        peerStatus: {
+            running: false,
+            mode: '',
+            sample_rate: 0,
+            format: '',
+            channels: 0,
+            updated_at_unix_ms: 0,
+        },
+        config: {
+            capture_device: '',
+            playback_device: '',
+            channels: 2,
+            fallback_rate: 44100,
+            preferred_format: 'S32_LE',
+            passthrough: true,
+            alsa_buffer_time_us: 200000,
+            alsa_latency_time_us: 20000,
+            queue_time_ns: 100000000,
+            fade_ms: 80,
+            poll_interval_sec: 1.0,
+            restart_backoff_sec: 0.5,
+            keep_silence_when_no_capture: true,
+            status_report_url: '',
+            status_report_timeout_ms: 300,
+            status_report_min_interval_sec: 1.0,
+            control_endpoint: '',
+            control_peer: '',
+            control_require_peer: false,
+            control_poll_interval_sec: 1.0,
+            control_timeout_ms: 2000,
+            loading: false,
+        },
+        latencyPreset: 'safe',
+        actionInProgress: false,
+        presets: {
+            low: { alsa_buffer_time_us: 50000, alsa_latency_time_us: 5000, queue_time_ns: 25000000 },
+            medium: { alsa_buffer_time_us: 100000, alsa_latency_time_us: 10000, queue_time_ns: 50000000 },
+            safe: { alsa_buffer_time_us: 200000, alsa_latency_time_us: 20000, queue_time_ns: 100000000 },
+        },
+
+        init() {
+            this.refreshAll();
+            setInterval(() => {
+                this.fetchStatus();
+                this.fetchPeerStatus();
+            }, 5000);
+        },
+
+        async refreshAll() {
+            await Promise.all([
+                this.fetchStatus(),
+                this.fetchPeerStatus(),
+                this.fetchConfig(),
+            ]);
+        },
+
+        async fetchStatus() {
+            try {
+                const res = await fetch('/pi/status');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.piStatus = {
+                    ...this.piStatus,
+                    ...data,
+                };
+            } catch (err) {
+                console.error('pi status fetch failed', err);
+            }
+        },
+
+        async fetchPeerStatus() {
+            try {
+                const res = await fetch('/i2s/peer-status');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.peerStatus = {
+                    ...this.peerStatus,
+                    ...data,
+                };
+            } catch (err) {
+                console.error('peer status fetch failed', err);
+            }
+        },
+
+        async fetchConfig() {
+            this.config.loading = true;
+            try {
+                const res = await fetch('/pi/config');
+                if (!res.ok) throw new Error('failed to fetch config');
+                const data = await res.json();
+                this.config = {
+                    ...this.config,
+                    ...data,
+                    loading: false,
+                };
+                this.latencyPreset = this.detectLatencyPreset();
+            } catch (err) {
+                console.error('config fetch failed', err);
+                this.config.loading = false;
+            }
+        },
+
+        detectLatencyPreset() {
+            const keys = Object.keys(this.presets);
+            for (const key of keys) {
+                const preset = this.presets[key];
+                if (
+                    Number(this.config.alsa_buffer_time_us) === preset.alsa_buffer_time_us &&
+                    Number(this.config.alsa_latency_time_us) === preset.alsa_latency_time_us &&
+                    Number(this.config.queue_time_ns) === preset.queue_time_ns
+                ) {
+                    return key;
+                }
+            }
+            return 'custom';
+        },
+
+        applyLatencyPreset() {
+            const preset = this.presets[this.latencyPreset];
+            if (!preset) return;
+            this.config.alsa_buffer_time_us = preset.alsa_buffer_time_us;
+            this.config.alsa_latency_time_us = preset.alsa_latency_time_us;
+            this.config.queue_time_ns = preset.queue_time_ns;
+        },
+
+        togglePassthrough() {
+            this.config.passthrough = !this.config.passthrough;
+        },
+
+        toggleKeepSilence() {
+            this.config.keep_silence_when_no_capture = !this.config.keep_silence_when_no_capture;
+        },
+
+        formatTimestamp(unixMs) {
+            if (!unixMs) return '{{ t.get("pi.status.not_available") }}';
+            try {
+                return new Date(unixMs).toLocaleString();
+            } catch (err) {
+                return '{{ t.get("pi.status.not_available") }}';
+            }
+        },
+
+        async applyConfig() {
+            if (this.actionInProgress) return;
+            this.actionInProgress = true;
+            try {
+                const payload = this.buildPayload();
+                const res = await fetch('/pi/config?apply=true', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (!res.ok) throw new Error('apply failed');
+                const data = await res.json();
+                this.config = { ...this.config, ...data };
+                this.latencyPreset = this.detectLatencyPreset();
+                showToast('{{ t.get("pi.toast.apply_ok") }}', 'success');
+            } catch (err) {
+                console.error('apply config failed', err);
+                showToast('{{ t.get("pi.toast.apply_error") }}', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        async restartBridge() {
+            if (this.actionInProgress) return;
+            this.actionInProgress = true;
+            try {
+                const res = await fetch('/pi/actions/restart', { method: 'POST' });
+                if (!res.ok) throw new Error('restart failed');
+                await res.json();
+                showToast('{{ t.get("pi.toast.restart_ok") }}', 'success');
+                setTimeout(() => this.fetchStatus(), 1500);
+            } catch (err) {
+                console.error('restart failed', err);
+                showToast('{{ t.get("pi.toast.restart_error") }}', 'error');
+            } finally {
+                this.actionInProgress = false;
+            }
+        },
+
+        buildPayload() {
+            const toInt = (value, fallback = 0) => {
+                const n = Number(value);
+                return Number.isFinite(n) ? Math.trunc(n) : fallback;
+            };
+            const toFloat = (value, fallback = 0) => {
+                const n = Number(value);
+                return Number.isFinite(n) ? n : fallback;
+            };
+            const toOptionalString = (value) => {
+                if (value === null || value === undefined) return null;
+                const trimmed = String(value).trim();
+                return trimmed.length ? trimmed : null;
+            };
+            return {
+                capture_device: String(this.config.capture_device || '').trim(),
+                playback_device: String(this.config.playback_device || '').trim(),
+                channels: toInt(this.config.channels, 2),
+                fallback_rate: toInt(this.config.fallback_rate, 44100),
+                preferred_format: String(this.config.preferred_format || '').trim(),
+                passthrough: Boolean(this.config.passthrough),
+                alsa_buffer_time_us: toInt(this.config.alsa_buffer_time_us, 200000),
+                alsa_latency_time_us: toInt(this.config.alsa_latency_time_us, 20000),
+                queue_time_ns: toInt(this.config.queue_time_ns, 100000000),
+                fade_ms: toInt(this.config.fade_ms, 80),
+                poll_interval_sec: toFloat(this.config.poll_interval_sec, 1.0),
+                restart_backoff_sec: toFloat(this.config.restart_backoff_sec, 0.5),
+                keep_silence_when_no_capture: Boolean(this.config.keep_silence_when_no_capture),
+                status_report_url: toOptionalString(this.config.status_report_url),
+                status_report_timeout_ms: toInt(this.config.status_report_timeout_ms, 300),
+                status_report_min_interval_sec: toFloat(
+                    this.config.status_report_min_interval_sec,
+                    1.0
+                ),
+                control_endpoint: toOptionalString(this.config.control_endpoint),
+                control_peer: toOptionalString(this.config.control_peer),
+                control_require_peer: Boolean(this.config.control_require_peer),
+                control_poll_interval_sec: toFloat(this.config.control_poll_interval_sec, 1.0),
+                control_timeout_ms: toInt(this.config.control_timeout_ms, 2000),
+            };
+        },
+    };
+}
+</script>
+{% endblock %}

@@ -1514,6 +1514,126 @@
         }
       }
     },
+    "/pi/status": {
+      "get": {
+        "tags": [
+          "pi"
+        ],
+        "summary": "Piステータス取得",
+        "description": "Pi control API からステータスを取得する.",
+        "operationId": "pi_status_pi_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pi/config": {
+      "get": {
+        "tags": [
+          "pi"
+        ],
+        "summary": "Pi設定取得",
+        "description": "Pi control API から設定を取得する.",
+        "operationId": "pi_config_pi_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiUsbI2sConfig"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "pi"
+        ],
+        "summary": "Pi設定更新",
+        "description": "Pi control API へ設定更新を転送する.",
+        "operationId": "pi_config_update_pi_config_put",
+        "parameters": [
+          {
+            "name": "apply",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Apply changes by restarting the bridge",
+              "default": true,
+              "title": "Apply"
+            },
+            "description": "Apply changes by restarting the bridge"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PiUsbI2sConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiUsbI2sConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pi/actions/restart": {
+      "post": {
+        "tags": [
+          "pi"
+        ],
+        "summary": "Piブリッジ再起動",
+        "description": "Pi 側 USB-I2S ブリッジを再起動する.",
+        "operationId": "pi_restart_bridge_pi_actions_restart_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "tags": [
@@ -1636,6 +1756,53 @@
         "summary": "System Page",
         "description": "Serve the System page.",
         "operationId": "system_page_system_get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pi": {
+      "get": {
+        "summary": "Pi Page",
+        "description": "Serve the Pi Settings page.",
+        "operationId": "pi_page_pi_get",
         "parameters": [
           {
             "name": "lang",
@@ -3219,6 +3386,477 @@
         "title": "PhaseTypeUpdateRequest",
         "description": "Phase type update request model."
       },
+      "PiStatus": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "title": "Sample Rate"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "channels": {
+            "type": "integer",
+            "title": "Channels"
+          },
+          "xruns": {
+            "type": "integer",
+            "title": "Xruns"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_error_at_unix_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error At Unix Ms"
+          },
+          "uptime_sec": {
+            "type": "number",
+            "title": "Uptime Sec"
+          },
+          "updated_at_unix_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At Unix Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "running",
+          "mode",
+          "sample_rate",
+          "format",
+          "channels",
+          "xruns",
+          "uptime_sec"
+        ],
+        "title": "PiStatus",
+        "description": "Pi(USB-I2S bridge) のステータス."
+      },
+      "PiUsbI2sConfig": {
+        "properties": {
+          "capture_device": {
+            "type": "string",
+            "title": "Capture Device"
+          },
+          "playback_device": {
+            "type": "string",
+            "title": "Playback Device"
+          },
+          "channels": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Channels"
+          },
+          "fallback_rate": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Fallback Rate"
+          },
+          "preferred_format": {
+            "type": "string",
+            "title": "Preferred Format"
+          },
+          "passthrough": {
+            "type": "boolean",
+            "title": "Passthrough"
+          },
+          "alsa_buffer_time_us": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Alsa Buffer Time Us"
+          },
+          "alsa_latency_time_us": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Alsa Latency Time Us"
+          },
+          "queue_time_ns": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Queue Time Ns"
+          },
+          "fade_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Fade Ms"
+          },
+          "poll_interval_sec": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Poll Interval Sec"
+          },
+          "restart_backoff_sec": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Restart Backoff Sec"
+          },
+          "keep_silence_when_no_capture": {
+            "type": "boolean",
+            "title": "Keep Silence When No Capture"
+          },
+          "status_report_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Report Url"
+          },
+          "status_report_timeout_ms": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Status Report Timeout Ms"
+          },
+          "status_report_min_interval_sec": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Status Report Min Interval Sec"
+          },
+          "control_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Endpoint"
+          },
+          "control_peer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Peer"
+          },
+          "control_require_peer": {
+            "type": "boolean",
+            "title": "Control Require Peer"
+          },
+          "control_poll_interval_sec": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Control Poll Interval Sec"
+          },
+          "control_timeout_ms": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Control Timeout Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "capture_device",
+          "playback_device",
+          "channels",
+          "fallback_rate",
+          "preferred_format",
+          "passthrough",
+          "alsa_buffer_time_us",
+          "alsa_latency_time_us",
+          "queue_time_ns",
+          "fade_ms",
+          "poll_interval_sec",
+          "restart_backoff_sec",
+          "keep_silence_when_no_capture",
+          "status_report_timeout_ms",
+          "status_report_min_interval_sec",
+          "control_require_peer",
+          "control_poll_interval_sec",
+          "control_timeout_ms"
+        ],
+        "title": "PiUsbI2sConfig",
+        "description": "Pi 側 USB-I2S ブリッジの設定."
+      },
+      "PiUsbI2sConfigUpdate": {
+        "properties": {
+          "capture_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capture Device"
+          },
+          "playback_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playback Device"
+          },
+          "channels": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channels"
+          },
+          "fallback_rate": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Rate"
+          },
+          "preferred_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Format"
+          },
+          "passthrough": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passthrough"
+          },
+          "alsa_buffer_time_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alsa Buffer Time Us"
+          },
+          "alsa_latency_time_us": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alsa Latency Time Us"
+          },
+          "queue_time_ns": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Time Ns"
+          },
+          "fade_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fade Ms"
+          },
+          "poll_interval_sec": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Interval Sec"
+          },
+          "restart_backoff_sec": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restart Backoff Sec"
+          },
+          "keep_silence_when_no_capture": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keep Silence When No Capture"
+          },
+          "status_report_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Report Url"
+          },
+          "status_report_timeout_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Report Timeout Ms"
+          },
+          "status_report_min_interval_sec": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Report Min Interval Sec"
+          },
+          "control_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Endpoint"
+          },
+          "control_peer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Peer"
+          },
+          "control_require_peer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Require Peer"
+          },
+          "control_poll_interval_sec": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Poll Interval Sec"
+          },
+          "control_timeout_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Timeout Ms"
+          }
+        },
+        "type": "object",
+        "title": "PiUsbI2sConfigUpdate",
+        "description": "Pi 側 USB-I2S ブリッジの設定更新."
+      },
       "Settings": {
         "properties": {
           "alsa_device": {
@@ -3517,6 +4155,10 @@
     {
       "name": "output",
       "description": "Output mode selection and device preferences"
+    },
+    {
+      "name": "pi",
+      "description": "Raspberry Pi USB-I2S bridge proxy control"
     },
     {
       "name": "legacy",

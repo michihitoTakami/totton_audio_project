@@ -24,11 +24,13 @@ from .routers import (
     opra_router,
     output_mode_router,
     partitioned_router,
+    pi_router,
     status_router,
 )
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
+    render_pi_settings,
     render_system,
 )
 
@@ -61,6 +63,10 @@ tags_metadata = [
     {
         "name": "output",
         "description": "Output mode selection and device preferences",
+    },
+    {
+        "name": "pi",
+        "description": "Raspberry Pi USB-I2S bridge proxy control",
     },
     {
         "name": "legacy",
@@ -178,6 +184,7 @@ No authentication required (local network only).
     app.include_router(crossfeed_router)
     app.include_router(partitioned_router)
     app.include_router(output_mode_router)
+    app.include_router(pi_router)
     if resolved_enable_rtp:
         from .routers.rtp import router as rtp_router
         from .routers.rtp_input import router as rtp_input_router
@@ -235,6 +242,15 @@ async def system_page(request: Request, lang: str | None = None):
     resolved_lang = _resolve_lang(request, lang)
     return _render_with_lang(
         content=render_system(lang=resolved_lang), lang=resolved_lang
+    )
+
+
+@app.get("/pi", response_class=HTMLResponse)
+async def pi_page(request: Request, lang: str | None = None):
+    """Serve the Pi Settings page."""
+    resolved_lang = _resolve_lang(request, lang)
+    return _render_with_lang(
+        content=render_pi_settings(lang=resolved_lang), lang=resolved_lang
     )
 
 

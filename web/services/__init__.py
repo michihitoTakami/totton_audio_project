@@ -40,6 +40,13 @@ from .rtp_bridge_client import (
     RtpBridgeConnectionError,
     RtpBridgeResponseError,
 )
+from .pi_client import (
+    get_pi_client,
+    PiClient,
+    PiClientError,
+    PiConnectionError,
+    PiResponseError,
+)
 
 __all__ = [
     # alsa
@@ -80,4 +87,10 @@ __all__ = [
     "RtpBridgeClientError",
     "RtpBridgeConnectionError",
     "RtpBridgeResponseError",
+    # pi control
+    "get_pi_client",
+    "PiClient",
+    "PiClientError",
+    "PiConnectionError",
+    "PiResponseError",
 ]
