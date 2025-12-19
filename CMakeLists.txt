@@ -169,6 +169,7 @@ add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/core/partition_runtime_utils.cpp
     src/daemon/app/process_resources.cpp
+    src/daemon/audio/crossfeed_manager.cpp
     src/daemon/audio/upsampler_builder.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
@@ -471,6 +472,7 @@ add_executable(cpu_tests
     tests/cpp/daemon/test_runtime_stats.cpp
     tests/cpp/audio/test_audio_pipeline.cpp
     tests/cpp/core/test_precision_traits.cpp
+    src/daemon/audio/crossfeed_manager.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
