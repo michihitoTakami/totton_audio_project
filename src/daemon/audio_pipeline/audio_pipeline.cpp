@@ -212,29 +212,94 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     if (crossfeedActive && deps_.crossfeedProcessor && deps_.cfOutputLeft && deps_.cfOutputRight &&
         deps_.cfStreamInputLeft && deps_.cfStreamInputRight && deps_.cfStreamAccumulatedLeft &&
         deps_.cfStreamAccumulatedRight) {
-        bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
-            outputLeft->data(), outputRight->data(), outputLeft->size(), *deps_.cfOutputLeft,
-            *deps_.cfOutputRight, nullptr, *deps_.cfStreamInputLeft, *deps_.cfStreamInputRight,
-            *deps_.cfStreamAccumulatedLeft, *deps_.cfStreamAccumulatedRight);
-        if (cfGenerated) {
-            size_t cfFrames = std::min(deps_.cfOutputLeft->size(), deps_.cfOutputRight->size());
-            if (cfFrames > 0) {
-                float cfPeak = computeStereoPeak(deps_.cfOutputLeft->data(),
-                                                 deps_.cfOutputRight->data(), cfFrames);
-                runtime_stats::updatePostCrossfeedPeak(cfPeak);
+        // NOTE: Upsampler の 1回の出力ブロックが大きい場合（例: 705.6kHz で 40万sample超）
+        // FourChannelFIR のストリーミング入力バッファ（通常 2x block 分）に一気に詰め込めず、
+        // "Input buffer too small" → 状態ドロップ → 音飛びにつながる。
+        //
+        // 対策: Crossfeed 側の streamValidInputPerBlock 境界に合わせて入力を分割し、
+        // 1回の呼び出しで溜め込み過ぎない + 可能な限り同一 RT サイクル内で処理を進める。
+        const size_t streamBlock = deps_.crossfeedProcessor->getStreamValidInputPerBlock();
+        const size_t inputBufL = deps_.cfStreamInputLeft->size();
+        const size_t inputBufR = deps_.cfStreamInputRight->size();
+        const size_t totalFrames = framesGenerated;
+
+        if (streamBlock == 0 || inputBufL < streamBlock || inputBufR < streamBlock) {
+            LOG_EVERY_N(ERROR, 100,
+                        "[AudioPipeline] Crossfeed stream buffers undersized (streamBlock={}, "
+                        "bufL={}, bufR={}). Falling back to raw upsampler output for this block.",
+                        streamBlock, inputBufL, inputBufR);
+        } else {
+            size_t offset = 0;
+            while (offset < totalFrames) {
+                size_t accL = *deps_.cfStreamAccumulatedLeft;
+                size_t accR = *deps_.cfStreamAccumulatedRight;
+                size_t acc = std::min(accL, accR);
+
+                // Safety: these should stay in sync and < streamBlock; recover defensively if not.
+                if (accL != accR || acc >= streamBlock) {
+                    LOG_EVERY_N(ERROR, 100,
+                                "[AudioPipeline] Crossfeed accumulated mismatch/overflow "
+                                "(accL={}, accR={}, streamBlock={}), resetting streaming state",
+                                accL, accR, streamBlock);
+                    *deps_.cfStreamAccumulatedLeft = 0;
+                    *deps_.cfStreamAccumulatedRight = 0;
+                    deps_.cfOutputLeft->clear();
+                    deps_.cfOutputRight->clear();
+                    deps_.crossfeedProcessor->resetStreaming();
+                    acc = 0;
+                }
+
+                const size_t remaining = totalFrames - offset;
+                const size_t needToFill = streamBlock - acc;
+                const size_t space = std::min(inputBufL - acc, inputBufR - acc);
+                size_t chunk = std::min({remaining, needToFill, space});
+                if (chunk == 0) {
+                    // Should not happen (buffers are expected to be >= streamBlock*2).
+                    // Recover by resetting accumulation and continue.
+                    LOG_EVERY_N(ERROR, 100,
+                                "[AudioPipeline] Crossfeed chunk became 0 (remaining={}, acc={}, "
+                                "streamBlock={}, bufL={}, bufR={}), resetting accumulation",
+                                remaining, acc, streamBlock, inputBufL, inputBufR);
+                    *deps_.cfStreamAccumulatedLeft = 0;
+                    *deps_.cfStreamAccumulatedRight = 0;
+                    deps_.cfOutputLeft->clear();
+                    deps_.cfOutputRight->clear();
+                    deps_.crossfeedProcessor->resetStreaming();
+                    continue;
+                }
+
+                bool cfGenerated = deps_.crossfeedProcessor->processStreamBlock(
+                    outputLeft->data() + static_cast<std::ptrdiff_t>(offset),
+                    outputRight->data() + static_cast<std::ptrdiff_t>(offset), chunk,
+                    *deps_.cfOutputLeft, *deps_.cfOutputRight, nullptr, *deps_.cfStreamInputLeft,
+                    *deps_.cfStreamInputRight, *deps_.cfStreamAccumulatedLeft,
+                    *deps_.cfStreamAccumulatedRight);
+                offset += chunk;
+
+                if (cfGenerated) {
+                    size_t cfFrames =
+                        std::min(deps_.cfOutputLeft->size(), deps_.cfOutputRight->size());
+                    if (cfFrames > 0) {
+                        float cfPeak = computeStereoPeak(deps_.cfOutputLeft->data(),
+                                                         deps_.cfOutputRight->data(), cfFrames);
+                        runtime_stats::updatePostCrossfeedPeak(cfPeak);
+                    }
+                    size_t stored =
+                        enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
+                    if (stored > 0 && deps_.buffer.playbackBuffer) {
+                        deps_.buffer.playbackBuffer->cv().notify_one();
+                    }
+                    deps_.cfOutputLeft->clear();
+                    deps_.cfOutputRight->clear();
+                }
             }
-            size_t stored = enqueueOutputFramesLocked(*deps_.cfOutputLeft, *deps_.cfOutputRight);
-            if (stored > 0 && deps_.buffer.playbackBuffer) {
-                deps_.buffer.playbackBuffer->cv().notify_one();
-            }
+
+            // クロスフィード有効時はストリーミングバッファへ蓄積だけ行い、
+            // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
+            // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
+            // クラッシュするのを防ぐ。
             return true;
         }
-
-        // クロスフィード有効時はストリーミングバッファへ蓄積だけ行い、
-        // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
-        // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
-        // クラッシュするのを防ぐ。
-        return true;
     }
 
     size_t stored = enqueueOutputFramesLocked(*outputLeft, *outputRight);
