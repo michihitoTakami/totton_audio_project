@@ -101,7 +101,7 @@ CROSSFEED_HF_SLOPE = 6.0
 #
 # Note: HRIR/フィルタ長の違いで「ピーク」で揃えるとDCゲインが暴れて低域が過剰になりやすい。
 # 王道クロスフィードでは低域成分の量が重要なので、DCゲインで揃える。
-CROSSFEED_TARGET_DC_GAIN_DB = -18.0
+CROSSFEED_TARGET_DC_GAIN_DB = -15.0
 
 # デフォルトパス
 REPO_ROOT = Path(__file__).resolve().parents[2]
