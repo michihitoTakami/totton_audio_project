@@ -172,6 +172,7 @@ prepare_config() {
             | .i2s.format = "S32_LE"
             | .i2s.periodFrames = 1024
             | .loopback.enabled = false
+            | .tcpInput.enabled = false
         ' "$CONFIG_FILE" > "$profiled_path" 2>/dev/null; then
             mv -f "$profiled_path" "$CONFIG_FILE"
         else
