@@ -6,6 +6,8 @@ Raspberry Pi 上で ALSA キャプチャを GStreamer RTP (+RTCP) で Jetson へ
 - 連携: `raspberry_pi/rtp_receiver`（ZeroMQ ブリッジで統計/レイテンシ共有、任意）
 - 受信側: Jetson の `rtp_input` サービス（`web/services/rtp_input.py`）
 
+> I2S移行（Pi→Jetson I2S）を含む運用手順は `docs/jetson/i2s/ops_runbook.md`（Issue #827）を参照してください。
+
 ## 必要パッケージ (Raspberry Pi OS / Debian 系)
 
 ```bash

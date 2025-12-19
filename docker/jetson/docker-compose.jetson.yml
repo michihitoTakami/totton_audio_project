@@ -34,9 +34,14 @@ services:
       - /dev/snd:/dev/snd
 
     # Web UI
-    # RTP はデフォルト無効。必要なら MAGICBOX_ENABLE_RTP=true にし、UDP(46000/46001/46002) を公開する。
+    # RTP はデフォルト無効（I2Sメイン運用）。
+    # フォールバックでいつでも使えるよう、UDPポートは常に公開しておく（有効化は env で制御）。
     ports:
       - "80:80"
+      # RTP fallback (Issue #827)
+      - "46000:46000/udp"
+      - "46001:46001/udp"
+      - "46002:46002/udp"
 
     # Shared memory for audio buffers
     shm_size: '256m'
