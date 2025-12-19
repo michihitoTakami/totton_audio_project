@@ -164,7 +164,6 @@ struct RuntimeState {
 
     FallbackManager::Manager* fallbackManager = nullptr;
     std::atomic<bool> fallbackActive{false};
-    int pidLockFd = -1;
 };
 
 }  // namespace daemon_app

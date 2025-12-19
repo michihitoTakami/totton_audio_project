@@ -168,17 +168,20 @@ target_compile_options(gpu_upsampler PRIVATE
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
     src/core/partition_runtime_utils.cpp
+    src/daemon/app/process_resources.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
     src/daemon/audio_pipeline/soft_mute_runner.cpp
     src/daemon/control/handlers/handler_registry.cpp
+    src/daemon/core/pid_lock.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/control/control_plane.cpp
     src/daemon/output/alsa_output.cpp
     src/daemon/output/alsa_pcm_controller.cpp
     src/daemon/output/playback_buffer_manager.cpp
     src/daemon/control/zmq_server.cpp
+    src/daemon/metrics/stats_file.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/shutdown_manager.cpp
 )
@@ -471,6 +474,7 @@ add_executable(cpu_tests
     src/daemon/audio_pipeline/rate_switcher.cpp
     src/daemon/audio_pipeline/soft_mute_runner.cpp
     src/daemon/control/handlers/handler_registry.cpp
+    src/daemon/metrics/stats_file.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/output/alsa_output.cpp
