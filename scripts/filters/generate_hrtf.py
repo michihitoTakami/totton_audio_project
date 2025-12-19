@@ -59,8 +59,8 @@ N_TAPS = 16_384
 TRIM_THRESHOLD_DB = -80.0
 TRIM_PADDING = 512  # 打ち切り位置からの余白
 # 追加の高域緩和（全チャネル共通、緩やかなロールオフ）
-GLOBAL_HF_CUTOFF_HZ = 20_000.0
-GLOBAL_HF_MIN_GAIN_DB = -9.0
+GLOBAL_HF_CUTOFF_HZ = 24_000.0
+GLOBAL_HF_MIN_GAIN_DB = -3.0
 GLOBAL_HF_SLOPE = 6.0
 # Note: HUTUBS uses 0-360° azimuth convention, so -30° is represented as 330°
 TARGET_AZIMUTH_LEFT = 330.0  # 左スピーカー方位角 (-30° in HUTUBS coordinate)
@@ -86,14 +86,15 @@ RATE_CONFIGS = {
 IPSILATERAL_DIRECT_BLEND = 0.45  # 0=完全にドライ, 1=完全に計測HRTF
 CONTRALATERAL_TAIL_START_MS = 0.8
 CONTRALATERAL_TAIL_DECAY_MS = 5.5
-CONTRALATERAL_HF_CUTOFF_HZ = 5200.0
-CONTRALATERAL_HF_MIN_GAIN_DB = -12.0
+CONTRALATERAL_HF_CUTOFF_HZ = 10_000.0
+CONTRALATERAL_HF_MIN_GAIN_DB = -6.0
 CONTRALATERAL_HF_SLOPE = 2.4
 DC_HEADROOM_DB = 0.5  # 左右耳のDCゲイン上限に与えるヘッドルーム
 
 # デフォルトパス
-DEFAULT_SOFA_DIR = Path(__file__).parent.parent / "data" / "crossfeed" / "raw" / "sofa"
-DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "data" / "crossfeed" / "hrtf"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SOFA_DIR = REPO_ROOT / "data" / "crossfeed" / "raw" / "sofa"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "crossfeed" / "hrtf"
 
 
 @dataclass
@@ -418,8 +419,27 @@ def generate_hrtf_filters(
         print(f"  Resampled length: {len(resampled)} samples")
 
         shaped = resampled
+        apply_global_post_trim = True
         if name in ("ll", "rr"):
+            # Note: If we apply the global HF tilt after blending, the dry (direct) component
+            # is also low-pass filtered. That can make the whole output sound "radio-like".
+            # Apply the global tilt to the measured HRIR BEFORE blending, so the dry path
+            # remains broadband.
+            if global_hf_cutoff_hz > 0.0 and global_hf_slope > 0.0:
+                shaped = apply_high_frequency_tilt(
+                    shaped,
+                    output_rate,
+                    global_hf_cutoff_hz,
+                    global_hf_min_gain_db,
+                    global_hf_slope,
+                )
+                print(
+                    "  Global HF tilt (pre-blend): "
+                    f"cutoff {global_hf_cutoff_hz:.0f} Hz, min {global_hf_min_gain_db} dB, "
+                    f"slope {global_hf_slope:.1f}"
+                )
             shaped = blend_with_direct_path(shaped, IPSILATERAL_DIRECT_BLEND)
+            apply_global_post_trim = False
             print(
                 f"  Ipsilateral blend: mix={IPSILATERAL_DIRECT_BLEND:.2f} "
                 "(1.0=raw HRTF, 0.0=dry)"
@@ -451,7 +471,11 @@ def generate_hrtf_filters(
                 f"(threshold {trim_threshold_db} dB, pad {trim_padding})"
             )
 
-        if global_hf_cutoff_hz > 0.0 and global_hf_slope > 0.0:
+        if (
+            apply_global_post_trim
+            and global_hf_cutoff_hz > 0.0
+            and global_hf_slope > 0.0
+        ):
             trimmed = apply_high_frequency_tilt(
                 trimmed,
                 output_rate,
@@ -580,8 +604,9 @@ def generate_hrtf_filters(
 
     # JSON出力
     json_path = output_dir / f"hrtf_{size.lower()}_{rate_key}.json"
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
+        f.write("\n")
     print(f"Saved metadata: {json_path}")
 
     return metadata
