@@ -37,6 +37,11 @@ services:
     # RTP はデフォルト無効。必要なら MAGICBOX_ENABLE_RTP=true にし、UDP(46000/46001/46002) を公開する。
     ports:
       - "80:80"
+      # RTP diagnostic (GStreamer rtpbin): RTP/RTCP ports
+      # NOTE: MAGICBOX_ENABLE_RTP はデフォルト false のため、通常運用では単に開いているだけ。
+      - "46000:46000/udp"
+      - "46001:46001/udp"
+      - "46002:46002/udp"
 
     # Shared memory for audio buffers
     shm_size: '256m'
@@ -56,15 +61,18 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       # RTP はコードとして残すが、I2Sメイン運用ではデフォルトで無効化する。
       # 必要な場合のみ MAGICBOX_ENABLE_RTP=true にし、必要ならポートも公開する。
-      - MAGICBOX_ENABLE_RTP=false
-      - MAGICBOX_RTP_AUTOSTART=false
+      - MAGICBOX_ENABLE_RTP=${MAGICBOX_ENABLE_RTP:-false}
+      - MAGICBOX_RTP_AUTOSTART=${MAGICBOX_RTP_AUTOSTART:-false}
+      # 診断用: RTP受信 → ALSA Loopback playback → daemon が Loopback capture から取り込む
+      # これを true にすると entrypoint が (1) RTP有効化 (2) RTP自動起動 (3) loopback入力へ切替 を行う
+      - MAGICBOX_RTP_DIAGNOSTIC_LOOPBACK=${MAGICBOX_RTP_DIAGNOSTIC_LOOPBACK:-false}
       # USB直結構成では mDNS(raspberrypi.local) が見えないことがあるため、IPで固定
-      - MAGICBOX_RTP_SENDER_HOST=192.168.55.100
+      - MAGICBOX_RTP_SENDER_HOST=${MAGICBOX_RTP_SENDER_HOST:-192.168.55.100}
       # ZeroMQ ブリッジを使う場合（任意）
-      - RTP_BRIDGE_ENDPOINT=tcp://192.168.55.100:60000
+      - RTP_BRIDGE_ENDPOINT=${RTP_BRIDGE_ENDPOINT:-tcp://192.168.55.100:60000}
       # Wait for ALSA devices to appear after cold boot
-      - MAGICBOX_WAIT_AUDIO_SECS=8
-      - MAGICBOX_WAIT_LOOPBACK=true
+      - MAGICBOX_WAIT_AUDIO_SECS=${MAGICBOX_WAIT_AUDIO_SECS:-8}
+      - MAGICBOX_WAIT_LOOPBACK=${MAGICBOX_WAIT_LOOPBACK:-true}
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
       # - MAGICBOX_RTP_RTCP_SEND_ENABLED=0
       # - MAGICBOX_RTP_USE_RTPBIN=0

@@ -21,6 +21,8 @@ DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.j
 RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
 : "${MAGICBOX_ENABLE_RTP:=false}"
 : "${MAGICBOX_RTP_AUTOSTART:=false}"
+: "${MAGICBOX_RTP_DIAGNOSTIC_LOOPBACK:=false}"
+: "${MAGICBOX_WAIT_LOOPBACK:=false}"
 
 # Colors for logging
 RED='\033[0;31m'
@@ -38,6 +40,12 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
+}
+
+_is_true() {
+    local raw="${1:-}"
+    raw="$(echo "$raw" | tr '[:upper:]' '[:lower:]' | xargs)"
+    [[ "$raw" == "1" || "$raw" == "true" || "$raw" == "yes" || "$raw" == "on" ]]
 }
 
 wait_for_alsa() {
@@ -64,6 +72,49 @@ wait_for_alsa() {
         now="$(date +%s)"
         if (( now - start >= timeout )); then
             log_warn "Timed out waiting for ALSA devices"
+            return 0
+        fi
+        sleep 1
+    done
+}
+
+wait_for_loopback() {
+    if ! _is_true "${MAGICBOX_WAIT_LOOPBACK}"; then
+        return 0
+    fi
+
+    local timeout="${MAGICBOX_WAIT_AUDIO_SECS:-0}"
+    if [[ -z "${timeout}" ]]; then
+        timeout=0
+    fi
+    if [[ "${timeout}" == "0" ]]; then
+        timeout=8
+    fi
+
+    log_info "Waiting for ALSA Loopback device (timeout=${timeout}s)..."
+    local start
+    start="$(date +%s)"
+    while true; do
+        # Prefer /proc/asound when available.
+        if [[ -r "/proc/asound/cards" ]]; then
+            if grep -qi "loopback" /proc/asound/cards; then
+                log_info "ALSA Loopback detected (/proc/asound/cards)"
+                return 0
+            fi
+        fi
+
+        # Fallback: a best-effort hint from /dev/snd (not perfectly reliable).
+        if [[ -d "/dev/snd" ]]; then
+            if ls /dev/snd/controlC* >/dev/null 2>&1; then
+                # If we have any cards, but no Loopback name is visible, keep waiting until timeout.
+                true
+            fi
+        fi
+
+        local now
+        now="$(date +%s)"
+        if (( now - start >= timeout )); then
+            log_warn "Timed out waiting for ALSA Loopback. Ensure host has 'snd-aloop' loaded (e.g. sudo modprobe snd-aloop)."
             return 0
         fi
         sleep 1
@@ -128,6 +179,10 @@ prepare_config() {
     local backup_path="${CONFIG_FILE}.bak"
     local reset_flag
     reset_flag="$(echo "$RESET_CONFIG" | tr '[:upper:]' '[:lower:]')"
+    local rtp_diag_enabled=false
+    if _is_true "${MAGICBOX_RTP_DIAGNOSTIC_LOOPBACK}"; then
+        rtp_diag_enabled=true
+    fi
 
     # Helper: validate JSON file, returns 0 if valid JSON
     validate_json() {
@@ -176,6 +231,46 @@ prepare_config() {
         fi
     }
 
+    apply_rtp_diagnostic_overrides() {
+        if [[ "${rtp_diag_enabled}" != "true" ]]; then
+            return 0
+        fi
+
+        # Diagnostic mode assumes RTP input -> ALSA Loopback playback -> daemon reads Loopback capture.
+        # Make it hard to misconfigure by auto-enabling the necessary flags for child processes.
+        if ! _is_true "${MAGICBOX_ENABLE_RTP}"; then
+            log_warn "RTP diagnostic: MAGICBOX_ENABLE_RTP is false; forcing it to true for this container process"
+            export MAGICBOX_ENABLE_RTP=true
+        fi
+        if ! _is_true "${MAGICBOX_RTP_AUTOSTART}"; then
+            log_warn "RTP diagnostic: MAGICBOX_RTP_AUTOSTART is false; forcing it to true for this container process"
+            export MAGICBOX_RTP_AUTOSTART=true
+        fi
+
+        # Align loopback capture format with rtp_input (S32LE) to avoid negotiation/mismatch noise.
+        local desired_rate="${MAGICBOX_RTP_SAMPLE_RATE:-44100}"
+        if [[ "${desired_rate}" != "44100" && "${desired_rate}" != "48000" ]]; then
+            desired_rate="44100"
+        fi
+
+        local migrated_path="${CONFIG_FILE}.migrated"
+        if jq \
+            --argjson rate "${desired_rate}" \
+            '(.i2s.enabled = false)
+             | (.loopback.enabled = true)
+             | (.loopback.device = "hw:Loopback,1,0")
+             | (.loopback.sampleRate = $rate)
+             | (.loopback.channels = 2)
+             | (.loopback.format = "S32_LE")' \
+            "$CONFIG_FILE" > "$migrated_path" 2>/dev/null; then
+            mv -f "$migrated_path" "$CONFIG_FILE"
+            log_info "RTP diagnostic: configured daemon input to Loopback capture (rate=${desired_rate}, fmt=S32_LE)"
+        else
+            rm -f "$migrated_path" 2>/dev/null || true
+            log_warn "RTP diagnostic: failed to rewrite config.json (keeping current config as-is)"
+        fi
+    }
+
     # Optional reset via env
     if [[ "$reset_flag" == "true" || "$reset_flag" == "1" ]]; then
         log_warn "Reset requested via MAGICBOX_RESET_CONFIG, restoring default config"
@@ -201,6 +296,7 @@ prepare_config() {
     if validate_json "$CONFIG_FILE"; then
         merge_defaults
         normalize_inputs
+        apply_rtp_diagnostic_overrides
     fi
 
     ln -sf "$CONFIG_FILE" "$CONFIG_SYMLINK"
@@ -263,6 +359,10 @@ start_daemon() {
     fi
     # Ensure ALSA is ready (cold boot / device enumeration delay).
     wait_for_alsa
+    # If loopback is used, optionally wait for snd-aloop to appear (best-effort).
+    if jq -e '.loopback.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+        wait_for_loopback
+    fi
 
     # If I2S capture is enabled, apply Jetson APE routing in container (best-effort).
     if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
@@ -279,6 +379,10 @@ start_all() {
 
     # Ensure ALSA is ready (cold boot / device enumeration delay).
     wait_for_alsa
+    # If loopback is used, optionally wait for snd-aloop to appear (best-effort).
+    if jq -e '.loopback.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+        wait_for_loopback
+    fi
 
     # If I2S capture is enabled, apply Jetson APE routing in container (best-effort).
     if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
