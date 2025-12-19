@@ -155,6 +155,30 @@ static void ensure_output_config(AppConfig& config) {
 // Runtime configuration (loaded from config.json)
 static daemon_app::RuntimeState g_state;
 
+static bool env_flag(const char* name, bool defaultValue) {
+    const char* v = std::getenv(name);
+    if (!v) {
+        return defaultValue;
+    }
+    std::string s(v);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // Trim spaces
+    s.erase(s.begin(),
+            std::find_if(s.begin(), s.end(), [](unsigned char c) { return !std::isspace(c); }));
+    s.erase(
+        std::find_if(s.rbegin(), s.rend(), [](unsigned char c) { return !std::isspace(c); }).base(),
+        s.end());
+
+    if (s == "1" || s == "true" || s == "yes" || s == "on") {
+        return true;
+    }
+    if (s == "0" || s == "false" || s == "no" || s == "off") {
+        return false;
+    }
+    return defaultValue;
+}
+
 inline ConvolutionEngine::RateFamily g_get_rate_family() {
     return static_cast<ConvolutionEngine::RateFamily>(
         g_state.rates.currentRateFamilyInt.load(std::memory_order_acquire));
@@ -2023,9 +2047,13 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             break;
         }
-        // Issue #899: avoid per-period host blocking on GPU completion in steady-state playback.
-        // Keep legacy semantics (blocking) for offline/tests unless explicitly enabled here.
-        g_state.upsampler->setStreamingNonBlocking(true);
+        // PR #910 (#899): event-driven non-blocking streaming can reduce per-period host blocking,
+        // but it also has risk of artifacts/noise if any staging/handshake is wrong.
+        // Default to legacy (blocking) semantics for safety; enable explicitly via env.
+        bool enableNonBlocking = env_flag("MAGICBOX_GPU_STREAMING_NONBLOCKING", false);
+        g_state.upsampler->setStreamingNonBlocking(enableNonBlocking);
+        std::cout << "GPU streaming non-blocking: " << (enableNonBlocking ? "enabled" : "disabled")
+                  << '\n';
         PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_state.upsampler, g_state.config,
                                                "ALSA");
 
