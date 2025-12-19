@@ -1474,9 +1474,12 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
 
         bool needReopen = false;
         while (g_state.flags.running.load(std::memory_order_acquire)) {
-            playback_buffer().throttleProducerIfFull(g_state.flags.running, []() {
-                return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
-            });
+            // Important: For I2S capture in external-clock/slave scenarios, we must keep draining
+            // the ALSA capture buffer. Applying backpressure here can stall reads long enough to
+            // trigger capture overruns (XRUN), resulting in periodic "burst + noise" artifacts.
+            //
+            // If downstream is behind, we prefer to drop at the daemon-level playback queue
+            // (PlaybackBufferManager::enqueue enforces capacity) rather than blocking capture.
 
             void* rawBuffer = nullptr;
             if (format == SND_PCM_FORMAT_S16_LE) {
@@ -1497,7 +1500,10 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
             }
             if (frames == -EPIPE) {
                 LOG_WARN("[I2S] XRUN detected, recovering");
-                snd_pcm_prepare(handle);
+                // Use recover() to handle driver-specific XRUN recovery requirements.
+                if (snd_pcm_recover(handle, frames, 1) < 0) {
+                    snd_pcm_prepare(handle);
+                }
                 continue;
             }
             if (frames < 0) {
