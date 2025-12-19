@@ -465,18 +465,14 @@ bool FourChannelFIR::processStreamBlock(const float* inputL, const float* inputR
             streamInputAccumulatedL = kept;
             streamInputAccumulatedR = kept;
         }
-
-        outputL.clear();
-        outputR.clear();
-        return false;
+    } else {
+        std::copy(inputL, inputL + inputFrames,
+                  streamInputBufferL.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedL));
+        std::copy(inputR, inputR + inputFrames,
+                  streamInputBufferR.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedR));
+        streamInputAccumulatedL += inputFrames;
+        streamInputAccumulatedR += inputFrames;
     }
-
-    std::copy(inputL, inputL + inputFrames,
-              streamInputBufferL.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedL));
-    std::copy(inputR, inputR + inputFrames,
-              streamInputBufferR.begin() + static_cast<std::ptrdiff_t>(streamInputAccumulatedR));
-    streamInputAccumulatedL += inputFrames;
-    streamInputAccumulatedR += inputFrames;
 
     if (streamInputAccumulatedL < streamValidInputPerBlock_ ||
         streamInputAccumulatedR < streamValidInputPerBlock_) {
