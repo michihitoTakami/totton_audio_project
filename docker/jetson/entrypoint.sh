@@ -19,6 +19,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
 DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
 RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
+PROFILE="${MAGICBOX_PROFILE:-base}"
 : "${MAGICBOX_ENABLE_RTP:=false}"
 : "${MAGICBOX_RTP_AUTOSTART:=false}"
 
@@ -149,6 +150,35 @@ prepare_config() {
         fi
     }
 
+    apply_profile() {
+        if [[ "${PROFILE}" != "jetson" ]]; then
+            return 0
+        fi
+        log_info "Applying config profile: jetson"
+        local profiled_path="${CONFIG_FILE}.profile"
+        if jq '
+            .gain = 1.0
+            | .eqEnabled = false
+            | .eqProfilePath = ""
+            | .phaseType = "minimum"
+            | .filterPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin"
+            | .filterPath44kMin = "data/coefficients/filter_44k_16x_2m_min_phase.bin"
+            | .filterPath48kMin = "data/coefficients/filter_48k_16x_2m_min_phase.bin"
+            | .i2s.enabled = true
+            | .i2s.device = "hw:APE,0"
+            | .i2s.sampleRate = 0
+            | .i2s.channels = 2
+            | .i2s.format = "S32_LE"
+            | .i2s.periodFrames = 1024
+            | .loopback.enabled = false
+        ' "$CONFIG_FILE" > "$profiled_path" 2>/dev/null; then
+            mv -f "$profiled_path" "$CONFIG_FILE"
+        else
+            rm -f "$profiled_path" 2>/dev/null || true
+            log_warn "Failed to apply jetson profile (keeping current config as-is)"
+        fi
+    }
+
     # Helper: Jetson migration - prefer I2S when both are enabled
     normalize_inputs() {
         if jq -e '.i2s.enabled == true and .loopback.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
@@ -200,6 +230,7 @@ prepare_config() {
     # Always merge newly introduced default keys (e.g., i2s) into existing config safely.
     if validate_json "$CONFIG_FILE"; then
         merge_defaults
+        apply_profile
         normalize_inputs
     fi
 

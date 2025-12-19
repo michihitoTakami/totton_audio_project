@@ -52,6 +52,22 @@
     "consoleOutput": true,
     "coloredOutput": true
   },
+  "i2s": {
+    "enabled": false,
+    "device": "hw:I2S",
+    "sampleRate": 0,
+    "channels": 2,
+    "format": "S32_LE",
+    "periodFrames": 1024
+  },
+  "loopback": {
+    "enabled": false,
+    "device": "hw:Loopback,1,0",
+    "sampleRate": 44100,
+    "channels": 2,
+    "format": "S16_LE",
+    "periodFrames": 1024
+  },
   "tcpInput": {
     "enabled": true,
     "bindAddress": "0.0.0.0",

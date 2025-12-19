@@ -54,6 +54,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - MAGICBOX_PROFILE=jetson
       # RTP はコードとして残すが、I2Sメイン運用ではデフォルトで無効化する。
       # 必要な場合のみ MAGICBOX_ENABLE_RTP=true にし、必要ならポートも公開する。
       - MAGICBOX_ENABLE_RTP=false
