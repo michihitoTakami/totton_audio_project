@@ -802,6 +802,10 @@ static bool handle_rate_switch(int newInputRate) {
     std::cout << "[Rate] Switching: " << currentRate << " Hz -> " << newInputRate << " Hz" << '\n';
 
     int savedRate = currentRate;
+    ConvolutionEngine::RateFamily targetFamily = ConvolutionEngine::detectRateFamily(newInputRate);
+    if (targetFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
+        targetFamily = ConvolutionEngine::RateFamily::RATE_44K;
+    }
 
     if (g_state.softMute.controller) {
         g_state.softMute.controller->startFadeOut();
@@ -887,6 +891,7 @@ static bool handle_rate_switch(int newInputRate) {
         }
 
         g_state.rates.inputSampleRate = newInputRate;
+        g_set_rate_family(targetFamily);
         newOutputRate = g_state.upsampler->getOutputSampleRate();
         newUpsampleRatio = g_state.upsampler->getUpsampleRatio();
 
@@ -905,6 +910,31 @@ static bool handle_rate_switch(int newInputRate) {
             delete g_state.softMute.controller;
         }
         g_state.softMute.controller = new SoftMute::Controller(50, newOutputRate);
+    }
+
+    if (g_state.crossfeed.processor) {
+        std::lock_guard<std::mutex> cfLock(g_state.crossfeed.crossfeedMutex);
+        if (g_state.crossfeed.processor->switchRateFamily(targetFamily)) {
+            reset_crossfeed_stream_state_locked();
+            size_t cf_buffer_capacity = compute_stream_buffer_capacity(
+                g_state.crossfeed.processor->getStreamValidInputPerBlock());
+            g_state.crossfeed.cfStreamInputLeft.assign(cf_buffer_capacity, 0.0f);
+            g_state.crossfeed.cfStreamInputRight.assign(cf_buffer_capacity, 0.0f);
+            g_state.crossfeed.cfStreamAccumulatedLeft = 0;
+            g_state.crossfeed.cfStreamAccumulatedRight = 0;
+            g_state.crossfeed.cfOutputLeft.clear();
+            g_state.crossfeed.cfOutputRight.clear();
+            g_state.crossfeed.cfOutputBufferLeft.clear();
+            g_state.crossfeed.cfOutputBufferRight.clear();
+            size_t cf_output_capacity =
+                std::max(cf_buffer_capacity, g_state.crossfeed.processor->getValidOutputPerBlock());
+            g_state.crossfeed.cfOutputLeft.reserve(cf_output_capacity);
+            g_state.crossfeed.cfOutputRight.reserve(cf_output_capacity);
+            g_state.crossfeed.cfOutputBufferLeft.reserve(cf_output_capacity);
+            g_state.crossfeed.cfOutputBufferRight.reserve(cf_output_capacity);
+        } else {
+            std::cerr << "[Rate] Warning: Failed to switch crossfeed HRTF rate family" << '\n';
+        }
     }
 
     if (g_state.softMute.controller) {
