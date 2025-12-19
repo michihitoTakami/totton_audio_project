@@ -696,7 +696,8 @@ class GPUUpsampler {
                                        StreamFloatVector& streamInputBuffer,
                                        size_t& streamInputAccumulated);
     bool processPartitionBlock(PartitionState& state, cudaStream_t stream,
-                               const DeviceSample* d_newSamples, int newSamples,
+                               const DeviceSample* d_history, size_t historySize,
+                               size_t historyStartIndex, int newSamples,
                                DeviceSample* d_channelOverlap, StreamFloatVector& partitionOutput);
     void setActiveHostCoefficients(const std::vector<float>& source);
     bool updateActiveImpulseFromSpectrum(const DeviceFftComplex* spectrum,

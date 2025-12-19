@@ -1431,10 +1431,25 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
     g_state.i2s.captureRunning.store(true, std::memory_order_release);
 
     while (g_state.flags.running.load(std::memory_order_acquire)) {
+        // Determine desired rate for this open attempt.
+        //
+        // - If config explicitly fixes i2s.sampleRate, honor it.
+        // - Otherwise follow the current engine input rate (which may change after rate follow).
+        unsigned int desired_rate = requested_rate;
+        if (g_state.config.i2s.sampleRate != 0) {
+            desired_rate = static_cast<unsigned int>(g_state.config.i2s.sampleRate);
+        } else {
+            int engineRate = g_state.rates.inputSampleRate;
+            if (engineRate == 44100 || engineRate == 48000) {
+                desired_rate = static_cast<unsigned int>(engineRate);
+            }
+        }
+
         snd_pcm_uframes_t negotiated_period = configured_period_frames;
-        unsigned int actual_rate = requested_rate;
-        snd_pcm_t* handle = open_i2s_capture(device, format, requested_rate, channels,
+        unsigned int actual_rate = desired_rate;
+        snd_pcm_t* handle = open_i2s_capture(device, format, desired_rate, channels,
                                              negotiated_period, actual_rate);
+        const unsigned int openedRate = actual_rate;
         {
             std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
             g_state.i2s.handle = handle;
@@ -1530,6 +1545,20 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
 
             if (g_state.audioPipeline) {
                 g_state.audioPipeline->process(floatBuffer.data(), static_cast<uint32_t>(frames));
+            }
+
+            // Follow engine input rate changes when i2s.sampleRate is not fixed.
+            // Without this, a mid-run rate switch can desync capture vs processing and produce
+            // severe artifacts after a few seconds.
+            if (g_state.config.i2s.sampleRate == 0) {
+                int engineRate = g_state.rates.inputSampleRate;
+                if ((engineRate == 44100 || engineRate == 48000) &&
+                    static_cast<unsigned int>(engineRate) != openedRate) {
+                    LOG_INFO("[I2S] Engine rate changed (engine {} Hz, capture {} Hz). Reopening.",
+                             engineRate, openedRate);
+                    needReopen = true;
+                    break;
+                }
             }
         }
 

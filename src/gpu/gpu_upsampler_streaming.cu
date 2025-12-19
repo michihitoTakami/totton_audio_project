@@ -11,6 +11,41 @@ using Sample = DeviceSample;
 using Complex = DeviceFftComplex;
 using ScaleType = DeviceScale;
 
+static bool writeHistoryRingAsync(Sample* ring, size_t ringSize, size_t writeIndex,
+                                  const Sample* src, size_t count, cudaStream_t stream) {
+    if (!ring || !src || ringSize == 0 || count == 0) {
+        return false;
+    }
+    if (writeIndex >= ringSize) {
+        return false;
+    }
+    const size_t first = std::min(count, ringSize - writeIndex);
+    Utils::checkCudaError(cudaMemcpyAsync(ring + writeIndex, src, first * sizeof(Sample),
+                                         cudaMemcpyDeviceToDevice, stream),
+                          "cudaMemcpy history ring write (first)");
+    if (first < count) {
+        const size_t second = count - first;
+        Utils::checkCudaError(cudaMemcpyAsync(ring, src + first, second * sizeof(Sample),
+                                             cudaMemcpyDeviceToDevice, stream),
+                              "cudaMemcpy history ring write (second)");
+    }
+    return true;
+}
+
+static size_t historyStartIndexForOffset(size_t writeIndex, size_t ringSize, int64_t sampleOffset) {
+    if (ringSize == 0) {
+        return 0;
+    }
+    size_t off = 0;
+    if (sampleOffset > 0) {
+        off = static_cast<size_t>(sampleOffset);
+    }
+    if (off >= ringSize) {
+        off = ringSize - 1;
+    }
+    return (writeIndex + ringSize - off) % ringSize;
+}
+
 // GPUUpsampler implementation - Streaming methods
 
 bool GPUUpsampler::initializeStreaming() {
@@ -876,6 +911,18 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                 ch.d_streamInput, ch.d_streamUpsampled, samplesToProcess, upsampleRatio_);
 
             const int newSamples = validOutputPerBlock_;
+            if (!d_upsampledHistory_ || historyBufferSize_ == 0) {
+                LOG_ERROR("[Partition] History buffer not initialized; re-init required");
+                return false;
+            }
+            Sample* historyBase =
+                d_upsampledHistory_ + static_cast<size_t>(channelIndex) * historyBufferSize_;
+            if (!writeHistoryRingAsync(historyBase, historyBufferSize_, historyWriteIndex_,
+                                       ch.d_streamUpsampled, static_cast<size_t>(newSamples),
+                                       stream)) {
+                LOG_ERROR("[Partition] Failed to write history ring");
+                return false;
+            }
             if (ch.stagedPartitionOutputs.size() != partitionStates_.size()) {
                 LOG_ERROR("[Partition] Staged partition output size mismatch; re-init required");
                 return false;
@@ -883,7 +930,10 @@ bool GPUUpsampler::processPartitionedStreamBlock(
             for (size_t idx = 0; idx < partitionStates_.size(); ++idx) {
                 auto& state = partitionStates_[idx];
                 Sample* overlap = (channelIndex == 2) ? state.d_overlapRight : state.d_overlapLeft;
-                if (!processPartitionBlock(state, stream, ch.d_streamUpsampled, newSamples, overlap,
+                const size_t startIndex = historyStartIndexForOffset(
+                    historyWriteIndex_, historyBufferSize_, state.sampleOffset);
+                if (!processPartitionBlock(state, stream, historyBase, historyBufferSize_,
+                                           startIndex, newSamples, overlap,
                                            ch.stagedPartitionOutputs[idx])) {
                     return false;
                 }
@@ -915,6 +965,14 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                           streamInputBuffer.begin());
             }
             streamInputAccumulated = remaining;
+
+            // Advance history timeline once per audio block (mono: every block; stereo: after right).
+            const bool advanceTimeline = (!isStereo) || isRight;
+            if (advanceTimeline && historyBufferSize_ > 0) {
+                partitionProcessedSamples_ += static_cast<int64_t>(newSamples);
+                historyWriteIndex_ =
+                    (historyWriteIndex_ + static_cast<size_t>(newSamples)) % historyBufferSize_;
+            }
             return true;
         }
 
@@ -1031,6 +1089,17 @@ bool GPUUpsampler::processPartitionedStreamBlock(
             ch.d_streamInput, ch.d_streamUpsampled, samplesToProcess, upsampleRatio_);
 
         const int newSamples = validOutputPerBlock_;
+        if (!d_upsampledHistory_ || historyBufferSize_ == 0) {
+            LOG_ERROR("[Partition] History buffer not initialized; re-init required");
+            return false;
+        }
+        Sample* historyBase =
+            d_upsampledHistory_ + static_cast<size_t>(channelIndex) * historyBufferSize_;
+        if (!writeHistoryRingAsync(historyBase, historyBufferSize_, historyWriteIndex_,
+                                   ch.d_streamUpsampled, static_cast<size_t>(newSamples), stream)) {
+            LOG_ERROR("[Partition] Failed to write history ring");
+            return false;
+        }
         if (static_cast<size_t>(newSamples) > ch.stagedOutput.size()) {
             LOG_ERROR("[Partition] Internal staging buffer too small: need {}, staged={}",
                       newSamples,
@@ -1052,8 +1121,10 @@ bool GPUUpsampler::processPartitionedStreamBlock(
             } else {
                 overlap = state.d_overlapLeft;  // mono/left share
             }
-            if (!processPartitionBlock(state, stream, ch.d_streamUpsampled, newSamples, overlap,
-                                       ch.stagedPartitionOutputs[idx])) {
+            const size_t startIndex =
+                historyStartIndexForOffset(historyWriteIndex_, historyBufferSize_, state.sampleOffset);
+            if (!processPartitionBlock(state, stream, historyBase, historyBufferSize_, startIndex,
+                                       newSamples, overlap, ch.stagedPartitionOutputs[idx])) {
                 return false;
             }
         }
@@ -1081,6 +1152,14 @@ bool GPUUpsampler::processPartitionedStreamBlock(
             }
         } else {
             ch.inFlight = true;
+        }
+
+        // Advance history timeline once per audio block (mono: every block; stereo: after right).
+        const bool advanceTimeline = (!isStereo) || isRight;
+        if (advanceTimeline && historyBufferSize_ > 0) {
+            partitionProcessedSamples_ += static_cast<int64_t>(newSamples);
+            historyWriteIndex_ =
+                (historyWriteIndex_ + static_cast<size_t>(newSamples)) % historyBufferSize_;
         }
 
         // Shift remaining samples in input buffer

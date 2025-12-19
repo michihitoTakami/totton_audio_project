@@ -1274,6 +1274,14 @@ void GPUUpsampler::resetPartitionedStreaming() {
     partitionProcessedSamples_ = 0;
     partitionOutputSamples_ = 0;
     historyWriteIndex_ = 0;
+
+    if (d_upsampledHistory_ && historyBufferSize_ > 0) {
+        Utils::checkCudaError(
+            cudaMemset(d_upsampledHistory_, 0,
+                       historyBufferSize_ * static_cast<size_t>(kStreamingChannelCount) *
+                           sizeof(Sample)),
+            "cudaMemset partition reset upsampled history");
+    }
 }
 
 void GPUUpsampler::releaseHostCoefficients() {
@@ -1601,6 +1609,41 @@ bool GPUUpsampler::initializePartitionedStreaming() {
         cudaMemset(d_overlapRight_, 0, streamOverlapSize_ * sizeof(Sample)),
         "cudaMemset partition overlap right");
 
+    // Allocate upsampled input history ring buffer (used to apply per-partition sampleOffset).
+    // Each partition corresponds to a tap segment starting at sampleOffset; that segment must see
+    // the input delayed by that offset (x[n - sampleOffset]).
+    //
+    // We keep a history of upsampled samples at output rate so each partition can read the
+    // appropriately delayed block without RT-host interaction.
+    size_t maxOffset = 0;
+    for (const auto& st : partitionStates_) {
+        if (st.sampleOffset > 0) {
+            maxOffset = std::max(maxOffset, static_cast<size_t>(st.sampleOffset));
+        }
+    }
+    // Ensure enough room so we never overwrite samples still needed by the largest offset.
+    // Use a safety margin of 4 blocks.
+    historyBufferSize_ = maxOffset + static_cast<size_t>(validOutputPerBlock_) * 4 + 1;
+    if (historyBufferSize_ < static_cast<size_t>(validOutputPerBlock_) + 1) {
+        historyBufferSize_ = static_cast<size_t>(validOutputPerBlock_) + 1;
+    }
+    if (d_upsampledHistory_) {
+        cudaFree(d_upsampledHistory_);
+        d_upsampledHistory_ = nullptr;
+    }
+    Utils::checkCudaError(
+        cudaMalloc(&d_upsampledHistory_,
+                   historyBufferSize_ * static_cast<size_t>(kStreamingChannelCount) *
+                       sizeof(Sample)),
+        "cudaMalloc partition upsampled history");
+    Utils::checkCudaError(
+        cudaMemset(d_upsampledHistory_, 0,
+                   historyBufferSize_ * static_cast<size_t>(kStreamingChannelCount) *
+                       sizeof(Sample)),
+        "cudaMemset partition upsampled history");
+    historyWriteIndex_ = 0;
+    partitionProcessedSamples_ = 0;
+
     // Allocate runtime buffers for each partition
     for (size_t idx = 0; idx < partitionStates_.size(); ++idx) {
         auto& state = partitionStates_[idx];
@@ -1669,8 +1712,32 @@ bool GPUUpsampler::initializePartitionedStreaming() {
     return true;
 }
 
+static bool copyFromHistoryRingAsync(Sample* dst,
+                                     const Sample* ring,
+                                     size_t ringSize, size_t startIndex, size_t count,
+                                     cudaStream_t stream) {
+    if (!dst || !ring || ringSize == 0 || count == 0) {
+        return false;
+    }
+    if (startIndex >= ringSize) {
+        return false;
+    }
+    const size_t first = std::min(count, ringSize - startIndex);
+    Utils::checkCudaError(cudaMemcpyAsync(dst, ring + startIndex, first * sizeof(Sample),
+                                         cudaMemcpyDeviceToDevice, stream),
+                          "cudaMemcpy history ring (first)");
+    if (first < count) {
+        const size_t second = count - first;
+        Utils::checkCudaError(cudaMemcpyAsync(dst + first, ring, second * sizeof(Sample),
+                                             cudaMemcpyDeviceToDevice, stream),
+                              "cudaMemcpy history ring (second)");
+    }
+    return true;
+}
+
 bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t stream,
-                                         const Sample* d_newSamples, int newSamples,
+                                         const Sample* d_history, size_t historySize,
+                                         size_t historyStartIndex, int newSamples,
                                          Sample* d_channelOverlap, StreamFloatVector& partitionOutput) {
     try {
         int samplesToUse = std::min(newSamples, state.validOutput);
@@ -1691,10 +1758,14 @@ bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t str
                 "cudaMemcpy partition overlap prepend");
         }
 
-        Utils::checkCudaError(
-            cudaMemcpyAsync(state.d_timeDomain + state.overlapSize, d_newSamples,
-                            samplesToUse * sizeof(Sample), cudaMemcpyDeviceToDevice, stream),
-            "cudaMemcpy partition block");
+        // Copy delayed input block from upsampled history ring into the time buffer.
+        // This applies the partition's sampleOffset by choosing the appropriate start index.
+        if (!copyFromHistoryRingAsync(state.d_timeDomain + state.overlapSize, d_history, historySize,
+                                      historyStartIndex, static_cast<size_t>(samplesToUse), stream)) {
+            LOG_ERROR("[Partition] Invalid history ring access (start={}, size={}, samples={})",
+                      historyStartIndex, historySize, samplesToUse);
+            return false;
+        }
 
         if (state.overlapSize > 0 && d_channelOverlap) {
             int overlapOffset = std::max(0, samplesToUse);
