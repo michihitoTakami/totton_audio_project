@@ -2080,38 +2080,21 @@ int main(int argc, char* argv[]) {
                                   << ")" << '\n';
 
                         // Pre-allocate crossfeed streaming buffers
-                        // Note: FourChannelFIR expects the caller-owned accumulation buffers to be
-                        // large enough to absorb bursty upstream outputs without resizing in RT
-                        // path. The upstream chunk size here is the upsampler's produced block at
-                        // output rate (streamValidInputPerBlock * upsampleRatio).
-                        size_t upsamplerProducedBlock = 0;
-                        if (g_state.upsampler) {
-                            size_t inBlock = g_state.upsampler->getStreamValidInputPerBlock();
-                            int ratio = g_state.upsampler->getUpsampleRatio();
-                            if (inBlock > 0 && ratio > 0) {
-                                upsamplerProducedBlock = inBlock * static_cast<size_t>(ratio);
-                            }
-                        }
-                        size_t cfSizingBase =
-                            std::max(g_state.crossfeed.processor->getStreamValidInputPerBlock(),
-                                     upsamplerProducedBlock);
-                        size_t cf_buffer_capacity = compute_stream_buffer_capacity(cfSizingBase);
+                        size_t cf_buffer_capacity = compute_stream_buffer_capacity(
+                            g_state.crossfeed.processor->getStreamValidInputPerBlock());
                         g_state.crossfeed.cfStreamInputLeft.resize(cf_buffer_capacity, 0.0f);
                         g_state.crossfeed.cfStreamInputRight.resize(cf_buffer_capacity, 0.0f);
                         g_state.crossfeed.cfStreamAccumulatedLeft = 0;
                         g_state.crossfeed.cfStreamAccumulatedRight = 0;
                         size_t cf_output_capacity =
-                            std::max({cf_buffer_capacity,
-                                      g_state.crossfeed.processor->getValidOutputPerBlock(),
-                                      upsamplerProducedBlock});
+                            std::max(cf_buffer_capacity,
+                                     g_state.crossfeed.processor->getValidOutputPerBlock());
                         g_state.crossfeed.cfOutputLeft.reserve(cf_output_capacity);
                         g_state.crossfeed.cfOutputRight.reserve(cf_output_capacity);
                         g_state.crossfeed.cfOutputBufferLeft.reserve(cf_output_capacity);
                         g_state.crossfeed.cfOutputBufferRight.reserve(cf_output_capacity);
                         std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity
-                                  << " samples (cfBlock="
-                                  << g_state.crossfeed.processor->getStreamValidInputPerBlock()
-                                  << ", upsamplerBlock=" << upsamplerProducedBlock << ")" << '\n';
+                                  << " samples" << '\n';
 
                         // Crossfeed is initialized but disabled by default
                         g_state.crossfeed.enabled.store(false);
