@@ -10,6 +10,7 @@
 #include "core/partition_runtime_utils.h"
 #include "daemon/api/dependencies.h"
 #include "daemon/api/events.h"
+#include "daemon/app/process_resources.h"
 #include "daemon/app/runtime_state.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/audio_pipeline/filter_manager.h"
@@ -62,7 +63,6 @@
 #include <sched.h>
 #include <sstream>
 #include <string>
-#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <thread>
@@ -620,74 +620,6 @@ static runtime_stats::Dependencies build_runtime_stats_dependencies() {
     return deps;
 }
 
-// ========== PID File Lock (flock-based) ==========
-
-// File descriptor for the PID lock file (kept open while running)
-
-// Read PID from lock file (for display purposes)
-static pid_t read_pid_from_lockfile() {
-    std::ifstream pidfile(PID_FILE_PATH);
-    if (!pidfile.is_open()) {
-        return 0;
-    }
-    pid_t pid = 0;
-    pidfile >> pid;
-    return pid;
-}
-
-// Acquire exclusive lock on PID file using flock()
-// Returns true if lock acquired, false if another instance is running
-static bool acquire_pid_lock() {
-    // Open or create the lock file
-    g_state.pidLockFd = open(PID_FILE_PATH, O_RDWR | O_CREAT, 0644);
-    if (g_state.pidLockFd < 0) {
-        LOG_ERROR("Cannot open PID file: {} ({})", PID_FILE_PATH, strerror(errno));
-        return false;
-    }
-
-    // Try to acquire exclusive lock (non-blocking)
-    if (flock(g_state.pidLockFd, LOCK_EX | LOCK_NB) < 0) {
-        if (errno == EWOULDBLOCK) {
-            // Another process holds the lock
-            pid_t existing_pid = read_pid_from_lockfile();
-            if (existing_pid > 0) {
-                LOG_ERROR("Another instance is already running (PID: {})", existing_pid);
-            } else {
-                LOG_ERROR("Another instance is already running");
-            }
-            LOG_ERROR("Use './scripts/daemon.sh stop' to stop it.");
-        } else {
-            LOG_ERROR("Cannot lock PID file: {}", strerror(errno));
-        }
-        close(g_state.pidLockFd);
-        g_state.pidLockFd = -1;
-        return false;
-    }
-
-    // Lock acquired - write our PID to the file
-    if (ftruncate(g_state.pidLockFd, 0) < 0) {
-        LOG_WARN("Cannot truncate PID file");
-    }
-    dprintf(g_state.pidLockFd, "%d\n", getpid());
-    fsync(g_state.pidLockFd);  // Ensure PID is written to disk
-
-    return true;
-}
-
-// Release PID lock and remove file
-// Note: Lock is automatically released when process exits (even on crash)
-static void release_pid_lock() {
-    if (g_state.pidLockFd >= 0) {
-        flock(g_state.pidLockFd, LOCK_UN);
-        close(g_state.pidLockFd);
-        g_state.pidLockFd = -1;
-    }
-    // Remove the PID file on clean shutdown
-    unlink(PID_FILE_PATH);
-    // Remove the stats file on clean shutdown
-    unlink(STATS_FILE_PATH);
-}
-
 // ========== Configuration ==========
 
 static void print_config_summary(const AppConfig& cfg) {
@@ -1175,9 +1107,10 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
     // Ensure non-blocking is effective even if driver flips it.
     snd_pcm_nonblock(handle, 1);
 
-    LOG_INFO("[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames, buffer {} "
-             "frames)",
-             device, rate_near, channels, period_frames, buffer_frames);
+    LOG_INFO(
+        "[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames, buffer {} "
+        "frames)",
+        device, rate_near, channels, period_frames, buffer_frames);
     return handle;
 }
 
@@ -1194,8 +1127,7 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
         snd_pcm_t* handle = nullptr;
 
         // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
-        int err =
-            snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
+        int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
         if (err < 0) {
             LOG_ERROR("[I2S] Cannot open capture device {}: {}", device, snd_strerror(err));
             return nullptr;
@@ -1244,18 +1176,18 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
             return nullptr;
         }
         buffer_frames = std::max<snd_pcm_uframes_t>(buffer_frames, local_period * 2);
-        if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) <
-            0) {
+        if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) < 0) {
             LOG_ERROR("[I2S] Cannot set buffer size: {}", snd_strerror(err));
             snd_pcm_close(handle);
             return nullptr;
         }
 
         if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
-            LOG_ERROR("[I2S] Cannot apply hardware parameters (rate {}, ch {}, fmt {}, "
-                      "period {} frames, buffer {} frames): {}",
-                      rate_label, channels, snd_pcm_format_name(format), local_period,
-                      buffer_frames, snd_strerror(err));
+            LOG_ERROR(
+                "[I2S] Cannot apply hardware parameters (rate {}, ch {}, fmt {}, "
+                "period {} frames, buffer {} frames): {}",
+                rate_label, channels, snd_pcm_format_name(format), local_period, buffer_frames,
+                snd_strerror(err));
             snd_pcm_close(handle);
             return nullptr;
         }
@@ -1283,10 +1215,11 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
         period_frames = local_period;
         actual_rate = effective_rate;
 
-        LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames, "
-                 "buffer {} frames)",
-                 device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
-                 buffer_frames);
+        LOG_INFO(
+            "[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames, "
+            "buffer {} frames)",
+            device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
+            buffer_frames);
 
         return handle;
     };
@@ -1768,9 +1701,11 @@ int main(int argc, char* argv[]) {
     // This allows logging during PID lock acquisition
     gpu_upsampler::logging::initializeEarly();
 
-    // Acquire PID file lock (prevent multiple instances)
-    // Note: At this point, logging outputs to stderr only
-    if (!acquire_pid_lock()) {
+    daemon_app::ProcessResources::Options resourceOptions;
+    resourceOptions.pidFilePath = PID_FILE_PATH;
+    resourceOptions.statsFilePath = STATS_FILE_PATH;
+    auto processResources = daemon_app::ProcessResources::acquire(resourceOptions);
+    if (!processResources) {
         return 1;
     }
 
@@ -1781,7 +1716,7 @@ int main(int argc, char* argv[]) {
     LOG_INFO("========================================");
     LOG_INFO("  GPU Audio Upsampler - ALSA Direct Output");
     LOG_INFO("========================================");
-    LOG_INFO("PID: {} (file: {})", getpid(), PID_FILE_PATH);
+    LOG_INFO("PID: {} (file: {})", getpid(), processResources->pidLock().path());
 
     shutdown_manager::ShutdownManager::Dependencies shutdownDeps{
         &g_state.softMute.controller, &g_state.flags.running, &g_state.flags.reloadRequested,
@@ -2460,8 +2395,6 @@ int main(int argc, char* argv[]) {
         }
     } while (g_state.flags.reloadRequested);
 
-    // Release PID lock and remove file on clean exit
-    release_pid_lock();
     std::cout << "Goodbye!" << '\n';
     return exitCode;
 }

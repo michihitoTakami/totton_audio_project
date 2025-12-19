@@ -2,11 +2,10 @@
 
 #include "convolution_engine.h"
 #include "core/daemon_constants.h"
+#include "daemon/metrics/stats_file.h"
 
 #include <chrono>
 #include <cmath>
-#include <cstdio>
-#include <fstream>
 #include <string>
 
 namespace runtime_stats {
@@ -283,14 +282,8 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
 void writeStatsFile(const Dependencies& deps, std::size_t bufferCapacityFrames,
                     const std::string& path) {
     auto stats = collect(deps, bufferCapacityFrames);
-    std::string tmpPath = path + ".tmp";
-    std::ofstream ofs(tmpPath);
-    if (!ofs) {
-        return;
-    }
-    ofs << stats.dump(2) << '\n';
-    ofs.close();
-    std::rename(tmpPath.c_str(), path.c_str());
+    daemon_metrics::StatsFile statsFile(path);
+    (void)statsFile.writeJsonAtomically(stats);
 }
 
 }  // namespace runtime_stats
