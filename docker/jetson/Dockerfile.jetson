@@ -37,7 +37,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Audio runtime libraries
     libasound2 \
     alsa-utils \
-    libpipewire-0.3-0 \
     libsndfile1 \
     # GStreamer runtime for RTP受信
     gstreamer1.0-tools \
