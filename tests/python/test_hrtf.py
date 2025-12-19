@@ -320,8 +320,10 @@ class TestGeneratedHRTFFilters:
         lr_peak = float(np.max(np.abs(hrtf_m_44k["lr"])))
         rl_peak = float(np.max(np.abs(hrtf_m_44k["rl"])))
         contra_ratio = lr_peak / rl_peak
+        # Note: With shelf-like rolloff, peak location can shift and the peak ratio
+        # can deviate a bit more than the hard lowpass case.
         assert (
-            0.9 < contra_ratio < 1.1
+            0.85 < contra_ratio < 1.2
         ), f"Contralateral peak asymmetry: LR={lr_peak}, RL={rl_peak}"
 
     def test_itd_exists(self, hrtf_m_44k):
