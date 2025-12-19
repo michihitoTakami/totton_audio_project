@@ -286,7 +286,7 @@ def _restart_via_docker(container: str) -> dict[str, Any]:
             status_code=500, detail="docker SDK is not available"
         ) from exc
     try:
-        client = docker.from_env()
+        client = docker.from_env()  # type: ignore[attr-defined]
         target = client.containers.get(container)
         target.restart(timeout=20)
         return {"mode": "docker", "container": container}
