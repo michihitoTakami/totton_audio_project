@@ -6,6 +6,12 @@ if [[ $# -gt 0 ]]; then
   exec "$@"
 fi
 
+CONFIG_PATH="${USB_I2S_CONFIG_PATH:-/var/lib/usb-i2s-bridge/config.env}"
+if [[ -n "${CONFIG_PATH}" && ! -f "${CONFIG_PATH}" ]]; then
+  mkdir -p "$(dirname "${CONFIG_PATH}")"
+  cp /opt/usb-i2s-bridge/raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env "${CONFIG_PATH}"
+fi
+
 CHRT_PRIO=${USB_I2S_CHRT_PRIO:-20}
 NICE_LEVEL=${USB_I2S_NICE_LEVEL:--11}
 launcher=()

@@ -122,3 +122,10 @@ repos:
         files: ^web/.*\.py$
         pass_filenames: false
         stages: [pre-commit]
+      - id: export-raspi-openapi
+        name: Export Raspberry Pi OpenAPI spec
+        entry: uv run python scripts/integration/export_raspi_openapi.py
+        language: system
+        files: ^raspberry_pi/.*\.py$
+        pass_filenames: false
+        stages: [pre-commit]

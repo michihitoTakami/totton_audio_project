@@ -4,46 +4,21 @@ services:
       context: ../..
       dockerfile: raspberry_pi/usb_i2s_bridge/Dockerfile
     container_name: rpi-usb-i2s-bridge
+    network_mode: "host"
     cap_add:
       - "SYS_NICE"
     ulimits:
       rtprio: 95
       memlock: -1
     # NOTE(#950): 60100/60101 の ZeroMQ 制御プレーンはデフォルト無効化。
-    # 必要なら USB_I2S_CONTROL_ENDPOINT を設定し、ports も適宜開けること。
+    # 必要なら config.env で USB_I2S_CONTROL_ENDPOINT を設定し、ports も適宜開けること。
     devices:
       - "/dev/snd:/dev/snd"
     group_add:
       - "audio"
     environment:
-      # 取り急ぎ: Pi実機で UAC2=card3 / I2S=card2 の前提
-      # ※必要ならUSB_I2S_CAPTURE_DEVICE / USB_I2S_PLAYBACK_DEVICEを環境変数で上書き
-      USB_I2S_CAPTURE_DEVICE: ${USB_I2S_CAPTURE_DEVICE:-hw:3,0}
-      USB_I2S_PLAYBACK_DEVICE: ${USB_I2S_PLAYBACK_DEVICE:-hw:2,0}
-      USB_I2S_CHANNELS: ${USB_I2S_CHANNELS:-2}
-      # 重要(#949): fallback を 48k にすると、hw_params 未確定時に 44.1k → 48k 変換へ倒れやすい。
-      # まずはデフォルトを 44.1k に寄せ、勝手なサンプルレート変換の確率を下げる。
-      USB_I2S_FALLBACK_RATE: ${USB_I2S_FALLBACK_RATE:-44100}
-      USB_I2S_PREFERRED_FORMAT: ${USB_I2S_PREFERRED_FORMAT:-S32_LE}
-      USB_I2S_PASSTHROUGH: ${USB_I2S_PASSTHROUGH:-true}
-      USB_I2S_FADE_MS: ${USB_I2S_FADE_MS:-80}
-      USB_I2S_POLL_INTERVAL_SEC: ${USB_I2S_POLL_INTERVAL_SEC:-1.0}
-      USB_I2S_RESTART_BACKOFF_SEC: ${USB_I2S_RESTART_BACKOFF_SEC:-0.5}
-      USB_I2S_KEEP_SILENCE: ${USB_I2S_KEEP_SILENCE:-true}
-      USB_I2S_STATUS_PATH: ${USB_I2S_STATUS_PATH:-/var/run/usb-i2s-bridge/status.json}
-      USB_I2S_ALSA_BUFFER_TIME_US: ${USB_I2S_ALSA_BUFFER_TIME_US:-200000}
-      USB_I2S_ALSA_LATENCY_TIME_US: ${USB_I2S_ALSA_LATENCY_TIME_US:-20000}
-      USB_I2S_QUEUE_TIME_NS: ${USB_I2S_QUEUE_TIME_NS:-100000000}
-      # Jetson Web(:80)へ状態を送る場合（任意）
-      USB_I2S_STATUS_REPORT_URL: ${USB_I2S_STATUS_REPORT_URL:-}
-      USB_I2S_STATUS_REPORT_TIMEOUT_MS: ${USB_I2S_STATUS_REPORT_TIMEOUT_MS:-300}
-      USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC: ${USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC:-1.0}
-      # ZeroMQ 制御プレーン（任意・デフォルト無効）
-      USB_I2S_CONTROL_ENDPOINT: ${USB_I2S_CONTROL_ENDPOINT:-}
-      USB_I2S_CONTROL_PEER: ${USB_I2S_CONTROL_PEER:-}
-      USB_I2S_CONTROL_REQUIRE_PEER: ${USB_I2S_CONTROL_REQUIRE_PEER:-false}
-      USB_I2S_CONTROL_POLL_INTERVAL_SEC: ${USB_I2S_CONTROL_POLL_INTERVAL_SEC:-1.0}
-      USB_I2S_CONTROL_TIMEOUT_MS: ${USB_I2S_CONTROL_TIMEOUT_MS:-2000}
+      # 設定は /var/lib/usb-i2s-bridge/config.env に集約
+      USB_I2S_CONFIG_PATH: /var/lib/usb-i2s-bridge/config.env
     restart: always
     logging:
       driver: "json-file"
@@ -52,5 +27,31 @@ services:
         max-file: "3"
     volumes:
       - usb-i2s-bridge-run:/var/run/usb-i2s-bridge
+      - usb-i2s-bridge-config:/var/lib/usb-i2s-bridge
+
+  raspi-control-api:
+    build:
+      context: ../..
+      dockerfile: raspberry_pi/control_api/Dockerfile
+    container_name: rpi-control-api
+    network_mode: "host"
+    environment:
+      RPI_CONTROL_BIND_INTERFACE: ${RPI_CONTROL_BIND_INTERFACE:-usb0}
+      RPI_CONTROL_PORT: ${RPI_CONTROL_PORT:-8081}
+      RPI_CONTROL_CONFIG_PATH: /var/lib/usb-i2s-bridge/config.env
+      RPI_CONTROL_STATUS_PATH: /var/run/usb-i2s-bridge/status.json
+      RPI_CONTROL_RESTART_MODE: docker
+      RPI_CONTROL_DOCKER_CONTAINER: rpi-usb-i2s-bridge
+    volumes:
+      - usb-i2s-bridge-run:/var/run/usb-i2s-bridge:ro
+      - usb-i2s-bridge-config:/var/lib/usb-i2s-bridge
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 volumes:
   usb-i2s-bridge-run:
+  usb-i2s-bridge-config:

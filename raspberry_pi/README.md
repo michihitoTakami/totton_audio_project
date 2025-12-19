@@ -91,20 +91,54 @@ Magic Box Web UI からのレイテンシ変更を Pi に伝える場合に使�
 
 I2S のレート/フォーマット/チャンネルを Pi-Jetson 間で同期させ、どちらかが切断中でも復帰後に共通パラメータになるまで capture を待機します。
 
-- REP (Pi): `USB_I2S_CONTROL_ENDPOINT` (**既定: 空=無効**)
-- REQ (Jetson 側など): `USB_I2S_CONTROL_PEER` (**既定: 空=無効**)
-- 待機ポリシー: `USB_I2S_CONTROL_REQUIRE_PEER=true` で peer 同期完了まで capture を禁止（**既定: false**）
-- タイムアウト/ポーリング: `USB_I2S_CONTROL_TIMEOUT_MS` / `USB_I2S_CONTROL_POLL_INTERVAL_SEC`
+- REP (Pi): `USB_I2S_CONTROL_ENDPOINT`（`config.env` で設定、既定: 空=無効）
+- REQ (Jetson 側など): `USB_I2S_CONTROL_PEER`（`config.env` で設定、既定: 空=無効）
+- 待機ポリシー: `USB_I2S_CONTROL_REQUIRE_PEER=true`（`config.env` で設定、既定: false）
+- タイムアウト/ポーリング: `USB_I2S_CONTROL_TIMEOUT_MS` / `USB_I2S_CONTROL_POLL_INTERVAL_SEC`（`config.env`）
 
 Jetson 側も `raspberry_pi/usb_i2s_bridge/control_agent.py` を `python3 -m raspberry_pi.usb_i2s_bridge.control_agent` で起動すると、同じ仕組みでステータスを提供できます。
+
+### Pi 制御 API (Issue #940)
+
+Pi 側に軽量の FastAPI を常駐させ、Jetson から USB 経由で制御します。
+
+- Docker Compose では `raspi-control-api` サービスとして起動します。
+- デフォルト bind は `usb0` を自動検出し、失敗時は `127.0.0.1` にフォールバックします。
+- **ポート 80 は使用しない**（Jetson 側 nginx へ戻るため）。既定は `8081`。
+- `raspi-control-api` は **docker.sock をマウントすることが前提**（再起動/反映に必須）。
+- `usb0` へバインドさせるため **host network が前提**。
+
+主なエンドポイント:
+
+- `GET /raspi/api/v1/status` : bridge 状態 / rate / format / ch / xruns / last_error / uptime
+- `GET /raspi/api/v1/config` : 現在の設定
+- `PUT /raspi/api/v1/config` : 設定更新（更新後に再起動）
+- `POST /raspi/api/v1/actions/restart` : bridge 再起動
+
+設定反映について:
+
+- **設定は `/var/lib/usb-i2s-bridge/config.env` のみ**を編集します（唯一の設定元）。
+- `usb-i2s-bridge` は起動時にこのファイルを読み込みます。
+- `raspi-control-api` が同ファイルを更新し、Docker 経由で `usb-i2s-bridge` コンテナを再起動します。
+- 初回起動時は `raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env` を seed としてコピーします。
+
+Jetson から叩く例:
+
+```bash
+curl http://192.168.55.2:8081/raspi/api/v1/status
+
+curl -X PUT http://192.168.55.2:8081/raspi/api/v1/config \
+  -H 'Content-Type: application/json' \
+  -d '{"alsa_buffer_time_us": 100000, "alsa_latency_time_us": 10000}'
+```
 
 ### Jetson Web(:80) へのステータス送信 (Issue #950)
 
 別ポートを増やさずに Jetson 側へ状態（mode/rate/format/ch）を通知したい場合は、Pi 側で以下を設定します（任意）。
 
-- `USB_I2S_STATUS_REPORT_URL`（例: `http://jetson/i2s/peer-status`）
-- `USB_I2S_STATUS_REPORT_TIMEOUT_MS`（既定 300）
-- `USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC`（既定 1.0）
+- `USB_I2S_STATUS_REPORT_URL`（例: `http://jetson/i2s/peer-status`）※`config.env` で設定
+- `USB_I2S_STATUS_REPORT_TIMEOUT_MS`（既定 300、`config.env`）
+- `USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC`（既定 1.0、`config.env`）
 
 ## 参考: 生の GStreamer コマンド
 
