@@ -17,6 +17,7 @@ namespace audio_pipeline {
 class AudioPipeline;
 class RateSwitcher;
 class FilterManager;
+class HeadroomController;
 class SoftMuteRunner;
 }  // namespace audio_pipeline
 
@@ -136,6 +137,7 @@ struct ManagerState {
 
     std::unique_ptr<audio_pipeline::RateSwitcher> rateSwitcher;
     std::unique_ptr<audio_pipeline::FilterManager> filterManager;
+    std::unique_ptr<audio_pipeline::HeadroomController> headroomController;
     std::unique_ptr<audio_pipeline::SoftMuteRunner> softMuteRunner;
     std::unique_ptr<daemon_output::AlsaOutput> alsaOutputInterface;
     std::unique_ptr<daemon_control::handlers::HandlerRegistry> handlerRegistry;

@@ -19,10 +19,6 @@ void FilterManager::handle(const daemon_core::api::FilterSwitchRequested& event)
     lastPath_ = event.filterPath;
     lastPhase_ = event.phaseType;
 
-    if (deps_.deps.refreshHeadroom) {
-        deps_.deps.refreshHeadroom(event.filterPath);
-    }
-
     LOG_INFO("[FilterManager] Filter switch requested: path={}, phase={}, reloadHeadroom={}",
              event.filterPath, static_cast<int>(event.phaseType), event.reloadHeadroom);
 }
