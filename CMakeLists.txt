@@ -176,14 +176,18 @@ add_executable(gpu_upsampler_alsa
     src/daemon/audio_pipeline/headroom_controller.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
     src/daemon/audio_pipeline/soft_mute_runner.cpp
+    src/daemon/audio_pipeline/switch_actions.cpp
     src/daemon/input/loopback_capture.cpp
+    src/daemon/input/i2s_capture.cpp
     src/daemon/control/handlers/handler_registry.cpp
     src/daemon/core/pid_lock.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/control/control_plane.cpp
     src/daemon/output/alsa_output.cpp
     src/daemon/output/alsa_pcm_controller.cpp
+    src/daemon/output/alsa_output_thread.cpp
     src/daemon/output/playback_buffer_manager.cpp
+    src/daemon/output/playback_buffer_access.cpp
     src/daemon/control/zmq_server.cpp
     src/daemon/metrics/stats_file.cpp
     src/daemon/metrics/runtime_stats.cpp
