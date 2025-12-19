@@ -173,6 +173,7 @@ add_executable(gpu_upsampler_alsa
     src/daemon/audio_pipeline/filter_manager.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
     src/daemon/audio_pipeline/soft_mute_runner.cpp
+    src/daemon/input/loopback_capture.cpp
     src/daemon/control/handlers/handler_registry.cpp
     src/daemon/core/pid_lock.cpp
     src/daemon/pcm/dac_manager.cpp
