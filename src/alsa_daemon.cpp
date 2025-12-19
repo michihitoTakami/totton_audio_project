@@ -1,6 +1,4 @@
 #include "audio/audio_utils.h"
-#include "audio/eq_parser.h"
-#include "audio/eq_to_fir.h"
 #include "audio/fallback_manager.h"
 #include "audio/filter_headroom.h"
 #include "audio/soft_mute.h"
@@ -12,6 +10,7 @@
 #include "daemon/api/events.h"
 #include "daemon/app/process_resources.h"
 #include "daemon/app/runtime_state.h"
+#include "daemon/audio/upsampler_builder.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/audio_pipeline/filter_manager.h"
 #include "daemon/audio_pipeline/rate_switcher.h"
@@ -75,6 +74,8 @@
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
+
+// NOTE: Avoid easy bloat; keep components modular whenever possible.
 
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
@@ -155,30 +156,6 @@ static void ensure_output_config(AppConfig& config) {
 
 // Runtime configuration (loaded from config.json)
 static daemon_app::RuntimeState g_state;
-
-static bool env_flag(const char* name, bool defaultValue) {
-    const char* v = std::getenv(name);
-    if (!v) {
-        return defaultValue;
-    }
-    std::string s(v);
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    // Trim spaces
-    s.erase(s.begin(),
-            std::find_if(s.begin(), s.end(), [](unsigned char c) { return !std::isspace(c); }));
-    s.erase(
-        std::find_if(s.rbegin(), s.rend(), [](unsigned char c) { return !std::isspace(c); }).base(),
-        s.end());
-
-    if (s == "1" || s == "true" || s == "yes" || s == "on") {
-        return true;
-    }
-    if (s == "0" || s == "false" || s == "no" || s == "off") {
-        return false;
-    }
-    return defaultValue;
-}
 
 inline ConvolutionEngine::RateFamily g_get_rate_family() {
     return static_cast<ConvolutionEngine::RateFamily>(
@@ -1558,120 +1535,25 @@ int main(int argc, char* argv[]) {
             g_state.config.partitionedConvolution.enabled, g_state.config.eqEnabled,
             g_state.config.crossfeed.enabled};
 
-        // Auto-select filter based on sample rate if configured filter doesn't exist
-        // but a sample-rate-specific version does
-        if (!std::filesystem::exists(g_state.config.filterPath)) {
-            // Try to find sample-rate-specific filter
-            std::string basePath = g_state.config.filterPath;
-            size_t dotPos = basePath.rfind('.');
-            if (dotPos != std::string::npos) {
-                std::string rateSpecificPath = basePath.substr(0, dotPos) + "_" +
-                                               std::to_string(g_state.rates.inputSampleRate) +
-                                               basePath.substr(dotPos);
-                if (std::filesystem::exists(rateSpecificPath)) {
-                    std::cout << "Config: Using sample-rate-specific filter: " << rateSpecificPath
-                              << '\n';
-                    g_state.config.filterPath = rateSpecificPath;
-                }
-            }
-        }
-
-        // Warn if using 44.1kHz filter with 48kHz input
-        if (g_state.rates.inputSampleRate == 48000 &&
-            g_state.config.filterPath.find("44100") == std::string::npos &&
-            g_state.config.filterPath.find("48000") == std::string::npos) {
-            std::cout << "Warning: Using generic filter with 48kHz input. "
-                      << "For optimal quality, generate a 48kHz-optimized filter." << '\n';
-        }
-
-        // Initialize GPU upsampler with configured values
-        std::cout << "Initializing GPU upsampler..." << '\n';
-        g_state.upsampler = new ConvolutionEngine::GPUUpsampler();
-        g_state.upsampler->setPartitionedConvolutionConfig(g_state.config.partitionedConvolution);
-
-        bool initSuccess = false;
-        ConvolutionEngine::RateFamily initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
-        if (g_state.config.multiRateEnabled) {
-            std::cout << "Multi-rate mode enabled" << '\n';
-            std::cout << "  Coefficient directory: " << g_state.config.coefficientDir << '\n';
-
-            if (!std::filesystem::exists(g_state.config.coefficientDir)) {
-                std::cerr << "Config error: Coefficient directory not found: "
-                          << g_state.config.coefficientDir << '\n';
-                delete g_state.upsampler;
-                exitCode = 1;
-                break;
-            }
-
-            initSuccess = g_state.upsampler->initializeMultiRate(g_state.config.coefficientDir,
-                                                                 g_state.config.blockSize,
-                                                                 g_state.rates.inputSampleRate);
-
-            if (initSuccess) {
-                g_state.rates.currentInputRate.store(g_state.upsampler->getInputSampleRate(),
-                                                     std::memory_order_release);
-                g_state.rates.currentOutputRate.store(g_state.upsampler->getOutputSampleRate(),
-                                                      std::memory_order_release);
-                g_set_rate_family(
-                    ConvolutionEngine::detectRateFamily(g_state.rates.inputSampleRate));
-            }
-        } else {
-            std::cout << "Quad-phase mode enabled" << '\n';
-
-            bool allFilesExist = true;
-            for (const auto& path :
-                 {g_state.config.filterPath44kMin, g_state.config.filterPath48kMin,
-                  g_state.config.filterPath44kLinear, g_state.config.filterPath48kLinear}) {
-                if (!std::filesystem::exists(path)) {
-                    std::cerr << "Config error: Filter file not found: " << path << '\n';
-                    allFilesExist = false;
-                }
-            }
-            if (!allFilesExist) {
-                delete g_state.upsampler;
-                exitCode = 1;
-                break;
-            }
-
-            initialFamily = ConvolutionEngine::detectRateFamily(g_state.rates.inputSampleRate);
-            if (initialFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
-                initialFamily = ConvolutionEngine::RateFamily::RATE_44K;
-            }
-
-            initSuccess = g_state.upsampler->initializeQuadPhase(
-                g_state.config.filterPath44kMin, g_state.config.filterPath48kMin,
-                g_state.config.filterPath44kLinear, g_state.config.filterPath48kLinear,
-                g_state.config.upsampleRatio, g_state.config.blockSize, initialFamily,
-                g_state.config.phaseType);
-        }
-
-        if (!initSuccess) {
-            std::cerr << "Failed to initialize GPU upsampler" << '\n';
-            delete g_state.upsampler;
+        auto buildResult = daemon_audio::buildUpsampler(
+            g_state.config, g_state.rates.inputSampleRate, partitionRequest, g_state.flags.running);
+        if (buildResult.status == daemon_audio::UpsamplerBuildStatus::Failure) {
             exitCode = 1;
             break;
         }
-
-        // Check for early abort (signal received during GPU initialization)
-        if (!g_state.flags.running) {
-            std::cout << "Startup interrupted by signal" << '\n';
-            delete g_state.upsampler;
-            g_state.upsampler = nullptr;
+        if (buildResult.status == daemon_audio::UpsamplerBuildStatus::Interrupted) {
             break;
         }
 
+        g_state.upsampler = buildResult.upsampler.release();
+        ConvolutionEngine::RateFamily initialFamily = buildResult.initialRateFamily;
+
         if (g_state.config.multiRateEnabled) {
-            std::cout << "GPU upsampler ready (multi-rate mode, " << g_state.config.blockSize
-                      << " samples/block)" << '\n';
-            std::cout << "  Current input rate: " << g_state.upsampler->getCurrentInputRate()
-                      << " Hz" << '\n';
-            std::cout << "  Upsample ratio: " << g_state.upsampler->getUpsampleRatio() << "x"
-                      << '\n';
-            std::cout << "  Output rate: " << g_state.upsampler->getOutputSampleRate() << " Hz"
-                      << '\n';
-        } else {
-            std::cout << "GPU upsampler ready (" << g_state.config.upsampleRatio << "x upsampling, "
-                      << g_state.config.blockSize << " samples/block)" << '\n';
+            g_state.rates.currentInputRate.store(buildResult.currentInputRate,
+                                                 std::memory_order_release);
+            g_state.rates.currentOutputRate.store(buildResult.currentOutputRate,
+                                                  std::memory_order_release);
+            g_set_rate_family(ConvolutionEngine::detectRateFamily(g_state.rates.inputSampleRate));
         }
 
         // Set g_state.rates.activeRateFamily and g_state.rates.activePhaseType for headroom
@@ -1685,80 +1567,6 @@ int main(int argc, char* argv[]) {
 
         g_state.rates.activePhaseType = g_state.config.phaseType;
         publish_filter_switch_event(current_filter_path(), g_state.rates.activePhaseType, true);
-
-        std::cout << "Input sample rate: " << g_state.upsampler->getInputSampleRate() << " Hz -> "
-                  << g_state.upsampler->getOutputSampleRate() << " Hz output" << '\n';
-        if (!g_state.config.multiRateEnabled) {
-            std::cout << "Phase type: " << phaseTypeToString(g_state.config.phaseType) << '\n';
-        }
-
-        // Log latency warning for linear phase
-        if (g_state.config.phaseType == PhaseType::Linear) {
-            double latencySec = g_state.upsampler->getLatencySeconds();
-            std::cout << "  WARNING: Linear phase latency: " << latencySec << " seconds ("
-                      << g_state.upsampler->getLatencySamples() << " samples)" << '\n';
-        }
-
-        // Initialize streaming mode to preserve overlap buffers across input callbacks
-        if (!g_state.upsampler->initializeStreaming()) {
-            std::cerr << "Failed to initialize streaming mode" << '\n';
-            delete g_state.upsampler;
-            exitCode = 1;
-            break;
-        }
-        // PR #910 (#899): event-driven non-blocking streaming can reduce per-period host blocking,
-        // but it also has risk of artifacts/noise if any staging/handshake is wrong.
-        // Default to legacy (blocking) semantics for safety; enable explicitly via env.
-        bool enableNonBlocking = env_flag("MAGICBOX_GPU_STREAMING_NONBLOCKING", false);
-        g_state.upsampler->setStreamingNonBlocking(enableNonBlocking);
-        std::cout << "GPU streaming non-blocking: " << (enableNonBlocking ? "enabled" : "disabled")
-                  << '\n';
-        PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_state.upsampler, g_state.config,
-                                               "ALSA");
-
-        // Check for early abort
-        if (!g_state.flags.running) {
-            std::cout << "Startup interrupted by signal" << '\n';
-            delete g_state.upsampler;
-            g_state.upsampler = nullptr;
-            break;
-        }
-
-        // Apply EQ profile if enabled
-        if (g_state.config.eqEnabled && !g_state.config.eqProfilePath.empty()) {
-            std::cout << "Loading EQ profile: " << g_state.config.eqProfilePath << '\n';
-            EQ::EqProfile eqProfile;
-            if (EQ::parseEqFile(g_state.config.eqProfilePath, eqProfile)) {
-                std::cout << "  EQ: " << eqProfile.name << " (" << eqProfile.bands.size()
-                          << " bands, preamp " << eqProfile.preampDb << " dB)" << '\n';
-
-                // Compute EQ magnitude response and apply with minimum phase reconstruction
-                size_t filterFftSize = g_state.upsampler->getFilterFftSize();  // N/2+1 (R2C output)
-                size_t fullFftSize = g_state.upsampler->getFullFftSize();      // N (full FFT)
-                double outputSampleRate = static_cast<double>(g_state.rates.inputSampleRate) *
-                                          g_state.config.upsampleRatio;
-                auto eqMagnitude = EQ::computeEqMagnitudeForFft(filterFftSize, fullFftSize,
-                                                                outputSampleRate, eqProfile);
-                double eqMax = 0.0;
-                double eqMin = std::numeric_limits<double>::infinity();
-                for (double v : eqMagnitude) {
-                    eqMax = std::max(eqMax, v);
-                    eqMin = std::min(eqMin, v);
-                }
-                std::cout << "  EQ magnitude stats: max=" << eqMax << " ("
-                          << 20.0 * std::log10(std::max(eqMax, 1e-30)) << " dB), min=" << eqMin
-                          << '\n';
-
-                if (g_state.upsampler->applyEqMagnitude(eqMagnitude)) {
-                    // Log message depends on phase type (already logged by applyEqMagnitude)
-                } else {
-                    std::cerr << "  EQ: Failed to apply frequency response" << '\n';
-                }
-            } else {
-                std::cerr << "  EQ: Failed to parse profile: " << g_state.config.eqProfilePath
-                          << '\n';
-            }
-        }
 
         // Pre-allocate streaming input buffers (avoid RT reallocations)
         size_t buffer_capacity =
