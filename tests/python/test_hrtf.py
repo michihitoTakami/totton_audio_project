@@ -279,16 +279,15 @@ class TestGeneratedHRTFFilters:
         channels["metadata"] = metadata
         return channels
 
-    def test_max_dc_gain_is_around_point_six(self, hrtf_m_44k):
-        """Test maximum DC gain across all channels is around 0.6 (ILD-preserving normalization)."""
-        dc_gains = {
-            "LL": np.sum(hrtf_m_44k["ll"]),
-            "LR": np.sum(hrtf_m_44k["lr"]),
-            "RL": np.sum(hrtf_m_44k["rl"]),
-            "RR": np.sum(hrtf_m_44k["rr"]),
-        }
-        max_dc = max(dc_gains.values())
-        assert abs(max_dc - 0.6) < 0.01, f"Max DC gain: {max_dc}, gains: {dc_gains}"
+    def test_direct_path_is_unity_impulse(self, hrtf_m_44k):
+        """Direct path (LL/RR) should be unity impulse (no coloration)."""
+        ll = hrtf_m_44k["ll"]
+        rr = hrtf_m_44k["rr"]
+
+        assert ll[0] == 1.0
+        assert rr[0] == 1.0
+        assert np.all(ll[1:] == 0.0)
+        assert np.all(rr[1:] == 0.0)
 
     def test_ild_exists(self, hrtf_m_44k):
         """
@@ -311,19 +310,19 @@ class TestGeneratedHRTFFilters:
     def test_ild_symmetric(self, hrtf_m_44k):
         """Test ILD is symmetric between left and right."""
         ll_dc = np.sum(hrtf_m_44k["ll"])
-        lr_dc = np.sum(hrtf_m_44k["lr"])
-        rl_dc = np.sum(hrtf_m_44k["rl"])
         rr_dc = np.sum(hrtf_m_44k["rr"])
 
         # Ipsilateral should be similar (LL ≈ RR)
         ipsi_ratio = ll_dc / rr_dc
         assert 0.9 < ipsi_ratio < 1.1, f"Ipsilateral asymmetry: LL={ll_dc}, RR={rr_dc}"
 
-        # Contralateral should be similar (LR ≈ RL)
-        contra_ratio = lr_dc / rl_dc
+        # Contralateral should be similar in peak gain (LR ≈ RL)
+        lr_peak = float(np.max(np.abs(hrtf_m_44k["lr"])))
+        rl_peak = float(np.max(np.abs(hrtf_m_44k["rl"])))
+        contra_ratio = lr_peak / rl_peak
         assert (
             0.9 < contra_ratio < 1.1
-        ), f"Contralateral asymmetry: LR={lr_dc}, RL={rl_dc}"
+        ), f"Contralateral peak asymmetry: LR={lr_peak}, RL={rl_peak}"
 
     def test_itd_exists(self, hrtf_m_44k):
         """
@@ -378,8 +377,8 @@ class TestGeneratedHRTFFilters:
         assert contra_diff < 50, f"Contralateral asymmetry: LR={lr_peak}, RL={rl_peak}"
 
     def test_metadata_normalization(self, hrtf_m_44k):
-        """Test metadata indicates ILD-preserving normalization."""
-        assert hrtf_m_44k["metadata"].get("normalization") == "ild_preserving"
+        """Test metadata indicates direct-preserving crossfeed normalization."""
+        assert hrtf_m_44k["metadata"].get("normalization") == "direct_plus_crossfeed_v1"
         assert hrtf_m_44k["metadata"].get("max_dc_gain") == 1.0
 
     def test_metadata_phase_type_original(self, hrtf_m_44k):
@@ -413,8 +412,8 @@ class TestAllHRTFFilters:
             ("xl", "48k"),
         ],
     )
-    def test_ild_preservation_all_filters(self, size, rate):
-        """Test ILD preservation for all filter variants."""
+    def test_direct_is_unity_all_filters(self, size, rate):
+        """Direct path should be unity impulse for all filter variants."""
         bin_path = HRTF_DIR / f"hrtf_{size}_{rate}.bin"
         json_path = HRTF_DIR / f"hrtf_{size}_{rate}.json"
 
@@ -431,21 +430,14 @@ class TestAllHRTFFilters:
         rl = channels["rl"]
         rr = channels["rr"]
 
-        dc_gains = {
-            "LL": np.sum(ll),
-            "LR": np.sum(lr),
-            "RL": np.sum(rl),
-            "RR": np.sum(rr),
-        }
+        assert ll[0] == 1.0
+        assert rr[0] == 1.0
+        assert np.all(ll[1:] == 0.0)
+        assert np.all(rr[1:] == 0.0)
 
-        # Max DC gain should be around 0.6 for ILD-preserving HRTF filters
-        # (normalized to preserve interaural level differences)
-        max_dc = max(dc_gains.values())
-        assert abs(max_dc - 0.6) < 0.01, f"{size}_{rate} max DC: {max_dc}"
-
-        # ILD should exist: channels should have different DC gains
-        dc_range = max_dc - min(dc_gains.values())
-        assert dc_range > 0.01, f"{size}_{rate} ILD too small: range={dc_range}"
+        # Crossfeed should exist (not all zeros)
+        assert float(np.max(np.abs(lr))) > 0.0
+        assert float(np.max(np.abs(rl))) > 0.0
 
     @pytest.mark.parametrize(
         "size,rate",
