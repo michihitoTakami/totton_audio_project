@@ -65,6 +65,12 @@ services:
       # Wait for ALSA devices to appear after cold boot
       - MAGICBOX_WAIT_AUDIO_SECS=8
       - MAGICBOX_WAIT_LOOPBACK=true
+      # Debug toggles for Issue #969 investigations:
+      # - Disable/limit partitioned convolution (low-latency mode)
+      # - If disabling this changes the symptom or removes huge peaks, the bug is likely in the
+      #   partitioned convolution path (tail handling / mixing / alignment).
+      - MAGICBOX_PARTITIONED_CONVOLUTION_ENABLED=true
+      # - MAGICBOX_PARTITIONED_CONVOLUTION_MAX_PARTITIONS=1
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
       # - MAGICBOX_RTP_RTCP_SEND_ENABLED=0
       # - MAGICBOX_RTP_USE_RTPBIN=0

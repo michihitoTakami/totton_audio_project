@@ -88,6 +88,50 @@ static void enforce_phase_partition_constraints(AppConfig& config) {
     }
 }
 
+static bool parse_env_bool(const char* value, bool defaultValue) {
+    if (!value) {
+        return defaultValue;
+    }
+    std::string v(value);
+    std::transform(v.begin(), v.end(), v.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (v == "1" || v == "true" || v == "yes" || v == "y" || v == "on") {
+        return true;
+    }
+    if (v == "0" || v == "false" || v == "no" || v == "n" || v == "off") {
+        return false;
+    }
+    return defaultValue;
+}
+
+static void apply_partition_env_overrides(AppConfig& config) {
+    // Debug/mitigation toggles for Issue #969 investigations.
+    //
+    // - MAGICBOX_PARTITIONED_CONVOLUTION_ENABLED: force enable/disable (true/false/1/0).
+    // - MAGICBOX_PARTITIONED_CONVOLUTION_MAX_PARTITIONS: cap maxPartitions (>0).
+    if (const char* v = std::getenv("MAGICBOX_PARTITIONED_CONVOLUTION_ENABLED")) {
+        bool enabled = parse_env_bool(v, config.partitionedConvolution.enabled);
+        if (enabled != config.partitionedConvolution.enabled) {
+            std::cout << "[Partition] Override: partitionedConvolution.enabled "
+                      << (config.partitionedConvolution.enabled ? "true" : "false") << " -> "
+                      << (enabled ? "true" : "false") << '\n';
+        }
+        config.partitionedConvolution.enabled = enabled;
+    }
+    if (const char* v = std::getenv("MAGICBOX_PARTITIONED_CONVOLUTION_MAX_PARTITIONS")) {
+        try {
+            int cap = std::stoi(std::string(v));
+            if (cap > 0 && cap != config.partitionedConvolution.maxPartitions) {
+                std::cout << "[Partition] Override: partitionedConvolution.maxPartitions "
+                          << config.partitionedConvolution.maxPartitions << " -> " << cap << '\n';
+                config.partitionedConvolution.maxPartitions = cap;
+            }
+        } catch (...) {
+            // ignore invalid
+        }
+    }
+}
+
 // Stats file path (JSON format for Web API)
 constexpr const char* STATS_FILE_PATH = "/tmp/gpu_upsampler_stats.json";
 
@@ -1017,6 +1061,7 @@ static void load_runtime_config() {
         std::cout << "Config: Using defaults (no config.json found)" << '\n';
     }
 
+    apply_partition_env_overrides(g_state.config);
     enforce_phase_partition_constraints(g_state.config);
 
     print_config_summary(g_state.config);
