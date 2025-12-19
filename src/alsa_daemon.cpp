@@ -19,6 +19,7 @@
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/control/control_plane.h"
 #include "daemon/control/handlers/handler_registry.h"
+#include "daemon/input/loopback_capture.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/alsa_output.h"
 #include "daemon/output/alsa_pcm_controller.h"
@@ -985,50 +986,9 @@ static void load_runtime_config() {
     g_state.gains.effective.store(initialOutput, std::memory_order_relaxed);
 }
 
-static snd_pcm_format_t parse_loopback_format(const std::string& formatStr) {
-    std::string lower = formatStr;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (lower == "s16_le" || lower == "s16") {
-        return SND_PCM_FORMAT_S16_LE;
-    }
-    if (lower == "s24_3le" || lower == "s24") {
-        return SND_PCM_FORMAT_S24_3LE;
-    }
-    if (lower == "s32_le" || lower == "s32") {
-        return SND_PCM_FORMAT_S32_LE;
-    }
-    return SND_PCM_FORMAT_UNKNOWN;
-}
-
 static snd_pcm_format_t parse_i2s_format(const std::string& formatStr) {
     // Same set as loopback (MVP)
-    return parse_loopback_format(formatStr);
-}
-
-static bool validate_loopback_config(const AppConfig& cfg) {
-    if (!cfg.loopback.enabled) {
-        return true;
-    }
-    if (cfg.loopback.sampleRate != 44100 && cfg.loopback.sampleRate != 48000) {
-        LOG_ERROR("[Loopback] Unsupported sample rate {} (expected 44100 or 48000)",
-                  cfg.loopback.sampleRate);
-        return false;
-    }
-    if (cfg.loopback.channels != CHANNELS) {
-        LOG_ERROR("[Loopback] Unsupported channels {} (expected {})", cfg.loopback.channels,
-                  CHANNELS);
-        return false;
-    }
-    if (cfg.loopback.periodFrames == 0) {
-        LOG_ERROR("[Loopback] periodFrames must be > 0");
-        return false;
-    }
-    if (parse_loopback_format(cfg.loopback.format) == SND_PCM_FORMAT_UNKNOWN) {
-        LOG_ERROR("[Loopback] Unsupported format '{}'", cfg.loopback.format);
-        return false;
-    }
-    return true;
+    return daemon_input::parseLoopbackFormat(formatStr);
 }
 
 static bool validate_i2s_config(const AppConfig& cfg) {
@@ -1057,87 +1017,6 @@ static bool validate_i2s_config(const AppConfig& cfg) {
         return false;
     }
     return true;
-}
-
-static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_format_t format,
-                                        unsigned int rate, unsigned int channels,
-                                        snd_pcm_uframes_t& period_frames) {
-    snd_pcm_t* handle = nullptr;
-    // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
-    int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
-    if (err < 0) {
-        LOG_ERROR("[Loopback] Cannot open capture device {}: {}", device, snd_strerror(err));
-        return nullptr;
-    }
-
-    snd_pcm_hw_params_t* hw_params;
-    snd_pcm_hw_params_alloca(&hw_params);
-    snd_pcm_hw_params_any(handle, hw_params);
-
-    if ((err = snd_pcm_hw_params_set_access(handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
-            0 ||
-        (err = snd_pcm_hw_params_set_format(handle, hw_params, format)) < 0) {
-        LOG_ERROR("[Loopback] Cannot set access/format: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-
-    if ((err = snd_pcm_hw_params_set_channels(handle, hw_params, channels)) < 0) {
-        LOG_ERROR("[Loopback] Cannot set channels {}: {}", channels, snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-
-    unsigned int rate_near = rate;
-    if ((err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate_near, nullptr)) < 0) {
-        LOG_ERROR("[Loopback] Cannot set rate {}: {}", rate, snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-    if (rate_near != rate) {
-        LOG_ERROR("[Loopback] Requested rate {} not supported (got {})", rate, rate_near);
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-
-    snd_pcm_uframes_t buffer_frames =
-        static_cast<snd_pcm_uframes_t>(std::max<uint32_t>(period_frames * 4, period_frames));
-    if ((err = snd_pcm_hw_params_set_period_size_near(handle, hw_params, &period_frames, nullptr)) <
-        0) {
-        LOG_ERROR("[Loopback] Cannot set period size: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-    buffer_frames = std::max<snd_pcm_uframes_t>(buffer_frames, period_frames * 2);
-    if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) < 0) {
-        LOG_ERROR("[Loopback] Cannot set buffer size: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-
-    if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
-        LOG_ERROR("[Loopback] Cannot apply hardware parameters: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-
-    snd_pcm_hw_params_get_period_size(hw_params, &period_frames, nullptr);
-    snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_frames);
-
-    if ((err = snd_pcm_prepare(handle)) < 0) {
-        LOG_ERROR("[Loopback] Cannot prepare capture device: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
-
-    // Ensure non-blocking is effective even if driver flips it.
-    snd_pcm_nonblock(handle, 1);
-
-    LOG_INFO(
-        "[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames, buffer {} "
-        "frames)",
-        device, rate_near, channels, period_frames, buffer_frames);
-    return handle;
 }
 
 static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t format,
@@ -1316,60 +1195,6 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
     return nullptr;
 }
 
-static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_t frames,
-                                 unsigned int channels, std::vector<float>& dst) {
-    const size_t samples = frames * static_cast<size_t>(channels);
-    dst.resize(samples);
-
-    if (format == SND_PCM_FORMAT_S16_LE) {
-        const auto* in = static_cast<const int16_t*>(src);
-        constexpr float scale = 1.0f / 32768.0f;
-        for (size_t i = 0; i < samples; ++i) {
-            dst[i] = static_cast<float>(in[i]) * scale;
-        }
-        return true;
-    }
-
-    if (format == SND_PCM_FORMAT_S32_LE) {
-        const auto* in = static_cast<const int32_t*>(src);
-        constexpr float scale = 1.0f / 2147483648.0f;
-        for (size_t i = 0; i < samples; ++i) {
-            dst[i] = static_cast<float>(in[i]) * scale;
-        }
-        return true;
-    }
-
-    if (format == SND_PCM_FORMAT_S24_3LE) {
-        const auto* in = static_cast<const uint8_t*>(src);
-        constexpr float scale = 1.0f / 8388608.0f;
-        for (size_t i = 0; i < samples; ++i) {
-            size_t idx = i * 3;
-            int32_t value = static_cast<int32_t>(in[idx]) |
-                            (static_cast<int32_t>(in[idx + 1]) << 8) |
-                            (static_cast<int32_t>(in[idx + 2]) << 16);
-            if (value & 0x00800000) {
-                value |= 0xFF000000;  // sign extend 24-bit
-            }
-            dst[i] = static_cast<float>(value) * scale;
-        }
-        return true;
-    }
-
-    return false;
-}
-
-static void wait_for_capture_ready(snd_pcm_t* handle) {
-    if (!handle) {
-        return;
-    }
-    // snd_pcm_wait is safe for non-blocking handles and prevents a tight EAGAIN spin.
-    int ret = snd_pcm_wait(handle, 100);
-    if (ret < 0) {
-        // Keep it quiet; transient errors may happen on device disconnect.
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-}
-
 static void i2s_capture_thread(const std::string& device, snd_pcm_format_t format,
                                unsigned int requested_rate, unsigned int channels,
                                snd_pcm_uframes_t period_frames) {
@@ -1453,7 +1278,7 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
 
             snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, negotiated_period);
             if (frames == -EAGAIN) {
-                wait_for_capture_ready(handle);
+                daemon_input::waitForCaptureReady(handle);
                 continue;
             }
             if (frames == -EPIPE) {
@@ -1475,12 +1300,12 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
                 continue;
             }
             if (frames == 0) {
-                wait_for_capture_ready(handle);
+                daemon_input::waitForCaptureReady(handle);
                 continue;
             }
 
-            if (!convert_pcm_to_float(rawBuffer, format, static_cast<size_t>(frames), channels,
-                                      floatBuffer)) {
+            if (!daemon_input::convertPcmToFloat(rawBuffer, format, static_cast<size_t>(frames),
+                                                 channels, floatBuffer)) {
                 LOG_ERROR("[I2S] Unsupported format during conversion");
                 needReopen = true;
                 break;
@@ -1508,108 +1333,6 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
     g_state.i2s.captureRunning.store(false, std::memory_order_release);
     g_state.i2s.captureReady.store(false, std::memory_order_release);
     LOG_INFO("[I2S] Capture thread terminated");
-}
-
-static void loopback_capture_thread(const std::string& device, snd_pcm_format_t format,
-                                    unsigned int rate, unsigned int channels,
-                                    snd_pcm_uframes_t period_frames) {
-    if (channels != static_cast<unsigned int>(CHANNELS)) {
-        LOG_ERROR("[Loopback] Unsupported channel count {} (expected {})", channels, CHANNELS);
-        return;
-    }
-
-    snd_pcm_uframes_t negotiated_period = period_frames;
-    snd_pcm_t* handle = open_loopback_capture(device, format, rate, channels, negotiated_period);
-    {
-        std::lock_guard<std::mutex> lock(g_state.loopback.handleMutex);
-        g_state.loopback.handle = handle;
-    }
-
-    if (!handle) {
-        return;
-    }
-
-    g_state.loopback.captureRunning.store(true, std::memory_order_release);
-    g_state.loopback.captureReady.store(true, std::memory_order_release);
-
-    std::vector<int16_t> buffer16;
-    std::vector<int32_t> buffer32;
-    std::vector<uint8_t> buffer24;
-    std::vector<float> floatBuffer;
-
-    auto resizeBuffers = [&](snd_pcm_uframes_t frames) {
-        if (format == SND_PCM_FORMAT_S16_LE) {
-            buffer16.assign(frames * channels, 0);
-        } else if (format == SND_PCM_FORMAT_S32_LE) {
-            buffer32.assign(frames * channels, 0);
-        } else if (format == SND_PCM_FORMAT_S24_3LE) {
-            buffer24.assign(static_cast<size_t>(frames) * channels * 3, 0);
-        }
-    };
-    resizeBuffers(negotiated_period);
-
-    while (g_state.flags.running.load(std::memory_order_acquire)) {
-        // Apply backpressure before pulling more input.
-        // This prevents software loopback / bursty upstream from running ahead of ALSA playback.
-        playback_buffer().throttleProducerIfFull(g_state.flags.running, []() {
-            return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
-        });
-
-        void* rawBuffer = nullptr;
-        if (format == SND_PCM_FORMAT_S16_LE) {
-            rawBuffer = buffer16.data();
-        } else if (format == SND_PCM_FORMAT_S32_LE) {
-            rawBuffer = buffer32.data();
-        } else if (format == SND_PCM_FORMAT_S24_3LE) {
-            rawBuffer = buffer24.data();
-        } else {
-            break;
-        }
-
-        snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, negotiated_period);
-        if (frames == -EAGAIN) {
-            wait_for_capture_ready(handle);
-            continue;
-        }
-        if (frames == -EPIPE) {
-            LOG_WARN("[Loopback] XRUN detected, recovering");
-            snd_pcm_prepare(handle);
-            continue;
-        }
-        if (frames < 0) {
-            LOG_WARN("[Loopback] Read error: {}", snd_strerror(frames));
-            if (snd_pcm_recover(handle, frames, 1) < 0) {
-                LOG_ERROR("[Loopback] Recover failed, restarting read loop");
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            continue;
-        }
-        if (frames == 0) {
-            wait_for_capture_ready(handle);
-            continue;
-        }
-
-        const void* src = rawBuffer;
-        if (!convert_pcm_to_float(src, format, static_cast<size_t>(frames), channels,
-                                  floatBuffer)) {
-            LOG_ERROR("[Loopback] Unsupported format during conversion");
-            break;
-        }
-
-        if (g_state.audioPipeline) {
-            g_state.audioPipeline->process(floatBuffer.data(), static_cast<uint32_t>(frames));
-        }
-    }
-
-    snd_pcm_drop(handle);
-    snd_pcm_close(handle);
-    {
-        std::lock_guard<std::mutex> lock(g_state.loopback.handleMutex);
-        g_state.loopback.handle = nullptr;
-    }
-    g_state.loopback.captureRunning.store(false, std::memory_order_release);
-    g_state.loopback.captureReady.store(false, std::memory_order_release);
-    LOG_INFO("[Loopback] Capture thread terminated");
 }
 
 // ALSA output thread (705.6kHz direct to DAC)
@@ -2347,18 +2070,32 @@ int main(int argc, char* argv[]) {
             }
         }
         if (!startupFailed && g_state.config.loopback.enabled) {
-            if (!validate_loopback_config(g_state.config)) {
+            if (!daemon_input::validateLoopbackConfig(g_state.config)) {
                 failStartup("Invalid loopback config");
             } else {
-                snd_pcm_format_t lb_format = parse_loopback_format(g_state.config.loopback.format);
+                snd_pcm_format_t lb_format =
+                    daemon_input::parseLoopbackFormat(g_state.config.loopback.format);
                 std::cout << "Starting loopback capture thread (" << g_state.config.loopback.device
                           << ", fmt=" << g_state.config.loopback.format
                           << ", rate=" << g_state.config.loopback.sampleRate
                           << ", period=" << g_state.config.loopback.periodFrames << ")" << '\n';
+
+                daemon_input::LoopbackCaptureDependencies loopbackDeps{
+                    .playbackBuffer = &playback_buffer(),
+                    .running = &g_state.flags.running,
+                    .currentOutputRate = &g_state.rates.currentOutputRate,
+                    .audioPipeline = &g_state.managers.audioPipelineRaw,
+                    .handleMutex = &g_state.loopback.handleMutex,
+                    .handle = &g_state.loopback.handle,
+                    .captureRunning = &g_state.loopback.captureRunning,
+                    .captureReady = &g_state.loopback.captureReady,
+                };
+
                 loopback_thread = std::thread(
-                    loopback_capture_thread, g_state.config.loopback.device, lb_format,
+                    daemon_input::loopbackCaptureThread, g_state.config.loopback.device, lb_format,
                     g_state.config.loopback.sampleRate, g_state.config.loopback.channels,
-                    static_cast<snd_pcm_uframes_t>(g_state.config.loopback.periodFrames));
+                    static_cast<snd_pcm_uframes_t>(g_state.config.loopback.periodFrames),
+                    loopbackDeps);
 
                 // Wait briefly for loopback thread to become ready
                 bool loopback_ready = false;
