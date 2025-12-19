@@ -155,6 +155,30 @@ static void ensure_output_config(AppConfig& config) {
 // Runtime configuration (loaded from config.json)
 static daemon_app::RuntimeState g_state;
 
+static bool env_flag(const char* name, bool defaultValue) {
+    const char* v = std::getenv(name);
+    if (!v) {
+        return defaultValue;
+    }
+    std::string s(v);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // Trim spaces
+    s.erase(s.begin(),
+            std::find_if(s.begin(), s.end(), [](unsigned char c) { return !std::isspace(c); }));
+    s.erase(
+        std::find_if(s.rbegin(), s.rend(), [](unsigned char c) { return !std::isspace(c); }).base(),
+        s.end());
+
+    if (s == "1" || s == "true" || s == "yes" || s == "on") {
+        return true;
+    }
+    if (s == "0" || s == "false" || s == "no" || s == "off") {
+        return false;
+    }
+    return defaultValue;
+}
+
 inline ConvolutionEngine::RateFamily g_get_rate_family() {
     return static_cast<ConvolutionEngine::RateFamily>(
         g_state.rates.currentRateFamilyInt.load(std::memory_order_acquire));
@@ -1120,16 +1144,59 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
     const snd_pcm_uframes_t requested_period = period_frames;
     actual_rate = 0;
 
-    auto try_open = [&](unsigned int candidate_rate) -> snd_pcm_t* {
+    auto expand_device_candidates = [](const std::string& configured) {
+        std::vector<std::string> candidates;
+        candidates.reserve(3);
+        candidates.push_back(configured);
+
+        auto add_unique = [&](std::string v) {
+            if (v.empty()) {
+                return;
+            }
+            for (const auto& existing : candidates) {
+                if (existing == v) {
+                    return;
+                }
+            }
+            candidates.push_back(std::move(v));
+        };
+
+        auto has_prefix = [&](const char* prefix) { return configured.rfind(prefix, 0) == 0; };
+
+        // ALSA "hw/plughw" allow both:
+        // - card,device
+        // - card,device,subdevice
+        // Field reports show Jetson environments where one form works and the other fails.
+        if (has_prefix("hw:") || has_prefix("plughw:")) {
+            const int commas =
+                static_cast<int>(std::count(configured.begin(), configured.end(), ','));
+            if (commas == 1) {
+                add_unique(configured + ",0");
+            } else if (commas >= 2) {
+                const auto lastComma = configured.rfind(',');
+                if (lastComma != std::string::npos) {
+                    add_unique(configured.substr(0, lastComma));
+                }
+            }
+        }
+
+        return candidates;
+    };
+
+    const auto device_candidates = expand_device_candidates(device);
+
+    auto try_open = [&](const std::string& target_device,
+                        unsigned int candidate_rate) -> snd_pcm_t* {
         const bool auto_rate = candidate_rate == 0;
         const std::string rate_label = auto_rate ? "auto" : std::to_string(candidate_rate);
         snd_pcm_uframes_t local_period = requested_period;
         snd_pcm_t* handle = nullptr;
 
         // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
-        int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
+        int err =
+            snd_pcm_open(&handle, target_device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
         if (err < 0) {
-            LOG_ERROR("[I2S] Cannot open capture device {}: {}", device, snd_strerror(err));
+            LOG_ERROR("[I2S] Cannot open capture device {}: {}", target_device, snd_strerror(err));
             return nullptr;
         }
 
@@ -1218,7 +1285,7 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
         LOG_INFO(
             "[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames, "
             "buffer {} frames)",
-            device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
+            target_device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
             buffer_frames);
 
         return handle;
@@ -1231,10 +1298,16 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
         rate_candidates = {requested_rate};
     }
 
-    for (unsigned int candidate : rate_candidates) {
-        snd_pcm_t* handle = try_open(candidate);
-        if (handle) {
-            return handle;
+    for (const auto& candidate_device : device_candidates) {
+        for (unsigned int candidate_rate : rate_candidates) {
+            snd_pcm_t* handle = try_open(candidate_device, candidate_rate);
+            if (handle) {
+                if (candidate_device != device) {
+                    LOG_WARN("[I2S] Using ALSA device fallback '{}' (configured was '{}')",
+                             candidate_device, device);
+                }
+                return handle;
+            }
         }
     }
 
@@ -1357,9 +1430,12 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
 
         bool needReopen = false;
         while (g_state.flags.running.load(std::memory_order_acquire)) {
-            playback_buffer().throttleProducerIfFull(g_state.flags.running, []() {
-                return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
-            });
+            // Important: For I2S capture in external-clock/slave scenarios, we must keep draining
+            // the ALSA capture buffer. Applying backpressure here can stall reads long enough to
+            // trigger capture overruns (XRUN), resulting in periodic "burst + noise" artifacts.
+            //
+            // If downstream is behind, we prefer to drop at the daemon-level playback queue
+            // (PlaybackBufferManager::enqueue enforces capacity) rather than blocking capture.
 
             void* rawBuffer = nullptr;
             if (format == SND_PCM_FORMAT_S16_LE) {
@@ -1380,7 +1456,10 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
             }
             if (frames == -EPIPE) {
                 LOG_WARN("[I2S] XRUN detected, recovering");
-                snd_pcm_prepare(handle);
+                // Use recover() to handle driver-specific XRUN recovery requirements.
+                if (snd_pcm_recover(handle, frames, 1) < 0) {
+                    snd_pcm_prepare(handle);
+                }
                 continue;
             }
             if (frames < 0) {
@@ -1902,9 +1981,13 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             break;
         }
-        // Issue #899: avoid per-period host blocking on GPU completion in steady-state playback.
-        // Keep legacy semantics (blocking) for offline/tests unless explicitly enabled here.
-        g_state.upsampler->setStreamingNonBlocking(true);
+        // PR #910 (#899): event-driven non-blocking streaming can reduce per-period host blocking,
+        // but it also has risk of artifacts/noise if any staging/handshake is wrong.
+        // Default to legacy (blocking) semantics for safety; enable explicitly via env.
+        bool enableNonBlocking = env_flag("MAGICBOX_GPU_STREAMING_NONBLOCKING", false);
+        g_state.upsampler->setStreamingNonBlocking(enableNonBlocking);
+        std::cout << "GPU streaming non-blocking: " << (enableNonBlocking ? "enabled" : "disabled")
+                  << '\n';
         PartitionRuntime::applyPartitionPolicy(partitionRequest, *g_state.upsampler, g_state.config,
                                                "ALSA");
 
