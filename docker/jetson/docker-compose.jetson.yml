@@ -65,6 +65,18 @@ services:
       # Wait for ALSA devices to appear after cold boot
       - MAGICBOX_WAIT_AUDIO_SECS=8
       - MAGICBOX_WAIT_LOOPBACK=true
+      # Mitigation for Jetson I2S capture instability:
+      # - Start an arecord->aplay bridge into snd-aloop and feed the daemon from loopback.
+      # - Enable only when investigating #969-like symptoms.
+      - MAGICBOX_I2S_LOOPBACK_BRIDGE=false
+      # Optional overrides (defaults shown):
+      # - MAGICBOX_I2S_CAPTURE_DEVICE=hw:APE,0,0
+      # - MAGICBOX_LOOPBACK_PLAYBACK_DEVICE=hw:Loopback,0,0
+      # - MAGICBOX_LOOPBACK_CAPTURE_DEVICE=hw:Loopback,1,0
+      # - MAGICBOX_LOOPBACK_RATE=44100
+      # - MAGICBOX_LOOPBACK_FORMAT=S32_LE
+      # - MAGICBOX_LOOPBACK_PERIOD_FRAMES=1024
+      # - MAGICBOX_LOOPBACK_BUFFER_FRAMES=4096
       # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
       # - MAGICBOX_RTP_RTCP_SEND_ENABLED=0
       # - MAGICBOX_RTP_USE_RTPBIN=0

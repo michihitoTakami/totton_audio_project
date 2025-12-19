@@ -22,6 +22,20 @@ RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
 : "${MAGICBOX_ENABLE_RTP:=false}"
 : "${MAGICBOX_RTP_AUTOSTART:=false}"
 
+# Optional: I2S -> snd-aloop(Loopback) bridge mode (opt-in).
+# When enabled, entrypoint will:
+# - Force daemon input to loopback (i2s.enabled=false, loopback.enabled=true)
+# - Start a background bridge: arecord(APE/I2S) -> aplay(Loopback playback)
+: "${MAGICBOX_I2S_LOOPBACK_BRIDGE:=false}"
+: "${MAGICBOX_I2S_BRIDGE_AUTORESTART:=true}"
+: "${MAGICBOX_I2S_CAPTURE_DEVICE:=}"
+: "${MAGICBOX_LOOPBACK_PLAYBACK_DEVICE:=hw:Loopback,0,0}"
+: "${MAGICBOX_LOOPBACK_CAPTURE_DEVICE:=hw:Loopback,1,0}"
+: "${MAGICBOX_LOOPBACK_RATE:=44100}"
+: "${MAGICBOX_LOOPBACK_FORMAT:=S32_LE}"
+: "${MAGICBOX_LOOPBACK_PERIOD_FRAMES:=1024}"
+: "${MAGICBOX_LOOPBACK_BUFFER_FRAMES:=4096}"
+
 # Colors for logging
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -38,6 +52,12 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
+}
+
+is_true() {
+    local v
+    v="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$v" == "true" || "$v" == "1" || "$v" == "yes" || "$v" == "y" || "$v" == "on" ]]
 }
 
 wait_for_alsa() {
@@ -68,6 +88,71 @@ wait_for_alsa() {
         fi
         sleep 1
     done
+}
+
+start_i2s_loopback_bridge() {
+    if ! is_true "${MAGICBOX_I2S_LOOPBACK_BRIDGE}"; then
+        return 0
+    fi
+
+    if ! command -v arecord >/dev/null 2>&1 || ! command -v aplay >/dev/null 2>&1; then
+        log_error "I2S->Loopback bridge requested but arecord/aplay not available"
+        return 1
+    fi
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        log_error "Config file not found for bridge: $CONFIG_FILE"
+        return 1
+    fi
+
+    local rate="${MAGICBOX_LOOPBACK_RATE}"
+    if [[ "$rate" != "44100" && "$rate" != "48000" ]]; then
+        log_warn "Invalid MAGICBOX_LOOPBACK_RATE='${rate}', forcing 44100"
+        rate="44100"
+    fi
+
+    local fmt="${MAGICBOX_LOOPBACK_FORMAT}"
+    local period="${MAGICBOX_LOOPBACK_PERIOD_FRAMES}"
+    local buffer="${MAGICBOX_LOOPBACK_BUFFER_FRAMES}"
+
+    local i2s_device="${MAGICBOX_I2S_CAPTURE_DEVICE}"
+    if [[ -z "${i2s_device}" ]]; then
+        i2s_device="$(jq -r '.i2s.device // "hw:APE,0"' "$CONFIG_FILE" 2>/dev/null || true)"
+    fi
+    if [[ -z "${i2s_device}" || "${i2s_device}" == "null" ]]; then
+        i2s_device="hw:APE,0"
+    fi
+
+    local loop_play="${MAGICBOX_LOOPBACK_PLAYBACK_DEVICE}"
+
+    log_warn "I2S->Loopback bridge enabled"
+    log_info "Bridge: arecord -D ${i2s_device} -> aplay -D ${loop_play} (rate=${rate}, fmt=${fmt}, period=${period}, buffer=${buffer})"
+
+    (
+        set +e
+        while true; do
+            arecord -D "${i2s_device}" -r "${rate}" -c 2 -f "${fmt}" \
+                --period-size "${period}" --buffer-size "${buffer}" \
+            | aplay -D "${loop_play}" -r "${rate}" -c 2 -f "${fmt}" \
+                --period-size "${period}" --buffer-size "${buffer}"
+
+            local code=$?
+            if ! is_true "${MAGICBOX_I2S_BRIDGE_AUTORESTART}"; then
+                exit "${code}"
+            fi
+            log_warn "I2S->Loopback bridge exited (code=${code}); restarting in 1s..."
+            sleep 1
+        done
+    ) &
+    BRIDGE_PID=$!
+    export BRIDGE_PID
+    sleep 0.2
+    if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
+        log_error "Failed to start I2S->Loopback bridge process"
+        return 1
+    fi
+    log_info "I2S->Loopback bridge started (PID: $BRIDGE_PID)"
+    return 0
 }
 
 _find_card_index_by_id() {
@@ -151,14 +236,16 @@ prepare_config() {
 
     # Helper: Jetson migration - prefer I2S when both are enabled
     normalize_inputs() {
-        if jq -e '.i2s.enabled == true and .loopback.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
-            log_warn "Both i2s.enabled and loopback.enabled are true; disabling loopback (Jetson default)"
-            local migrated_path="${CONFIG_FILE}.migrated"
-            if jq '(.loopback.enabled = false)' "$CONFIG_FILE" > "$migrated_path" 2>/dev/null; then
-                mv -f "$migrated_path" "$CONFIG_FILE"
-            else
-                rm -f "$migrated_path" 2>/dev/null || true
-                log_warn "Failed to normalize input settings (daemon may refuse to start)"
+        if ! is_true "${MAGICBOX_I2S_LOOPBACK_BRIDGE}"; then
+            if jq -e '.i2s.enabled == true and .loopback.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+                log_warn "Both i2s.enabled and loopback.enabled are true; disabling loopback (Jetson default)"
+                local migrated_path="${CONFIG_FILE}.migrated"
+                if jq '(.loopback.enabled = false)' "$CONFIG_FILE" > "$migrated_path" 2>/dev/null; then
+                    mv -f "$migrated_path" "$CONFIG_FILE"
+                else
+                    rm -f "$migrated_path" 2>/dev/null || true
+                    log_warn "Failed to normalize input settings (daemon may refuse to start)"
+                fi
             fi
         fi
 
@@ -173,6 +260,38 @@ prepare_config() {
                 rm -f "$migrated_path" 2>/dev/null || true
                 log_warn "Failed to migrate i2s.device (keeping current config as-is)"
             fi
+        fi
+    }
+
+    apply_loopback_bridge_config() {
+        if ! is_true "${MAGICBOX_I2S_LOOPBACK_BRIDGE}"; then
+            return 0
+        fi
+
+        local rate="${MAGICBOX_LOOPBACK_RATE}"
+        if [[ "$rate" != "44100" && "$rate" != "48000" ]]; then
+            log_warn "Invalid MAGICBOX_LOOPBACK_RATE='${rate}', forcing 44100"
+            rate="44100"
+        fi
+        local loop_dev="${MAGICBOX_LOOPBACK_CAPTURE_DEVICE}"
+        local fmt="${MAGICBOX_LOOPBACK_FORMAT}"
+        local period="${MAGICBOX_LOOPBACK_PERIOD_FRAMES}"
+
+        log_warn "Loopback bridge mode: forcing daemon input to loopback (disabling i2s)"
+        local migrated_path="${CONFIG_FILE}.migrated"
+        if jq --arg dev "${loop_dev}" --arg fmt "${fmt}" --argjson rate "${rate}" --argjson period "${period}" '
+              (.i2s.enabled = false)
+            | (.loopback.enabled = true)
+            | (.loopback.device = $dev)
+            | (.loopback.sampleRate = $rate)
+            | (.loopback.channels = 2)
+            | (.loopback.format = $fmt)
+            | (.loopback.periodFrames = $period)
+        ' "$CONFIG_FILE" > "$migrated_path" 2>/dev/null; then
+            mv -f "$migrated_path" "$CONFIG_FILE"
+        else
+            rm -f "$migrated_path" 2>/dev/null || true
+            log_warn "Failed to apply loopback bridge config (daemon may refuse to start)"
         fi
     }
 
@@ -201,6 +320,7 @@ prepare_config() {
     if validate_json "$CONFIG_FILE"; then
         merge_defaults
         normalize_inputs
+        apply_loopback_bridge_config
     fi
 
     ln -sf "$CONFIG_FILE" "$CONFIG_SYMLINK"
@@ -264,10 +384,25 @@ start_daemon() {
     # Ensure ALSA is ready (cold boot / device enumeration delay).
     wait_for_alsa
 
-    # If I2S capture is enabled, apply Jetson APE routing in container (best-effort).
-    if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+    # If I2S capture is enabled (or bridge uses APE), apply Jetson APE routing in container (best-effort).
+    if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1 || is_true "${MAGICBOX_I2S_LOOPBACK_BRIDGE}"; then
         configure_jetson_ape_i2s || true
     fi
+
+    if is_true "${MAGICBOX_I2S_LOOPBACK_BRIDGE}"; then
+        start_i2s_loopback_bridge
+        log_info "Starting Audio Daemon (managed mode)..."
+        "$DAEMON" &
+        DAEMON_PID=$!
+
+        trap 'log_info "Shutting down..."; kill "${BRIDGE_PID:-}" "${DAEMON_PID:-}" 2>/dev/null; exit 0' SIGTERM SIGINT
+        wait -n "$DAEMON_PID" "${BRIDGE_PID:-$DAEMON_PID}"
+        EXIT_CODE=$?
+        log_warn "A process exited with code $EXIT_CODE"
+        kill "${BRIDGE_PID:-}" "${DAEMON_PID:-}" 2>/dev/null || true
+        exit "$EXIT_CODE"
+    fi
+
     exec "$DAEMON"
 }
 
@@ -280,9 +415,13 @@ start_all() {
     # Ensure ALSA is ready (cold boot / device enumeration delay).
     wait_for_alsa
 
-    # If I2S capture is enabled, apply Jetson APE routing in container (best-effort).
-    if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1; then
+    # If I2S capture is enabled (or bridge uses APE), apply Jetson APE routing in container (best-effort).
+    if jq -e '.i2s.enabled == true' "$CONFIG_FILE" >/dev/null 2>&1 || is_true "${MAGICBOX_I2S_LOOPBACK_BRIDGE}"; then
         configure_jetson_ape_i2s || true
+    fi
+
+    if is_true "${MAGICBOX_I2S_LOOPBACK_BRIDGE}"; then
+        start_i2s_loopback_bridge
     fi
 
     # Start daemon in background
@@ -307,14 +446,18 @@ start_all() {
     WEB_PID=$!
 
     # Trap signals for graceful shutdown
-    trap 'log_info "Shutting down..."; kill "$DAEMON_PID" "$WEB_PID" 2>/dev/null; exit 0' SIGTERM SIGINT
+    trap 'log_info "Shutting down..."; kill "${BRIDGE_PID:-}" "$DAEMON_PID" "$WEB_PID" 2>/dev/null; exit 0' SIGTERM SIGINT
 
     # Wait for either process to exit
-    wait -n "$DAEMON_PID" "$WEB_PID"
+    if [[ -n "${BRIDGE_PID:-}" ]]; then
+        wait -n "$DAEMON_PID" "$WEB_PID" "$BRIDGE_PID"
+    else
+        wait -n "$DAEMON_PID" "$WEB_PID"
+    fi
     EXIT_CODE=$?
 
     log_warn "A process exited with code $EXIT_CODE"
-    kill "$DAEMON_PID" "$WEB_PID" 2>/dev/null || true
+    kill "${BRIDGE_PID:-}" "$DAEMON_PID" "$WEB_PID" 2>/dev/null || true
     exit "$EXIT_CODE"
 }
 
