@@ -105,6 +105,8 @@ Pi 側に軽量の FastAPI を常駐させ、Jetson から USB 経由で制御�
 - Docker Compose では `raspi-control-api` サービスとして起動します。
 - デフォルト bind は `usb0` を自動検出し、失敗時は `127.0.0.1` にフォールバックします。
 - **ポート 80 は使用しない**（Jetson 側 nginx へ戻るため）。既定は `8081`。
+- `raspi-control-api` は **docker.sock をマウントすることが前提**（再起動/反映に必須）。
+- `usb0` へバインドさせるため **host network が前提**。
 
 主なエンドポイント:
 

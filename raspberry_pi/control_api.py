@@ -340,6 +340,10 @@ def create_app(
     docker_container: str = DEFAULT_DOCKER_CONTAINER,
 ) -> FastAPI:
     app = FastAPI(title="Pi Control API", version="1.0")
+    if restart_mode.strip().lower() == "docker":
+        docker_sock = Path("/var/run/docker.sock")
+        if not docker_sock.exists():
+            print("[raspi-control-api] WARNING: /var/run/docker.sock not mounted")
 
     @app.get("/raspi/api/v1/status", response_model=StatusResponse)
     def get_status() -> StatusResponse:
