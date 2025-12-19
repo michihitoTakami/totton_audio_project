@@ -469,6 +469,10 @@ def _persist_status(
     alsa_format: str,
     channels: int,
     generation: int = 0,
+    xruns: int | None = None,
+    last_error: str | None = None,
+    last_error_at_unix_ms: int | None = None,
+    uptime_sec: float | None = None,
     reporter: StatusReporter | None = None,
 ) -> None:
     """Issue #824 の制御プレーン連携用に、現在値をファイルへ書き出す."""
@@ -482,6 +486,14 @@ def _persist_status(
         "updated_at_unix_ms": int(time.time() * 1000),
         "note": "For Issue #824/#950 (rate/format/ch status).",
     }
+    if xruns is not None:
+        payload["xruns"] = int(xruns)
+    if last_error is not None:
+        payload["last_error"] = str(last_error)
+    if last_error_at_unix_ms is not None:
+        payload["last_error_at_unix_ms"] = int(last_error_at_unix_ms)
+    if uptime_sec is not None:
+        payload["uptime_sec"] = float(uptime_sec)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload))
@@ -720,10 +732,18 @@ def _run_with_arecord_aplay(
     current_fmt = str(cfg.preferred_format)
     conversion_enabled = not cfg.passthrough
 
+    start_monotonic = time.monotonic()
+    xrun_count = 0
+    last_error: str | None = None
+    last_error_at_unix_ms: int | None = None
+    error_lock = threading.Lock()
+
     aplay_proc: subprocess.Popen | None = None
     arecord_proc: subprocess.Popen | None = None
     arecord_out: IO[bytes] | None = None
     aplay_in: IO[bytes] | None = None
+    aplay_err_thread: threading.Thread | None = None
+    arecord_err_thread: threading.Thread | None = None
 
     status_generation = 0
     last_status_key: tuple[str, int, str, int] | None = None  # (mode, rate, fmt, ch)
@@ -735,6 +755,11 @@ def _run_with_arecord_aplay(
             status_generation += 1
             last_status_key = key
         if cfg.status_path:
+            uptime_sec = max(0.0, time.monotonic() - start_monotonic)
+            with error_lock:
+                xruns_snapshot = xrun_count
+                last_error_snapshot = last_error
+                last_error_at_snapshot = last_error_at_unix_ms
             _persist_status(
                 cfg.status_path,
                 running=(mode != "none"),
@@ -743,6 +768,10 @@ def _run_with_arecord_aplay(
                 alsa_format=fmt,
                 channels=cfg.channels,
                 generation=status_generation,
+                xruns=xruns_snapshot,
+                last_error=last_error_snapshot,
+                last_error_at_unix_ms=last_error_at_snapshot,
+                uptime_sec=uptime_sec,
                 reporter=reporter,
             )
         if control:
@@ -754,11 +783,46 @@ def _run_with_arecord_aplay(
                 channels=cfg.channels,
             )
 
+    def _record_error(message: str, *, is_xrun: bool = False) -> None:
+        nonlocal xrun_count, last_error, last_error_at_unix_ms
+        with error_lock:
+            if is_xrun:
+                xrun_count += 1
+            last_error = str(message)
+            last_error_at_unix_ms = int(time.time() * 1000)
+
+    def _start_error_monitor(
+        pipe: IO[bytes] | None, *, name: str
+    ) -> threading.Thread | None:
+        if pipe is None:
+            return None
+
+        def _run() -> None:
+            for raw in iter(pipe.readline, b""):
+                if not raw:
+                    break
+                try:
+                    line = raw.decode("utf-8", errors="ignore").strip()
+                except Exception:
+                    continue
+                if not line:
+                    continue
+                lowered = line.lower()
+                if "xrun" in lowered or "overrun" in lowered or "underrun" in lowered:
+                    _record_error(f"{name}: {line}", is_xrun=True)
+
+        thread = threading.Thread(
+            target=_run, name=f"usb_i2s_{name}_stderr", daemon=True
+        )
+        thread.start()
+        return thread
+
     def _restart_aplay(*, rate: int, fmt: str, conversion: bool) -> None:
-        nonlocal aplay_proc, aplay_in, current_rate, current_fmt
+        nonlocal aplay_proc, aplay_in, current_rate, current_fmt, aplay_err_thread
         _terminate_process(aplay_proc)
         aplay_proc = None
         aplay_in = None
+        aplay_err_thread = None
         cmd = _build_aplay_command(
             cfg, sample_rate=rate, alsa_format=fmt, conversion=conversion
         )
@@ -769,25 +833,31 @@ def _run_with_arecord_aplay(
             f"[usb_i2s_bridge] start aplay rate={rate} fmt={fmt} conversion={conversion} cmd={' '.join(cmd)}"
         )
         try:
-            aplay_proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+            aplay_proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE
+            )
             assert aplay_proc.stdin is not None
             aplay_in = aplay_proc.stdin
+            aplay_err_thread = _start_error_monitor(aplay_proc.stderr, name="aplay")
             current_rate = int(rate)
             current_fmt = str(fmt)
         except FileNotFoundError as e:
             print(f"[usb_i2s_bridge] aplay not found: {e}; retrying")
+            _record_error(f"aplay not found: {e}")
             aplay_proc = None
             aplay_in = None
         except Exception as e:
             print(f"[usb_i2s_bridge] failed to start aplay: {e}; retrying")
+            _record_error(f"aplay start failed: {e}")
             aplay_proc = None
             aplay_in = None
 
     def _restart_arecord(*, rate: int, fmt: str, conversion: bool) -> None:
-        nonlocal arecord_proc, arecord_out
+        nonlocal arecord_proc, arecord_out, arecord_err_thread
         _terminate_process(arecord_proc)
         arecord_proc = None
         arecord_out = None
+        arecord_err_thread = None
         cmd = _build_arecord_command(
             cfg, sample_rate=rate, alsa_format=fmt, conversion=conversion
         )
@@ -798,15 +868,22 @@ def _run_with_arecord_aplay(
             f"[usb_i2s_bridge] start arecord rate={rate} fmt={fmt} conversion={conversion} cmd={' '.join(cmd)}"
         )
         try:
-            arecord_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            arecord_proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
             assert arecord_proc.stdout is not None
             arecord_out = arecord_proc.stdout
+            arecord_err_thread = _start_error_monitor(
+                arecord_proc.stderr, name="arecord"
+            )
         except FileNotFoundError as e:
             print(f"[usb_i2s_bridge] arecord not found: {e}; retrying")
+            _record_error(f"arecord not found: {e}")
             arecord_proc = None
             arecord_out = None
         except Exception as e:
             print(f"[usb_i2s_bridge] failed to start arecord: {e}; retrying")
+            _record_error(f"arecord start failed: {e}")
             arecord_proc = None
             arecord_out = None
 
@@ -953,6 +1030,9 @@ def _run_with_arecord_aplay(
                             "[usb_i2s_bridge] aplay exited unexpectedly in passthrough; "
                             f"enabling conversion fallback rc={rc}"
                         )
+                        _record_error(
+                            f"aplay exited in passthrough rc={rc}", is_xrun=True
+                        )
                         conversion_enabled = True
                         desired_fmt = str(cfg.preferred_format)
                     _restart_aplay(
@@ -993,6 +1073,7 @@ def _run_with_arecord_aplay(
                         "[usb_i2s_bridge] aplay exited unexpectedly; enabling conversion fallback "
                         f"rc={rc}"
                     )
+                    _record_error(f"aplay exited unexpectedly rc={rc}", is_xrun=True)
                     conversion_enabled = True
                     next_poll = 0.0
                 time.sleep(cfg.restart_backoff_sec)
@@ -1014,6 +1095,7 @@ def _run_with_arecord_aplay(
                         print(
                             f"[usb_i2s_bridge] arecord EOF/exit rc={rc}; switching to silence and restarting"
                         )
+                        _record_error(f"arecord EOF/exit rc={rc}", is_xrun=True)
                         _stop_arecord()
                         conversion_enabled = True  # 次回は安全側で起動
                         current_mode = (
@@ -1026,6 +1108,7 @@ def _run_with_arecord_aplay(
                     aplay_in.write(b"\x00" * chunk_bytes)
             except BrokenPipeError:
                 print("[usb_i2s_bridge] aplay broken pipe; restarting")
+                _record_error("aplay broken pipe", is_xrun=True)
                 _terminate_process(aplay_proc)
                 aplay_proc = None
                 aplay_in = None
@@ -1035,6 +1118,7 @@ def _run_with_arecord_aplay(
                 time.sleep(cfg.restart_backoff_sec)
             except OSError as e:
                 print(f"[usb_i2s_bridge] I/O error: {e}; restarting aplay/arecord")
+                _record_error(f"I/O error: {e}", is_xrun=True)
                 _stop_all()
                 time.sleep(cfg.restart_backoff_sec)
     finally:

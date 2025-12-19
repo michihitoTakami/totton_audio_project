@@ -19,8 +19,8 @@ WorkingDirectory=/opt/magicbox/gpu_os
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -e /dev/snd ] && exit 0; sleep 1; done; echo \"[usb-i2s-bridge] /dev/snd not found\" >&2; exit 1'
 #
 # NOTE: 起動時に毎回 --build するとネットワーク/ストレージ要因で失敗しやすいので避ける。
-ExecStart=/usr/bin/docker compose -f raspberry_pi/usb_i2s_bridge/docker-compose.yml up -d
-ExecStop=/usr/bin/docker compose -f raspberry_pi/usb_i2s_bridge/docker-compose.yml down
+ExecStart=/usr/bin/docker compose --env-file raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env -f raspberry_pi/usb_i2s_bridge/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose --env-file raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env -f raspberry_pi/usb_i2s_bridge/docker-compose.yml down
 
 TimeoutStartSec=0
 Restart=on-failure

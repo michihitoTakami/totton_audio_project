@@ -64,10 +64,12 @@ python3 -m raspberry_pi.rtp_sender \
 
 ```bash
 # デフォルト: I2S (USB/UAC2 -> I2S) ブリッジを起動
-docker compose -f raspberry_pi/docker-compose.yml up -d --build
+docker compose --env-file raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env \
+  -f raspberry_pi/docker-compose.yml up -d --build
 
 # RTP を起動したい場合（レアケース）: profile を明示
-docker compose -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rtp-sender rtp-bridge jetson-proxy
+docker compose --env-file raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env \
+  -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rtp-sender rtp-bridge jetson-proxy
 ```
 
 - `raspberry_pi/docker-compose.yml` は **デフォルトで I2S ブリッジ**を起動します。RTP 系は `profiles: ["rtp"]` のため、明示しない限り起動しません。
@@ -97,6 +99,28 @@ I2S のレート/フォーマット/チャンネルを Pi-Jetson 間で同期さ
 - タイムアウト/ポーリング: `USB_I2S_CONTROL_TIMEOUT_MS` / `USB_I2S_CONTROL_POLL_INTERVAL_SEC`
 
 Jetson 側も `raspberry_pi/usb_i2s_bridge/control_agent.py` を `python3 -m raspberry_pi.usb_i2s_bridge.control_agent` で起動すると、同じ仕組みでステータスを提供できます。
+
+### Pi 制御 API (Issue #940)
+
+Pi 側に軽量の FastAPI を常駐させ、Jetson から USB 経由で制御します。
+
+- 起動例: `python3 -m raspberry_pi.control_api --host 192.168.55.2 --port 8081`
+- デフォルト bind は `usb0` を自動検出し、失敗時は `127.0.0.1` にフォールバックします。
+- **ポート 80 は使用しない**（Jetson 側 nginx へ戻るため）。既定は `8081`。
+
+主なエンドポイント:
+
+- `GET /raspi/api/v1/status` : bridge 状態 / rate / format / ch / xruns / last_error / uptime
+- `GET /raspi/api/v1/config` : 現在の設定
+- `PUT /raspi/api/v1/config` : 設定更新（更新後に再起動）
+- `POST /raspi/api/v1/actions/restart` : bridge 再起動
+
+設定反映について:
+
+- `raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env` を更新し、`docker compose` を再起動します。
+- systemd 起動の場合は `systemd/raspberry_pi/usb-i2s-bridge.service` が `--env-file` を参照します。
+
+systemd で常駐させる場合は `systemd/raspberry_pi/raspi-control-api.service` を参考にしてください。
 
 ### Jetson Web(:80) へのステータス送信 (Issue #950)
 
