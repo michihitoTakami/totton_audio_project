@@ -161,6 +161,19 @@ prepare_config() {
                 log_warn "Failed to normalize input settings (daemon may refuse to start)"
             fi
         fi
+
+        # Jetson migration: old default used hw:APE,0,0 but field reports show hw:APE,0 is more stable.
+        # Only rewrite when the value is exactly the old default (user overrides are kept).
+        if jq -e '.i2s.enabled == true and .i2s.device == "hw:APE,0,0"' "$CONFIG_FILE" >/dev/null 2>&1; then
+            log_warn "Migrating i2s.device from hw:APE,0,0 to hw:APE,0 (Jetson APE/I2S default)"
+            local migrated_path="${CONFIG_FILE}.migrated"
+            if jq '(.i2s.device = "hw:APE,0")' "$CONFIG_FILE" > "$migrated_path" 2>/dev/null; then
+                mv -f "$migrated_path" "$CONFIG_FILE"
+            else
+                rm -f "$migrated_path" 2>/dev/null || true
+                log_warn "Failed to migrate i2s.device (keeping current config as-is)"
+            fi
+        fi
     }
 
     # Optional reset via env

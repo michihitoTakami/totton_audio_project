@@ -1175,9 +1175,10 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
     // Ensure non-blocking is effective even if driver flips it.
     snd_pcm_nonblock(handle, 1);
 
-    LOG_INFO("[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames, buffer {} "
-             "frames)",
-             device, rate_near, channels, period_frames, buffer_frames);
+    LOG_INFO(
+        "[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames, buffer {} "
+        "frames)",
+        device, rate_near, channels, period_frames, buffer_frames);
     return handle;
 }
 
@@ -1187,7 +1188,49 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
     const snd_pcm_uframes_t requested_period = period_frames;
     actual_rate = 0;
 
-    auto try_open = [&](unsigned int candidate_rate) -> snd_pcm_t* {
+    auto expand_device_candidates = [](const std::string& configured) {
+        std::vector<std::string> candidates;
+        candidates.reserve(3);
+        candidates.push_back(configured);
+
+        auto add_unique = [&](std::string v) {
+            if (v.empty()) {
+                return;
+            }
+            for (const auto& existing : candidates) {
+                if (existing == v) {
+                    return;
+                }
+            }
+            candidates.push_back(std::move(v));
+        };
+
+        auto has_prefix = [&](const char* prefix) { return configured.rfind(prefix, 0) == 0; };
+
+        // ALSA "hw/plughw" allow both:
+        // - card,device
+        // - card,device,subdevice
+        // Field reports show Jetson environments where one form works and the other fails.
+        if (has_prefix("hw:") || has_prefix("plughw:")) {
+            const int commas =
+                static_cast<int>(std::count(configured.begin(), configured.end(), ','));
+            if (commas == 1) {
+                add_unique(configured + ",0");
+            } else if (commas >= 2) {
+                const auto lastComma = configured.rfind(',');
+                if (lastComma != std::string::npos) {
+                    add_unique(configured.substr(0, lastComma));
+                }
+            }
+        }
+
+        return candidates;
+    };
+
+    const auto device_candidates = expand_device_candidates(device);
+
+    auto try_open = [&](const std::string& target_device,
+                        unsigned int candidate_rate) -> snd_pcm_t* {
         const bool auto_rate = candidate_rate == 0;
         const std::string rate_label = auto_rate ? "auto" : std::to_string(candidate_rate);
         snd_pcm_uframes_t local_period = requested_period;
@@ -1195,9 +1238,9 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
 
         // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
         int err =
-            snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
+            snd_pcm_open(&handle, target_device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
         if (err < 0) {
-            LOG_ERROR("[I2S] Cannot open capture device {}: {}", device, snd_strerror(err));
+            LOG_ERROR("[I2S] Cannot open capture device {}: {}", target_device, snd_strerror(err));
             return nullptr;
         }
 
@@ -1244,18 +1287,18 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
             return nullptr;
         }
         buffer_frames = std::max<snd_pcm_uframes_t>(buffer_frames, local_period * 2);
-        if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) <
-            0) {
+        if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) < 0) {
             LOG_ERROR("[I2S] Cannot set buffer size: {}", snd_strerror(err));
             snd_pcm_close(handle);
             return nullptr;
         }
 
         if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
-            LOG_ERROR("[I2S] Cannot apply hardware parameters (rate {}, ch {}, fmt {}, "
-                      "period {} frames, buffer {} frames): {}",
-                      rate_label, channels, snd_pcm_format_name(format), local_period,
-                      buffer_frames, snd_strerror(err));
+            LOG_ERROR(
+                "[I2S] Cannot apply hardware parameters (rate {}, ch {}, fmt {}, "
+                "period {} frames, buffer {} frames): {}",
+                rate_label, channels, snd_pcm_format_name(format), local_period, buffer_frames,
+                snd_strerror(err));
             snd_pcm_close(handle);
             return nullptr;
         }
@@ -1283,10 +1326,11 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
         period_frames = local_period;
         actual_rate = effective_rate;
 
-        LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames, "
-                 "buffer {} frames)",
-                 device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
-                 buffer_frames);
+        LOG_INFO(
+            "[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames, "
+            "buffer {} frames)",
+            target_device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
+            buffer_frames);
 
         return handle;
     };
@@ -1298,10 +1342,16 @@ static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t f
         rate_candidates = {requested_rate};
     }
 
-    for (unsigned int candidate : rate_candidates) {
-        snd_pcm_t* handle = try_open(candidate);
-        if (handle) {
-            return handle;
+    for (const auto& candidate_device : device_candidates) {
+        for (unsigned int candidate_rate : rate_candidates) {
+            snd_pcm_t* handle = try_open(candidate_device, candidate_rate);
+            if (handle) {
+                if (candidate_device != device) {
+                    LOG_WARN("[I2S] Using ALSA device fallback '{}' (configured was '{}')",
+                             candidate_device, device);
+                }
+                return handle;
+            }
         }
     }
 
