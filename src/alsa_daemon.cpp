@@ -1,6 +1,5 @@
 #include "audio/audio_utils.h"
 #include "audio/fallback_manager.h"
-#include "audio/filter_headroom.h"
 #include "audio/soft_mute.h"
 #include "convolution_engine.h"
 #include "core/config_loader.h"
@@ -14,6 +13,7 @@
 #include "daemon/audio/upsampler_builder.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/audio_pipeline/filter_manager.h"
+#include "daemon/audio_pipeline/headroom_controller.h"
 #include "daemon/audio_pipeline/rate_switcher.h"
 #include "daemon/audio_pipeline/soft_mute_runner.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
@@ -79,8 +79,6 @@
 
 // PID file path (also serves as lock file)
 constexpr const char* PID_FILE_PATH = "/tmp/gpu_upsampler_alsa.pid";
-
-static void refresh_current_headroom(const std::string& reason);
 
 static void enforce_phase_partition_constraints(AppConfig& config) {
     if (config.partitionedConvolution.enabled && config.phaseType == PhaseType::Linear) {
@@ -328,6 +326,20 @@ static daemon_output::PlaybackBufferManager& playback_buffer() {
     return *g_state.playback.buffer;
 }
 
+static audio_pipeline::HeadroomControllerDependencies make_headroom_dependencies(
+    daemon_core::api::EventDispatcher* dispatcher) {
+    audio_pipeline::HeadroomControllerDependencies deps{};
+    deps.dispatcher = dispatcher;
+    deps.config = &g_state.config;
+    deps.headroomCache = &g_state.headroomCache;
+    deps.headroomGain = &g_state.gains.headroom;
+    deps.outputGain = &g_state.gains.output;
+    deps.effectiveGain = &g_state.gains.effective;
+    deps.activeRateFamily = []() { return g_state.rates.activeRateFamily; };
+    deps.activePhaseType = []() { return g_state.rates.activePhaseType; };
+    return deps;
+}
+
 static void update_daemon_dependencies() {
     g_state.managers.daemonDependencies.config = &g_state.config;
     g_state.managers.daemonDependencies.running = &g_state.flags.running;
@@ -341,7 +353,9 @@ static void update_daemon_dependencies() {
     g_state.managers.daemonDependencies.dacManager = &g_state.managers.dacManagerRaw;
     g_state.managers.daemonDependencies.streamingMutex = &g_state.streaming.streamingMutex;
     g_state.managers.daemonDependencies.refreshHeadroom = [](const std::string& reason) {
-        refresh_current_headroom(reason);
+        if (g_state.managers.headroomController) {
+            g_state.managers.headroomController->refreshCurrentHeadroom(reason);
+        }
     };
 }
 
@@ -358,6 +372,8 @@ static void initialize_event_modules() {
         std::make_unique<audio_pipeline::FilterManager>(audio_pipeline::FilterManagerDependencies{
             .dispatcher = g_state.managers.eventDispatcher.get(),
             .deps = g_state.managers.daemonDependencies});
+    g_state.managers.headroomController = std::make_unique<audio_pipeline::HeadroomController>(
+        make_headroom_dependencies(g_state.managers.eventDispatcher.get()));
     g_state.managers.softMuteRunner =
         std::make_unique<audio_pipeline::SoftMuteRunner>(audio_pipeline::SoftMuteRunnerDependencies{
             .dispatcher = g_state.managers.eventDispatcher.get(),
@@ -371,6 +387,7 @@ static void initialize_event_modules() {
 
     g_state.managers.rateSwitcher->start();
     g_state.managers.filterManager->start();
+    g_state.managers.headroomController->start();
     g_state.managers.softMuteRunner->start();
     g_state.managers.alsaOutputInterface->start();
     g_state.managers.handlerRegistry->registerDefaults();
@@ -641,51 +658,6 @@ static void print_config_summary(const AppConfig& cfg) {
                                            cfg.upsampleRatio);
 }
 
-static std::string resolve_filter_path_for(ConvolutionEngine::RateFamily family, PhaseType phase) {
-    if (phase == PhaseType::Linear) {
-        return (family == ConvolutionEngine::RateFamily::RATE_44K)
-                   ? g_state.config.filterPath44kLinear
-                   : g_state.config.filterPath48kLinear;
-    }
-    return (family == ConvolutionEngine::RateFamily::RATE_44K) ? g_state.config.filterPath44kMin
-                                                               : g_state.config.filterPath48kMin;
-}
-
-static std::string current_filter_path() {
-    return resolve_filter_path_for(g_state.rates.activeRateFamily, g_state.rates.activePhaseType);
-}
-
-static void update_effective_gain(float headroomGain, const std::string& reason) {
-    g_state.gains.headroom.store(headroomGain, std::memory_order_relaxed);
-    float effective = g_state.config.gain * headroomGain;
-    g_state.gains.output.store(effective, std::memory_order_relaxed);
-    LOG_INFO("Gain [{}]: user {:.4f} * headroom {:.4f} = {:.4f}", reason, g_state.config.gain,
-             headroomGain, effective);
-}
-
-static void apply_headroom_for_path(const std::string& path, const std::string& reason) {
-    if (path.empty()) {
-        LOG_WARN("Headroom [{}]: empty filter path, falling back to unity gain", reason);
-        update_effective_gain(1.0f, reason);
-        return;
-    }
-
-    FilterHeadroomInfo info = g_state.headroomCache.get(path);
-    update_effective_gain(info.safeGain, reason);
-
-    if (!info.metadataFound) {
-        LOG_WARN("Headroom [{}]: metadata missing for {} (using safe gain {:.4f})", reason, path,
-                 info.safeGain);
-    } else {
-        LOG_INFO("Headroom [{}]: {} max_coef={:.6f} safeGain={:.4f} target={:.2f}", reason, path,
-                 info.maxCoefficient, info.safeGain, info.targetPeak);
-    }
-}
-
-static void refresh_current_headroom(const std::string& reason) {
-    apply_headroom_for_path(current_filter_path(), reason);
-}
-
 static void reset_runtime_state() {
     g_state.managers.streamingCacheManager.reset();
 
@@ -945,8 +917,15 @@ static void load_runtime_config() {
     enforce_phase_partition_constraints(g_state.config);
 
     print_config_summary(g_state.config);
-    g_state.headroomCache.setTargetPeak(g_state.config.headroomTarget);
-    update_effective_gain(1.0f, "config load (pending filter headroom)");
+    if (!g_state.managers.headroomController) {
+        g_state.managers.headroomController = std::make_unique<audio_pipeline::HeadroomController>(
+            make_headroom_dependencies(nullptr));
+    }
+    if (g_state.managers.headroomController) {
+        g_state.managers.headroomController->setTargetPeak(g_state.config.headroomTarget);
+        g_state.managers.headroomController->resetEffectiveGain(
+            "config load (pending filter headroom)");
+    }
     float initialOutput = g_state.gains.output.load(std::memory_order_relaxed);
     g_state.gains.limiter.store(1.0f, std::memory_order_relaxed);
     g_state.gains.effective.store(initialOutput, std::memory_order_relaxed);
@@ -1555,7 +1534,11 @@ int main(int argc, char* argv[]) {
         }
 
         g_state.rates.activePhaseType = g_state.config.phaseType;
-        publish_filter_switch_event(current_filter_path(), g_state.rates.activePhaseType, true);
+        std::string filterPath;
+        if (g_state.managers.headroomController) {
+            filterPath = g_state.managers.headroomController->currentFilterPath();
+        }
+        publish_filter_switch_event(filterPath, g_state.rates.activePhaseType, true);
 
         // Pre-allocate streaming input buffers (avoid RT reallocations)
         size_t buffer_capacity =
@@ -1711,7 +1694,9 @@ int main(int argc, char* argv[]) {
             return reset_streaming_caches_for_switch();
         };
         controlDeps.refreshHeadroom = [](const std::string& reason) {
-            refresh_current_headroom(reason);
+            if (g_state.managers.headroomController) {
+                g_state.managers.headroomController->refreshCurrentHeadroom(reason);
+            }
         };
         controlDeps.reinitializeStreamingForLegacyMode = []() {
             return reinitialize_streaming_for_legacy_mode();
