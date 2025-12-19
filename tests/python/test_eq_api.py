@@ -354,20 +354,25 @@ class TestProfilesEndpoint:
         assert "filter_count" in profile
         assert "type" in profile
 
-    def test_list_profiles_detects_opra_type(self, client, eq_profile_dir, config_path):
-        """Should detect OPRA profile type."""
+    def test_list_profiles_excludes_opra_profiles(
+        self, client, valid_eq_content, eq_profile_dir, config_path
+    ):
+        """OPRA-generated profiles should be hidden from the saved list."""
         opra_content = """# OPRA: Test Headphone
 # Author: test
 Preamp: -6 dB
 Filter 1: ON PK Fc 100 Hz Gain -2.0 dB Q 1.0
 """
         (eq_profile_dir / "opra_test.txt").write_text(opra_content)
+        (eq_profile_dir / "custom.txt").write_text(valid_eq_content)
 
         response = client.get("/eq/profiles")
 
         assert response.status_code == 200
-        profile = response.json()["profiles"][0]
-        assert profile["type"] == "opra"
+        data = response.json()
+        names = [p["name"] for p in data["profiles"]]
+        assert "custom" in names
+        assert "opra_test" not in names
 
 
 class TestActivateEndpoint:

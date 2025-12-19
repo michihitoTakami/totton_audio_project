@@ -170,6 +170,8 @@ async def dashboard_page(lang: str = "en"):
 | POST | `/eq/import` | プロファイルインポート |
 | DELETE | `/eq/profiles/{name}` | プロファイル削除 |
 
+> Note: OPRAから適用したプロファイルの履歴はSaved EQ Profilesに表示しない仕様のため、`/eq/profiles` の一覧には含まれません。
+
 ## ファイアウォール設定
 
 UFW を使用している場合:

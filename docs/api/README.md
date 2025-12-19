@@ -54,6 +54,8 @@ EQプロファイル管理
 | DELETE | `/eq/profiles/{name}` | プロファイル削除 |
 | GET | `/eq/active` | アクティブプロファイル取得 |
 
+> Note: OPRAから自動生成される一時プロファイルは履歴に出さないため、`/eq/profiles` では除外されます。
+
 ### OPRA (`/opra`)
 OPRAヘッドホンEQデータベース連携
 

@@ -369,6 +369,8 @@ cmake --build build -j$(nproc)
 | `/api/opra/search` | GET | OPRAヘッドホン検索 |
 | `/api/dac/capability/{id}` | GET | DAC性能取得 |
 
+> Note: OPRAから適用したプロファイルの履歴はSaved EQ Profilesには表示せず、`/api/eq/profiles` のレスポンスからも除外されます。
+
 ### ZeroMQコマンド
 
 | コマンド | 説明 |
