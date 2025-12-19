@@ -1,0 +1,62 @@
+Magic Box Project (michy_os / gpu_os)
+Binary & Docker Non-Commercial License (MB-NCL) v1.0
+
+Copyright (c) 2025 Michihito Takami
+All rights reserved.
+
+This license governs the use of Magic Box Project “Distributed Artifacts” (binaries, Docker images, configuration files, and bundled documentation) that are distributed by the Author.
+
+Important: Third-party software and data included in the Distributed Artifacts (e.g., OPRA, HUTUBS) are governed by their respective licenses.
+This license does not restrict any rights granted by those third-party licenses. See NOTICE.md / THIRD_PARTY_LICENSES.md.
+
+---
+
+## 1. Definitions
+- "Software": programs, configurations, scripts, and documents included in this repository (or distributed artifacts) for which the Author holds copyright, excluding third-party components.
+- "Distributed Artifacts": binary distributions, Docker images, installers, archives, etc. that include the Software.
+- "Personal Use": use by an individual for their own purposes (including family/household use).
+- "Commercial Use": any use intended for commercial advantage or monetary compensation, whether direct or indirect, including (but not limited to) selling, subscription fees, advertising revenue, providing services, paid support, contracting/consulting deliverables, internal business use, SaaS/hosted services, or embedding into a product or service.
+
+## 2. Grant (Non-Exclusive)
+Subject to compliance with this license, the Author grants you a non-exclusive, non-transferable, non-sublicensable permission to:
+- run the Software for Personal Use;
+- copy the Distributed Artifacts and make backups for Personal Use;
+- modify configuration files and operational scripts for Personal Use;
+- redistribute the Distributed Artifacts free of charge for non-commercial purposes, provided you satisfy Section 5.
+
+## 3. Prohibitions
+You must not:
+- use the Software or Distributed Artifacts for Commercial Use;
+- sell, rent, license for a fee, or otherwise commercialize any part of the Software or Distributed Artifacts;
+- provide the Software or Distributed Artifacts as part of a commercial service or hosted offering;
+- reverse engineer, decompile, or disassemble the Software, except to the extent permitted by mandatory law;
+- remove or alter copyright notices, this license text, or NOTICE files.
+
+## 4. Future Versions
+The Author may apply different licensing terms to future versions (including paid versions).
+Your rights for a given version are governed by the license that accompanied that version at the time you obtained it.
+
+## 5. Conditions for Non-Commercial Redistribution
+If you redistribute the Distributed Artifacts for non-commercial purposes, you must:
+- include this LICENSE file, NOTICE.md, and THIRD_PARTY_LICENSES.md;
+- if you made modifications, clearly state that you modified it and provide a brief summary of the changes.
+
+## 6. Disclaimer of Warranty
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND.
+THE AUTHOR DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+## 7. Limitation of Liability
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DAMAGES OR LOSSES ARISING FROM THE USE OF OR INABILITY TO USE THE SOFTWARE, WHETHER DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR LOSS OF PROFITS.
+
+## 8. Termination
+This license automatically terminates upon your breach.
+
+## 9. Enforcement (Including Commercial Use)
+If you violate this license (including engaging in Commercial Use), the Author reserves the right to seek injunctive relief, damages, and any other remedies available under law.
+
+## 10. Commercial Licensing
+If you want to use the Software or Distributed Artifacts commercially, contact the Author in advance to negotiate a separate commercial license.
+
+---
+
+Governing law: Japan. Exclusive jurisdiction: Tokyo District Court, to the extent permitted by mandatory law.

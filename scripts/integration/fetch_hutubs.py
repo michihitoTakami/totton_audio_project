@@ -8,7 +8,7 @@ Selects representative subjects for each size category (XS/S/M/L/XL).
 Data Source: HUTUBS - Head-related Transfer Function Database
     https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960
 
-License: CC BY-SA 4.0
+License: CC BY 4.0
 Attribution:
     HUTUBS - Head-related Transfer Function Database of the
     Technical University of Berlin
