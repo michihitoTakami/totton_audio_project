@@ -229,6 +229,7 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
                         "bufL={}, bufR={}). Falling back to raw upsampler output for this block.",
                         streamBlock, inputBufL, inputBufR);
         } else {
+            bool enqueuedAnyCrossfeedOutput = false;
             size_t offset = 0;
             while (offset < totalFrames) {
                 size_t accL = *deps_.cfStreamAccumulatedLeft;
@@ -289,6 +290,7 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
                     if (stored > 0 && deps_.buffer.playbackBuffer) {
                         deps_.buffer.playbackBuffer->cv().notify_one();
                     }
+                    enqueuedAnyCrossfeedOutput = enqueuedAnyCrossfeedOutput || (stored > 0);
                     deps_.cfOutputLeft->clear();
                     deps_.cfOutputRight->clear();
                 }
@@ -298,6 +300,19 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
             // 十分なデータが溜まるまで元のアップサンプル出力をキューに積まない。
             // これにより未処理音声とクロスフィード済み音声が混在してバッファが膨張し
             // クラッシュするのを防ぐ。
+            //
+            // ただし、有効化直後は 4ch FIR がまだ出力できず "何も enqueue しない" 状態が続くと
+            // PlaybackBuffer が枯渇して underflow → クリック/音飛びの原因になる。
+            // そのため、この RT サイクルで 1フレームも enqueue できなかった場合は、
+            // タイムライン維持のため無音を enqueue する。
+            if (!enqueuedAnyCrossfeedOutput && framesGenerated > 0) {
+                std::fill(outputLeft->begin(), outputLeft->end(), 0.0f);
+                std::fill(outputRight->begin(), outputRight->end(), 0.0f);
+                size_t stored = enqueueOutputFramesLocked(*outputLeft, *outputRight);
+                if (stored > 0 && deps_.buffer.playbackBuffer) {
+                    deps_.buffer.playbackBuffer->cv().notify_one();
+                }
+            }
             return true;
         }
     }

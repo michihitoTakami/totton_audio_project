@@ -1990,6 +1990,7 @@
           "head_size": {
             "type": "string",
             "enum": [
+              "xs",
               "s",
               "m",
               "l",
@@ -2026,6 +2027,7 @@
               {
                 "type": "string",
                 "enum": [
+                  "xs",
                   "s",
                   "m",
                   "l",
