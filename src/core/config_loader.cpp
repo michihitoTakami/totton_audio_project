@@ -9,6 +9,12 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 
+static std::string toLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
 PhaseType parsePhaseType(const std::string& str) {
     if (str == "linear" || str == "hybrid") {
         return PhaseType::Linear;
@@ -28,9 +34,7 @@ const char* phaseTypeToString(PhaseType type) {
 }
 
 OutputMode parseOutputMode(const std::string& str) {
-    std::string lower = str;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::string lower = toLower(str);
     if (lower == "usb") {
         return OutputMode::Usb;
     }
@@ -51,6 +55,22 @@ static std::string validateHeadSize(const std::string& str) {
         return str;
     }
     return "m";  // Default to medium for invalid values
+}
+
+static std::string validateDelimiterBackend(const std::string& str) {
+    std::string lower = toLower(str);
+    if (lower == "bypass" || lower == "ort") {
+        return lower;
+    }
+    return "bypass";
+}
+
+static std::string validateOrtProvider(const std::string& str) {
+    std::string lower = toLower(str);
+    if (lower == "cpu" || lower == "cuda" || lower == "tensorrt" || lower == "trt") {
+        return (lower == "trt") ? "tensorrt" : lower;
+    }
+    return "cpu";
 }
 
 bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig, bool verbose) {
@@ -106,10 +126,7 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 if (output.contains("mode") && output["mode"].is_string()) {
                     std::string modeStr = output["mode"].get<std::string>();
                     OutputMode parsed = parseOutputMode(modeStr);
-                    std::string normalized = modeStr;
-                    std::transform(
-                        normalized.begin(), normalized.end(), normalized.begin(),
-                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    std::string normalized = toLower(modeStr);
                     if (normalized != "usb" && verbose) {
                         LOG_WARN("Config: Unsupported output.mode '{}', falling back to 'usb'",
                                  modeStr);
@@ -360,6 +377,47 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                 // On type error, keep defaults (already set in AppConfig{})
                 if (verbose) {
                     LOG_WARN("Config: Invalid fallback settings, using defaults: {}", e.what());
+                }
+            }
+        }
+
+        // De-limiter inference backend settings (Issue #1017)
+        if (j.contains("delimiter") && j["delimiter"].is_object()) {
+            auto dl = j["delimiter"];
+            try {
+                if (dl.contains("enabled") && dl["enabled"].is_boolean()) {
+                    outConfig.delimiter.enabled = dl["enabled"].get<bool>();
+                }
+                if (dl.contains("backend") && dl["backend"].is_string()) {
+                    outConfig.delimiter.backend =
+                        validateDelimiterBackend(dl["backend"].get<std::string>());
+                }
+                if (dl.contains("expectedSampleRate") &&
+                    dl["expectedSampleRate"].is_number_integer()) {
+                    int sr = dl["expectedSampleRate"].get<int>();
+                    if (sr > 0) {
+                        outConfig.delimiter.expectedSampleRate = static_cast<uint32_t>(sr);
+                    }
+                }
+
+                if (dl.contains("ort") && dl["ort"].is_object()) {
+                    auto ort = dl["ort"];
+                    if (ort.contains("modelPath") && ort["modelPath"].is_string()) {
+                        outConfig.delimiter.ort.modelPath = ort["modelPath"].get<std::string>();
+                    }
+                    if (ort.contains("provider") && ort["provider"].is_string()) {
+                        outConfig.delimiter.ort.provider =
+                            validateOrtProvider(ort["provider"].get<std::string>());
+                    }
+                    if (ort.contains("intraOpThreads") &&
+                        ort["intraOpThreads"].is_number_integer()) {
+                        int threads = ort["intraOpThreads"].get<int>();
+                        outConfig.delimiter.ort.intraOpThreads = std::max(0, threads);
+                    }
+                }
+            } catch (const std::exception& e) {
+                if (verbose) {
+                    LOG_WARN("Config: Invalid delimiter settings, using defaults: {}", e.what());
                 }
             }
         }

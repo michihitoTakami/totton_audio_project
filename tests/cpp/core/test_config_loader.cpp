@@ -662,3 +662,86 @@ TEST_F(ConfigLoaderTest, Issue219_LoadConfigWithMultiRateAndFilterPaths) {
     EXPECT_EQ(config.filterPath48kLinear, "a/path48kLinear.bin");
     EXPECT_EQ(config.coefficientDir, "multi/coefficients");
 }
+
+// ============================================================
+// Issue #1017: De-limiter inference backend config
+// ============================================================
+
+TEST_F(ConfigLoaderTest, DelimiterDefaults) {
+    AppConfig config;
+    EXPECT_FALSE(config.delimiter.enabled);
+    EXPECT_EQ(config.delimiter.backend, "bypass");
+    EXPECT_EQ(config.delimiter.expectedSampleRate, 44100u);
+    EXPECT_EQ(config.delimiter.ort.provider, "cpu");
+    EXPECT_EQ(config.delimiter.ort.modelPath, "");
+    EXPECT_EQ(config.delimiter.ort.intraOpThreads, 0);
+}
+
+TEST_F(ConfigLoaderTest, LoadDelimiterSection_OrtCuda) {
+    writeConfig(R"({
+        "delimiter": {
+            "enabled": true,
+            "backend": "ort",
+            "expectedSampleRate": 44100,
+            "ort": {
+                "modelPath": "models/delimiter.onnx",
+                "provider": "CUDA",
+                "intraOpThreads": 4
+            }
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+    EXPECT_TRUE(config.delimiter.enabled);
+    EXPECT_EQ(config.delimiter.backend, "ort");
+    EXPECT_EQ(config.delimiter.expectedSampleRate, 44100u);
+    EXPECT_EQ(config.delimiter.ort.modelPath, "models/delimiter.onnx");
+    EXPECT_EQ(config.delimiter.ort.provider, "cuda");
+    EXPECT_EQ(config.delimiter.ort.intraOpThreads, 4);
+}
+
+TEST_F(ConfigLoaderTest, LoadDelimiterSection_InvalidValuesFallback) {
+    writeConfig(R"({
+        "delimiter": {
+            "enabled": true,
+            "backend": "unknown_backend",
+            "expectedSampleRate": -1,
+            "ort": {
+                "provider": "trt",
+                "intraOpThreads": -5
+            }
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+    EXPECT_TRUE(config.delimiter.enabled);
+    // Unknown backend -> bypass
+    EXPECT_EQ(config.delimiter.backend, "bypass");
+    // Invalid expectedSampleRate -> keep default
+    EXPECT_EQ(config.delimiter.expectedSampleRate, 44100u);
+    // provider "trt" alias -> "tensorrt"
+    EXPECT_EQ(config.delimiter.ort.provider, "tensorrt");
+    // intraOpThreads clamped to >=0
+    EXPECT_EQ(config.delimiter.ort.intraOpThreads, 0);
+}
+
+TEST_F(ConfigLoaderTest, LoadDelimiterSection_WrongTypesKeepDefaults) {
+    writeConfig(R"({
+        "delimiter": {
+            "enabled": "not a bool",
+            "backend": 123,
+            "expectedSampleRate": "44100",
+            "ort": "not an object"
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+    EXPECT_FALSE(config.delimiter.enabled);
+    EXPECT_EQ(config.delimiter.backend, "bypass");
+    EXPECT_EQ(config.delimiter.expectedSampleRate, 44100u);
+    EXPECT_EQ(config.delimiter.ort.provider, "cpu");
+    EXPECT_EQ(config.delimiter.ort.modelPath, "");
+}

@@ -374,6 +374,20 @@ target_compile_options(fallback_manager PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# De-limiter inference backend abstraction (CPU-only, Issue #1017)
+add_library(delimiter_inference STATIC
+    src/delimiter/inference_backend.cpp
+)
+target_link_libraries(delimiter_inference PUBLIC
+    logging
+)
+target_include_directories(delimiter_inference PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_compile_options(delimiter_inference PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+)
+
 # EQ Support Library (CPU-only, Issue #107)
 # Consolidates EQ parsing, FIR generation, and config loading
 # No GPU dependencies - can be used independently of gpu_upsampler_core
@@ -466,6 +480,7 @@ add_executable(cpu_tests
     tests/cpp/audio/test_eq_parser.cpp
     tests/cpp/audio/test_eq_to_fir.cpp
     tests/cpp/core/test_config_loader.cpp
+    tests/cpp/delimiter/test_inference_backend.cpp
     tests/cpp/e2e/test_partition_plan.cpp
     tests/cpp/audio/test_phase_alignment.cpp
     tests/cpp/audio/test_playback_buffer_threshold.cpp
@@ -493,6 +508,7 @@ target_link_libraries(cpu_tests
     logging
     filter_headroom
     fallback_manager
+    delimiter_inference
     soft_mute
     dac_capability
 )
