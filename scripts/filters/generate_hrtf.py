@@ -59,8 +59,11 @@ N_TAPS = 16_384
 TRIM_THRESHOLD_DB = -80.0
 TRIM_PADDING = 512  # 打ち切り位置からの余白
 # 追加の高域緩和（全チャネル共通、緩やかなロールオフ）
-GLOBAL_HF_CUTOFF_HZ = 24_000.0
-GLOBAL_HF_MIN_GAIN_DB = -3.0
+#
+# Note: 王道クロスフィード方針では「直達成分は完全にドライ」を守るため、
+# デフォルトでは無効（0）とし、必要時のみCLIで有効化する。
+GLOBAL_HF_CUTOFF_HZ = 0.0
+GLOBAL_HF_MIN_GAIN_DB = 0.0
 GLOBAL_HF_SLOPE = 6.0
 # Note: HUTUBS uses 0-360° azimuth convention, so -30° is represented as 330°
 TARGET_AZIMUTH_LEFT = 330.0  # 左スピーカー方位角 (-30° in HUTUBS coordinate)
@@ -82,14 +85,23 @@ RATE_CONFIGS = {
     "48k": {"input_rate": 48000, "output_rate": 768000, "ratio": 16},
 }
 
-# 聴感調整用定数
-IPSILATERAL_DIRECT_BLEND = 0.45  # 0=完全にドライ, 1=完全に計測HRTF
+# 聴感調整用定数（王道クロスフィード）
+#
+# 方針:
+# - 直達（ipsilateral）は完全にドライ（LL/RRはデルタ）
+# - クロス（contralateral）のみを「少量」「低域中心」で加える
+#   -> 高域の干渉/コム感を抑え、ヘッドホンの音質（解像感）を壊しにくくする
 CONTRALATERAL_TAIL_START_MS = 0.8
 CONTRALATERAL_TAIL_DECAY_MS = 5.5
-CONTRALATERAL_HF_CUTOFF_HZ = 10_000.0
-CONTRALATERAL_HF_MIN_GAIN_DB = -6.0
-CONTRALATERAL_HF_SLOPE = 2.4
-DC_HEADROOM_DB = 0.5  # 左右耳のDCゲイン上限に与えるヘッドルーム
+# クロス成分のローパス（frequency-domain shaping）
+CROSSFEED_HF_CUTOFF_HZ = 1500.0
+CROSSFEED_HF_MIN_GAIN_DB = -60.0
+CROSSFEED_HF_SLOPE = 6.0
+# クロス成分の強さ（直達=1.0に対する低域ゲイン; DC近傍）
+#
+# Note: HRIR/フィルタ長の違いで「ピーク」で揃えるとDCゲインが暴れて低域が過剰になりやすい。
+# 王道クロスフィードでは低域成分の量が重要なので、DCゲインで揃える。
+CROSSFEED_TARGET_DC_GAIN_DB = -18.0
 
 # デフォルトパス
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -123,6 +135,13 @@ def blend_with_direct_path(hrir: np.ndarray, mix_ratio: float) -> np.ndarray:
     direct = np.zeros_like(hrir)
     direct[0] = 1.0
     return mix * hrir + (1.0 - mix) * direct
+
+
+def make_direct_impulse(length: int) -> np.ndarray:
+    impulse = np.zeros(length, dtype=np.float64)
+    if length > 0:
+        impulse[0] = 1.0
+    return impulse
 
 
 def apply_exponential_tail_taper(
@@ -334,6 +353,11 @@ def resample_hrir(hrir: np.ndarray, orig_rate: int, target_rate: int) -> np.ndar
     # scipy.signal.resample_polyを使用
     resampled = signal.resample_poly(hrir, up, down)
 
+    # Important: When converting an impulse response to a different sample rate, we need
+    # to scale the amplitude by the sampling interval ratio to preserve analog gain.
+    # (Otherwise DC gain tends to scale with the upsampling ratio and becomes unnaturally large.)
+    resampled = resampled * (float(orig_rate) / float(target_rate))
+
     return resampled
 
 
@@ -404,7 +428,6 @@ def generate_hrtf_filters(
 
     # 各チャンネルを処理（第1パス: リサンプリング・パディング）
     channels = {}
-    dc_gains = {}
     effective_lengths = {}
     for name, hrir in [
         ("ll", hrtf.ll),
@@ -414,55 +437,36 @@ def generate_hrtf_filters(
     ]:
         print(f"\nProcessing channel: {name.upper()}")
 
-        # リサンプリング
+        if name in ("ll", "rr"):
+            # 直達は完全にドライ（デルタ）
+            channels[name] = make_direct_impulse(n_taps)
+            effective_lengths[name] = 1
+            print("  Direct path: unity impulse (no coloration)")
+            continue
+
+        # クロス成分のみを生成
         resampled = resample_hrir(hrir, hrtf.sample_rate, output_rate)
         print(f"  Resampled length: {len(resampled)} samples")
 
-        shaped = resampled
-        apply_global_post_trim = True
-        if name in ("ll", "rr"):
-            # Note: If we apply the global HF tilt after blending, the dry (direct) component
-            # is also low-pass filtered. That can make the whole output sound "radio-like".
-            # Apply the global tilt to the measured HRIR BEFORE blending, so the dry path
-            # remains broadband.
-            if global_hf_cutoff_hz > 0.0 and global_hf_slope > 0.0:
-                shaped = apply_high_frequency_tilt(
-                    shaped,
-                    output_rate,
-                    global_hf_cutoff_hz,
-                    global_hf_min_gain_db,
-                    global_hf_slope,
-                )
-                print(
-                    "  Global HF tilt (pre-blend): "
-                    f"cutoff {global_hf_cutoff_hz:.0f} Hz, min {global_hf_min_gain_db} dB, "
-                    f"slope {global_hf_slope:.1f}"
-                )
-            shaped = blend_with_direct_path(shaped, IPSILATERAL_DIRECT_BLEND)
-            apply_global_post_trim = False
-            print(
-                f"  Ipsilateral blend: mix={IPSILATERAL_DIRECT_BLEND:.2f} "
-                "(1.0=raw HRTF, 0.0=dry)"
-            )
-        else:
-            shaped = apply_exponential_tail_taper(
-                shaped,
-                output_rate,
-                CONTRALATERAL_TAIL_START_MS,
-                CONTRALATERAL_TAIL_DECAY_MS,
-            )
-            shaped = apply_high_frequency_tilt(
-                shaped,
-                output_rate,
-                CONTRALATERAL_HF_CUTOFF_HZ,
-                CONTRALATERAL_HF_MIN_GAIN_DB,
-                CONTRALATERAL_HF_SLOPE,
-            )
-            print(
-                "  Contralateral shaping: tail taper start "
-                f"{CONTRALATERAL_TAIL_START_MS} ms / decay {CONTRALATERAL_TAIL_DECAY_MS} ms,"
-                f" HF tilt cutoff {CONTRALATERAL_HF_CUTOFF_HZ:.0f} Hz"
-            )
+        shaped = apply_exponential_tail_taper(
+            resampled,
+            output_rate,
+            CONTRALATERAL_TAIL_START_MS,
+            CONTRALATERAL_TAIL_DECAY_MS,
+        )
+
+        shaped = apply_high_frequency_tilt(
+            shaped,
+            output_rate,
+            CROSSFEED_HF_CUTOFF_HZ,
+            CROSSFEED_HF_MIN_GAIN_DB,
+            CROSSFEED_HF_SLOPE,
+        )
+        print(
+            "  Crossfeed shaping: tail taper start "
+            f"{CONTRALATERAL_TAIL_START_MS} ms / decay {CONTRALATERAL_TAIL_DECAY_MS} ms, "
+            f"lowpass cutoff {CROSSFEED_HF_CUTOFF_HZ:.0f} Hz"
+        )
 
         trimmed = trim_hrir(shaped, trim_threshold_db, trim_padding)
         if len(trimmed) != len(shaped):
@@ -471,11 +475,7 @@ def generate_hrtf_filters(
                 f"(threshold {trim_threshold_db} dB, pad {trim_padding})"
             )
 
-        if (
-            apply_global_post_trim
-            and global_hf_cutoff_hz > 0.0
-            and global_hf_slope > 0.0
-        ):
+        if global_hf_cutoff_hz > 0.0 and global_hf_slope > 0.0:
             trimmed = apply_high_frequency_tilt(
                 trimmed,
                 output_rate,
@@ -484,65 +484,40 @@ def generate_hrtf_filters(
                 global_hf_slope,
             )
             print(
-                "  Global HF tilt: "
+                "  Global HF tilt (crossfeed only): "
                 f"cutoff {global_hf_cutoff_hz:.0f} Hz, min {global_hf_min_gain_db} dB, "
                 f"slope {global_hf_slope:.1f}"
             )
 
         effective_lengths[name] = len(trimmed)
 
-        # ゼロパディングでターゲット長に拡張（位相保持）
         fir = pad_hrir_to_length(trimmed, n_taps)
+        channels[name] = fir
         print(f"  FIR length: {len(fir)} taps (effective {len(trimmed)})")
 
-        dc_gains[name] = np.sum(fir)
-        print(f"  DC gain (raw): {dc_gains[name]:.6f}")
-
-        channels[name] = fir
-
-    # ILD保持のため、全チャンネル共通スケールで正規化
-    # 最大DCゲイン（通常は同側: LL/RR）を基準に正規化
-    max_dc_gain = max(abs(g) for g in dc_gains.values())
-    print("\n=== DC Normalization (ILD-preserving) ===")
-    print(f"Max DC gain: {max_dc_gain:.6f}")
-
-    if max_dc_gain <= 1e-10:
-        raise ValueError(
-            f"Invalid HRTF data: max DC gain ({max_dc_gain:.2e}) is near zero. "
-            "This indicates corrupted or invalid SOFA data."
+    # クロス成分の強さを固定（ユーザーにwet/dryを考えさせない）
+    target_dc = float(10.0 ** (CROSSFEED_TARGET_DC_GAIN_DB / 20.0))
+    for name in ("lr", "rl"):
+        dc = float(np.sum(channels[name]))
+        if abs(dc) <= 1e-12:
+            raise ValueError(
+                f"Invalid crossfeed channel: {name} DC gain is near zero ({dc:.2e})"
+            )
+        scale = target_dc / dc
+        channels[name] *= scale
+        peak = float(np.max(np.abs(channels[name])))
+        print(
+            f"[Crossfeed gain] {name.upper()} DC {dc:.6f} -> {target_dc:.6f} "
+            f"({CROSSFEED_TARGET_DC_GAIN_DB} dB), scale={scale:.6f}, peak={peak:.6f}"
         )
 
-    for name in channels:
-        channels[name] = channels[name] / max_dc_gain
-        normalized_dc = np.sum(channels[name])
-        print(f"  {name.upper()}: {dc_gains[name]:.6f} → {normalized_dc:.6f}")
-
-    # 左右耳それぞれのDCゲイン（同側＋対側）を測定し、上限を超える場合は全体スケール
     left_dc = float(np.sum(channels["ll"]) + np.sum(channels["rl"]))
     right_dc = float(np.sum(channels["rr"]) + np.sum(channels["lr"]))
     ear_dc = {"left": left_dc, "right": right_dc}
-
-    headroom_linear = 10 ** (DC_HEADROOM_DB / 20.0)
-    max_allowed = 1.0 / headroom_linear
-    max_ear_dc = max(abs(left_dc), abs(right_dc))
-    if max_ear_dc > max_allowed + 1e-6:
-        scale = max_allowed / max_ear_dc
-        print(
-            f"\nEar DC clamp: max {max_ear_dc:.4f} > {max_allowed:.3f}, "
-            f"applying global scale {scale:.3f}"
-        )
-        for name in channels:
-            channels[name] *= scale
-        ear_dc = {ear: gain * scale for ear, gain in ear_dc.items()}
-        print(
-            f"  Post-clamp left/right DC: {ear_dc['left']:.4f} / {ear_dc['right']:.4f} "
-            f"(headroom {DC_HEADROOM_DB} dB)"
-        )
-    else:
-        print(
-            f"\nEar DC totals within headroom: left={ear_dc['left']:.4f}, "
-            f"right={ear_dc['right']:.4f}"
-        )
+    print(
+        f"\nEar DC totals (direct + crossfeed): left={ear_dc['left']:.4f}, "
+        f"right={ear_dc['right']:.4f}"
+    )
 
     # float32に変換
     for name in channels:
@@ -564,7 +539,7 @@ def generate_hrtf_filters(
 
     # メタデータ
     metadata = {
-        "description": f"HRTF FIR filter for head size {size} (phase-preserving)",
+        "description": f"Crossfeed FIR filter for head size {size} (direct-preserving)",
         "size_category": size,
         "subject_id": REPRESENTATIVE_SUBJECTS[size],
         "sample_rate": output_rate,
@@ -572,9 +547,9 @@ def generate_hrtf_filters(
         "n_taps": n_taps,
         "n_channels": 4,
         "channel_order": ["LL", "LR", "RL", "RR"],
-        "phase_type": "original",  # 位相保持（ITD/ILD維持）
-        "normalization": "ild_preserving",  # 共通スケール正規化（ILD保持）
-        "max_dc_gain": 1.0,  # 最大DCゲインチャンネル=1.0、他はILD分だけ小さい
+        "phase_type": "original",  # 位相保持（ITD維持）
+        "normalization": "direct_plus_crossfeed_v1",
+        "max_dc_gain": 1.0,
         "ear_dc_gain": ear_dc,
         "source_azimuth_left": -30.0,  # Logical value (HUTUBS uses 330°)
         "source_azimuth_right": TARGET_AZIMUTH_RIGHT,
@@ -585,13 +560,13 @@ def generate_hrtf_filters(
         "generated_at": datetime.now().isoformat(),
         "storage_format": "channel_major_v1",
         "shaping": {
-            "ipsilateral_direct_blend": IPSILATERAL_DIRECT_BLEND,
+            "direct_path": "unity_impulse",
             "contralateral_tail_start_ms": CONTRALATERAL_TAIL_START_MS,
             "contralateral_tail_decay_ms": CONTRALATERAL_TAIL_DECAY_MS,
-            "contralateral_highfreq_cutoff_hz": CONTRALATERAL_HF_CUTOFF_HZ,
-            "contralateral_highfreq_min_gain_db": CONTRALATERAL_HF_MIN_GAIN_DB,
-            "contralateral_highfreq_slope": CONTRALATERAL_HF_SLOPE,
-            "ear_dc_headroom_db": DC_HEADROOM_DB,
+            "crossfeed_target_dc_gain_db": CROSSFEED_TARGET_DC_GAIN_DB,
+            "crossfeed_lowpass_cutoff_hz": CROSSFEED_HF_CUTOFF_HZ,
+            "crossfeed_lowpass_min_gain_db": CROSSFEED_HF_MIN_GAIN_DB,
+            "crossfeed_lowpass_slope": CROSSFEED_HF_SLOPE,
             "trim_threshold_db": trim_threshold_db,
             "trim_padding": trim_padding,
             "global_highfreq_cutoff_hz": global_hf_cutoff_hz,
