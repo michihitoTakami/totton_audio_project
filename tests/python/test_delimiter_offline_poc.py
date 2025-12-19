@@ -20,6 +20,7 @@ def test_delimiter_offline_poc_bypass_smoke(
     input_wav = tmp_path / "input.wav"
     output_wav = tmp_path / "output.wav"
     report = tmp_path / "report.json"
+    debug_dir = tmp_path / "debug"
 
     duration_sec = 0.25
     t = (
@@ -44,6 +45,8 @@ def test_delimiter_offline_poc_bypass_smoke(
             "--overlap-sec",
             "0.25",
             "--resample-back",
+            "--debug-dir",
+            str(debug_dir),
             "--report",
             str(report),
         ],
@@ -61,6 +64,9 @@ def test_delimiter_offline_poc_bypass_smoke(
     assert report.exists()
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["meta"]["backend"] == "bypass"
+    assert payload["debug"] is not None
+    assert Path(payload["debug"]["waveform_png"]).exists()
+    assert Path(payload["debug"]["ab_wav"]).exists()
 
     assert "[input]" in result.stdout
     assert "[output]" in result.stdout

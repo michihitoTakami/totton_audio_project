@@ -118,6 +118,130 @@ def _overlap_add(
     return out[:total_len]
 
 
+def _write_debug_artifacts(
+    debug_dir: Path,
+    *,
+    input_audio: np.ndarray,
+    input_sr: int,
+    output_audio: np.ndarray,
+    output_sr: int,
+    ab_seconds: float,
+    ab_gap_sec: float,
+) -> dict[str, Any]:
+    """Write artifacts that help eyeball/hear the difference quickly.
+
+    Outputs:
+    - input.wav / output.wav (resampled to output_sr)
+    - ab.wav (input + silence + output)
+    - waveform.png (overview + zoom around peak + histogram)
+    """
+
+    import matplotlib.pyplot as plt
+
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
+    in_resampled = _resample(input_audio, sr_in=input_sr, sr_out=output_sr)
+    out_resampled = output_audio
+
+    # Limit A/B duration to keep files small and comparison quick.
+    limit_samples = (
+        int(round(max(0.0, ab_seconds) * output_sr)) if ab_seconds > 0 else None
+    )
+    if limit_samples is not None and limit_samples > 0:
+        in_ab = in_resampled[:limit_samples]
+        out_ab = out_resampled[:limit_samples]
+    else:
+        in_ab = in_resampled
+        out_ab = out_resampled
+
+    gap = np.zeros((int(round(max(0.0, ab_gap_sec) * output_sr)), 2), dtype=np.float32)
+    ab = np.concatenate([in_ab, gap, out_ab], axis=0)
+
+    input_path = debug_dir / "input.wav"
+    output_path = debug_dir / "output.wav"
+    ab_path = debug_dir / "ab.wav"
+    plot_path = debug_dir / "waveform.png"
+
+    sf.write(input_path, in_resampled, output_sr)
+    sf.write(output_path, out_resampled, output_sr)
+    sf.write(ab_path, ab, output_sr)
+
+    # Plot: overview + zoom around peak + histogram (abs)
+    in_left = in_resampled[:, 0]
+    out_left = out_resampled[:, 0]
+
+    peak_idx = int(np.argmax(np.abs(in_left))) if in_left.size else 0
+    zoom_half = int(round(0.02 * output_sr))  # 20ms window around peak
+    z0 = max(0, peak_idx - zoom_half)
+    z1 = min(len(in_left), peak_idx + zoom_half)
+    t_over = np.arange(len(in_left), dtype=np.float64) / output_sr
+    t_zoom = np.arange(z0, z1, dtype=np.float64) / output_sr
+
+    plt.figure(figsize=(14, 9))
+
+    ax1 = plt.subplot(3, 1, 1)
+    max_sec = (
+        min(float(ab_seconds), float(len(in_left) / output_sr))
+        if ab_seconds > 0
+        else float(len(in_left) / output_sr)
+    )
+    view_samples = int(round(max_sec * output_sr))
+    view_samples = max(1, min(view_samples, len(in_left)))
+    ax1.plot(
+        t_over[:view_samples],
+        in_left[:view_samples],
+        label="input",
+        alpha=0.8,
+        linewidth=0.9,
+    )
+    ax1.plot(
+        t_over[:view_samples],
+        out_left[:view_samples],
+        label="output",
+        alpha=0.8,
+        linewidth=0.9,
+    )
+    ax1.set_title("Waveform overview (Left channel)")
+    ax1.set_xlabel("Time [s]")
+    ax1.set_ylabel("Amplitude")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc="upper right")
+
+    ax2 = plt.subplot(3, 1, 2)
+    ax2.plot(t_zoom, in_left[z0:z1], label="input", alpha=0.8, linewidth=0.9)
+    ax2.plot(t_zoom, out_left[z0:z1], label="output", alpha=0.8, linewidth=0.9)
+    ax2.set_title("Zoom around input peak (±20ms)")
+    ax2.set_xlabel("Time [s]")
+    ax2.set_ylabel("Amplitude")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="upper right")
+
+    ax3 = plt.subplot(3, 1, 3)
+    bins = 200
+    ax3.hist(np.abs(in_left), bins=bins, range=(0.0, 1.2), alpha=0.6, label="|input|")
+    ax3.hist(np.abs(out_left), bins=bins, range=(0.0, 1.2), alpha=0.6, label="|output|")
+    ax3.set_title("Abs amplitude histogram (Left channel)")
+    ax3.set_xlabel("|Amplitude|")
+    ax3.set_ylabel("Count")
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=150)
+    plt.close()
+
+    return {
+        "debug_dir": str(debug_dir),
+        "input_wav": str(input_path),
+        "output_wav": str(output_path),
+        "ab_wav": str(ab_path),
+        "waveform_png": str(plot_path),
+        "ab_seconds": float(ab_seconds),
+        "ab_gap_sec": float(ab_gap_sec),
+        "output_sr": int(output_sr),
+    }
+
+
 def run_backend(
     backend: DelimiterBackend,
     audio_44100_stereo: np.ndarray,
@@ -252,6 +376,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Resample output back to original sample rate",
     )
+    p.add_argument(
+        "--debug-dir",
+        type=Path,
+        default=None,
+        help="If set, write A/B wav + waveform PNG for quick inspection",
+    )
+    p.add_argument(
+        "--ab-seconds",
+        type=float,
+        default=8.0,
+        help="Seconds to include in A/B output (0 to keep full length)",
+    )
+    p.add_argument(
+        "--ab-gap-sec",
+        type=float,
+        default=0.5,
+        help="Silence gap (seconds) inserted between A and B in ab.wav",
+    )
     p.add_argument("--report", type=Path, default=None, help="Write JSON report")
     return p.parse_args()
 
@@ -326,6 +468,20 @@ def main() -> None:
         else f"[perf] elapsed={dt:.3f}s"
     )
 
+    debug_info: dict[str, Any] | None = None
+    if args.debug_dir is not None:
+        debug_info = _write_debug_artifacts(
+            args.debug_dir,
+            input_audio=audio,
+            input_sr=int(sr),
+            output_audio=out_audio,
+            output_sr=int(out_sr),
+            ab_seconds=float(args.ab_seconds),
+            ab_gap_sec=float(args.ab_gap_sec),
+        )
+        print(f"[debug] waveform={debug_info['waveform_png']}")
+        print(f"[debug] ab={debug_info['ab_wav']}")
+
     if args.report:
         report = {
             "input": {
@@ -342,6 +498,7 @@ def main() -> None:
             },
             "perf": {"elapsed_sec": dt, "rtf": rtf},
             "meta": meta,
+            "debug": debug_info,
         }
         args.report.parent.mkdir(parents=True, exist_ok=True)
         with open(args.report, "w", encoding="utf-8") as f:
