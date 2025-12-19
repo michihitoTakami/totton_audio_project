@@ -167,6 +167,7 @@ target_compile_options(gpu_upsampler PRIVATE
 # ALSA Direct Output Daemon executable
 add_executable(gpu_upsampler_alsa
     src/alsa_daemon.cpp
+    src/daemon/app/app.cpp
     src/core/partition_runtime_utils.cpp
     src/daemon/app/process_resources.cpp
     src/daemon/audio/crossfeed_manager.cpp
