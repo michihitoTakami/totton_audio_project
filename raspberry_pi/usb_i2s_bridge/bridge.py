@@ -37,7 +37,9 @@ _CONFIG_OVERRIDES: dict[str, str] = {}
 
 
 def _load_config_overrides() -> dict[str, str]:
-    path = os.getenv("USB_I2S_CONFIG_PATH", "").strip()
+    path = os.getenv(
+        "USB_I2S_CONFIG_PATH", "/var/lib/usb-i2s-bridge/config.env"
+    ).strip()
     if not path:
         return {}
     cfg_path = Path(path)

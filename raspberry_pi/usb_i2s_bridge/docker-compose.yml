@@ -11,18 +11,14 @@ services:
       rtprio: 95
       memlock: -1
     # NOTE(#950): 60100/60101 の ZeroMQ 制御プレーンはデフォルト無効化。
-    # 必要なら USB_I2S_CONTROL_ENDPOINT を設定し、ports も適宜開けること。
+    # 必要なら config.env で USB_I2S_CONTROL_ENDPOINT を設定し、ports も適宜開けること。
     devices:
       - "/dev/snd:/dev/snd"
     group_add:
       - "audio"
     environment:
+      # 設定は /var/lib/usb-i2s-bridge/config.env に集約
       USB_I2S_CONFIG_PATH: /var/lib/usb-i2s-bridge/config.env
-      USB_I2S_STATUS_PATH: /var/run/usb-i2s-bridge/status.json
-      # Jetson Web(:80)へ状態を送る場合（任意）
-      USB_I2S_STATUS_REPORT_URL: ${USB_I2S_STATUS_REPORT_URL:-}
-      USB_I2S_STATUS_REPORT_TIMEOUT_MS: ${USB_I2S_STATUS_REPORT_TIMEOUT_MS:-300}
-      USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC: ${USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC:-1.0}
     restart: always
     logging:
       driver: "json-file"

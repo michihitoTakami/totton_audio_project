@@ -23,12 +23,8 @@ DEFAULT_STATUS_PATH = Path(
     os.getenv("RPI_CONTROL_STATUS_PATH", "/var/run/usb-i2s-bridge/status.json")
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = Path(
-    os.getenv(
-        "RPI_CONTROL_CONFIG_PATH",
-        str(_REPO_ROOT / "raspberry_pi" / "usb_i2s_bridge" / "usb-i2s-bridge.env"),
-    )
+    os.getenv("RPI_CONTROL_CONFIG_PATH", "/var/lib/usb-i2s-bridge/config.env")
 )
 DEFAULT_RESTART_MODE = os.getenv("RPI_CONTROL_RESTART_MODE", "docker").strip()
 DEFAULT_RESTART_CMD = os.getenv("RPI_CONTROL_RESTART_CMD", "").strip()

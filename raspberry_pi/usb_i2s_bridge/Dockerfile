@@ -23,21 +23,7 @@ RUN chmod +x /usr/local/bin/usb-i2s-bridge-entrypoint.sh
 ENV PYTHONPATH=/opt/usb-i2s-bridge:${PYTHONPATH}
 
 # Defaults (override via env / compose)
-ENV USB_I2S_CAPTURE_DEVICE=hw:3,0 \
-    USB_I2S_PLAYBACK_DEVICE=hw:2,0 \
-    USB_I2S_CHANNELS=2 \
-    USB_I2S_FALLBACK_RATE=48000 \
-    USB_I2S_PREFERRED_FORMAT=S32_LE \
-    USB_I2S_PASSTHROUGH=true \
-    USB_I2S_ALSA_BUFFER_TIME_US=200000 \
-    USB_I2S_ALSA_LATENCY_TIME_US=20000 \
-    USB_I2S_QUEUE_TIME_NS=100000000 \
-    USB_I2S_FADE_MS=80 \
-    USB_I2S_POLL_INTERVAL_SEC=1.0 \
-    USB_I2S_RESTART_BACKOFF_SEC=0.5 \
-    USB_I2S_KEEP_SILENCE=true \
-    USB_I2S_STATUS_PATH=/var/run/usb-i2s-bridge/status.json \
-    USB_I2S_CONFIG_PATH=/var/lib/usb-i2s-bridge/config.env
+ENV USB_I2S_CONFIG_PATH=/var/lib/usb-i2s-bridge/config.env
 
 ENTRYPOINT ["/usr/local/bin/usb-i2s-bridge-entrypoint.sh"]
 CMD []
