@@ -77,3 +77,6 @@ worktrees/
 # Exclude simulated files (~6MB each) - pattern: *_simulated.sofa
 data/crossfeed/raw/**/*_simulated.sofa
 .mypy_cache/
+
+# De-limiter weights (downloaded locally for PoC)
+data/delimiter/weight/
