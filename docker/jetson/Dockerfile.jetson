@@ -37,7 +37,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Audio runtime libraries
     libasound2 \
     alsa-utils \
-    libpipewire-0.3-0 \
     libsndfile1 \
     # GStreamer runtime for RTP受信
     gstreamer1.0-tools \
@@ -73,7 +72,7 @@ COPY data/EQ/ data/EQ/
 COPY data/crossfeed/ data/crossfeed/
 # Seed default config (copied to writable volume at runtime)
 RUN mkdir -p /opt/magicbox/config-default
-COPY docker/jetson/config.docker.json /opt/magicbox/config-default/config.json
+COPY config.json /opt/magicbox/config-default/config.json
 
 # Copy Python Control Plane
 COPY web/ web/

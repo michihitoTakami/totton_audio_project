@@ -19,6 +19,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
 DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
 RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
+PROFILE="${MAGICBOX_PROFILE:-base}"
 : "${MAGICBOX_ENABLE_RTP:=false}"
 : "${MAGICBOX_RTP_AUTOSTART:=false}"
 
@@ -128,6 +129,7 @@ prepare_config() {
     local backup_path="${CONFIG_FILE}.bak"
     local reset_flag
     reset_flag="$(echo "$RESET_CONFIG" | tr '[:upper:]' '[:lower:]')"
+    local apply_profile_on_seed=false
 
     # Helper: validate JSON file, returns 0 if valid JSON
     validate_json() {
@@ -146,6 +148,35 @@ prepare_config() {
         else
             rm -f "$merged_path" 2>/dev/null || true
             log_warn "Failed to merge defaults into config (keeping current config as-is)"
+        fi
+    }
+
+    apply_profile() {
+        if [[ "${PROFILE}" != "jetson" ]]; then
+            return 0
+        fi
+        log_info "Applying config profile: jetson"
+        local profiled_path="${CONFIG_FILE}.profile"
+        if jq '
+            .gain = 1.0
+            | .eqEnabled = false
+            | .eqProfilePath = ""
+            | .phaseType = "minimum"
+            | .filterPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin"
+            | .filterPath44kMin = "data/coefficients/filter_44k_16x_2m_min_phase.bin"
+            | .filterPath48kMin = "data/coefficients/filter_48k_16x_2m_min_phase.bin"
+            | .i2s.enabled = true
+            | .i2s.device = "hw:APE,0"
+            | .i2s.sampleRate = 0
+            | .i2s.channels = 2
+            | .i2s.format = "S32_LE"
+            | .i2s.periodFrames = 1024
+            | .loopback.enabled = false
+        ' "$CONFIG_FILE" > "$profiled_path" 2>/dev/null; then
+            mv -f "$profiled_path" "$CONFIG_FILE"
+        else
+            rm -f "$profiled_path" 2>/dev/null || true
+            log_warn "Failed to apply jetson profile (keeping current config as-is)"
         fi
     }
 
@@ -180,11 +211,13 @@ prepare_config() {
     if [[ "$reset_flag" == "true" || "$reset_flag" == "1" ]]; then
         log_warn "Reset requested via MAGICBOX_RESET_CONFIG, restoring default config"
         cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+        apply_profile_on_seed=true
     else
         # Seed if missing/empty
         if [[ ! -s "$CONFIG_FILE" ]]; then
             log_info "Config not found, seeding default config to $CONFIG_FILE"
             cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+            apply_profile_on_seed=true
         else
             # Validate existing JSON; if invalid, back up and restore defaults
             if validate_json "$CONFIG_FILE"; then
@@ -193,6 +226,7 @@ prepare_config() {
                 log_warn "Config is invalid JSON, backing up to $backup_path and restoring default"
                 cp -f "$CONFIG_FILE" "$backup_path" || true
                 cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
+                apply_profile_on_seed=true
             fi
         fi
     fi
@@ -200,6 +234,9 @@ prepare_config() {
     # Always merge newly introduced default keys (e.g., i2s) into existing config safely.
     if validate_json "$CONFIG_FILE"; then
         merge_defaults
+        if [[ "${apply_profile_on_seed}" == "true" ]]; then
+            apply_profile
+        fi
         normalize_inputs
     fi
 

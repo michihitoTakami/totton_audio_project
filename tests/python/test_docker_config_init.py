@@ -109,6 +109,50 @@ def test_config_init_prefers_i2s_when_both_enabled(tmp_path: Path) -> None:
     assert config_data["loopback"]["enabled"] is False
 
 
+def test_config_init_applies_jetson_profile(tmp_path: Path) -> None:
+    """Jetson profile should override input and filter defaults."""
+    default_file = tmp_path / "default" / "config.json"
+    default_file.parent.mkdir(parents=True)
+    default_file.write_text(
+        json.dumps(
+            {
+                "gain": 0.25,
+                "eqEnabled": True,
+                "eqProfilePath": "data/EQ/Sample_EQ.txt",
+                "filterPath": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
+                "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
+                "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
+                "i2s": {"enabled": False},
+                "loopback": {"enabled": True},
+            }
+        )
+    )
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True)
+
+    result = _run_entrypoint(
+        tmp_path,
+        {
+            "MAGICBOX_CONFIG_DIR": str(config_dir),
+            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
+            "MAGICBOX_PROFILE": "jetson",
+        },
+        "config-init",
+    )
+
+    assert result.returncode == 0, result.stderr
+    config_file = config_dir / "config.json"
+    config_data = json.loads(config_file.read_text())
+    assert config_data["gain"] == 1.0
+    assert config_data["eqEnabled"] is False
+    assert config_data["eqProfilePath"] == ""
+    assert config_data["filterPath"].endswith("_min_phase.bin")
+    assert config_data["i2s"]["enabled"] is True
+    assert config_data["loopback"]["enabled"] is False
+
+
 def test_config_init_resets_when_flag_true(tmp_path: Path) -> None:
     """Reset flag should overwrite with default config."""
     default_file = tmp_path / "default" / "config.json"

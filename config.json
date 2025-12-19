@@ -12,17 +12,17 @@
   "periodSize": 32768,
   "upsampleRatio": 16,
   "blockSize": 4096,
-  "gain": 0.285,
+  "gain": 1.0,
   "headroomTarget": 0.92,
   "phaseType": "minimum",
-  "filterPath": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
-  "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
-  "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
+  "filterPath": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
+  "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
+  "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_min_phase.bin",
   "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
   "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
   "_comment": "Filter paths: system preloads 44kHz/48kHz filters for both minimum and linear phase at startup.",
-  "eqEnabled": true,
-  "eqProfilePath": "data/EQ/Sample_EQ.txt",
+  "eqEnabled": false,
+  "eqProfilePath": "",
   "partitionedConvolution": {
     "enabled": true,
     "fastPartitionTaps": 32768,
@@ -52,11 +52,21 @@
     "consoleOutput": true,
     "coloredOutput": true
   },
-  "tcpInput": {
+  "i2s": {
     "enabled": true,
-    "bindAddress": "0.0.0.0",
-    "port": 46001,
-    "bufferSizeBytes": 262144
+    "device": "hw:APE,0",
+    "sampleRate": 0,
+    "channels": 2,
+    "format": "S32_LE",
+    "periodFrames": 1024
+  },
+  "loopback": {
+    "enabled": false,
+    "device": "hw:Loopback,1,0",
+    "sampleRate": 44100,
+    "channels": 2,
+    "format": "S16_LE",
+    "periodFrames": 1024
   },
   "statsFilePath": "/tmp/gpu_upsampler_stats.json"
 }

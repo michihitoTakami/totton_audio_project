@@ -43,7 +43,8 @@ ls -l build/gpu_upsampler_alsa
 
 ## 設定の永続化と初期化（Jetson magicbox）
 - `magicbox-config` ボリューム(`/opt/magicbox/config`)に `config.json` を保存し、コンテナ再ビルドでも設定が維持されます。
-- 初回またはリセット時は `docker/jetson/config.docker.json` の安全な初期値をコピーします（本体イメージ内の `config-default` からシード）。
+- 初回またはリセット時は `config.json` の安全な初期値をコピーします（本体イメージ内の `config-default` からシード）。
+- Jetson 固有の設定（I2S 有効化など）は `MAGICBOX_PROFILE=jetson` で上書きされます。
 - 設定を工場出荷状態に戻したい場合は `MAGICBOX_RESET_CONFIG=true docker compose -f jetson/docker-compose.jetson.yml up -d` を実行してください。
 - JSONが壊れている場合は自動的にデフォルトへ復旧し、壊れたファイルは `config.json.bak` にバックアップします。
 - ボリュームを削除して完全初期化する場合: `docker volume rm $(docker volume ls -q | grep magicbox-config)`（再作成時にデフォルトが再配置されます）。
