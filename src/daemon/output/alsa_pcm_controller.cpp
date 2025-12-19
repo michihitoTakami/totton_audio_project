@@ -129,6 +129,11 @@ bool AlsaPcmController::openForDevice(const std::string& device, int forcedSampl
         snd_pcm_close(pcm);
         return false;
     }
+    if (rate != static_cast<unsigned int>(configuredRate)) {
+        LOG_ERROR("[ALSA] Requested sample rate {} not supported (got {})", configuredRate, rate);
+        snd_pcm_close(pcm);
+        return false;
+    }
 
     if ((err = snd_pcm_hw_params_set_channels(pcm, hwParams, channels_)) < 0) {
         LOG_ERROR("[ALSA] Cannot set channel count: {}", snd_strerror(err));
@@ -138,14 +143,26 @@ bool AlsaPcmController::openForDevice(const std::string& device, int forcedSampl
 
     auto bufferSize = static_cast<snd_pcm_uframes_t>(deps_.config->bufferSize);
     auto periodSize = static_cast<snd_pcm_uframes_t>(deps_.config->periodSize);
-    snd_pcm_hw_params_set_buffer_size_near(pcm, hwParams, &bufferSize);
-    snd_pcm_hw_params_set_period_size_near(pcm, hwParams, &periodSize, nullptr);
+    if ((err = snd_pcm_hw_params_set_period_size_near(pcm, hwParams, &periodSize, nullptr)) < 0) {
+        LOG_ERROR("[ALSA] Cannot set period size: {}", snd_strerror(err));
+        snd_pcm_close(pcm);
+        return false;
+    }
+    bufferSize = std::max<snd_pcm_uframes_t>(bufferSize, periodSize * 2);
+    if ((err = snd_pcm_hw_params_set_buffer_size_near(pcm, hwParams, &bufferSize)) < 0) {
+        LOG_ERROR("[ALSA] Cannot set buffer size: {}", snd_strerror(err));
+        snd_pcm_close(pcm);
+        return false;
+    }
 
     if ((err = snd_pcm_hw_params(pcm, hwParams)) < 0) {
         LOG_ERROR("[ALSA] Cannot set hardware parameters: {}", snd_strerror(err));
         snd_pcm_close(pcm);
         return false;
     }
+
+    snd_pcm_hw_params_get_period_size(hwParams, &periodSize, nullptr);
+    snd_pcm_hw_params_get_buffer_size(hwParams, &bufferSize);
 
     if ((err = snd_pcm_prepare(pcm)) < 0) {
         LOG_ERROR("[ALSA] Cannot prepare device: {}", snd_strerror(err));

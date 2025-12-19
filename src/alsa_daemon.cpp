@@ -1103,7 +1103,7 @@ static bool validate_i2s_config(const AppConfig& cfg) {
 
 static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_format_t format,
                                         unsigned int rate, unsigned int channels,
-                                        snd_pcm_uframes_t period_frames) {
+                                        snd_pcm_uframes_t& period_frames) {
     snd_pcm_t* handle = nullptr;
     // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
     int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
@@ -1136,17 +1136,35 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
         snd_pcm_close(handle);
         return nullptr;
     }
+    if (rate_near != rate) {
+        LOG_ERROR("[Loopback] Requested rate {} not supported (got {})", rate, rate_near);
+        snd_pcm_close(handle);
+        return nullptr;
+    }
 
     snd_pcm_uframes_t buffer_frames =
         static_cast<snd_pcm_uframes_t>(std::max<uint32_t>(period_frames * 4, period_frames));
-    snd_pcm_hw_params_set_period_size_near(handle, hw_params, &period_frames, nullptr);
-    snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames);
+    if ((err = snd_pcm_hw_params_set_period_size_near(handle, hw_params, &period_frames, nullptr)) <
+        0) {
+        LOG_ERROR("[Loopback] Cannot set period size: {}", snd_strerror(err));
+        snd_pcm_close(handle);
+        return nullptr;
+    }
+    buffer_frames = std::max<snd_pcm_uframes_t>(buffer_frames, period_frames * 2);
+    if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) < 0) {
+        LOG_ERROR("[Loopback] Cannot set buffer size: {}", snd_strerror(err));
+        snd_pcm_close(handle);
+        return nullptr;
+    }
 
     if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
         LOG_ERROR("[Loopback] Cannot apply hardware parameters: {}", snd_strerror(err));
         snd_pcm_close(handle);
         return nullptr;
     }
+
+    snd_pcm_hw_params_get_period_size(hw_params, &period_frames, nullptr);
+    snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_frames);
 
     if ((err = snd_pcm_prepare(handle)) < 0) {
         LOG_ERROR("[Loopback] Cannot prepare capture device: {}", snd_strerror(err));
@@ -1157,99 +1175,137 @@ static snd_pcm_t* open_loopback_capture(const std::string& device, snd_pcm_forma
     // Ensure non-blocking is effective even if driver flips it.
     snd_pcm_nonblock(handle, 1);
 
-    LOG_INFO("[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames)", device,
-             rate_near, channels, period_frames);
+    LOG_INFO("[Loopback] Capture device {} configured ({} Hz, {} ch, period {} frames, buffer {} "
+             "frames)",
+             device, rate_near, channels, period_frames, buffer_frames);
     return handle;
 }
 
 static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t format,
                                    unsigned int requested_rate, unsigned int channels,
-                                   snd_pcm_uframes_t period_frames, unsigned int& actual_rate) {
-    // For I2S in external-clock/slave scenarios, forcing a sample rate can be harmful.
-    // When requested_rate == 0, we intentionally skip snd_pcm_hw_params_set_rate_near()
-    // and rely on the driver + external clocking, then best-effort query the actual rate.
-    unsigned int fallback_rate = requested_rate;
-    if (fallback_rate == 0) {
-        int current = g_state.rates.inputSampleRate;
-        fallback_rate = (current == 44100 || current == 48000)
-                            ? static_cast<unsigned int>(current)
-                            : static_cast<unsigned int>(DEFAULT_INPUT_SAMPLE_RATE);
-    }
-    actual_rate = fallback_rate;
-    snd_pcm_t* handle = nullptr;
-    // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
-    int err = snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
-    if (err < 0) {
-        LOG_ERROR("[I2S] Cannot open capture device {}: {}", device, snd_strerror(err));
-        return nullptr;
-    }
+                                   snd_pcm_uframes_t& period_frames, unsigned int& actual_rate) {
+    const snd_pcm_uframes_t requested_period = period_frames;
+    actual_rate = 0;
 
-    snd_pcm_hw_params_t* hw_params;
-    snd_pcm_hw_params_alloca(&hw_params);
-    snd_pcm_hw_params_any(handle, hw_params);
+    auto try_open = [&](unsigned int candidate_rate) -> snd_pcm_t* {
+        const bool auto_rate = candidate_rate == 0;
+        const std::string rate_label = auto_rate ? "auto" : std::to_string(candidate_rate);
+        snd_pcm_uframes_t local_period = requested_period;
+        snd_pcm_t* handle = nullptr;
 
-    if ((err = snd_pcm_hw_params_set_access(handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
-            0 ||
-        (err = snd_pcm_hw_params_set_format(handle, hw_params, format)) < 0) {
-        LOG_ERROR("[I2S] Cannot set access/format: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
+        // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
+        int err =
+            snd_pcm_open(&handle, device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
+        if (err < 0) {
+            LOG_ERROR("[I2S] Cannot open capture device {}: {}", device, snd_strerror(err));
+            return nullptr;
+        }
 
-    if ((err = snd_pcm_hw_params_set_channels(handle, hw_params, channels)) < 0) {
-        LOG_ERROR("[I2S] Cannot set channels {}: {}", channels, snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
+        snd_pcm_hw_params_t* hw_params;
+        snd_pcm_hw_params_alloca(&hw_params);
+        snd_pcm_hw_params_any(handle, hw_params);
 
-    unsigned int rate_near = requested_rate;
-    if (rate_near > 0) {
-        if ((err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate_near, nullptr)) < 0) {
-            LOG_ERROR("[I2S] Cannot set rate {}: {}", requested_rate, snd_strerror(err));
+        if ((err = snd_pcm_hw_params_set_access(handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
+                0 ||
+            (err = snd_pcm_hw_params_set_format(handle, hw_params, format)) < 0) {
+            LOG_ERROR("[I2S] Cannot set access/format: {}", snd_strerror(err));
             snd_pcm_close(handle);
             return nullptr;
         }
-    }
 
-    snd_pcm_uframes_t buffer_frames =
-        static_cast<snd_pcm_uframes_t>(std::max<uint32_t>(period_frames * 4, period_frames));
-    snd_pcm_hw_params_set_period_size_near(handle, hw_params, &period_frames, nullptr);
-    snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames);
+        if ((err = snd_pcm_hw_params_set_channels(handle, hw_params, channels)) < 0) {
+            LOG_ERROR("[I2S] Cannot set channels {}: {}", channels, snd_strerror(err));
+            snd_pcm_close(handle);
+            return nullptr;
+        }
 
-    if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
-        LOG_ERROR("[I2S] Cannot apply hardware parameters: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
+        unsigned int rate_near = candidate_rate;
+        if (!auto_rate) {
+            if ((err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate_near, nullptr)) <
+                0) {
+                LOG_ERROR("[I2S] Cannot set rate {}: {}", candidate_rate, snd_strerror(err));
+                snd_pcm_close(handle);
+                return nullptr;
+            }
+            if (rate_near != candidate_rate) {
+                LOG_ERROR("[I2S] Requested rate {} not supported (got {})", candidate_rate,
+                          rate_near);
+                snd_pcm_close(handle);
+                return nullptr;
+            }
+        }
 
-    // Query actual rate after applying hw_params (best-effort).
-    unsigned int got_rate = 0;
-    int dir = 0;
-    if ((err = snd_pcm_hw_params_get_rate(hw_params, &got_rate, &dir)) >= 0 && got_rate > 0) {
-        actual_rate = got_rate;
-    } else {
-        actual_rate = (rate_near > 0) ? rate_near : fallback_rate;
-    }
+        snd_pcm_uframes_t buffer_frames =
+            static_cast<snd_pcm_uframes_t>(std::max<uint32_t>(local_period * 4, local_period));
+        if ((err = snd_pcm_hw_params_set_period_size_near(handle, hw_params, &local_period,
+                                                          nullptr)) < 0) {
+            LOG_ERROR("[I2S] Cannot set period size: {}", snd_strerror(err));
+            snd_pcm_close(handle);
+            return nullptr;
+        }
+        buffer_frames = std::max<snd_pcm_uframes_t>(buffer_frames, local_period * 2);
+        if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) <
+            0) {
+            LOG_ERROR("[I2S] Cannot set buffer size: {}", snd_strerror(err));
+            snd_pcm_close(handle);
+            return nullptr;
+        }
 
-    if ((err = snd_pcm_prepare(handle)) < 0) {
-        LOG_ERROR("[I2S] Cannot prepare capture device: {}", snd_strerror(err));
-        snd_pcm_close(handle);
-        return nullptr;
-    }
+        if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
+            LOG_ERROR("[I2S] Cannot apply hardware parameters (rate {}, ch {}, fmt {}, "
+                      "period {} frames, buffer {} frames): {}",
+                      rate_label, channels, snd_pcm_format_name(format), local_period,
+                      buffer_frames, snd_strerror(err));
+            snd_pcm_close(handle);
+            return nullptr;
+        }
 
-    // Ensure non-blocking is effective even if driver flips it.
-    snd_pcm_nonblock(handle, 1);
+        snd_pcm_hw_params_get_period_size(hw_params, &local_period, nullptr);
+        snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_frames);
+        unsigned int effective_rate = candidate_rate;
+        snd_pcm_hw_params_get_rate(hw_params, &effective_rate, nullptr);
+        if (!auto_rate && effective_rate != candidate_rate) {
+            LOG_ERROR("[I2S] Negotiated rate {} differs from requested {}", effective_rate,
+                      candidate_rate);
+            snd_pcm_close(handle);
+            return nullptr;
+        }
 
+        if ((err = snd_pcm_prepare(handle)) < 0) {
+            LOG_ERROR("[I2S] Cannot prepare capture device: {}", snd_strerror(err));
+            snd_pcm_close(handle);
+            return nullptr;
+        }
+
+        // Ensure non-blocking is effective even if driver flips it.
+        snd_pcm_nonblock(handle, 1);
+
+        period_frames = local_period;
+        actual_rate = effective_rate;
+
+        LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames, "
+                 "buffer {} frames)",
+                 device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
+                 buffer_frames);
+
+        return handle;
+    };
+
+    std::vector<unsigned int> rate_candidates;
     if (requested_rate == 0) {
-        LOG_INFO(
-            "[I2S] Capture device {} configured ({} Hz detected, {} ch, fmt={}, period {} frames; "
-            "rate=auto)",
-            device, actual_rate, channels, snd_pcm_format_name(format), period_frames);
+        rate_candidates = {0u, 44100u, 48000u};
     } else {
-        LOG_INFO("[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames)",
-                 device, actual_rate, channels, snd_pcm_format_name(format), period_frames);
+        rate_candidates = {requested_rate};
     }
-    return handle;
+
+    for (unsigned int candidate : rate_candidates) {
+        snd_pcm_t* handle = try_open(candidate);
+        if (handle) {
+            return handle;
+        }
+    }
+
+    return nullptr;
 }
 
 static bool convert_pcm_to_float(const void* src, snd_pcm_format_t format, size_t frames,
@@ -1316,24 +1372,19 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
         return;
     }
 
+    const snd_pcm_uframes_t configured_period_frames = period_frames;
     std::vector<int16_t> buffer16;
     std::vector<int32_t> buffer32;
     std::vector<uint8_t> buffer24;
-    if (format == SND_PCM_FORMAT_S16_LE) {
-        buffer16.resize(period_frames * channels);
-    } else if (format == SND_PCM_FORMAT_S32_LE) {
-        buffer32.resize(period_frames * channels);
-    } else if (format == SND_PCM_FORMAT_S24_3LE) {
-        buffer24.resize(static_cast<size_t>(period_frames) * channels * 3);
-    }
     std::vector<float> floatBuffer;
 
     g_state.i2s.captureRunning.store(true, std::memory_order_release);
 
     while (g_state.flags.running.load(std::memory_order_acquire)) {
+        snd_pcm_uframes_t negotiated_period = configured_period_frames;
         unsigned int actual_rate = requested_rate;
-        snd_pcm_t* handle =
-            open_i2s_capture(device, format, requested_rate, channels, period_frames, actual_rate);
+        snd_pcm_t* handle = open_i2s_capture(device, format, requested_rate, channels,
+                                             negotiated_period, actual_rate);
         {
             std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
             g_state.i2s.handle = handle;
@@ -1345,6 +1396,17 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
         }
+
+        auto resizeBuffers = [&](snd_pcm_uframes_t frames) {
+            if (format == SND_PCM_FORMAT_S16_LE) {
+                buffer16.assign(frames * channels, 0);
+            } else if (format == SND_PCM_FORMAT_S32_LE) {
+                buffer32.assign(frames * channels, 0);
+            } else if (format == SND_PCM_FORMAT_S24_3LE) {
+                buffer24.assign(static_cast<size_t>(frames) * channels * 3, 0);
+            }
+        };
+        resizeBuffers(negotiated_period);
 
         // If the hardware rate differs from current engine input rate, schedule follow-up.
         // (Actual reinit is handled in main loop; network-driven follow is #824.)
@@ -1378,7 +1440,7 @@ static void i2s_capture_thread(const std::string& device, snd_pcm_format_t forma
                 break;
             }
 
-            snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, period_frames);
+            snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, negotiated_period);
             if (frames == -EAGAIN) {
                 wait_for_capture_ready(handle);
                 continue;
@@ -1442,7 +1504,8 @@ static void loopback_capture_thread(const std::string& device, snd_pcm_format_t 
         return;
     }
 
-    snd_pcm_t* handle = open_loopback_capture(device, format, rate, channels, period_frames);
+    snd_pcm_uframes_t negotiated_period = period_frames;
+    snd_pcm_t* handle = open_loopback_capture(device, format, rate, channels, negotiated_period);
     {
         std::lock_guard<std::mutex> lock(g_state.loopback.handleMutex);
         g_state.loopback.handle = handle;
@@ -1458,14 +1521,18 @@ static void loopback_capture_thread(const std::string& device, snd_pcm_format_t 
     std::vector<int16_t> buffer16;
     std::vector<int32_t> buffer32;
     std::vector<uint8_t> buffer24;
-    if (format == SND_PCM_FORMAT_S16_LE) {
-        buffer16.resize(period_frames * channels);
-    } else if (format == SND_PCM_FORMAT_S32_LE) {
-        buffer32.resize(period_frames * channels);
-    } else if (format == SND_PCM_FORMAT_S24_3LE) {
-        buffer24.resize(static_cast<size_t>(period_frames) * channels * 3);
-    }
     std::vector<float> floatBuffer;
+
+    auto resizeBuffers = [&](snd_pcm_uframes_t frames) {
+        if (format == SND_PCM_FORMAT_S16_LE) {
+            buffer16.assign(frames * channels, 0);
+        } else if (format == SND_PCM_FORMAT_S32_LE) {
+            buffer32.assign(frames * channels, 0);
+        } else if (format == SND_PCM_FORMAT_S24_3LE) {
+            buffer24.assign(static_cast<size_t>(frames) * channels * 3, 0);
+        }
+    };
+    resizeBuffers(negotiated_period);
 
     while (g_state.flags.running.load(std::memory_order_acquire)) {
         // Apply backpressure before pulling more input.
@@ -1485,7 +1552,7 @@ static void loopback_capture_thread(const std::string& device, snd_pcm_format_t 
             break;
         }
 
-        snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, period_frames);
+        snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, negotiated_period);
         if (frames == -EAGAIN) {
             wait_for_capture_ready(handle);
             continue;
