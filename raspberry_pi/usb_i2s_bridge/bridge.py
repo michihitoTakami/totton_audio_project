@@ -33,6 +33,34 @@ from typing import IO, Optional, Tuple
 
 from .control_plane import ControlPlaneSync
 
+_CONFIG_OVERRIDES: dict[str, str] = {}
+
+
+def _load_config_overrides() -> dict[str, str]:
+    path = os.getenv("USB_I2S_CONFIG_PATH", "").strip()
+    if not path:
+        return {}
+    cfg_path = Path(path)
+    if not cfg_path.exists():
+        return {}
+    try:
+        text = cfg_path.read_text()
+    except OSError:
+        return {}
+    overrides: dict[str, str] = {}
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        overrides[key.strip()] = value.strip()
+    return overrides
+
+
+_CONFIG_OVERRIDES = _load_config_overrides()
+
 _DEFAULT_CAPTURE_DEVICE = "hw:2,0"  # USB Audio in (typical)
 _DEFAULT_PLAYBACK_DEVICE = "hw:0,0"  # I2S out (typical)
 _DEFAULT_CHANNELS = 2
@@ -151,7 +179,7 @@ class UsbI2sBridgeConfig:
 
 
 def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
+    raw = _CONFIG_OVERRIDES.get(name, os.getenv(name))
     if raw is None:
         return default
     try:
@@ -161,7 +189,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
+    raw = _CONFIG_OVERRIDES.get(name, os.getenv(name))
     if raw is None:
         return default
     try:
@@ -171,18 +199,18 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_str(name: str, default: str) -> str:
-    return os.getenv(name, default)
+    return _CONFIG_OVERRIDES.get(name, os.getenv(name, default))
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
+    raw = _CONFIG_OVERRIDES.get(name, os.getenv(name))
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_path(name: str, default: Path | None) -> Path | None:
-    raw = os.getenv(name)
+    raw = _CONFIG_OVERRIDES.get(name, os.getenv(name))
     if raw is None:
         return default
     raw = raw.strip()

@@ -30,8 +30,10 @@ DEFAULT_CONFIG_PATH = Path(
         str(_REPO_ROOT / "raspberry_pi" / "usb_i2s_bridge" / "usb-i2s-bridge.env"),
     )
 )
-DEFAULT_RESTART_CMD = os.getenv(
-    "RPI_CONTROL_RESTART_CMD", "systemctl restart usb-i2s-bridge.service"
+DEFAULT_RESTART_MODE = os.getenv("RPI_CONTROL_RESTART_MODE", "docker").strip()
+DEFAULT_RESTART_CMD = os.getenv("RPI_CONTROL_RESTART_CMD", "").strip()
+DEFAULT_DOCKER_CONTAINER = os.getenv(
+    "RPI_CONTROL_DOCKER_CONTAINER", "rpi-usb-i2s-bridge"
 ).strip()
 
 
@@ -274,7 +276,27 @@ def _load_status(path: Path) -> StatusResponse:
     )
 
 
-def _run_restart(command: str) -> dict[str, Any]:
+def _restart_via_docker(container: str) -> dict[str, Any]:
+    if not container:
+        raise HTTPException(status_code=400, detail="docker container is not set")
+    try:
+        import docker
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500, detail="docker SDK is not available"
+        ) from exc
+    try:
+        client = docker.from_env()
+        target = client.containers.get(container)
+        target.restart(timeout=20)
+        return {"mode": "docker", "container": container}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500, detail=f"docker restart failed: {exc}"
+        ) from exc
+
+
+def _restart_via_command(command: str) -> dict[str, Any]:
     if not command:
         raise HTTPException(status_code=400, detail="restart command is not configured")
     try:
@@ -293,17 +315,29 @@ def _run_restart(command: str) -> dict[str, Any]:
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="restart timed out") from exc
     return {
+        "mode": "command",
         "command": command,
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
     }
 
 
+def _run_restart(*, mode: str, command: str, container: str) -> dict[str, Any]:
+    mode = mode.strip().lower()
+    if mode == "docker":
+        return _restart_via_docker(container)
+    if mode == "command":
+        return _restart_via_command(command)
+    raise HTTPException(status_code=400, detail=f"unknown restart mode: {mode}")
+
+
 def create_app(
     *,
     config_path: Path = DEFAULT_CONFIG_PATH,
     status_path: Path = DEFAULT_STATUS_PATH,
+    restart_mode: str = DEFAULT_RESTART_MODE,
     restart_cmd: str = DEFAULT_RESTART_CMD,
+    docker_container: str = DEFAULT_DOCKER_CONTAINER,
 ) -> FastAPI:
     app = FastAPI(title="Pi Control API", version="1.0")
 
@@ -329,12 +363,23 @@ def create_app(
         merged = UsbI2sConfig(**data)
         _write_config(config_path, merged)
         if apply:
-            _run_restart(restart_cmd)
+            _run_restart(
+                mode=restart_mode,
+                command=restart_cmd,
+                container=docker_container,
+            )
         return merged
 
     @app.post("/raspi/api/v1/actions/restart")
     def restart_bridge() -> dict[str, Any]:
-        return {"status": "ok", "result": _run_restart(restart_cmd)}
+        return {
+            "status": "ok",
+            "result": _run_restart(
+                mode=restart_mode,
+                command=restart_cmd,
+                container=docker_container,
+            ),
+        }
 
     return app
 
@@ -363,9 +408,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="path to USB-I2S status json file",
     )
     parser.add_argument(
+        "--restart-mode",
+        default=DEFAULT_RESTART_MODE,
+        choices=["docker", "command"],
+        help="restart method (docker or command)",
+    )
+    parser.add_argument(
         "--restart-cmd",
         default=DEFAULT_RESTART_CMD,
-        help="command to restart the bridge",
+        help="command to restart the bridge (command mode only)",
+    )
+    parser.add_argument(
+        "--docker-container",
+        default=DEFAULT_DOCKER_CONTAINER,
+        help="docker container name for restart",
     )
     return parser.parse_args(argv)
 
@@ -378,7 +434,9 @@ def main(argv: list[str] | None = None) -> None:
     app_instance = create_app(
         config_path=args.config,
         status_path=args.status,
+        restart_mode=args.restart_mode,
         restart_cmd=args.restart_cmd,
+        docker_container=args.docker_container,
     )
     from uvicorn import run
 
