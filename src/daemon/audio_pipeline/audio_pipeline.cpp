@@ -114,6 +114,15 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     bool rightGenerated = false;
 
     if (useFallback) {
+        // NOTE:
+        // The fallback path is intended to keep audio continuity when GPU processing is not
+        // available/healthy. The previous implementation used zero-stuffing (placing original
+        // samples at i*ratio and leaving the rest as zeros), which produces strong imaging and can
+        // sound like "buzz/noise with a hint of music" at high upsample ratios.
+        //
+        // Replace it with a very cheap CPU linear interpolation upsampler. This is not equivalent
+        // to the high-quality FIR pipeline, but it is much less offensive than zero-stuffing and
+        // helps diagnosing whether symptoms are simply "fallback activated" vs. true corruption.
         if (!deps_.config) {
             return false;
         }
@@ -124,13 +133,44 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
                       outputLeft->capacity(), outputRight->capacity());
             return false;
         }
+
+        // Keep this visible but low-noise: fallback can persist for a long time on some systems.
+        LOG_EVERY_N(WARN, 50,
+                    "AudioPipeline: using CPU linear-interpolation fallback upsampling (ratio={})",
+                    ratio);
+
         outputLeft->assign(outputFrames, 0.0f);
         outputRight->assign(outputFrames, 0.0f);
-        for (size_t i = 0; i < frames; ++i) {
-            size_t index = i * ratio;
-            if (index < outputLeft->size()) {
-                (*outputLeft)[index] = workLeft_[i];
-                (*outputRight)[index] = workRight_[i];
+
+        // Degenerate cases: keep silence/hold sample.
+        if (ratio == 0 || outputFrames == 0) {
+            return false;
+        }
+        if (frames == 1) {
+            // Hold the single input sample.
+            std::fill(outputLeft->begin(), outputLeft->end(), workLeft_[0]);
+            std::fill(outputRight->begin(), outputRight->end(), workRight_[0]);
+        } else {
+            // For each input interval [i, i+1), generate `ratio` samples with linear interpolation.
+            for (size_t i = 0; i + 1 < frames; ++i) {
+                const float l0 = workLeft_[i];
+                const float l1 = workLeft_[i + 1];
+                const float r0 = workRight_[i];
+                const float r1 = workRight_[i + 1];
+                const size_t base = i * ratio;
+                for (size_t k = 0; k < ratio; ++k) {
+                    const float t = static_cast<float>(k) / static_cast<float>(ratio);
+                    (*outputLeft)[base + k] = l0 + (l1 - l0) * t;
+                    (*outputRight)[base + k] = r0 + (r1 - r0) * t;
+                }
+            }
+            // Tail: hold last sample for the final `ratio` outputs.
+            const float lastL = workLeft_[frames - 1];
+            const float lastR = workRight_[frames - 1];
+            const size_t tailBase = (frames - 1) * ratio;
+            for (size_t k = 0; k < ratio; ++k) {
+                (*outputLeft)[tailBase + k] = lastL;
+                (*outputRight)[tailBase + k] = lastR;
             }
         }
         leftGenerated = true;
