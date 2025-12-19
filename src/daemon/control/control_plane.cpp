@@ -283,11 +283,6 @@ std::string ControlPlane::handleStats(const daemon_ipc::ZmqRequest& request) {
 }
 
 std::string ControlPlane::handleCrossfeedEnable(const daemon_ipc::ZmqRequest& request) {
-    if (deps_.config && deps_.config->partitionedConvolution.enabled) {
-        return buildErrorResponse(request, "CROSSFEED_DISABLED",
-                                  "Crossfeed not available in low-latency mode");
-    }
-
     // Preflight: avoid starting fade if enable will fail.
     {
         std::lock_guard<std::mutex> cfLock(*deps_.crossfeed.mutex);

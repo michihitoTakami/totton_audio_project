@@ -63,12 +63,7 @@ ConvolutionEngine::RateFamily resolveRateFamily(int inputSampleRate) {
 CrossfeedInitResult initializeCrossfeed(daemon_app::RuntimeState& state,
                                         bool partitionedConvolutionEnabled) {
     CrossfeedInitResult result{};
-
-    if (partitionedConvolutionEnabled) {
-        std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)" << '\n';
-        result.skipped = true;
-        return result;
-    }
+    (void)partitionedConvolutionEnabled;
 
     std::string hrtfDir = "data/crossfeed/hrtf";
     if (!std::filesystem::exists(hrtfDir)) {
