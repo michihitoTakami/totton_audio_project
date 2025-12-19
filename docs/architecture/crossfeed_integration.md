@@ -21,7 +21,7 @@ EPIC #884 で掲げた既存畳み込みエンジンへの Crossfeed/HRTF 4ch FI
 - Crossfeed で生成される出力も `enqueueOutputFramesLocked` を通じて `PlaybackBufferManager::enqueue` されるため、バッファはアップサンプル出力と同一のキャパシティ管理ロジックを共有します。
 
 ## ON/OFF 切替と状態リセット
-1. `alsa_daemon.cpp` の `reset_crossfeed_stream_state_locked` はクロスフィードのストリーミングバッファ（蓄積量のみ）と `ConvolutionEngine::FourChannelFIR::resetStreaming()` をクリアし、切替時の残留データから生じる軋み音やバッファ膨張を防ぎます。
+1. `daemon/audio/crossfeed_manager.cpp` の `resetCrossfeedStreamStateLocked` はクロスフィードのストリーミングバッファ（蓄積量のみ）と `ConvolutionEngine::FourChannelFIR::resetStreaming()` をクリアし、切替時の残留データから生じる軋み音やバッファ膨張を防ぎます。
 2. `control_plane`（`src/daemon/control/control_plane.cpp`）では `deps_.crossfeed.enabledFlag`/`mutex` を介して `ConvolutionEngine::FourChannelFIR` へのアクセスを保護しており、`CROSSFEED_ENABLE/DISABLE` API は `resetStreamingState` を呼ぶことで状態を同期させます。
 3. Crossfeed を有効化するタイミングでは `StreamingCacheManager::onCrossfeedReset` を通じて playback buffer をリセットし、ソフトミュートと `softMute::Controller` が `renderOutput` 側で連動してポップ音を吸収します。
 4. 無効化後は `deps_.cfStreamInput*` の蓄積量をリセットして新しいアップサンプルブロックを待ち、次回有効化時にも `processStreamBlock` が新しいブロックから再スタートするよう整合性をとります。

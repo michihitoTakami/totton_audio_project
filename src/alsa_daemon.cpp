@@ -10,6 +10,7 @@
 #include "daemon/api/events.h"
 #include "daemon/app/process_resources.h"
 #include "daemon/app/runtime_state.h"
+#include "daemon/audio/crossfeed_manager.h"
 #include "daemon/audio/upsampler_builder.h"
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/audio_pipeline/filter_manager.h"
@@ -47,7 +48,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -454,26 +454,6 @@ static size_t get_playback_ready_threshold(size_t period_size) {
 
 // Fallback manager (Issue #139)
 
-// Resets crossfeed streaming buffers and GPU overlap state.
-// Caller must hold g_state.crossfeed.crossfeedMutex.
-static void reset_crossfeed_stream_state_locked() {
-    if (!g_state.crossfeed.cfStreamInputLeft.empty()) {
-        std::fill(g_state.crossfeed.cfStreamInputLeft.begin(),
-                  g_state.crossfeed.cfStreamInputLeft.end(), 0.0f);
-    }
-    if (!g_state.crossfeed.cfStreamInputRight.empty()) {
-        std::fill(g_state.crossfeed.cfStreamInputRight.begin(),
-                  g_state.crossfeed.cfStreamInputRight.end(), 0.0f);
-    }
-    g_state.crossfeed.cfStreamAccumulatedLeft = 0;
-    g_state.crossfeed.cfStreamAccumulatedRight = 0;
-    g_state.crossfeed.cfOutputLeft.clear();
-    g_state.crossfeed.cfOutputRight.clear();
-    if (g_state.crossfeed.processor) {
-        g_state.crossfeed.processor->resetStreaming();
-    }
-}
-
 // Crossfeed enable/disable safety (Issue #888)
 // - Avoid mixing pre/post switch audio by clearing playback + streaming caches.
 // - Do not touch SoftMute here; caller wraps this with a fade-out/in.
@@ -718,12 +698,7 @@ static void reset_runtime_state() {
     g_state.streaming.upsamplerOutputRight.clear();
 
     // Reset crossfeed streaming buffers
-    g_state.crossfeed.cfStreamInputLeft.clear();
-    g_state.crossfeed.cfStreamInputRight.clear();
-    g_state.crossfeed.cfStreamAccumulatedLeft = 0;
-    g_state.crossfeed.cfStreamAccumulatedRight = 0;
-    g_state.crossfeed.cfOutputBufferLeft.clear();
-    g_state.crossfeed.cfOutputBufferRight.clear();
+    daemon_audio::clearCrossfeedRuntimeBuffers(g_state.crossfeed);
 }
 
 static bool reinitialize_streaming_for_legacy_mode() {
@@ -891,25 +866,9 @@ static bool handle_rate_switch(int newInputRate) {
 
     if (g_state.crossfeed.processor) {
         std::lock_guard<std::mutex> cfLock(g_state.crossfeed.crossfeedMutex);
-        if (g_state.crossfeed.processor->switchRateFamily(targetFamily)) {
-            reset_crossfeed_stream_state_locked();
-            size_t cf_buffer_capacity = compute_stream_buffer_capacity(
-                g_state.crossfeed.processor->getStreamValidInputPerBlock());
-            g_state.crossfeed.cfStreamInputLeft.assign(cf_buffer_capacity, 0.0f);
-            g_state.crossfeed.cfStreamInputRight.assign(cf_buffer_capacity, 0.0f);
-            g_state.crossfeed.cfStreamAccumulatedLeft = 0;
-            g_state.crossfeed.cfStreamAccumulatedRight = 0;
-            g_state.crossfeed.cfOutputLeft.clear();
-            g_state.crossfeed.cfOutputRight.clear();
-            g_state.crossfeed.cfOutputBufferLeft.clear();
-            g_state.crossfeed.cfOutputBufferRight.clear();
-            size_t cf_output_capacity =
-                std::max(cf_buffer_capacity, g_state.crossfeed.processor->getValidOutputPerBlock());
-            g_state.crossfeed.cfOutputLeft.reserve(cf_output_capacity);
-            g_state.crossfeed.cfOutputRight.reserve(cf_output_capacity);
-            g_state.crossfeed.cfOutputBufferLeft.reserve(cf_output_capacity);
-            g_state.crossfeed.cfOutputBufferRight.reserve(cf_output_capacity);
-        } else {
+        auto status = daemon_audio::switchCrossfeedRateFamilyLocked(g_state.crossfeed,
+                                                                    g_state.config, targetFamily);
+        if (status == daemon_audio::CrossfeedSwitchStatus::Failed) {
             std::cerr << "[Rate] Warning: Failed to switch crossfeed HRTF rate family" << '\n';
         }
     }
@@ -1613,79 +1572,8 @@ int main(int argc, char* argv[]) {
         g_state.streaming.upsamplerOutputRight.reserve(upsampler_output_capacity);
         initialize_streaming_cache_manager();
 
-        if (!g_state.config.partitionedConvolution.enabled) {
-            // Initialize HRTF processor for crossfeed (optional feature)
-            // Crossfeed is disabled by default until enabled via ZeroMQ command
-            std::string hrtfDir = "data/crossfeed/hrtf";
-            if (std::filesystem::exists(hrtfDir)) {
-                std::cout << "Initializing HRTF processor for crossfeed..." << '\n';
-                g_state.crossfeed.processor = new ConvolutionEngine::FourChannelFIR();
-
-                // Determine rate family based on input sample rate
-                ConvolutionEngine::RateFamily rateFamily =
-                    ConvolutionEngine::detectRateFamily(g_state.rates.inputSampleRate);
-                if (rateFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
-                    rateFamily = ConvolutionEngine::RateFamily::RATE_44K;
-                }
-                ConvolutionEngine::HeadSize initialHeadSize =
-                    ConvolutionEngine::stringToHeadSize(g_state.config.crossfeed.headSize);
-
-                if (g_state.crossfeed.processor->initialize(hrtfDir, g_state.config.blockSize,
-                                                            initialHeadSize, rateFamily)) {
-                    if (g_state.crossfeed.processor->initializeStreaming()) {
-                        std::cout << "  HRTF processor ready (head size: "
-                                  << ConvolutionEngine::headSizeToString(initialHeadSize)
-                                  << ", rate family: "
-                                  << (rateFamily == ConvolutionEngine::RateFamily::RATE_44K ? "44k"
-                                                                                            : "48k")
-                                  << ")" << '\n';
-
-                        // Pre-allocate crossfeed streaming buffers
-                        size_t cf_buffer_capacity = compute_stream_buffer_capacity(
-                            g_state.crossfeed.processor->getStreamValidInputPerBlock());
-                        g_state.crossfeed.cfStreamInputLeft.resize(cf_buffer_capacity, 0.0f);
-                        g_state.crossfeed.cfStreamInputRight.resize(cf_buffer_capacity, 0.0f);
-                        g_state.crossfeed.cfStreamAccumulatedLeft = 0;
-                        g_state.crossfeed.cfStreamAccumulatedRight = 0;
-                        size_t cf_output_capacity =
-                            std::max(cf_buffer_capacity,
-                                     g_state.crossfeed.processor->getValidOutputPerBlock());
-                        g_state.crossfeed.cfOutputLeft.reserve(cf_output_capacity);
-                        g_state.crossfeed.cfOutputRight.reserve(cf_output_capacity);
-                        g_state.crossfeed.cfOutputBufferLeft.reserve(cf_output_capacity);
-                        g_state.crossfeed.cfOutputBufferRight.reserve(cf_output_capacity);
-                        std::cout << "  Crossfeed buffer capacity: " << cf_buffer_capacity
-                                  << " samples" << '\n';
-
-                        // Crossfeed is initialized but disabled by default
-                        g_state.crossfeed.enabled.store(false);
-                        g_state.crossfeed.processor->setEnabled(false);
-                        std::cout << "  Crossfeed: initialized (disabled by default)" << '\n';
-                    } else {
-                        std::cerr << "  HRTF: Failed to initialize streaming mode" << '\n';
-                        delete g_state.crossfeed.processor;
-                        g_state.crossfeed.processor = nullptr;
-                    }
-                } else {
-                    std::cerr << "  HRTF: Failed to initialize processor" << '\n';
-                    std::cerr << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
-                                 "generate HRTF "
-                                 "filters"
-                              << '\n';
-                    delete g_state.crossfeed.processor;
-                    g_state.crossfeed.processor = nullptr;
-                }
-            } else {
-                std::cout << "HRTF directory not found (" << hrtfDir
-                          << "), crossfeed feature disabled" << '\n';
-                std::cout << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
-                             "generate HRTF "
-                             "filters"
-                          << '\n';
-            }
-        } else {
-            std::cout << "[Partition] Crossfeed initialization skipped (low-latency mode)" << '\n';
-        }
+        (void)daemon_audio::initializeCrossfeed(g_state,
+                                                g_state.config.partitionedConvolution.enabled);
 
         std::cout << '\n';
 
@@ -2030,9 +1918,7 @@ int main(int argc, char* argv[]) {
         }
         delete g_state.softMute.controller;
         g_state.softMute.controller = nullptr;
-        delete g_state.crossfeed.processor;
-        g_state.crossfeed.processor = nullptr;
-        g_state.crossfeed.enabled.store(false);
+        daemon_audio::shutdownCrossfeed(g_state.crossfeed);
         if (g_state.audioPipeline) {
             g_state.audioPipeline.reset();  // Tear down pipeline before deleting GPU upsampler
             g_state.managers.audioPipelineRaw = nullptr;
