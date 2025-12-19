@@ -16,8 +16,8 @@
   "normalization": "direct_plus_crossfeed_v1",
   "max_dc_gain": 1.0,
   "ear_dc_gain": {
-    "left": 1.316227766016838,
-    "right": 1.316227766016838
+    "left": 1.2238721138568338,
+    "right": 1.223872113856834
   },
   "source_azimuth_left": -30.0,
   "source_azimuth_right": 30.0,
@@ -25,13 +25,13 @@
   "license": "CC BY 4.0",
   "attribution": "HUTUBS - Head-related Transfer Function Database, TU Berlin",
   "source": "https://depositonce.tu-berlin.de/items/dc2a3076-a291-417e-97f0-7697e332c960",
-  "generated_at": "2025-12-20T08:19:56.172851",
+  "generated_at": "2025-12-20T08:32:38.148649",
   "storage_format": "channel_major_v1",
   "shaping": {
     "direct_path": "unity_impulse",
     "contralateral_tail_start_ms": 0.8,
     "contralateral_tail_decay_ms": 5.5,
-    "crossfeed_target_dc_gain_db": -10.0,
+    "crossfeed_target_dc_gain_db": -13.0,
     "crossfeed_lowpass_cutoff_hz": 2500.0,
     "crossfeed_lowpass_min_gain_db": -18.0,
     "crossfeed_lowpass_slope": 2.0,
