@@ -119,21 +119,23 @@ async def list_eq_profiles():
     if EQ_PROFILES_DIR.exists():
         for f in EQ_PROFILES_DIR.iterdir():
             if f.is_file() and f.suffix == ".txt":
-                # Determine profile type by checking content
                 profile_type = "custom"
                 filter_count = 0
                 try:
                     content = f.read_text(encoding="utf-8")
-                    if "# OPRA:" in content:
-                        profile_type = "opra"
-                    # Count filter lines
+                except IOError:
+                    content = None
+
+                if content and "# OPRA:" in content:
+                    # Hide OPRA-generated profiles from the saved list (issue #983)
+                    continue
+
+                if content:
                     filter_count = sum(
                         1
                         for line in content.split("\n")
                         if line.strip().startswith("Filter ")
                     )
-                except IOError:
-                    pass
 
                 stat = f.stat()
                 profiles.append(
