@@ -286,16 +286,18 @@ static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc)
               << "s)..." << '\n';
     g_state.softMute.controller->startFadeOut();
 
-    // Wait briefly until mostly muted (or timeout) to avoid pops, but keep command responsive
+    // Wait until near-silent (or timeout) before switching to avoid audible glitches.
+    // NOTE: This runs on the command thread. Use a bounded timeout to avoid hanging the UI
+    // if the audio thread is not advancing (e.g., output not running).
     auto fade_start = std::chrono::steady_clock::now();
-    const auto quick_timeout = std::chrono::milliseconds(250);
+    const auto fade_timeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS);
     while (true) {
         SoftMute::MuteState st = g_state.softMute.controller->getState();
         float gain = g_state.softMute.controller->getCurrentGain();
-        if (st == SoftMute::MuteState::MUTED || gain < 0.05f) {
+        if (st == SoftMute::MuteState::MUTED || gain <= 0.001f) {
             break;
         }
-        if (std::chrono::steady_clock::now() - fade_start > quick_timeout) {
+        if (std::chrono::steady_clock::now() - fade_start > fade_timeout) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
