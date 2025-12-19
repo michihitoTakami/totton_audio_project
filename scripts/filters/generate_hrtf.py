@@ -93,10 +93,13 @@ RATE_CONFIGS = {
 #   -> 高域の干渉/コム感を抑え、ヘッドホンの音質（解像感）を壊しにくくする
 CONTRALATERAL_TAIL_START_MS = 0.8
 CONTRALATERAL_TAIL_DECAY_MS = 5.5
-# クロス成分のローパス（frequency-domain shaping）
-CROSSFEED_HF_CUTOFF_HZ = 1500.0
-CROSSFEED_HF_MIN_GAIN_DB = -60.0
-CROSSFEED_HF_SLOPE = 6.0
+# クロス成分の高域ロールオフ（frequency-domain shaping）
+#
+# Note: 急峻なlowpassだと「HUTUBS由来のスペクトル形状（ピンナ等）」がほぼ消えてしまうため、
+# 高域は完全には切らず、シェルフ的に“薄く残す”設定にする。
+CROSSFEED_HF_CUTOFF_HZ = 2500.0
+CROSSFEED_HF_MIN_GAIN_DB = -18.0
+CROSSFEED_HF_SLOPE = 2.0
 # クロス成分の強さ（直達=1.0に対する低域ゲイン; DC近傍）
 #
 # Note: HRIR/フィルタ長の違いで「ピーク」で揃えるとDCゲインが暴れて低域が過剰になりやすい。
