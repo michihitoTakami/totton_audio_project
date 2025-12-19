@@ -4,6 +4,7 @@
 #include "audio/eq_parser.h"
 #include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
+#include "core/daemon_constants.h"
 #include "daemon/api/events.h"
 #include "logging/logger.h"
 
@@ -97,10 +98,23 @@ bool applySoftMuteForCrossfeedSwitch(ControlPlaneDependencies& deps,
         return switchFunc();
     }
 
+    // Crossfeed enable/disable clears playback buffers to avoid mixing pre/post switch audio.
+    // Use the filter-switch fade duration to hide discontinuities while the new path warms up.
+    using namespace DaemonConstants;
+    mute->setFadeDuration(FILTER_SWITCH_FADE_MS);
+    if (deps.currentOutputRate) {
+        int sr = deps.currentOutputRate->load(std::memory_order_relaxed);
+        if (sr > 0) {
+            mute->setSampleRate(sr);
+        }
+    }
+
     mute->startFadeOut();
 
     auto fadeStart = std::chrono::steady_clock::now();
-    const auto quickTimeout = std::chrono::milliseconds(250);
+    // Wait until mostly muted to avoid clicks when playback buffers are cleared.
+    // Keep within IPC timeouts; we only block for fade-out (fade-in continues asynchronously).
+    const auto quickTimeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_MS + 200);
     while (true) {
         SoftMute::MuteState st = mute->getState();
         float gain = mute->getCurrentGain();
@@ -118,6 +132,8 @@ bool applySoftMuteForCrossfeedSwitch(ControlPlaneDependencies& deps,
         mute->startFadeIn();
     } else {
         mute->setPlaying();
+        // Restore a sane default quickly on failure (audio thread also clamps this when PLAYING).
+        mute->setFadeDuration(DEFAULT_SOFT_MUTE_FADE_MS);
     }
     return ok;
 }

@@ -18,7 +18,8 @@ from pydantic import (
 # ============================================================================
 
 # HeadSize type for crossfeed settings (validated by Pydantic)
-HeadSize = Literal["s", "m", "l", "xl"]
+# Note: C++ side supports 5 sizes (xs/s/m/l/xl) and the UI exposes them.
+HeadSize = Literal["xs", "s", "m", "l", "xl"]
 
 # Common constrained types
 SessionId = constr(

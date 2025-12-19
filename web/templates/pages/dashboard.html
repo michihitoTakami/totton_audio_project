@@ -333,8 +333,14 @@ function dashboardData() {
                 const response = await fetch('/crossfeed/status');
                 if (!response.ok) throw new Error('Failed to fetch crossfeed status');
                 const data = await response.json();
-                this.crossfeed.enabled = data.enabled || false;
-                this.crossfeed.headSize = data.head_size || 'm';
+                const enabled = Boolean(data.enabled);
+                this.crossfeed.enabled = enabled;
+                // Keep status card in sync (it does not read config.json)
+                this.status.crossfeed_enabled = enabled;
+
+                const headSize = data.headSize ?? data.head_size ?? 'm';
+                this.crossfeed.headSize =
+                    typeof headSize === 'string' ? headSize.toLowerCase() : 'm';
             } catch (error) {
                 console.error('Failed to fetch crossfeed status:', error);
             }
