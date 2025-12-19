@@ -119,6 +119,16 @@ Pi 側に軽量の FastAPI を常駐させ、Jetson から USB 経由で制御�
 - `raspi-control-api` が同ファイルを更新し、Docker 経由で `usb-i2s-bridge` コンテナを再起動します。
 - 初回起動時は `raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env` を seed としてコピーします。
 
+Jetson から叩く例:
+
+```bash
+curl http://192.168.55.2:8081/raspi/api/v1/status
+
+curl -X PUT http://192.168.55.2:8081/raspi/api/v1/config \
+  -H 'Content-Type: application/json' \
+  -d '{"alsa_buffer_time_us": 100000, "alsa_latency_time_us": 10000}'
+```
+
 ### Jetson Web(:80) へのステータス送信 (Issue #950)
 
 別ポートを増やさずに Jetson 側へ状態（mode/rate/format/ch）を通知したい場合は、Pi 側で以下を設定します（任意）。

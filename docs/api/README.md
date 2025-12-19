@@ -1,4 +1,4 @@
-# GPU Upsampler Web API
+# GPU Upsampler Web API / Pi Control API
 
 GPU音声アップサンプラーのREST API仕様です。
 
@@ -10,12 +10,25 @@ GPU音声アップサンプラーのREST API仕様です。
 | 認証 | なし（ローカルネットワーク専用） |
 | フォーマット | JSON |
 
+### Pi Control API 概要
+
+| 項目 | 値 |
+|------|-----|
+| ベースURL | `http://192.168.55.2:8081` |
+| 認証 | なし（USB直結ネットワーク専用） |
+| フォーマット | JSON |
+
 ## インタラクティブドキュメント
 
 サーバー起動後、以下のURLでインタラクティブなAPIドキュメントにアクセスできます：
 
 - **Swagger UI**: http://localhost:11881/docs
 - **ReDoc**: http://localhost:11881/redoc
+
+Pi制御API:
+
+- **Swagger UI**: http://192.168.55.2:8081/docs
+- **ReDoc**: http://192.168.55.2:8081/redoc
 
 ## エンドポイント一覧
 
@@ -109,20 +122,24 @@ DAC Capability検出とサンプリングレートフィルタリング
 
 機械可読なOpenAPI仕様は以下のファイルで提供されます：
 
-- **[openapi.json](./openapi.json)** - OpenAPI 3.1仕様（JSONフォーマット）
+- **[openapi.json](./openapi.json)** - Jetson Web API (OpenAPI 3.1)
+- **[raspi_openapi.json](./raspi_openapi.json)** - Pi Control API (OpenAPI 3.1)
 
 ### OpenAPIファイルの更新
 
 `web/` 配下のPythonファイルを変更すると、pre-commitフックにより自動的に `openapi.json` が更新されます。
+`raspberry_pi/` 配下のPythonファイルを変更すると、pre-commitフックにより `raspi_openapi.json` が更新されます。
 
 手動で更新する場合：
 ```bash
 uv run python scripts/integration/export_openapi.py
+uv run python scripts/integration/export_raspi_openapi.py
 ```
 
 最新かどうか確認する場合：
 ```bash
 uv run python scripts/integration/export_openapi.py --check
+uv run python scripts/integration/export_raspi_openapi.py --check
 ```
 
 ## ライセンス

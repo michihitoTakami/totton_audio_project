@@ -392,9 +392,11 @@ async def restart():
 ```bash
 # OpenAPI spec を出力
 uv run python scripts/integration/export_openapi.py
+uv run python scripts/integration/export_raspi_openapi.py
 
 # 最新かどうか確認
 uv run python scripts/integration/export_openapi.py --check
+uv run python scripts/integration/export_raspi_openapi.py --check
 ```
 
 ### API変更時のチェックリスト
