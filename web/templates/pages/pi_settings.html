@@ -80,116 +80,205 @@
             <div class="stack">
                 <div class="muted">{{ t.get('pi.config.description') }}</div>
             </div>
-            {{ buttons.btn_primary(t.get('pi.config.refresh'), icon='🔄', click='fetchConfig()', disabled='actionInProgress || config.loading', extra_class='btn-secondary') }}
-            {{ buttons.btn_primary(t.get('pi.config.restart'), icon='⏻', click='restartBridge()', disabled='actionInProgress') }}
+            <div class="btn-row">
+                {{ buttons.btn_primary(t.get('pi.config.refresh'), icon='🔄', click='fetchConfig()', disabled='actionInProgress || config.loading', extra_class='btn-secondary') }}
+                {{ buttons.btn_primary(t.get('pi.config.restart'), icon='⏻', click='restartBridge()', disabled='actionInProgress') }}
+            </div>
         </div>
 
         <div class="form-grid">
+            {% set form_label = t.get('pi.config.device_preset') %}
+            {% set form_input_type = "select" %}
+            {% set form_input_model = "devicePreset" %}
+            {% set form_on_change = "applyDevicePreset()" %}
+            {% set form_select_options = '<template x-for=\"preset in devicePresets\" :key=\"preset.id\"><option :value=\"preset.id\" x-text=\"preset.label\"></option></template>' %}
+            {% include 'components/form_group.html' %}
+
             {% set form_label = t.get('pi.config.latency') %}
             {% set form_input_type = "select" %}
-            {% set form_input_model = "latencyPreset" %}
-            {% set form_on_change = "applyLatencyPreset()" %}
+            {% set form_input_model = "latencyProfile" %}
+            {% set form_input_disabled = "true" %}
             {% set form_select_options %}
-            <option value="low">{{ t.get('pi.config.latency.low') }}</option>
-            <option value="medium">{{ t.get('pi.config.latency.medium') }}</option>
-            <option value="safe">{{ t.get('pi.config.latency.safe') }}</option>
-            <option value="custom">{{ t.get('pi.config.latency.custom') }}</option>
+            <option value="standard">{{ t.get('pi.config.latency.standard') }}</option>
             {% endset %}
             {% include 'components/form_group.html' %}
 
             {% set form_label = t.get('pi.config.capture_device') %}
             {% set form_input_model = "config.capture_device" %}
+            {% set form_input_disabled = "true" %}
             {% include 'components/form_group.html' %}
 
             {% set form_label = t.get('pi.config.playback_device') %}
             {% set form_input_model = "config.playback_device" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.channels') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.channels" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.fallback_rate') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.fallback_rate" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.preferred_format') %}
-            {% set form_input_model = "config.preferred_format" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.status_report_url') %}
-            {% set form_input_model = "config.status_report_url" %}
-            {% set form_input_placeholder = "http://192.168.55.1/i2s/peer-status" %}
-            {% include 'components/form_group.html' %}
-        </div>
-
-        <div class="form-grid">
-            {% set form_label = t.get('pi.config.buffer_time_us') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.alsa_buffer_time_us" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.latency_time_us') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.alsa_latency_time_us" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.queue_time_ns') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.queue_time_ns" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.poll_interval_sec') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.poll_interval_sec" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.restart_backoff_sec') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.restart_backoff_sec" %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('pi.config.status_report_timeout_ms') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.status_report_timeout_ms" %}
+            {% set form_input_disabled = "true" %}
             {% include 'components/form_group.html' %}
         </div>
 
         <div class="card-row wrap">
-            {% set toggle_id = "pi-passthrough" %}
-            {% set toggle_label = t.get('pi.config.passthrough') %}
-            {% set toggle_desc = t.get('pi.config.passthrough_desc') %}
-            {% set alpine_model = "config.passthrough" %}
-            {% set alpine_click = "togglePassthrough()" %}
-            {% include 'components/toggle_switch.html' %}
-
-            {% set toggle_id = "pi-keep-silence" %}
-            {% set toggle_label = t.get('pi.config.keep_silence') %}
-            {% set toggle_desc = t.get('pi.config.keep_silence_desc') %}
-            {% set alpine_model = "config.keep_silence_when_no_capture" %}
-            {% set alpine_click = "toggleKeepSilence()" %}
+            {% set toggle_id = "pi-advanced" %}
+            {% set toggle_label = t.get('pi.config.advanced') %}
+            {% set toggle_desc = t.get('pi.config.advanced_desc') %}
+            {% set alpine_model = "advancedMode" %}
+            {% set alpine_click = "toggleAdvancedMode()" %}
             {% include 'components/toggle_switch.html' %}
         </div>
 
-        <div class="form-grid">
-            {{ sliders.slider_input(
-                label=t.get('pi.config.fade_ms'),
-                min=0,
-                max=200,
-                step=5,
-                model="config.fade_ms"
-            ) }}
+        <div x-show="advancedMode">
+            <div class="form-grid">
+                {% set form_label = t.get('pi.config.capture_device') %}
+                {% set form_input_model = "config.capture_device" %}
+                {% set form_input_disabled = "devicePreset !== 'custom'" %}
+                {% include 'components/form_group.html' %}
 
-            {% set form_label = t.get('pi.config.status_report_min_interval_sec') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "config.status_report_min_interval_sec" %}
-            {% include 'components/form_group.html' %}
+                {% set form_label = t.get('pi.config.playback_device') %}
+                {% set form_input_model = "config.playback_device" %}
+                {% set form_input_disabled = "devicePreset !== 'custom'" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.channels') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.channels" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.fallback_rate') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.fallback_rate" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.preferred_format') %}
+                {% set form_input_model = "config.preferred_format" %}
+                {% include 'components/form_group.html' %}
+            </div>
+
+            <div class="form-grid">
+                {% set form_label = t.get('pi.config.buffer_time_us') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.alsa_buffer_time_us" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.latency_time_us') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.alsa_latency_time_us" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.queue_time_ns') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.queue_time_ns" %}
+                {% include 'components/form_group.html' %}
+            </div>
+
+            <div class="card-row wrap">
+                {% set toggle_id = "pi-passthrough" %}
+                {% set toggle_label = t.get('pi.config.passthrough') %}
+                {% set toggle_desc = t.get('pi.config.passthrough_desc') %}
+                {% set alpine_model = "config.passthrough" %}
+                {% set alpine_click = "togglePassthrough()" %}
+                {% include 'components/toggle_switch.html' %}
+
+                {% set toggle_id = "pi-keep-silence" %}
+                {% set toggle_label = t.get('pi.config.keep_silence') %}
+                {% set toggle_desc = t.get('pi.config.keep_silence_desc') %}
+                {% set alpine_model = "config.keep_silence_when_no_capture" %}
+                {% set alpine_click = "toggleKeepSilence()" %}
+                {% include 'components/toggle_switch.html' %}
+            </div>
+
+            <div class="form-grid">
+                {{ sliders.slider_input(
+                    label=t.get('pi.config.fade_ms'),
+                    min=0,
+                    max=200,
+                    step=5,
+                    model="config.fade_ms"
+                ) }}
+
+                {% set form_label = t.get('pi.config.poll_interval_sec') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.poll_interval_sec" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.restart_backoff_sec') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.restart_backoff_sec" %}
+                {% include 'components/form_group.html' %}
+            </div>
+
+            <div class="form-grid">
+                {% set form_label = t.get('pi.config.status_report_url') %}
+                {% set form_input_model = "config.status_report_url" %}
+                {% set form_input_placeholder = "http://192.168.55.1/i2s/peer-status" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.status_report_timeout_ms') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.status_report_timeout_ms" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.status_report_min_interval_sec') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.status_report_min_interval_sec" %}
+                {% include 'components/form_group.html' %}
+            </div>
+
+            <div class="form-grid">
+                {% set form_label = t.get('pi.config.control_endpoint') %}
+                {% set form_input_model = "config.control_endpoint" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.control_peer') %}
+                {% set form_input_model = "config.control_peer" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.control_require_peer') %}
+                {% set form_input_type = "select" %}
+                {% set form_input_model = "config.control_require_peer" %}
+                {% set form_select_options %}
+                <option :value="true">{{ t.get('pi.config.control_require_peer_on') }}</option>
+                <option :value="false">{{ t.get('pi.config.control_require_peer_off') }}</option>
+                {% endset %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.control_poll_interval_sec') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.control_poll_interval_sec" %}
+                {% include 'components/form_group.html' %}
+
+                {% set form_label = t.get('pi.config.control_timeout_ms') %}
+                {% set form_input_type = "number" %}
+                {% set form_input_model = "config.control_timeout_ms" %}
+                {% include 'components/form_group.html' %}
+            </div>
         </div>
 
         <div class="btn-row">
             {{ buttons.btn_primary(t.get('pi.config.apply'), icon='💾', click='applyConfig()', disabled='actionInProgress || config.loading') }}
+        </div>
+    {% endcall %}
+
+    {% call panels.card_panel(t.get('pi.notes.title')) %}
+        <div class="config-notes">
+            <div class="config-note">{{ t.get('pi.notes.device_preset') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.latency_preset') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.capture_playback') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.channels') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.fallback_rate') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.preferred_format') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.passthrough') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.buffer_time') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.latency_time') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.queue_time') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.fade_ms') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.poll_interval') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.restart_backoff') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.keep_silence') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.status_report_url') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.status_report_timeout') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.status_report_min_interval') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.control_endpoint') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.control_peer') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.control_require_peer') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.control_poll_interval') }}</div>
+            <div class="config-note">{{ t.get('pi.notes.control_timeout') }}</div>
         </div>
     {% endcall %}
 </div>
@@ -243,13 +332,24 @@ function piSettingsPage() {
             control_timeout_ms: 2000,
             loading: false,
         },
-        latencyPreset: 'safe',
+        devicePreset: 'default',
+        latencyProfile: 'standard',
+        advancedMode: false,
         actionInProgress: false,
-        presets: {
-            low: { alsa_buffer_time_us: 50000, alsa_latency_time_us: 5000, queue_time_ns: 25000000 },
-            medium: { alsa_buffer_time_us: 100000, alsa_latency_time_us: 10000, queue_time_ns: 50000000 },
-            safe: { alsa_buffer_time_us: 200000, alsa_latency_time_us: 20000, queue_time_ns: 100000000 },
-        },
+        devicePresets: [
+            {
+                id: 'default',
+                label: '{{ t.get("pi.config.device_preset.default") }}',
+                capture_device: 'hw:3,0',
+                playback_device: 'hw:2,0',
+            },
+            {
+                id: 'custom',
+                label: '{{ t.get("pi.config.device_preset.custom") }}',
+                capture_device: '',
+                playback_device: '',
+            },
+        ],
 
         init() {
             this.refreshAll();
@@ -306,34 +406,31 @@ function piSettingsPage() {
                     ...data,
                     loading: false,
                 };
-                this.latencyPreset = this.detectLatencyPreset();
+                this.devicePreset = this.detectDevicePreset();
             } catch (err) {
                 console.error('config fetch failed', err);
                 this.config.loading = false;
             }
         },
 
-        detectLatencyPreset() {
-            const keys = Object.keys(this.presets);
-            for (const key of keys) {
-                const preset = this.presets[key];
-                if (
-                    Number(this.config.alsa_buffer_time_us) === preset.alsa_buffer_time_us &&
-                    Number(this.config.alsa_latency_time_us) === preset.alsa_latency_time_us &&
-                    Number(this.config.queue_time_ns) === preset.queue_time_ns
-                ) {
-                    return key;
-                }
-            }
-            return 'custom';
+        detectDevicePreset() {
+            const matches = this.devicePresets.find((preset) => {
+                if (preset.id === 'custom') return false;
+                return (
+                    String(this.config.capture_device || '') === preset.capture_device &&
+                    String(this.config.playback_device || '') === preset.playback_device
+                );
+            });
+            return matches ? matches.id : 'custom';
         },
 
-        applyLatencyPreset() {
-            const preset = this.presets[this.latencyPreset];
-            if (!preset) return;
-            this.config.alsa_buffer_time_us = preset.alsa_buffer_time_us;
-            this.config.alsa_latency_time_us = preset.alsa_latency_time_us;
-            this.config.queue_time_ns = preset.queue_time_ns;
+        applyDevicePreset() {
+            const preset = this.devicePresets.find(
+                (item) => item.id === this.devicePreset
+            );
+            if (!preset || preset.id === 'custom') return;
+            this.config.capture_device = preset.capture_device;
+            this.config.playback_device = preset.playback_device;
         },
 
         togglePassthrough() {
@@ -342,6 +439,10 @@ function piSettingsPage() {
 
         toggleKeepSilence() {
             this.config.keep_silence_when_no_capture = !this.config.keep_silence_when_no_capture;
+        },
+
+        toggleAdvancedMode() {
+            this.advancedMode = !this.advancedMode;
         },
 
         formatTimestamp(unixMs) {
@@ -366,7 +467,7 @@ function piSettingsPage() {
                 if (!res.ok) throw new Error('apply failed');
                 const data = await res.json();
                 this.config = { ...this.config, ...data };
-                this.latencyPreset = this.detectLatencyPreset();
+                this.devicePreset = this.detectDevicePreset();
                 showToast('{{ t.get("pi.toast.apply_ok") }}', 'success');
             } catch (err) {
                 console.error('apply config failed', err);
@@ -407,9 +508,17 @@ function piSettingsPage() {
                 const trimmed = String(value).trim();
                 return trimmed.length ? trimmed : null;
             };
+            const preset = this.devicePresets.find(
+                (item) => item.id === this.devicePreset
+            );
+            const usePreset = preset && preset.id !== 'custom';
             return {
-                capture_device: String(this.config.capture_device || '').trim(),
-                playback_device: String(this.config.playback_device || '').trim(),
+                capture_device: usePreset
+                    ? preset.capture_device
+                    : String(this.config.capture_device || '').trim(),
+                playback_device: usePreset
+                    ? preset.playback_device
+                    : String(this.config.playback_device || '').trim(),
                 channels: toInt(this.config.channels, 2),
                 fallback_rate: toInt(this.config.fallback_rate, 44100),
                 preferred_format: String(this.config.preferred_format || '').trim(),
