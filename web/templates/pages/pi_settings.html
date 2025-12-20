@@ -348,6 +348,7 @@ function piSettingsPage() {
         latencyProfile: 'medium',
         advancedMode: false,
         actionInProgress: false,
+        piApiLastError: null,
         latencyProfiles: {
             // NOTE: 実際の体感遅延はデバイス/環境に依存するため “目安”。
             // ALSA buffer/latency と queue を同じ比率でスケールさせ、操作感を揃える。
@@ -412,14 +413,20 @@ function piSettingsPage() {
         async fetchStatus() {
             try {
                 const res = await fetch('/pi/status');
-                if (!res.ok) return;
+                if (!res.ok) {
+                    const msg = await this.extractApiError(res, 'Pi status fetch failed');
+                    this.setPiApiError(msg);
+                    return;
+                }
                 const data = await res.json();
                 this.piStatus = {
                     ...this.piStatus,
                     ...data,
                 };
+                this.clearPiApiError();
             } catch (err) {
                 console.error('pi status fetch failed', err);
+                this.setPiApiError(String(err));
             }
         },
 
@@ -441,7 +448,11 @@ function piSettingsPage() {
             this.config.loading = true;
             try {
                 const res = await fetch('/pi/config');
-                if (!res.ok) throw new Error('failed to fetch config');
+                if (!res.ok) {
+                    const msg = await this.extractApiError(res, 'failed to fetch config');
+                    this.setPiApiError(msg);
+                    throw new Error(msg);
+                }
                 const data = await res.json();
                 this.config = {
                     ...this.config,
@@ -450,6 +461,7 @@ function piSettingsPage() {
                 };
                 this.devicePreset = this.detectDevicePreset();
                 this.latencyProfile = this.detectLatencyProfile();
+                this.clearPiApiError();
             } catch (err) {
                 console.error('config fetch failed', err);
                 this.config.loading = false;
@@ -533,12 +545,17 @@ function piSettingsPage() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                 });
-                if (!res.ok) throw new Error('apply failed');
+                if (!res.ok) {
+                    const msg = await this.extractApiError(res, 'apply failed');
+                    this.setPiApiError(msg);
+                    throw new Error(msg);
+                }
                 const data = await res.json();
                 this.config = { ...this.config, ...data };
                 this.devicePreset = this.detectDevicePreset();
                 this.latencyProfile = this.detectLatencyProfile();
                 showToast('{{ t.get("pi.toast.apply_ok") }}', 'success');
+                this.clearPiApiError();
             } catch (err) {
                 console.error('apply config failed', err);
                 showToast('{{ t.get("pi.toast.apply_error") }}', 'error');
@@ -552,16 +569,57 @@ function piSettingsPage() {
             this.actionInProgress = true;
             try {
                 const res = await fetch('/pi/actions/restart', { method: 'POST' });
-                if (!res.ok) throw new Error('restart failed');
+                if (!res.ok) {
+                    const msg = await this.extractApiError(res, 'restart failed');
+                    this.setPiApiError(msg);
+                    throw new Error(msg);
+                }
                 await res.json();
                 showToast('{{ t.get("pi.toast.restart_ok") }}', 'success');
                 setTimeout(() => this.fetchStatus(), 1500);
+                this.clearPiApiError();
             } catch (err) {
                 console.error('restart failed', err);
                 showToast('{{ t.get("pi.toast.restart_error") }}', 'error');
             } finally {
                 this.actionInProgress = false;
             }
+        },
+
+        setPiApiError(message) {
+            const msg = String(message || '').trim() || 'Pi API error';
+            if (this.piApiLastError === msg) return;
+            this.piApiLastError = msg;
+            // 連続ポーリングでトーストが連射されないよう、変化時のみ出す
+            showToast(msg, 'error', 5000);
+            // 画面上にも「最後に起きた問題」を残す（status card に表示される）
+            this.piStatus = {
+                ...this.piStatus,
+                running: false,
+                last_error: msg,
+                updated_at_unix_ms: Date.now(),
+            };
+        },
+
+        clearPiApiError() {
+            this.piApiLastError = null;
+        },
+
+        async extractApiError(res, fallbackMessage) {
+            try {
+                const contentType = res.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                    const data = await res.json();
+                    if (data && typeof data.detail === 'string' && data.detail.trim().length) {
+                        return data.detail.trim();
+                    }
+                }
+                const text = await res.text();
+                if (text && text.trim().length) return text.trim();
+            } catch (err) {
+                // ignore parsing error
+            }
+            return `${fallbackMessage} (${res.status})`;
         },
 
         buildPayload() {

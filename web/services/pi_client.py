@@ -24,7 +24,7 @@ class PiResponseError(PiClientError):
         self.status_code = status_code
 
 
-DEFAULT_PI_API_BASE = os.getenv("MAGICBOX_PI_API_BASE", "http://192.168.55.2:8081")
+DEFAULT_PI_API_BASE = os.getenv("MAGICBOX_PI_API_BASE", "http://192.168.55.100:8081")
 DEFAULT_PI_API_TIMEOUT_MS = int(os.getenv("MAGICBOX_PI_API_TIMEOUT_MS", "2000"))
 
 
@@ -89,10 +89,12 @@ class PiClient:
                 except Exception:
                     body = ""
             message = body.strip() or exc.reason or "Pi API error"
-            raise PiResponseError(message, status_code=exc.code) from exc
-        except error.URLError as exc:
+            raise PiResponseError(f"{message} ({url})", status_code=exc.code) from exc
+        except (error.URLError, TimeoutError) as exc:
             reason = getattr(exc, "reason", exc)
-            raise PiConnectionError(str(reason)) from exc
+            raise PiConnectionError(
+                f"Pi API unreachable: {url} (timeout={self.timeout_sec:.2f}s): {reason}"
+            ) from exc
 
         if not body:
             return {}
