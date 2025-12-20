@@ -3,6 +3,7 @@
 #include "convolution_engine.h"
 #include "core/daemon_constants.h"
 #include "daemon/metrics/stats_file.h"
+#include "delimiter/safety_controller.h"
 
 #include <chrono>
 #include <cmath>
@@ -83,6 +84,50 @@ nlohmann::json buildFallbackJson(const Dependencies& deps) {
     }
 
     return fallback;
+}
+
+const char* delimiterModeToString(int value) {
+    switch (static_cast<delimiter::ProcessingMode>(value)) {
+    case delimiter::ProcessingMode::Active:
+        return "active";
+    case delimiter::ProcessingMode::Bypass:
+        return "bypass";
+    }
+    return "unknown";
+}
+
+const char* delimiterReasonToString(int value) {
+    switch (static_cast<delimiter::FallbackReason>(value)) {
+    case delimiter::FallbackReason::None:
+        return "none";
+    case delimiter::FallbackReason::InferenceFailure:
+        return "inference_failure";
+    case delimiter::FallbackReason::Overload:
+        return "overload";
+    case delimiter::FallbackReason::Manual:
+        return "manual";
+    }
+    return "unknown";
+}
+
+nlohmann::json buildDelimiterJson(const Dependencies& deps) {
+    nlohmann::json dl;
+    dl["enabled"] = (deps.config ? deps.config->delimiter.enabled : false);
+    if (deps.delimiterMode) {
+        dl["mode"] = delimiterModeToString(deps.delimiterMode->load(std::memory_order_relaxed));
+    } else {
+        dl["mode"] = "unknown";
+    }
+    if (deps.delimiterFallbackReason) {
+        dl["fallback_reason"] =
+            delimiterReasonToString(deps.delimiterFallbackReason->load(std::memory_order_relaxed));
+    } else {
+        dl["fallback_reason"] = "unknown";
+    }
+    dl["bypass_locked"] =
+        (deps.delimiterBypassLocked ? deps.delimiterBypassLocked->load(std::memory_order_relaxed)
+                                    : false);
+    return dl;
 }
 
 }  // namespace
@@ -254,6 +299,7 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
     stats["peaks"] = peaks;
 
     stats["fallback"] = buildFallbackJson(deps);
+    stats["delimiter"] = buildDelimiterJson(deps);
 
     if (deps.dacManager) {
         stats["dac"] = deps.dacManager->buildStatsSummaryJson();

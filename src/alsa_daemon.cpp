@@ -349,6 +349,9 @@ static runtime_stats::Dependencies build_runtime_stats_dependencies() {
     deps.outputGain = &g_state.gains.output;
     deps.limiterGain = &g_state.gains.limiter;
     deps.effectiveGain = &g_state.gains.effective;
+    deps.delimiterMode = &g_state.delimiter.mode;
+    deps.delimiterFallbackReason = &g_state.delimiter.fallbackReason;
+    deps.delimiterBypassLocked = &g_state.delimiter.bypassLocked;
     return deps;
 }
 
@@ -640,6 +643,9 @@ int main(int argc, char* argv[]) {
             pipelineDeps.currentOutputRate = []() {
                 return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
             };
+            pipelineDeps.delimiterMode = &g_state.delimiter.mode;
+            pipelineDeps.delimiterFallbackReason = &g_state.delimiter.fallbackReason;
+            pipelineDeps.delimiterBypassLocked = &g_state.delimiter.bypassLocked;
             g_state.audioPipeline =
                 std::make_unique<audio_pipeline::AudioPipeline>(std::move(pipelineDeps));
             g_state.managers.audioPipelineRaw = g_state.audioPipeline.get();

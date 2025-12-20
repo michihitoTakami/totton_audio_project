@@ -28,6 +28,9 @@ struct Dependencies {
     const std::atomic<float>* outputGain = nullptr;
     const std::atomic<float>* limiterGain = nullptr;
     const std::atomic<float>* effectiveGain = nullptr;
+    const std::atomic<int>* delimiterMode = nullptr;
+    const std::atomic<int>* delimiterFallbackReason = nullptr;
+    const std::atomic<bool>* delimiterBypassLocked = nullptr;
 };
 
 void reset();
