@@ -6,11 +6,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from ..constants import (
-    DAEMON_BINARY,
     LINEAR_PHASE_WARNING,
     PHASE_TYPE_LINEAR,
     PHASE_TYPE_MINIMUM,
-    PID_FILE_PATH,
 )
 from ..models import (
     ApiResponse,
@@ -22,7 +20,6 @@ from ..models import (
 from ..services import (
     check_daemon_running,
     get_daemon_client,
-    get_daemon_pid,
     load_config,
     load_partitioned_convolution_settings,
     save_partitioned_convolution_settings,
@@ -78,15 +75,11 @@ async def daemon_restart():
 
 @router.get("/status", response_model=DaemonStatus)
 async def daemon_status():
-    """Get detailed daemon status."""
+    """Get daemon running status (minimal)."""
     running = check_daemon_running()
-    pid = get_daemon_pid()
 
     return DaemonStatus(
         running=running,
-        pid=pid,
-        pid_file=str(PID_FILE_PATH),
-        binary_path=str(DAEMON_BINARY),
     )
 
 

@@ -5,6 +5,7 @@
 #include "daemon/metrics/stats_file.h"
 #include "daemon/output/playback_buffer_manager.h"
 #include "delimiter/safety_controller.h"
+#include "logging/metrics.h"
 
 #include <chrono>
 #include <cmath>
@@ -327,6 +328,22 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
 
     stats["fallback"] = buildFallbackJson(deps);
     stats["delimiter"] = buildDelimiterJson(deps);
+
+    // ALSA/engine diagnostics for debugging (XRUN, buffer/period config, etc.)
+    // - XRUN count is recorded in the ALSA output path (see alsa_pcm_controller.cpp)
+    // - buffer/period are the configured values in AppConfig (not necessarily the negotiated HW
+    // size)
+    nlohmann::json audioDiag;
+    const auto& audioStats = gpu_upsampler::metrics::getAudioStats();
+    audioDiag["xrun_count"] = audioStats.xrunCount.load(std::memory_order_relaxed);
+    audioDiag["buffer_underflows"] = audioStats.bufferUnderflows.load(std::memory_order_relaxed);
+    audioDiag["buffer_overflows"] = audioStats.bufferOverflows.load(std::memory_order_relaxed);
+    stats["audio"] = audioDiag;
+
+    nlohmann::json alsa;
+    alsa["buffer_size_config"] = (deps.config ? deps.config->bufferSize : 0);
+    alsa["period_size_config"] = (deps.config ? deps.config->periodSize : 0);
+    stats["alsa"] = alsa;
 
     if (deps.dacManager) {
         stats["dac"] = deps.dacManager->buildStatsSummaryJson();

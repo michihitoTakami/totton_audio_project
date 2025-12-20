@@ -55,6 +55,10 @@ class Settings(BaseModel):
 
     alsa_device: str = "default"
     upsample_ratio: int = 8
+    buffer_size: int = 0
+    period_size: int = 0
+    gain: float = 1.0
+    headroom_target: float = 0.0
     eq_enabled: bool = False
     eq_profile: Optional[str] = None
     eq_profile_path: Optional[str] = None
@@ -168,15 +172,22 @@ class Status(BaseModel):
     input_rate: int = 0
     output_rate: int = 0
     peaks: PeakLevels = Field(default_factory=PeakLevels)
+    # Debug / diagnostics (from /tmp/gpu_upsampler_stats.json)
+    xrun_count: int = 0
+    buffer_underflows: int = 0
+    buffer_overflows: int = 0
+    buffer_capacity_frames: int = 0
+    dropped_frames: int = 0
+    rendered_silence_blocks: int = 0
+    rendered_silence_frames: int = 0
+    alsa_buffer_size_config: int = 0
+    alsa_period_size_config: int = 0
 
 
 class DaemonStatus(BaseModel):
     """Daemon status response model."""
 
     running: bool
-    pid: Optional[int] = None
-    pid_file: str
-    binary_path: str
 
 
 class ZmqPingResponse(BaseModel):

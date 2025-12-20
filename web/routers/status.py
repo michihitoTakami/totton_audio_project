@@ -35,6 +35,15 @@ async def get_status():
         input_rate=stats["input_rate"],
         output_rate=stats["output_rate"],
         peaks=stats["peaks"],
+        xrun_count=stats.get("xrun_count", 0),
+        buffer_underflows=stats.get("buffer_underflows", 0),
+        buffer_overflows=stats.get("buffer_overflows", 0),
+        buffer_capacity_frames=stats.get("buffer_capacity_frames", 0),
+        dropped_frames=stats.get("dropped_frames", 0),
+        rendered_silence_blocks=stats.get("rendered_silence_blocks", 0),
+        rendered_silence_frames=stats.get("rendered_silence_frames", 0),
+        alsa_buffer_size_config=stats.get("alsa_buffer_size_config", 0),
+        alsa_period_size_config=stats.get("alsa_period_size_config", 0),
     )
 
 
@@ -58,6 +67,13 @@ async def websocket_stats(websocket: WebSocket):
                     "input_rate": stats["input_rate"],
                     "output_rate": stats["output_rate"],
                     "peaks": stats["peaks"],
+                    "xrun_count": stats.get("xrun_count", 0),
+                    "buffer_underflows": stats.get("buffer_underflows", 0),
+                    "buffer_overflows": stats.get("buffer_overflows", 0),
+                    "buffer_capacity_frames": stats.get("buffer_capacity_frames", 0),
+                    "dropped_frames": stats.get("dropped_frames", 0),
+                    "alsa_buffer_size_config": stats.get("alsa_buffer_size_config", 0),
+                    "alsa_period_size_config": stats.get("alsa_period_size_config", 0),
                 }
             )
 

@@ -17,8 +17,8 @@
             <div class="stack">
                 <div class="muted">{{ t.get('system.language.description') }}</div>
             </div>
-            {{ buttons.btn_primary(t.get('system.language.english'), icon='🇺🇸', click="switchLanguage('en')", disabled="currentLang === 'en'", extra_class='btn-secondary') }}
-            {{ buttons.btn_primary(t.get('system.language.japanese'), icon='🇯🇵', click="switchLanguage('ja')", disabled="currentLang === 'ja'", extra_class='btn-secondary') }}
+            {{ buttons.btn_primary(t.get('system.language.english'), icon='🇺🇸', click="switchLanguage('en')", extra_class='btn-secondary', attrs=':class="{ active: currentLang === &quot;en&quot; }" :aria-pressed="currentLang === &quot;en&quot;"') }}
+            {{ buttons.btn_primary(t.get('system.language.japanese'), icon='🇯🇵', click="switchLanguage('ja')", extra_class='btn-secondary', attrs=':class="{ active: currentLang === &quot;ja&quot; }" :aria-pressed="currentLang === &quot;ja&quot;"') }}
         </div>
     {% endcall %}
 
@@ -47,14 +47,6 @@
 
     {% call panels.card_panel(t.get('system.daemon.title')) %}
         <div class="card-row wrap">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.daemon.pid') }}</div>
-                <div class="mono" x-text="daemon.pid ?? 'N/A'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.daemon.binary') }}</div>
-                <div class="mono" x-text="daemon.binary_path ?? 'N/A'"></div>
-            </div>
             {{ buttons.btn_primary(t.get('system.daemon.restart'), icon='🔄', click='restartDaemon()', disabled='actionInProgress') }}
         </div>
     {% endcall %}
@@ -72,17 +64,16 @@
             {{ buttons.btn_primary(t.get('system.dac.rescan'), icon='🔍', click='rescanDac()', disabled='actionInProgress || dac.loading', extra_class='btn-secondary') }}
         </div>
 
-        <div class="device-list" x-show="dac.devices.length > 0">
-            <template x-for="device in dac.devices" :key="device.id">
-                <div class="device-row">
-                    <div class="stack">
-                        <div class="mono" x-text="device.id"></div>
-                        <div class="muted" x-text="device.name"></div>
-                        <div class="muted" x-show="device.description" x-text="device.description"></div>
-                    </div>
-                    {{ buttons.btn_primary(t.get('system.dac.select'), icon='🎧', click='selectDac(device.id)', disabled='actionInProgress || dac.runtime?.active_device === device.id', extra_class='btn-secondary btn-sm') }}
-                </div>
-            </template>
+        <div class="form-grid" x-show="dac.devices.length > 0">
+            {% set form_label = t.get('system.dac.select') %}
+            {% set form_input_type = "select" %}
+            {% set form_input_model = "dac.selected" %}
+            {% set form_input_disabled = "actionInProgress || dac.loading" %}
+            {% set form_select_options = '<template x-for="device in dac.devices" :key="device.id"><option :value="device.id" x-text="device.name ? `${device.name} (${device.id})` : device.id"></option></template>' %}
+            {% include 'components/form_group.html' %}
+        </div>
+        <div class="btn-row" x-show="dac.devices.length > 0">
+            {{ buttons.btn_primary(t.get('system.dac.select'), icon='🎧', click='selectDac(dac.selected)', disabled='actionInProgress || !dac.selected', extra_class='btn-secondary') }}
         </div>
         <template x-if="dac.devices.length === 0">
             {% set info_message = t.get('system.dac.no_devices') %}
@@ -154,6 +145,45 @@
             </div>
         </div>
     {% endcall %}
+
+    {% call panels.card_panel(t.get('system.debug.title')) %}
+        <div class="grid-2">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.debug.xrun_count') }}</div>
+                <div class="mono" x-text="debug.xrun_count ?? 0"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('system.debug.buffer_capacity') }}</div>
+                <div class="mono" x-text="debug.buffer_capacity_frames ?? 0"></div>
+            </div>
+        </div>
+        <div class="grid-2">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.debug.dropped_frames') }}</div>
+                <div class="mono" x-text="debug.dropped_frames ?? 0"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('system.debug.rendered_silence_blocks') }}</div>
+                <div class="mono" x-text="debug.rendered_silence_blocks ?? 0"></div>
+            </div>
+        </div>
+        <div class="grid-2">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.debug.rendered_silence_frames') }}</div>
+                <div class="mono" x-text="debug.rendered_silence_frames ?? 0"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('system.debug.alsa_buffer_size_config') }}</div>
+                <div class="mono" x-text="debug.alsa_buffer_size_config ?? 0"></div>
+            </div>
+        </div>
+        <div class="grid-2">
+            <div class="stack">
+                <div class="muted">{{ t.get('system.debug.alsa_period_size_config') }}</div>
+                <div class="mono" x-text="debug.alsa_period_size_config ?? 0"></div>
+            </div>
+        </div>
+    {% endcall %}
 </div>
 {% endblock %}
 
@@ -162,8 +192,7 @@
 function systemPage() {
     return {
         health: { daemon_running: false, input_rate: 0, output_rate: 0 },
-        daemon: { pid: null, binary_path: null },
-        dac: { devices: [], runtime: null, loading: false },
+        dac: { devices: [], runtime: null, loading: false, selected: '' },
         currentLang: "{{ lang }}",
         partitioned: {
             enabled: false,
@@ -174,6 +203,15 @@ function systemPage() {
             loading: false,
         },
         config: { bufferSize: null, periodSize: null, gain: null, headroomTarget: null },
+        debug: {
+            xrun_count: 0,
+            buffer_capacity_frames: 0,
+            dropped_frames: 0,
+            rendered_silence_blocks: 0,
+            rendered_silence_frames: 0,
+            alsa_buffer_size_config: 0,
+            alsa_period_size_config: 0,
+        },
         actionInProgress: false,
 
         init() {
@@ -187,11 +225,9 @@ function systemPage() {
         async refreshAll() {
             await Promise.all([
                 this.fetchStatus(),
-                this.fetchDaemonStatus(),
                 this.fetchDacDevices(),
                 this.fetchDacState(),
                 this.fetchPartitioned(),
-                this.fetchConfig(),
             ]);
         },
 
@@ -203,21 +239,22 @@ function systemPage() {
                 this.health.daemon_running = data.daemon_running;
                 this.health.input_rate = data.input_rate || 0;
                 this.health.output_rate = data.output_rate || 0;
+                const settings = data.settings;
+                if (settings) {
+                    this.config.bufferSize = settings.buffer_size;
+                    this.config.periodSize = settings.period_size;
+                    this.config.gain = settings.gain;
+                    this.config.headroomTarget = settings.headroom_target;
+                }
+                this.debug.xrun_count = data.xrun_count ?? 0;
+                this.debug.buffer_capacity_frames = data.buffer_capacity_frames ?? 0;
+                this.debug.dropped_frames = data.dropped_frames ?? 0;
+                this.debug.rendered_silence_blocks = data.rendered_silence_blocks ?? 0;
+                this.debug.rendered_silence_frames = data.rendered_silence_frames ?? 0;
+                this.debug.alsa_buffer_size_config = data.alsa_buffer_size_config ?? 0;
+                this.debug.alsa_period_size_config = data.alsa_period_size_config ?? 0;
             } catch (err) {
                 console.error('status fetch failed', err);
-            }
-        },
-
-        async fetchDaemonStatus() {
-            try {
-                const res = await fetch('/daemon/status');
-                if (!res.ok) return;
-                const data = await res.json();
-                this.daemon.pid = data.pid;
-                this.daemon.binary_path = data.binary_path;
-                this.health.daemon_running = data.running;
-            } catch (err) {
-                console.error('daemon status failed', err);
             }
         },
 
@@ -229,7 +266,7 @@ function systemPage() {
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(data.detail || data.message || 'restart failed');
                 showToast(data.message || '{{ t.get("system.toast.restart_ok") }}', 'success');
-                await this.fetchDaemonStatus();
+                await this.fetchStatus();
             } catch (err) {
                 showToast(err.message, 'error');
             } finally {
@@ -243,6 +280,16 @@ function systemPage() {
                 const res = await fetch('/dac/devices');
                 const data = await res.json();
                 this.dac.devices = data.devices || [];
+                // Keep selection stable (prefer active device -> previous selection -> first item)
+                const active = this.dac.runtime?.active_device;
+                const ids = new Set(this.dac.devices.map(d => d.id));
+                if (active && ids.has(active)) {
+                    this.dac.selected = active;
+                } else if (this.dac.selected && ids.has(this.dac.selected)) {
+                    // keep
+                } else {
+                    this.dac.selected = this.dac.devices[0]?.id || '';
+                }
             } catch (err) {
                 console.error('dac devices failed', err);
             } finally {
@@ -255,6 +302,9 @@ function systemPage() {
                 const res = await fetch('/dac/state');
                 if (!res.ok) return;
                 this.dac.runtime = await res.json();
+                if (!this.dac.selected && this.dac.runtime?.active_device) {
+                    this.dac.selected = this.dac.runtime.active_device;
+                }
             } catch (err) {
                 console.error('dac state failed', err);
             }
@@ -341,23 +391,6 @@ function systemPage() {
             this.partitioned.max_partitions = 4;
             this.partitioned.tail_fft_multiple = 2;
             showToast('{{ t.get("system.partitioned.reset_defaults") }}', 'info');
-        },
-
-        async fetchConfig() {
-            try {
-                const res = await fetch('/status');
-                if (!res.ok) return;
-                const data = await res.json();
-                const settings = data.settings;
-                if (settings) {
-                    this.config.bufferSize = settings.buffer_size;
-                    this.config.periodSize = settings.period_size;
-                    this.config.gain = settings.gain;
-                    this.config.headroomTarget = settings.headroom_target;
-                }
-            } catch (err) {
-                console.error('config fetch failed', err);
-            }
         },
 
         switchLanguage(target) {
