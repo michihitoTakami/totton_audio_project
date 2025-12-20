@@ -483,6 +483,7 @@ add_executable(cpu_tests
     tests/cpp/audio/test_rate_family.cpp
     tests/cpp/audio/test_eq_parser.cpp
     tests/cpp/audio/test_eq_to_fir.cpp
+    tests/cpp/audio/test_filter_headroom_cache.cpp
     tests/cpp/audio/test_overlap_add.cpp
     tests/cpp/core/test_config_loader.cpp
     tests/cpp/delimiter/test_inference_backend.cpp
@@ -490,6 +491,8 @@ add_executable(cpu_tests
     tests/cpp/audio/test_phase_alignment.cpp
     tests/cpp/audio/test_playback_buffer_threshold.cpp
     tests/cpp/daemon/test_alsa_write_loop.cpp
+    tests/cpp/daemon/test_loopback_helpers.cpp
+    tests/cpp/daemon/test_pid_lock.cpp
     tests/cpp/daemon/test_runtime_stats.cpp
     tests/cpp/daemon/test_stream_buffer_sizing.cpp
     tests/cpp/daemon/test_playback_buffer_access.cpp
@@ -505,6 +508,7 @@ add_executable(cpu_tests
     src/daemon/audio_pipeline/soft_mute_runner.cpp
     src/daemon/audio_pipeline/switch_actions.cpp
     src/daemon/control/handlers/handler_registry.cpp
+    src/daemon/core/pid_lock.cpp
     src/daemon/input/loopback_capture.cpp
     src/daemon/input/i2s_capture.cpp
     src/daemon/metrics/stats_file.cpp

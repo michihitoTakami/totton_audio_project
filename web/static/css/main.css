@@ -1708,6 +1708,43 @@ body::before {
     justify-content: center;
 }
 
+.card-row {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+    text-align: left;
+}
+
+.card-row .stack {
+    flex: 1 1 240px;
+}
+
+.card-row .btn-row {
+    flex: 1 1 240px;
+    margin-top: 0;
+}
+
+.wrap {
+    flex-wrap: wrap;
+}
+
+.config-notes {
+    display: grid;
+    gap: 10px;
+    text-align: left;
+}
+
+.config-note {
+    font-size: 12px;
+    color: rgba(224, 224, 224, 0.85);
+    padding: 10px 12px;
+    border: 1px dashed rgba(0, 255, 255, 0.25);
+    border-radius: 4px;
+    background: rgba(0, 255, 255, 0.03);
+    line-height: 1.5;
+}
+
 /* Button Group */
 .btn-group {
     display: flex;

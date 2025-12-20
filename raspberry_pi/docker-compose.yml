@@ -37,6 +37,8 @@ services:
       dockerfile: raspberry_pi/control_api/Dockerfile
     container_name: rpi-control-api
     network_mode: "host"
+    depends_on:
+      - usb-i2s-bridge
     environment:
       RPI_CONTROL_BIND_INTERFACE: ${RPI_CONTROL_BIND_INTERFACE:-usb0}
       RPI_CONTROL_PORT: ${RPI_CONTROL_PORT:-8081}
