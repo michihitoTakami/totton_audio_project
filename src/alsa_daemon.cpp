@@ -601,6 +601,7 @@ int main(int argc, char* argv[]) {
             pipelineDeps.output.outputGain = &g_state.gains.output;
             pipelineDeps.output.limiterGain = &g_state.gains.limiter;
             pipelineDeps.output.effectiveGain = &g_state.gains.effective;
+            pipelineDeps.running = &g_state.flags.running;
             pipelineDeps.upsampler.process =
                 [](const float* data, size_t frames, ConvolutionEngine::StreamFloatVector& output,
                    cudaStream_t stream, ConvolutionEngine::StreamFloatVector& streamInput,
@@ -632,6 +633,9 @@ int main(int argc, char* argv[]) {
             pipelineDeps.buffer.playbackBuffer = &daemon_output::playbackBuffer(g_state);
             pipelineDeps.maxOutputBufferFrames = []() {
                 return daemon_output::maxOutputBufferFrames(g_state);
+            };
+            pipelineDeps.currentInputRate = []() {
+                return g_state.rates.currentInputRate.load(std::memory_order_acquire);
             };
             pipelineDeps.currentOutputRate = []() {
                 return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
