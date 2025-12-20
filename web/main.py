@@ -162,7 +162,7 @@ Control interface for the GPU-accelerated audio upsampler daemon.
 
 ### Authentication
 Most endpoints do not require authentication (local network only).
-Admin endpoints (e.g., /api/opra/sync/*) require `X-Admin-Token`.
+Admin endpoints (e.g., /api/opra/sync/*) require HTTP Basic.
     """,
         version="1.0.0",
         openapi_tags=effective_tags,

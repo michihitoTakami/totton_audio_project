@@ -12,7 +12,8 @@ def _write_sample_db(path: Path) -> None:
 
 
 def test_opra_sync_requires_admin_token(monkeypatch):
-    monkeypatch.setenv("MAGICBOX_ADMIN_TOKEN", "secret")
+    monkeypatch.setenv("MAGICBOX_ADMIN_USER", "admin")
+    monkeypatch.setenv("MAGICBOX_ADMIN_PASSWORD", "secret")
     app = create_app()
     client = TestClient(app)
 
@@ -21,7 +22,8 @@ def test_opra_sync_requires_admin_token(monkeypatch):
 
 
 def test_opra_sync_status_returns_metadata(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("MAGICBOX_ADMIN_TOKEN", "secret")
+    monkeypatch.setenv("MAGICBOX_ADMIN_USER", "admin")
+    monkeypatch.setenv("MAGICBOX_ADMIN_PASSWORD", "secret")
     monkeypatch.setenv("GPU_OS_DATA_DIR", str(tmp_path))
 
     manager = OpraCacheManager()
@@ -40,7 +42,7 @@ def test_opra_sync_status_returns_metadata(monkeypatch, tmp_path: Path):
 
     app = create_app()
     client = TestClient(app)
-    resp = client.get("/api/opra/sync/status", headers={"X-Admin-Token": "secret"})
+    resp = client.get("/api/opra/sync/status", auth=("admin", "secret"))
     assert resp.status_code == 200
     body = resp.json()
     assert body["current_commit"] == "abc1234"
@@ -48,7 +50,8 @@ def test_opra_sync_status_returns_metadata(monkeypatch, tmp_path: Path):
 
 
 def test_opra_sync_update_starts_job(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("MAGICBOX_ADMIN_TOKEN", "secret")
+    monkeypatch.setenv("MAGICBOX_ADMIN_USER", "admin")
+    monkeypatch.setenv("MAGICBOX_ADMIN_PASSWORD", "secret")
     monkeypatch.setenv("GPU_OS_DATA_DIR", str(tmp_path))
 
     def fake_download_opra_database(*, target, source, temp_dir, **_kwargs):
@@ -72,7 +75,7 @@ def test_opra_sync_update_starts_job(monkeypatch, tmp_path: Path):
     client = TestClient(app)
     resp = client.post(
         "/api/opra/sync/update",
-        headers={"X-Admin-Token": "secret"},
+        auth=("admin", "secret"),
         json={"target": "latest", "source": "github_raw"},
     )
     assert resp.status_code == 202

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "GPU Upsampler Control",
-    "description": "\n## GPU Audio Upsampler Web API\n\nControl interface for the GPU-accelerated audio upsampler daemon.\n\n### Features\n- **Daemon Control**: Start/stop/restart the audio processing daemon\n- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)\n- **OPRA Integration**: Access the OPRA headphone EQ database\n- **Real-time Stats**: WebSocket endpoint for live statistics\n\n### Authentication\nMost endpoints do not require authentication (local network only).\nAdmin endpoints (e.g., /api/opra/sync/*) require `X-Admin-Token`.\n    ",
+    "description": "\n## GPU Audio Upsampler Web API\n\nControl interface for the GPU-accelerated audio upsampler daemon.\n\n### Features\n- **Daemon Control**: Start/stop/restart the audio processing daemon\n- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)\n- **OPRA Integration**: Access the OPRA headphone EQ database\n- **Real-time Stats**: WebSocket endpoint for live statistics\n\n### Authentication\nMost endpoints do not require authentication (local network only).\nAdmin endpoints (e.g., /api/opra/sync/*) require HTTP Basic.\n    ",
     "version": "1.0.0"
   },
   "paths": {
@@ -946,24 +946,6 @@
         "summary": "Opra Sync Status",
         "description": "Return current OPRA sync status.",
         "operationId": "opra_sync_status_api_opra_sync_status_get",
-        "parameters": [
-          {
-            "name": "x-admin-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Token"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -974,18 +956,13 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBasic": []
+          }
+        ]
       }
     },
     "/api/opra/sync/available": {
@@ -996,6 +973,11 @@
         "summary": "Opra Sync Available",
         "description": "Check available OPRA updates for the given source.",
         "operationId": "opra_sync_available_api_opra_sync_available_get",
+        "security": [
+          {
+            "HTTPBasic": []
+          }
+        ],
         "parameters": [
           {
             "name": "source",
@@ -1005,22 +987,6 @@
               "type": "string",
               "default": "github_raw",
               "title": "Source"
-            }
-          },
-          {
-            "name": "x-admin-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Token"
             }
           }
         ],
@@ -1056,33 +1022,15 @@
         "summary": "Opra Sync Update",
         "description": "Kick off OPRA sync update in background.",
         "operationId": "opra_sync_update_api_opra_sync_update_post",
-        "parameters": [
-          {
-            "name": "x-admin-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Token"
-            }
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/OpraSyncUpdateRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "202": {
@@ -1105,7 +1053,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBasic": []
+          }
+        ]
       }
     },
     "/api/opra/sync/rollback": {
@@ -1116,24 +1069,6 @@
         "summary": "Opra Sync Rollback",
         "description": "Rollback to the previous OPRA version.",
         "operationId": "opra_sync_rollback_api_opra_sync_rollback_post",
-        "parameters": [
-          {
-            "name": "x-admin-token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Token"
-            }
-          }
-        ],
         "responses": {
           "202": {
             "description": "Successful Response",
@@ -1144,18 +1079,13 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBasic": []
+          }
+        ]
       }
     },
     "/dac/state": {
@@ -4545,6 +4475,12 @@
         ],
         "title": "ZmqPingResponse",
         "description": "ZeroMQ ping response model."
+      }
+    },
+    "securitySchemes": {
+      "HTTPBasic": {
+        "type": "http",
+        "scheme": "basic"
       }
     }
   },
