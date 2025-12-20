@@ -650,16 +650,26 @@ void AudioPipeline::resetHighLatencyState(const char* reason) {
 void AudioPipeline::resetHighLatencyStateLocked(const char* reason) {
     (void)reason;
     hasPrevChunk_ = false;
-    prevInputTailLeft_.clear();
-    prevInputTailRight_.clear();
-    prevOutputTailWeightedLeft_.clear();
-    prevOutputTailWeightedRight_.clear();
+    if (overlapFrames_ > 0) {
+        prevInputTailLeft_.assign(overlapFrames_, 0.0f);
+        prevInputTailRight_.assign(overlapFrames_, 0.0f);
+        prevOutputTailWeightedLeft_.assign(overlapFrames_, 0.0f);
+        prevOutputTailWeightedRight_.assign(overlapFrames_, 0.0f);
+    } else {
+        prevInputTailLeft_.clear();
+        prevInputTailRight_.clear();
+        prevOutputTailWeightedLeft_.clear();
+        prevOutputTailWeightedRight_.clear();
+    }
     chunkInputLeft_.clear();
     chunkInputRight_.clear();
     chunkOutputLeft_.clear();
     chunkOutputRight_.clear();
     segmentLeft_.clear();
     segmentRight_.clear();
+    readInterleaved_.clear();
+    readLeft_.clear();
+    readRight_.clear();
     if (delimiterBackend_) {
         delimiterBackend_->reset();
     }
