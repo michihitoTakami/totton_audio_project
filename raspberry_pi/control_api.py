@@ -392,7 +392,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--host",
         default=DEFAULT_BIND_HOST,
-        help="bind host (default: auto-detect usb0)",
+        help="bind host (default: auto-detect from interface; exits if auto-detect fails)",
     )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
@@ -430,7 +430,12 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     host = args.host.strip()
     if not host:
-        host = _resolve_interface_ip(DEFAULT_BIND_INTERFACE) or "127.0.0.1"
+        host = _resolve_interface_ip(DEFAULT_BIND_INTERFACE) or ""
+    if not host:
+        raise SystemExit(
+            "[raspi-control-api] ERROR: bind host is not set and interface auto-detect failed. "
+            "Set RPI_CONTROL_BIND_HOST (e.g. 192.168.55.100) or fix RPI_CONTROL_BIND_INTERFACE."
+        )
     app_instance = create_app(
         config_path=args.config,
         status_path=args.status,
