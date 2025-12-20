@@ -54,3 +54,22 @@ def test_language_switch_translated_to_japanese():
     assert "言語設定" in html
     assert "英語" in html
     assert "日本語" in html
+
+
+def test_system_dac_uses_select_box_not_list():
+    """
+    DAC selector should be a single select box (not a per-device list).
+
+    Regression guard for UI changes that accidentally render all devices as a list.
+    """
+    html = render_system(lang="en", current_page="system")
+
+    # Select box is rendered via form_group.html
+    assert "<select" in html
+    assert 'x-model="dac.selected"' in html
+    assert "/dac/devices" in html
+    assert "/dac/select" in html
+
+    # Old list-based UI markers should not exist
+    assert "device-list" not in html
+    assert "device-row" not in html

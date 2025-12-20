@@ -73,7 +73,7 @@
             {% include 'components/form_group.html' %}
         </div>
         <div class="btn-row" x-show="dac.devices.length > 0">
-            {{ buttons.btn_primary(t.get('system.dac.select'), icon='🎧', click='selectDac(dac.selected)', disabled='actionInProgress || !dac.selected', extra_class='btn-secondary') }}
+            {{ buttons.btn_primary(t.get('system.dac.select'), icon='🎧', click='selectDac(dac.selected)', disabled='actionInProgress || !dac.selected || dac.runtime?.active_device === dac.selected', extra_class='btn-secondary') }}
         </div>
         <template x-if="dac.devices.length === 0">
             {% set info_message = t.get('system.dac.no_devices') %}
@@ -324,6 +324,8 @@ function systemPage() {
         },
 
         async selectDac(id) {
+            if (!id) return;
+            if (this.dac.runtime?.active_device === id) return;
             if (!confirm('{{ t.get("system.confirm.switch_dac") }}')) return;
             this.actionInProgress = true;
             try {
