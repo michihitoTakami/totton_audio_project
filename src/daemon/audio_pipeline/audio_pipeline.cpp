@@ -452,6 +452,8 @@ bool AudioPipeline::enqueueInputForWorker(const float* inputSamples, uint32_t nF
 
     if (pauseRequested || cacheFlushPending) {
         // Keep timeline stable and avoid mixing pre/post-switch audio.
+        inputDropDetected_.store(true, std::memory_order_release);
+        inputCv_.notify_one();
         if (!deps_.config || !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
             return false;
         }
