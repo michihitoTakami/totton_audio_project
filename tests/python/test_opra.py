@@ -19,7 +19,7 @@ from scripts.integration.opra import (
 # Skip marker for tests requiring OPRA submodule
 requires_opra_submodule = pytest.mark.skipif(
     not Path(DEFAULT_OPRA_PATH).exists(),
-    reason="OPRA submodule not initialized. Run: git submodule update --init",
+    reason="OPRA data not installed. Run OPRA sync (or init submodule for dev)",
 )
 
 

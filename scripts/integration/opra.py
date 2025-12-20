@@ -2,7 +2,9 @@
 """
 OPRA Database Parser and EQ Converter.
 
-Reads OPRA headphone EQ database from submodule and converts to Equalizer APO format.
+Reads OPRA headphone EQ database from the synced cache (`opra/current`) and
+converts to Equalizer APO format. If the cache is missing (development only),
+falls back to the OPRA submodule data.
 Source: https://github.com/opra-project/OPRA
 License: CC BY-SA 4.0
 
@@ -241,7 +243,8 @@ class OpraDatabase:
     """
     OPRA headphone EQ database reader.
 
-    Reads from the OPRA submodule and provides search functionality.
+    Prefers the OPRA cache (`opra/current/database_v1.jsonl`) and only falls
+    back to the OPRA submodule path for development environments.
     """
 
     def __init__(self, db_path: Path | None = None):
@@ -249,7 +252,8 @@ class OpraDatabase:
         Initialize database.
 
         Args:
-            db_path: Path to database_v1.jsonl. If None, uses default submodule path.
+            db_path: Path to database_v1.jsonl. If None, uses OPRA cache current
+                and falls back to the submodule path for development.
         """
         self.db_path = db_path or _resolve_default_opra_path()
         self._vendors: dict[str, dict] = {}
@@ -265,7 +269,10 @@ class OpraDatabase:
         if not self.db_path.exists():
             raise FileNotFoundError(
                 f"OPRA database not found at {self.db_path}. "
-                "Run OPRA sync or 'git submodule update --init' to fetch OPRA data."
+                "Run OPRA sync to install the OPRA cache "
+                "(see docs/specifications/opra-sync.md). "
+                "For development, ensure OPRA data is available "
+                "(e.g., initialize the data/opra-db submodule)."
             )
 
         with open(self.db_path, encoding="utf-8") as f:
