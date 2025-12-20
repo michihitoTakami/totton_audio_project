@@ -94,14 +94,26 @@
             {% set form_select_options = '<template x-for=\"preset in devicePresets\" :key=\"preset.id\"><option :value=\"preset.id\" x-text=\"preset.label\"></option></template>' %}
             {% include 'components/form_group.html' %}
 
-            {% set form_label = t.get('pi.config.latency') %}
-            {% set form_input_type = "select" %}
-            {% set form_input_model = "latencyProfile" %}
-            {% set form_input_disabled = "true" %}
-            {% set form_select_options %}
-            <option value="standard">{{ t.get('pi.config.latency.standard') }}</option>
-            {% endset %}
-            {% include 'components/form_group.html' %}
+            {% set selector_label = t.get('pi.config.latency') %}
+            {% set alpine_model = "latencyProfile" %}
+            {% set alpine_click = "setLatencyProfile" %}
+            {% set alpine_disabled = "actionInProgress || config.loading" %}
+            {% set sizes = ['low', 'medium', 'safe'] %}
+            {% set size_labels = {
+                'low': t.get('pi.config.latency.low_short'),
+                'medium': t.get('pi.config.latency.medium_short'),
+                'safe': t.get('pi.config.latency.safe_short'),
+            } %}
+            {% set size_descriptions = {
+                'low': t.get('pi.config.latency.low_desc'),
+                'medium': t.get('pi.config.latency.medium_desc'),
+                'safe': t.get('pi.config.latency.safe_desc'),
+            } %}
+            {% include 'components/size_selector.html' %}
+
+            {% set info_message = t.get('pi.config.latency.custom_note') %}
+            {% set info_show = "latencyProfile === 'custom'" %}
+            {% include 'components/info_text.html' %}
 
             {% set form_label = t.get('pi.config.capture_device') %}
             {% set form_input_model = "config.capture_device" %}
@@ -333,9 +345,28 @@ function piSettingsPage() {
             loading: false,
         },
         devicePreset: 'default',
-        latencyProfile: 'standard',
+        latencyProfile: 'medium',
         advancedMode: false,
         actionInProgress: false,
+        latencyProfiles: {
+            // NOTE: 実際の体感遅延はデバイス/環境に依存するため “目安”。
+            // ALSA buffer/latency と queue を同じ比率でスケールさせ、操作感を揃える。
+            low: {
+                alsa_buffer_time_us: 100000,
+                alsa_latency_time_us: 10000,
+                queue_time_ns: 50000000,
+            },
+            medium: {
+                alsa_buffer_time_us: 200000,
+                alsa_latency_time_us: 20000,
+                queue_time_ns: 100000000,
+            },
+            safe: {
+                alsa_buffer_time_us: 400000,
+                alsa_latency_time_us: 40000,
+                queue_time_ns: 200000000,
+            },
+        },
         devicePresets: [
             {
                 id: 'default',
@@ -352,6 +383,17 @@ function piSettingsPage() {
         ],
 
         init() {
+            // 詳細モードで手動編集された場合は “custom” 表示に追従させる
+            this.$watch('config.alsa_buffer_time_us', () => {
+                this.latencyProfile = this.detectLatencyProfile();
+            });
+            this.$watch('config.alsa_latency_time_us', () => {
+                this.latencyProfile = this.detectLatencyProfile();
+            });
+            this.$watch('config.queue_time_ns', () => {
+                this.latencyProfile = this.detectLatencyProfile();
+            });
+
             this.refreshAll();
             setInterval(() => {
                 this.fetchStatus();
@@ -407,6 +449,7 @@ function piSettingsPage() {
                     loading: false,
                 };
                 this.devicePreset = this.detectDevicePreset();
+                this.latencyProfile = this.detectLatencyProfile();
             } catch (err) {
                 console.error('config fetch failed', err);
                 this.config.loading = false;
@@ -424,6 +467,20 @@ function piSettingsPage() {
             return matches ? matches.id : 'custom';
         },
 
+        detectLatencyProfile() {
+            const equals = (a, b) => Number(a) === Number(b);
+            for (const [id, profile] of Object.entries(this.latencyProfiles)) {
+                if (
+                    equals(this.config.alsa_buffer_time_us, profile.alsa_buffer_time_us) &&
+                    equals(this.config.alsa_latency_time_us, profile.alsa_latency_time_us) &&
+                    equals(this.config.queue_time_ns, profile.queue_time_ns)
+                ) {
+                    return id;
+                }
+            }
+            return 'custom';
+        },
+
         applyDevicePreset() {
             const preset = this.devicePresets.find(
                 (item) => item.id === this.devicePreset
@@ -431,6 +488,18 @@ function piSettingsPage() {
             if (!preset || preset.id === 'custom') return;
             this.config.capture_device = preset.capture_device;
             this.config.playback_device = preset.playback_device;
+        },
+
+        setLatencyProfile(profileId) {
+            const profile = this.latencyProfiles[String(profileId)];
+            if (!profile) {
+                this.latencyProfile = 'custom';
+                return;
+            }
+            this.latencyProfile = String(profileId);
+            this.config.alsa_buffer_time_us = profile.alsa_buffer_time_us;
+            this.config.alsa_latency_time_us = profile.alsa_latency_time_us;
+            this.config.queue_time_ns = profile.queue_time_ns;
         },
 
         togglePassthrough() {
@@ -468,6 +537,7 @@ function piSettingsPage() {
                 const data = await res.json();
                 this.config = { ...this.config, ...data };
                 this.devicePreset = this.detectDevicePreset();
+                this.latencyProfile = this.detectLatencyProfile();
                 showToast('{{ t.get("pi.toast.apply_ok") }}', 'success');
             } catch (err) {
                 console.error('apply config failed', err);

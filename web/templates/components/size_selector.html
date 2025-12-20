@@ -6,22 +6,39 @@
    - alpine_disabled (optional): Alpine.js expression for disabled state (default: "false")
    - alpine_show (optional): Alpine.js expression for x-show directive
    - sizes (optional): Array of size values (default: ['xs', 's', 'm', 'l', 'xl'])
+   - size_labels (optional): Mapping of size -> label text (default: none, uses size.upper())
+   - size_descriptions (optional): Mapping of size -> secondary text (default: none)
    - form_group_style (optional): Inline style string for form-group div
 #}
 {% set alpine_disabled = alpine_disabled | default("false") %}
 {% set sizes = sizes | default(['xs', 's', 'm', 'l', 'xl']) %}
+{% set size_labels = size_labels | default(None) %}
+{% set size_descriptions = size_descriptions | default(None) %}
 
 <div class="form-group" {% if form_group_style %}style="{{ form_group_style }}"{% endif %} {% if alpine_show %}x-show="{{ alpine_show }}"{% endif %}>
     <label>{{ selector_label }}</label>
     <div class="head-size-group">
         {% for size in sizes %}
+        {% set label = size.upper() %}
+        {% if size_labels and size in size_labels %}
+            {% set label = size_labels[size] %}
+        {% endif %}
+        {% set desc = None %}
+        {% if size_descriptions and size in size_descriptions %}
+            {% set desc = size_descriptions[size] %}
+        {% endif %}
         <button
             type="button"
             class="head-size-btn"
             :class="{ 'active': {{ alpine_model }} === '{{ size }}' }"
             @click="{{ alpine_click }}('{{ size }}')"
             :disabled="{{ alpine_disabled }}"
-        >{{ size.upper() }}</button>
+        >
+            <span class="selector-btn-title">{{ label }}</span>
+            {% if desc %}
+            <span class="selector-btn-subtitle">{{ desc }}</span>
+            {% endif %}
+        </button>
         {% endfor %}
     </div>
 </div>

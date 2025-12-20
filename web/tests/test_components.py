@@ -464,11 +464,11 @@ class TestSizeSelectorComponent:
         html = response.text
 
         # Should have 5 sizes: XS, S, M, L, XL
-        assert ">XS</button>" in html
-        assert ">S</button>" in html
-        assert ">M</button>" in html
-        assert ">L</button>" in html
-        assert ">XL</button>" in html
+        assert 'class="selector-btn-title">XS' in html
+        assert 'class="selector-btn-title">S' in html
+        assert 'class="selector-btn-title">M' in html
+        assert 'class="selector-btn-title">L' in html
+        assert 'class="selector-btn-title">XL' in html
 
     def test_size_selector_alpine_bindings(self, client):
         """Verify size selector has Alpine.js bindings."""
