@@ -352,6 +352,9 @@ static runtime_stats::Dependencies build_runtime_stats_dependencies() {
     deps.delimiterMode = &g_state.delimiter.mode;
     deps.delimiterFallbackReason = &g_state.delimiter.fallbackReason;
     deps.delimiterBypassLocked = &g_state.delimiter.bypassLocked;
+    deps.playbackBuffer = &daemon_output::playbackBuffer(g_state);
+    deps.outputReady = &g_state.flags.outputReady;
+
     return deps;
 }
 
