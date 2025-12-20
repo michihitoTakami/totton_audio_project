@@ -21,6 +21,15 @@
 //   Safe for single producer / single consumer pattern with atomic operations.
 //   Producer thread calls write(), consumer thread calls read().
 //   For multi-producer or multi-consumer, use mutex externally.
+//
+// Memory ordering / invariants:
+//   - SPSC only: producer is the sole writer of tail_, consumer is the sole
+//     writer of head_ (both use relaxed operations).
+//   - size_ is the synchronization point between threads:
+//       * write(): sample writes happen-before size_.fetch_add(..., release)
+//       * read(): size_.load(acquire) happens-before reading samples
+//   - clear() must be externally synchronized and called only when both threads
+//     are stopped or paused (no concurrent write/read), otherwise data races.
 
 class AudioRingBuffer {
    public:
