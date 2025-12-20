@@ -1791,6 +1791,21 @@ body::before {
     text-align: center;
 }
 
+.selector-btn-title {
+    display: block;
+    font-weight: 700;
+    line-height: 1.1;
+}
+
+.selector-btn-subtitle {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.8;
+    line-height: 1.1;
+}
+
 .head-size-btn:hover:not(:disabled) {
     background: rgba(0, 255, 255, 0.1);
     border-color: #00ffff;
