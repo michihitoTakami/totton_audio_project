@@ -16,6 +16,7 @@ def test_render_eq_settings_english():
     # Check sections are present
     assert "Active EQ Profile" in html
     assert "OPRA Headphone Search" in html
+    assert "OPRA Sync" in html
     assert "Import EQ from Text" in html
     assert "Saved EQ Profiles" in html
 
@@ -35,6 +36,7 @@ def test_render_eq_settings_japanese():
     # Check sections are present
     assert "有効なEQプロファイル" in html
     assert "OPRAヘッドホン検索" in html
+    assert "OPRA同期" in html
     assert "テキストからEQをインポート" in html
     assert "保存済みEQプロファイル" in html
 
@@ -55,6 +57,10 @@ def test_eq_settings_page_structure():
     assert "/eq/profiles" in html
     assert "/opra/search" in html
     assert "/opra/apply/" in html
+    assert "/api/opra/sync/status" in html
+    assert "/api/opra/sync/available" in html
+    assert "/api/opra/sync/update" in html
+    assert "/api/opra/sync/rollback" in html
 
     # Check form elements
     assert 'id="opraSearch"' in html
