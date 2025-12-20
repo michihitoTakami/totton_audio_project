@@ -8,9 +8,11 @@
 #include "audio/audio_utils.h"
 #include "io/audio_ring_buffer.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <gtest/gtest.h>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -215,6 +217,77 @@ TEST_F(AudioRingBufferTest, ConcurrentAccess_SPSCPattern) {
     producer.join();
     consumer.join();
 
+    EXPECT_EQ(samplesWritten.load(), totalSamples);
+    EXPECT_EQ(samplesRead.load(), totalSamples);
+}
+
+TEST_F(AudioRingBufferTest, ConcurrentAccess_StressSequence) {
+    buffer_.init(4096);
+    const size_t totalSamples = 1 << 18;
+    const size_t maxChunk = 128;
+    std::atomic<bool> producerDone{false};
+    std::atomic<bool> mismatch{false};
+    std::atomic<size_t> samplesWritten{0};
+    std::atomic<size_t> samplesRead{0};
+
+    std::thread producer([&]() {
+        std::minstd_rand rng(12345);
+        std::uniform_int_distribution<size_t> dist(1, maxChunk);
+        std::vector<float> data(maxChunk);
+        size_t written = 0;
+        while (written < totalSamples && !mismatch.load(std::memory_order_relaxed)) {
+            size_t chunk = std::min(dist(rng), totalSamples - written);
+            if (buffer_.availableToWrite() < chunk) {
+                std::this_thread::yield();
+                continue;
+            }
+            for (size_t i = 0; i < chunk; ++i) {
+                data[i] = static_cast<float>(written + i);
+            }
+            if (buffer_.write(data.data(), chunk)) {
+                written += chunk;
+                samplesWritten.store(written, std::memory_order_relaxed);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+        producerDone.store(true, std::memory_order_release);
+    });
+
+    std::thread consumer([&]() {
+        std::minstd_rand rng(67890);
+        std::uniform_int_distribution<size_t> dist(1, maxChunk);
+        std::vector<float> data(maxChunk);
+        size_t read = 0;
+        while (read < totalSamples && !mismatch.load(std::memory_order_relaxed)) {
+            size_t chunk = std::min(dist(rng), totalSamples - read);
+            if (buffer_.availableToRead() < chunk) {
+                if (producerDone.load(std::memory_order_acquire) &&
+                    buffer_.availableToRead() == 0) {
+                    break;
+                }
+                std::this_thread::yield();
+                continue;
+            }
+            if (buffer_.read(data.data(), chunk)) {
+                for (size_t i = 0; i < chunk; ++i) {
+                    if (data[i] != static_cast<float>(read + i)) {
+                        mismatch.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+                }
+                read += chunk;
+                samplesRead.store(read, std::memory_order_relaxed);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+    });
+
+    producer.join();
+    consumer.join();
+
+    EXPECT_FALSE(mismatch.load());
     EXPECT_EQ(samplesWritten.load(), totalSamples);
     EXPECT_EQ(samplesRead.load(), totalSamples);
 }
