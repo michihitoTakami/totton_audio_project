@@ -70,25 +70,13 @@ class TestDaemonStatus:
 
     def test_daemon_status_running(self):
         """Test daemon running status."""
-        status = DaemonStatus(
-            running=True,
-            pid=12345,
-            pid_file="/tmp/daemon.pid",
-            binary_path="/usr/bin/daemon",
-        )
+        status = DaemonStatus(running=True)
         assert status.running is True
-        assert status.pid == 12345
 
     def test_daemon_status_stopped(self):
         """Test daemon stopped status."""
-        status = DaemonStatus(
-            running=False,
-            pid=None,
-            pid_file="/tmp/daemon.pid",
-            binary_path="/usr/bin/daemon",
-        )
+        status = DaemonStatus(running=False)
         assert status.running is False
-        assert status.pid is None
 
 
 class TestEqProfileInfo:

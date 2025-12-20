@@ -311,6 +311,16 @@ def load_stats() -> dict:
             "post_mix": {"linear": 0.0, "dbfs": -200.0},
             "post_gain": {"linear": 0.0, "dbfs": -200.0},
         },
+        # Debug extras (may be absent depending on daemon build/version)
+        "xrun_count": 0,
+        "buffer_underflows": 0,
+        "buffer_overflows": 0,
+        "buffer_capacity_frames": 0,
+        "dropped_frames": 0,
+        "rendered_silence_blocks": 0,
+        "rendered_silence_frames": 0,
+        "alsa_buffer_size_config": 0,
+        "alsa_period_size_config": 0,
     }
     if not STATS_FILE_PATH.exists():
         return default_stats
@@ -332,6 +342,18 @@ def load_stats() -> dict:
                 "dbfs": stage.get("dbfs", -200.0),
             }
 
+        audio = data.get("audio", {}) if isinstance(data, dict) else {}
+        if not isinstance(audio, dict):
+            audio = {}
+
+        buffer = data.get("buffer", {}) if isinstance(data, dict) else {}
+        if not isinstance(buffer, dict):
+            buffer = {}
+
+        alsa = data.get("alsa", {}) if isinstance(data, dict) else {}
+        if not isinstance(alsa, dict):
+            alsa = {}
+
         return {
             "clip_rate": clip_rate,
             "clip_count": clip,
@@ -344,6 +366,19 @@ def load_stats() -> dict:
                 "post_mix": _stage("post_mix"),
                 "post_gain": _stage("post_gain"),
             },
+            "xrun_count": int(audio.get("xrun_count", 0) or 0),
+            "buffer_underflows": int(audio.get("buffer_underflows", 0) or 0),
+            "buffer_overflows": int(audio.get("buffer_overflows", 0) or 0),
+            "buffer_capacity_frames": int(buffer.get("capacity_frames", 0) or 0),
+            "dropped_frames": int(buffer.get("dropped_frames", 0) or 0),
+            "rendered_silence_blocks": int(
+                buffer.get("rendered_silence_blocks", 0) or 0
+            ),
+            "rendered_silence_frames": int(
+                buffer.get("rendered_silence_frames", 0) or 0
+            ),
+            "alsa_buffer_size_config": int(alsa.get("buffer_size_config", 0) or 0),
+            "alsa_period_size_config": int(alsa.get("period_size_config", 0) or 0),
         }
     except (json.JSONDecodeError, IOError):
         return default_stats

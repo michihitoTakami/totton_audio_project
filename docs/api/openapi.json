@@ -226,7 +226,7 @@
           "daemon"
         ],
         "summary": "Daemon Status",
-        "description": "Get detailed daemon status.",
+        "description": "Get daemon running status (minimal).",
         "operationId": "daemon_status_daemon_status_get",
         "responses": {
           "200": {
@@ -2552,32 +2552,11 @@
           "running": {
             "type": "boolean",
             "title": "Running"
-          },
-          "pid": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pid"
-          },
-          "pid_file": {
-            "type": "string",
-            "title": "Pid File"
-          },
-          "binary_path": {
-            "type": "string",
-            "title": "Binary Path"
           }
         },
         "type": "object",
         "required": [
-          "running",
-          "pid_file",
-          "binary_path"
+          "running"
         ],
         "title": "DaemonStatus",
         "description": "Daemon status response model."
@@ -3871,6 +3850,26 @@
             "title": "Upsample Ratio",
             "default": 8
           },
+          "buffer_size": {
+            "type": "integer",
+            "title": "Buffer Size",
+            "default": 0
+          },
+          "period_size": {
+            "type": "integer",
+            "title": "Period Size",
+            "default": 0
+          },
+          "gain": {
+            "type": "number",
+            "title": "Gain",
+            "default": 1.0
+          },
+          "headroom_target": {
+            "type": "number",
+            "title": "Headroom Target",
+            "default": 0.0
+          },
           "eq_enabled": {
             "type": "boolean",
             "title": "Eq Enabled",
@@ -4057,6 +4056,51 @@
           },
           "peaks": {
             "$ref": "#/components/schemas/PeakLevels"
+          },
+          "xrun_count": {
+            "type": "integer",
+            "title": "Xrun Count",
+            "default": 0
+          },
+          "buffer_underflows": {
+            "type": "integer",
+            "title": "Buffer Underflows",
+            "default": 0
+          },
+          "buffer_overflows": {
+            "type": "integer",
+            "title": "Buffer Overflows",
+            "default": 0
+          },
+          "buffer_capacity_frames": {
+            "type": "integer",
+            "title": "Buffer Capacity Frames",
+            "default": 0
+          },
+          "dropped_frames": {
+            "type": "integer",
+            "title": "Dropped Frames",
+            "default": 0
+          },
+          "rendered_silence_blocks": {
+            "type": "integer",
+            "title": "Rendered Silence Blocks",
+            "default": 0
+          },
+          "rendered_silence_frames": {
+            "type": "integer",
+            "title": "Rendered Silence Frames",
+            "default": 0
+          },
+          "alsa_buffer_size_config": {
+            "type": "integer",
+            "title": "Alsa Buffer Size Config",
+            "default": 0
+          },
+          "alsa_period_size_config": {
+            "type": "integer",
+            "title": "Alsa Period Size Config",
+            "default": 0
           }
         },
         "type": "object",

@@ -117,6 +117,10 @@ def load_config() -> Settings:
             return Settings(
                 alsa_device=preferred_device,
                 upsample_ratio=data.get("upsampleRatio", 8),
+                buffer_size=int(data.get("bufferSize", 0) or 0),
+                period_size=int(data.get("periodSize", 0) or 0),
+                gain=float(data.get("gain", 1.0) or 0.0),
+                headroom_target=float(data.get("headroomTarget", 0.0) or 0.0),
                 eq_enabled=bool(eq_enabled and eq_profile_path),
                 eq_profile=eq_profile,
                 eq_profile_path=eq_profile_path,

@@ -30,7 +30,6 @@ def test_system_page_structure():
     html = render_system(lang="en")
 
     assert "/status" in html
-    assert "/daemon/status" in html
     assert "/daemon/restart" in html
     assert "/dac/devices" in html
     assert "/dac/state" in html
