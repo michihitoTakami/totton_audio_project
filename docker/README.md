@@ -36,6 +36,10 @@ docker compose -f jetson/docker-compose.jetson.yml down
 - サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build magicbox` のようにサービス名を指定
 - `restart: always` を指定済み。systemd で単体起動する場合も `Restart=always` を付け、片側クラッシュ時に自動復帰させてください。
 
+## OPRAキャッシュの永続化
+- Jetson Compose は `magicbox-opra-cache` ボリュームを `/data/opra` にマウントし、OPRA同期結果がコンテナの再ビルド/再起動後も保持されるようにしています。
+- データルートは `GPU_OS_DATA_DIR` で上書き可能（デフォルト `/data`）。エントリポイントがロック/versionsディレクトリを作成し、`magicbox` ユーザー所有に揃えます。
+
 ## Magic Box コンテナの事前ビルド（Jetson 本体で実行）
 `docker/jetson/Dockerfile.jetson` はホストでビルド済みのバイナリをコピーする前提です。コンテナを立ち上げる前に Jetson 上で以下を実行し、`build/gpu_upsampler_alsa` を用意してください。
 
