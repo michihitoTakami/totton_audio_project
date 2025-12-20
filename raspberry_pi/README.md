@@ -141,7 +141,7 @@ curl -X PUT http://192.168.55.100:8081/raspi/api/v1/config \
 
 別ポートを増やさずに Jetson 側へ状態（mode/rate/format/ch）を通知したい場合は、Pi 側で以下を設定します（任意）。
 
-- `USB_I2S_STATUS_REPORT_URL`（例: `http://jetson/i2s/peer-status`）※`config.env` で設定
+- `USB_I2S_STATUS_REPORT_URL`（例: `http://192.168.55.1/i2s/peer-status`）※`config.env` で設定
 - `USB_I2S_STATUS_REPORT_TIMEOUT_MS`（既定 300、`config.env`）
 - `USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC`（既定 1.0、`config.env`）
 
