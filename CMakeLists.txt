@@ -484,6 +484,7 @@ add_executable(cpu_tests
     tests/cpp/audio/test_eq_parser.cpp
     tests/cpp/audio/test_eq_to_fir.cpp
     tests/cpp/audio/test_filter_headroom_cache.cpp
+    tests/cpp/audio/test_overlap_add.cpp
     tests/cpp/core/test_config_loader.cpp
     tests/cpp/delimiter/test_inference_backend.cpp
     tests/cpp/e2e/test_partition_plan.cpp
