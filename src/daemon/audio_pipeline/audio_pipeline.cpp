@@ -90,6 +90,39 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     workRight_.resize(initialFrames);
 
     highLatencyEnabled_ = (deps_.config && deps_.config->delimiter.enabled);
+    delimiterWarmup_.store(highLatencyEnabled_, std::memory_order_relaxed);
+    delimiterQueueSamples_.store(0, std::memory_order_relaxed);
+    delimiterQueueSeconds_.store(0.0, std::memory_order_relaxed);
+    delimiterLastInferenceMs_.store(0.0, std::memory_order_relaxed);
+    delimiterBackendAvailable_.store(false, std::memory_order_relaxed);
+    delimiterBackendValid_.store(false, std::memory_order_relaxed);
+    delimiterTargetMode_.store(static_cast<int>(delimiter::ProcessingMode::Active),
+                               std::memory_order_relaxed);
+    if (deps_.delimiterEnabled) {
+        deps_.delimiterEnabled->store(highLatencyEnabled_, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterWarmup) {
+        deps_.delimiterWarmup->store(highLatencyEnabled_, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterQueueSamples) {
+        deps_.delimiterQueueSamples->store(0, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterQueueSeconds) {
+        deps_.delimiterQueueSeconds->store(0.0, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterLastInferenceMs) {
+        deps_.delimiterLastInferenceMs->store(0.0, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBackendAvailable) {
+        deps_.delimiterBackendAvailable->store(false, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBackendValid) {
+        deps_.delimiterBackendValid->store(false, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterTargetMode) {
+        deps_.delimiterTargetMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                         std::memory_order_relaxed);
+    }
     if (highLatencyEnabled_) {
         if (deps_.delimiterMode) {
             deps_.delimiterMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
@@ -108,6 +141,11 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
             delimiterBackend_ = deps_.delimiterBackendFactory(deps_.config->delimiter);
         } else {
             delimiterBackend_ = delimiter::createDelimiterInferenceBackend(deps_.config->delimiter);
+        }
+        bool backendAvailable = (delimiterBackend_ != nullptr);
+        delimiterBackendAvailable_.store(backendAvailable, std::memory_order_relaxed);
+        if (deps_.delimiterBackendAvailable) {
+            deps_.delimiterBackendAvailable->store(backendAvailable, std::memory_order_relaxed);
         }
 
         int initRate = pickInitialInputRate(deps_);
@@ -546,6 +584,60 @@ bool AudioPipeline::waitForRtQuiescent(std::chrono::milliseconds timeout) const 
            !rtInProcess_.load(std::memory_order_acquire);
 }
 
+bool AudioPipeline::requestDelimiterEnable() {
+    if (!highLatencyEnabled_ || !delimiterBackend_) {
+        return false;
+    }
+    delimiterCommand_.store(static_cast<int>(DelimiterCommand::Enable), std::memory_order_release);
+    return true;
+}
+
+bool AudioPipeline::requestDelimiterDisable() {
+    if (!highLatencyEnabled_) {
+        return false;
+    }
+    delimiterCommand_.store(static_cast<int>(DelimiterCommand::Disable), std::memory_order_release);
+    return true;
+}
+
+DelimiterStatusSnapshot AudioPipeline::delimiterStatus() const {
+    DelimiterStatusSnapshot snapshot;
+    snapshot.enabled = highLatencyEnabled_;
+    snapshot.backendAvailable = delimiterBackendAvailable_.load(std::memory_order_relaxed);
+    snapshot.backendValid = delimiterBackendValid_.load(std::memory_order_relaxed);
+    snapshot.warmup = delimiterWarmup_.load(std::memory_order_relaxed);
+    snapshot.queueSamples = delimiterQueueSamples_.load(std::memory_order_relaxed);
+    snapshot.queueSeconds = delimiterQueueSeconds_.load(std::memory_order_relaxed);
+    snapshot.lastInferenceMs = delimiterLastInferenceMs_.load(std::memory_order_relaxed);
+    snapshot.mode = delimiter::ProcessingMode::Active;
+    snapshot.targetMode = delimiter::ProcessingMode::Active;
+    snapshot.fallbackReason = delimiter::FallbackReason::None;
+    snapshot.bypassLocked = false;
+    if (deps_.delimiterMode) {
+        snapshot.mode = static_cast<delimiter::ProcessingMode>(
+            deps_.delimiterMode->load(std::memory_order_relaxed));
+    }
+    if (deps_.delimiterTargetMode) {
+        snapshot.targetMode = static_cast<delimiter::ProcessingMode>(
+            deps_.delimiterTargetMode->load(std::memory_order_relaxed));
+    }
+    if (deps_.delimiterFallbackReason) {
+        snapshot.fallbackReason = static_cast<delimiter::FallbackReason>(
+            deps_.delimiterFallbackReason->load(std::memory_order_relaxed));
+    }
+    if (deps_.delimiterBypassLocked) {
+        snapshot.bypassLocked = deps_.delimiterBypassLocked->load(std::memory_order_relaxed);
+    }
+    if (deps_.delimiterEnabled) {
+        snapshot.enabled = deps_.delimiterEnabled->load(std::memory_order_relaxed);
+    }
+    {
+        std::lock_guard<std::mutex> lock(delimiterDetailMutex_);
+        snapshot.detail = delimiterDetail_;
+    }
+    return snapshot;
+}
+
 RenderResult AudioPipeline::renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,
                                          std::vector<float>& floatScratch,
                                          SoftMute::Controller* softMute) {
@@ -697,11 +789,20 @@ void AudioPipeline::resetHighLatencyStateLocked(const char* reason) {
     if (delimiterBackend_) {
         delimiterBackend_->reset();
     }
+    delimiterWarmup_.store(true, std::memory_order_relaxed);
+    if (deps_.delimiterWarmup) {
+        deps_.delimiterWarmup->store(true, std::memory_order_relaxed);
+    }
 }
 
 void AudioPipeline::updateDelimiterStatus(const delimiter::SafetyStatus& status) {
     if (deps_.delimiterMode) {
         deps_.delimiterMode->store(static_cast<int>(status.mode), std::memory_order_relaxed);
+    }
+    delimiterTargetMode_.store(static_cast<int>(status.targetMode), std::memory_order_relaxed);
+    if (deps_.delimiterTargetMode) {
+        deps_.delimiterTargetMode->store(static_cast<int>(status.targetMode),
+                                         std::memory_order_relaxed);
     }
     if (deps_.delimiterFallbackReason) {
         deps_.delimiterFallbackReason->store(static_cast<int>(status.lastFallbackReason),
@@ -709,6 +810,78 @@ void AudioPipeline::updateDelimiterStatus(const delimiter::SafetyStatus& status)
     }
     if (deps_.delimiterBypassLocked) {
         deps_.delimiterBypassLocked->store(status.bypassLocked, std::memory_order_relaxed);
+    }
+    {
+        std::lock_guard<std::mutex> lock(delimiterDetailMutex_);
+        delimiterDetail_ = status.detail;
+    }
+}
+
+void AudioPipeline::applyDelimiterCommand() {
+    auto command = static_cast<DelimiterCommand>(delimiterCommand_.exchange(
+        static_cast<int>(DelimiterCommand::None), std::memory_order_acq_rel));
+    if (command == DelimiterCommand::None || !highLatencyEnabled_) {
+        return;
+    }
+
+    if (!delimiterSafety_) {
+        return;
+    }
+
+    switch (command) {
+    case DelimiterCommand::Enable:
+        delimiterSafety_->forceActive("user enabled via ZMQ");
+        updateDelimiterStatus(delimiterSafety_->status());
+        delimiterWarmup_.store(true, std::memory_order_relaxed);
+        if (deps_.delimiterWarmup) {
+            deps_.delimiterWarmup->store(true, std::memory_order_relaxed);
+        }
+        if (deps_.delimiterEnabled) {
+            deps_.delimiterEnabled->store(true, std::memory_order_relaxed);
+        }
+        break;
+    case DelimiterCommand::Disable:
+        delimiterSafety_->forceBypassLock(delimiter::FallbackReason::Manual,
+                                          "user disabled via ZMQ");
+        updateDelimiterStatus(delimiterSafety_->status());
+        if (deps_.delimiterEnabled) {
+            deps_.delimiterEnabled->store(false, std::memory_order_relaxed);
+        }
+        break;
+    case DelimiterCommand::None:
+        break;
+    }
+}
+
+void AudioPipeline::updateDelimiterTelemetry(bool backendEnabled, bool backendValid,
+                                             double queueSeconds, std::size_t queueSamples) {
+    delimiterBackendAvailable_.store(backendEnabled, std::memory_order_relaxed);
+    delimiterBackendValid_.store(backendValid, std::memory_order_relaxed);
+    delimiterQueueSeconds_.store(queueSeconds, std::memory_order_relaxed);
+    delimiterQueueSamples_.store(queueSamples, std::memory_order_relaxed);
+
+    if (deps_.delimiterBackendAvailable) {
+        deps_.delimiterBackendAvailable->store(backendEnabled, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBackendValid) {
+        deps_.delimiterBackendValid->store(backendValid, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterQueueSeconds) {
+        deps_.delimiterQueueSeconds->store(queueSeconds, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterQueueSamples) {
+        deps_.delimiterQueueSamples->store(queueSamples, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterWarmup) {
+        deps_.delimiterWarmup->store(delimiterWarmup_.load(std::memory_order_relaxed),
+                                     std::memory_order_relaxed);
+    }
+}
+
+void AudioPipeline::recordInferenceDurationMs(double durationMs) {
+    delimiterLastInferenceMs_.store(durationMs, std::memory_order_relaxed);
+    if (deps_.delimiterLastInferenceMs) {
+        deps_.delimiterLastInferenceMs->store(durationMs, std::memory_order_relaxed);
     }
 }
 
@@ -798,6 +971,8 @@ void AudioPipeline::workerLoop() {
                     updateDelimiterStatus(delimiterSafety_->status());
                 }
             }
+
+            applyDelimiterCommand();
 
             const bool needFullChunk = !hasPrevChunk_;
             const size_t needFrames = needFullChunk ? chunkFrames_ : hopFrames_;
@@ -910,6 +1085,7 @@ void AudioPipeline::workerLoop() {
                     std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count();
                 realtimeFactor = (chunkSec > 0.0f) ? (elapsed / chunkSec) : 0.0;
 
+                recordInferenceDurationMs(elapsed * 1000.0);
                 inferenceOk = (res.status == delimiter::InferenceStatus::Ok);
                 if (!inferenceOk) {
                     LOG_EVERY_N(WARN, 10,
@@ -924,8 +1100,9 @@ void AudioPipeline::workerLoop() {
             }
 
             double queueSeconds = 0.0;
+            std::size_t queueSamples = inputInterleaved_.availableToRead();
             if (workerInputRate_ > 0) {
-                queueSeconds = static_cast<double>(inputInterleaved_.availableToRead()) /
+                queueSeconds = static_cast<double>(queueSamples) /
                                (2.0 * static_cast<double>(workerInputRate_));
             }
             bool overloadTriggered = false;
@@ -939,6 +1116,8 @@ void AudioPipeline::workerLoop() {
                 bypassChunk = bypassChunk || (status.mode == delimiter::ProcessingMode::Bypass) ||
                               status.bypassLocked;
             }
+
+            updateDelimiterTelemetry(backendEnabled, backendValid, queueSeconds, queueSamples);
 
             if (!inferenceOk || overloadTriggered) {
                 bypassChunk = true;
@@ -978,6 +1157,11 @@ void AudioPipeline::workerLoop() {
             }
 
             hasPrevChunk_ = true;
+            if (delimiterWarmup_.exchange(false, std::memory_order_relaxed)) {
+                if (deps_.delimiterWarmup) {
+                    deps_.delimiterWarmup->store(false, std::memory_order_relaxed);
+                }
+            }
 
             size_t offset = 0;
             while (offset < segmentLeft_.size()) {

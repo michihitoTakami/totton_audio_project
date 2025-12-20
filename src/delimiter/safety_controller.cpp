@@ -80,6 +80,27 @@ bool SafetyController::requestActive(bool userRequested, const std::string& deta
     return true;
 }
 
+void SafetyController::forceBypassLock(FallbackReason reason, const std::string& detail) {
+    recordDetail(reason, detail);
+    bypassLocked_ = true;
+    mode_ = ProcessingMode::Bypass;
+    targetMode_ = ProcessingMode::Bypass;
+    inTransition_ = false;
+    fadeIndex_ = 0;
+}
+
+void SafetyController::forceActive(const std::string& detail) {
+    recordDetail(FallbackReason::None, detail);
+    bypassLocked_ = false;
+    mode_ = ProcessingMode::Active;
+    targetMode_ = ProcessingMode::Active;
+    inTransition_ = false;
+    fadeIndex_ = 0;
+    consecutiveFailures_ = 0;
+    consecutiveOverload_ = 0;
+    consecutiveRecovery_ = 0;
+}
+
 bool SafetyController::observeInferenceResult(const InferenceResult& result) {
     if (result.status == InferenceStatus::Ok) {
         consecutiveFailures_ = 0;

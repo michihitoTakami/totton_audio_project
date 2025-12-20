@@ -352,6 +352,14 @@ static runtime_stats::Dependencies build_runtime_stats_dependencies() {
     deps.delimiterMode = &g_state.delimiter.mode;
     deps.delimiterFallbackReason = &g_state.delimiter.fallbackReason;
     deps.delimiterBypassLocked = &g_state.delimiter.bypassLocked;
+    deps.delimiterEnabled = &g_state.delimiter.enabled;
+    deps.delimiterWarmup = &g_state.delimiter.warmup;
+    deps.delimiterQueueSamples = &g_state.delimiter.queueSamples;
+    deps.delimiterQueueSeconds = &g_state.delimiter.queueSeconds;
+    deps.delimiterLastInferenceMs = &g_state.delimiter.lastInferenceMs;
+    deps.delimiterBackendAvailable = &g_state.delimiter.backendAvailable;
+    deps.delimiterBackendValid = &g_state.delimiter.backendValid;
+    deps.delimiterTargetMode = &g_state.delimiter.targetMode;
     deps.playbackBuffer = &daemon_output::playbackBuffer(g_state);
     deps.outputReady = &g_state.flags.outputReady;
 
@@ -408,6 +416,21 @@ static void reset_runtime_state() {
 
     // Reset crossfeed streaming buffers
     daemon_audio::clearCrossfeedRuntimeBuffers(g_state.crossfeed);
+
+    g_state.delimiter.mode.store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                 std::memory_order_relaxed);
+    g_state.delimiter.targetMode.store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                       std::memory_order_relaxed);
+    g_state.delimiter.fallbackReason.store(static_cast<int>(delimiter::FallbackReason::None),
+                                           std::memory_order_relaxed);
+    g_state.delimiter.bypassLocked.store(false, std::memory_order_relaxed);
+    g_state.delimiter.enabled.store(false, std::memory_order_relaxed);
+    g_state.delimiter.warmup.store(false, std::memory_order_relaxed);
+    g_state.delimiter.queueSamples.store(0, std::memory_order_relaxed);
+    g_state.delimiter.queueSeconds.store(0.0, std::memory_order_relaxed);
+    g_state.delimiter.lastInferenceMs.store(0.0, std::memory_order_relaxed);
+    g_state.delimiter.backendAvailable.store(false, std::memory_order_relaxed);
+    g_state.delimiter.backendValid.store(false, std::memory_order_relaxed);
 }
 
 static void load_runtime_config() {
@@ -462,6 +485,20 @@ static void load_runtime_config() {
     if (g_state.rates.inputSampleRate != 44100 && g_state.rates.inputSampleRate != 48000) {
         g_state.rates.inputSampleRate = DEFAULT_INPUT_SAMPLE_RATE;
     }
+
+    g_state.delimiter.enabled.store(g_state.config.delimiter.enabled, std::memory_order_relaxed);
+    g_state.delimiter.warmup.store(g_state.config.delimiter.enabled, std::memory_order_relaxed);
+    g_state.delimiter.backendAvailable.store(g_state.config.delimiter.enabled,
+                                             std::memory_order_relaxed);
+    g_state.delimiter.backendValid.store(false, std::memory_order_relaxed);
+    g_state.delimiter.queueSamples.store(0, std::memory_order_relaxed);
+    g_state.delimiter.queueSeconds.store(0.0, std::memory_order_relaxed);
+    g_state.delimiter.lastInferenceMs.store(0.0, std::memory_order_relaxed);
+    g_state.delimiter.targetMode.store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                       std::memory_order_relaxed);
+    g_state.delimiter.fallbackReason.store(static_cast<int>(delimiter::FallbackReason::None),
+                                           std::memory_order_relaxed);
+    g_state.delimiter.bypassLocked.store(false, std::memory_order_relaxed);
 
     if (!found) {
         std::cout << "Config: Using defaults (no config.json found)" << '\n';
@@ -649,6 +686,14 @@ int main(int argc, char* argv[]) {
             pipelineDeps.delimiterMode = &g_state.delimiter.mode;
             pipelineDeps.delimiterFallbackReason = &g_state.delimiter.fallbackReason;
             pipelineDeps.delimiterBypassLocked = &g_state.delimiter.bypassLocked;
+            pipelineDeps.delimiterEnabled = &g_state.delimiter.enabled;
+            pipelineDeps.delimiterWarmup = &g_state.delimiter.warmup;
+            pipelineDeps.delimiterQueueSamples = &g_state.delimiter.queueSamples;
+            pipelineDeps.delimiterQueueSeconds = &g_state.delimiter.queueSeconds;
+            pipelineDeps.delimiterLastInferenceMs = &g_state.delimiter.lastInferenceMs;
+            pipelineDeps.delimiterBackendAvailable = &g_state.delimiter.backendAvailable;
+            pipelineDeps.delimiterBackendValid = &g_state.delimiter.backendValid;
+            pipelineDeps.delimiterTargetMode = &g_state.delimiter.targetMode;
             g_state.audioPipeline =
                 std::make_unique<audio_pipeline::AudioPipeline>(std::move(pipelineDeps));
             g_state.managers.audioPipelineRaw = g_state.audioPipeline.get();
@@ -752,6 +797,22 @@ int main(int argc, char* argv[]) {
         };
         controlDeps.setPreferredOutputDevice = [](AppConfig& cfg, const std::string& device) {
             set_preferred_output_device(cfg, device);
+        };
+        controlDeps.delimiterEnable = []() {
+            return g_state.audioPipeline ? g_state.audioPipeline->requestDelimiterEnable() : false;
+        };
+        controlDeps.delimiterDisable = []() {
+            return g_state.audioPipeline ? g_state.audioPipeline->requestDelimiterDisable() : false;
+        };
+        controlDeps.delimiterStatus = []() {
+            if (!g_state.audioPipeline) {
+                audio_pipeline::DelimiterStatusSnapshot snapshot;
+                snapshot.enabled = false;
+                snapshot.backendAvailable = false;
+                snapshot.backendValid = false;
+                return snapshot;
+            }
+            return g_state.audioPipeline->delimiterStatus();
         };
         controlDeps.dacManager = g_state.managers.dacManager.get();
         controlDeps.upsampler = &g_state.upsampler;

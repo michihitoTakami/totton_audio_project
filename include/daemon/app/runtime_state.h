@@ -125,6 +125,14 @@ struct DelimiterState {
     std::atomic<int> mode{static_cast<int>(delimiter::ProcessingMode::Active)};
     std::atomic<int> fallbackReason{static_cast<int>(delimiter::FallbackReason::None)};
     std::atomic<bool> bypassLocked{false};
+    std::atomic<bool> enabled{false};
+    std::atomic<bool> warmup{false};
+    std::atomic<std::size_t> queueSamples{0};
+    std::atomic<double> queueSeconds{0.0};
+    std::atomic<double> lastInferenceMs{0.0};
+    std::atomic<bool> backendAvailable{false};
+    std::atomic<bool> backendValid{false};
+    std::atomic<int> targetMode{static_cast<int>(delimiter::ProcessingMode::Active)};
 };
 
 struct I2sState {

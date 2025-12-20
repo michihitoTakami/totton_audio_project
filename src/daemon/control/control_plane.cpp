@@ -6,6 +6,7 @@
 #include "convolution_engine.h"
 #include "core/daemon_constants.h"
 #include "daemon/api/events.h"
+#include "daemon/audio_pipeline/audio_pipeline.h"
 #include "logging/logger.h"
 
 #include <algorithm>
@@ -68,6 +69,30 @@ bool isSupportedOutputMode(const std::string& normalized) {
         }
     }
     return false;
+}
+
+const char* delimiterModeToString(delimiter::ProcessingMode mode) {
+    switch (mode) {
+    case delimiter::ProcessingMode::Active:
+        return "active";
+    case delimiter::ProcessingMode::Bypass:
+        return "bypass";
+    }
+    return "unknown";
+}
+
+const char* delimiterReasonToString(delimiter::FallbackReason reason) {
+    switch (reason) {
+    case delimiter::FallbackReason::None:
+        return "none";
+    case delimiter::FallbackReason::InferenceFailure:
+        return "inference_failure";
+    case delimiter::FallbackReason::Overload:
+        return "overload";
+    case delimiter::FallbackReason::Manual:
+        return "manual";
+    }
+    return "unknown";
 }
 
 ConvolutionEngine::FourChannelFIR* crossfeedProcessor(const CrossfeedControls& controls) {
@@ -206,6 +231,12 @@ void ControlPlane::registerHandlers() {
     zmqServer_->registerCommand("PING", [this](const auto& req) { return handlePing(req); });
     zmqServer_->registerCommand("RELOAD", [this](const auto& req) { return handleReload(req); });
     zmqServer_->registerCommand("STATS", [this](const auto& req) { return handleStats(req); });
+    zmqServer_->registerCommand("DELIMITER_STATUS",
+                                [this](const auto& req) { return handleDelimiterStatus(req); });
+    zmqServer_->registerCommand("DELIMITER_ENABLE",
+                                [this](const auto& req) { return handleDelimiterEnable(req); });
+    zmqServer_->registerCommand("DELIMITER_DISABLE",
+                                [this](const auto& req) { return handleDelimiterDisable(req); });
     zmqServer_->registerCommand("CROSSFEED_ENABLE",
                                 [this](const auto& req) { return handleCrossfeedEnable(req); });
     zmqServer_->registerCommand("CROSSFEED_DISABLE",
@@ -689,6 +720,68 @@ std::string ControlPlane::handlePhaseTypeSet(const daemon_ipc::ZmqRequest& reque
     }
 
     return buildOkResponse(request, "Phase type set to " + phaseStr);
+}
+
+nlohmann::json ControlPlane::buildDelimiterStatusJson(
+    const audio_pipeline::DelimiterStatusSnapshot& status) {
+    nlohmann::json data;
+    data["enabled"] = status.enabled;
+    data["backend_available"] = status.backendAvailable;
+    data["backend_valid"] = status.backendValid;
+    data["mode"] = delimiterModeToString(status.mode);
+    data["target_mode"] = delimiterModeToString(status.targetMode);
+    data["fallback_reason"] = delimiterReasonToString(status.fallbackReason);
+    data["bypass_locked"] = status.bypassLocked;
+    data["warmup"] = status.warmup;
+    data["queue_seconds"] = status.queueSeconds;
+    data["queue_samples"] = status.queueSamples;
+    data["last_inference_ms"] = status.lastInferenceMs;
+    if (!status.detail.empty()) {
+        data["detail"] = status.detail;
+    }
+    return data;
+}
+
+std::string ControlPlane::handleDelimiterStatus(const daemon_ipc::ZmqRequest& request) {
+    if (!deps_.delimiterStatus) {
+        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE", "Delimiter status unavailable");
+    }
+    auto status = deps_.delimiterStatus();
+    return buildOkResponse(request, "", buildDelimiterStatusJson(status));
+}
+
+std::string ControlPlane::handleDelimiterEnable(const daemon_ipc::ZmqRequest& request) {
+    if (!deps_.delimiterEnable || !deps_.delimiterStatus) {
+        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE",
+                                  "Delimiter control unavailable");
+    }
+    auto status = deps_.delimiterStatus();
+    if (!status.backendAvailable) {
+        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE", "Delimiter backend not ready");
+    }
+    if (!deps_.delimiterEnable()) {
+        return buildErrorResponse(request, "DELIMITER_ENABLE_FAILED",
+                                  "Failed to enable De-limiter");
+    }
+    auto updated = deps_.delimiterStatus();
+    return buildOkResponse(request, "Delimiter enabled", buildDelimiterStatusJson(updated));
+}
+
+std::string ControlPlane::handleDelimiterDisable(const daemon_ipc::ZmqRequest& request) {
+    if (!deps_.delimiterDisable || !deps_.delimiterStatus) {
+        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE",
+                                  "Delimiter control unavailable");
+    }
+    auto status = deps_.delimiterStatus();
+    if (!status.backendAvailable) {
+        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE", "Delimiter backend not ready");
+    }
+    if (!deps_.delimiterDisable()) {
+        return buildErrorResponse(request, "DELIMITER_DISABLE_FAILED",
+                                  "Failed to disable De-limiter");
+    }
+    auto updated = deps_.delimiterStatus();
+    return buildOkResponse(request, "Delimiter disabled", buildDelimiterStatusJson(updated));
 }
 
 }  // namespace daemon_control

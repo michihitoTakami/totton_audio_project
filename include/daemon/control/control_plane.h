@@ -19,6 +19,10 @@ class GPUUpsampler;
 class FourChannelFIR;
 }  // namespace ConvolutionEngine
 
+namespace audio_pipeline {
+struct DelimiterStatusSnapshot;
+}  // namespace audio_pipeline
+
 namespace daemon_control {
 
 struct CrossfeedControls {
@@ -50,6 +54,9 @@ struct ControlPlaneDependencies {
     std::function<void(const std::string&)> refreshHeadroom;
     std::function<bool()> reinitializeStreamingForLegacyMode;
     std::function<void(AppConfig&, const std::string&)> setPreferredOutputDevice;
+    std::function<bool()> delimiterEnable;
+    std::function<bool()> delimiterDisable;
+    std::function<audio_pipeline::DelimiterStatusSnapshot()> delimiterStatus;
 
     dac::DacManager* dacManager = nullptr;
     ConvolutionEngine::GPUUpsampler** upsampler = nullptr;
@@ -95,6 +102,10 @@ class ControlPlane {
     std::string handleOutputModeSet(const daemon_ipc::ZmqRequest& request);
     std::string handlePhaseTypeGet(const daemon_ipc::ZmqRequest& request);
     std::string handlePhaseTypeSet(const daemon_ipc::ZmqRequest& request);
+    std::string handleDelimiterStatus(const daemon_ipc::ZmqRequest& request);
+    std::string handleDelimiterEnable(const daemon_ipc::ZmqRequest& request);
+    std::string handleDelimiterDisable(const daemon_ipc::ZmqRequest& request);
+    nlohmann::json buildDelimiterStatusJson(const audio_pipeline::DelimiterStatusSnapshot& status);
 
     ControlPlaneDependencies deps_;
     std::unique_ptr<daemon_ipc::ZmqCommandServer> zmqServer_;
