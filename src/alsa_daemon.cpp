@@ -1,3 +1,9 @@
+// IMPORTANT: DO NOT GROW THIS FILE AGAIN.
+//
+// Keep `src/alsa_daemon.cpp` as a small entrypoint + wiring only.
+// Any non-trivial logic (ALSA/input threads/rate switching/filter switching/stats/etc) MUST live in
+// dedicated modules under `src/daemon/**` (with headers in `include/daemon/**`).
+
 #include "audio/audio_utils.h"
 #include "audio/fallback_manager.h"
 #include "audio/soft_mute.h"
@@ -16,14 +22,20 @@
 #include "daemon/audio_pipeline/headroom_controller.h"
 #include "daemon/audio_pipeline/rate_switcher.h"
 #include "daemon/audio_pipeline/soft_mute_runner.h"
+#include "daemon/audio_pipeline/stream_buffer_sizing.h"
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
+#include "daemon/audio_pipeline/switch_actions.h"
 #include "daemon/control/control_plane.h"
 #include "daemon/control/handlers/handler_registry.h"
+#include "daemon/core/thread_priority.h"
+#include "daemon/input/i2s_capture.h"
 #include "daemon/input/loopback_capture.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/alsa_output.h"
+#include "daemon/output/alsa_output_thread.h"
 #include "daemon/output/alsa_pcm_controller.h"
 #include "daemon/output/alsa_write_loop.h"
+#include "daemon/output/playback_buffer_access.h"
 #include "daemon/output/playback_buffer_manager.h"
 #include "daemon/pcm/dac_manager.h"
 #include "daemon/shutdown_manager.h"
@@ -155,177 +167,6 @@ static void ensure_output_config(AppConfig& config) {
 // Runtime configuration (loaded from config.json)
 static daemon_app::RuntimeState g_state;
 
-inline ConvolutionEngine::RateFamily g_get_rate_family() {
-    return static_cast<ConvolutionEngine::RateFamily>(
-        g_state.rates.currentRateFamilyInt.load(std::memory_order_acquire));
-}
-
-inline void g_set_rate_family(ConvolutionEngine::RateFamily family) {
-    g_state.rates.currentRateFamilyInt.store(static_cast<int>(family), std::memory_order_release);
-}
-
-static size_t get_max_output_buffer_frames() {
-    using namespace DaemonConstants;
-    auto seconds = static_cast<double>(MAX_OUTPUT_BUFFER_SECONDS);
-    if (seconds <= 0.0) {
-        return DEFAULT_MAX_OUTPUT_BUFFER_FRAMES;
-    }
-
-    int outputRate = g_state.rates.currentOutputRate.load(std::memory_order_acquire);
-    if (outputRate <= 0) {
-        outputRate = DEFAULT_OUTPUT_SAMPLE_RATE;
-    }
-
-    double frames = seconds * static_cast<double>(outputRate);
-    if (frames <= 0.0) {
-        return DEFAULT_MAX_OUTPUT_BUFFER_FRAMES;
-    }
-    return static_cast<size_t>(frames);
-}
-
-static size_t compute_stream_buffer_capacity(size_t streamValidInputPerBlock) {
-    using namespace DaemonConstants;
-    size_t frames = static_cast<size_t>(DEFAULT_BLOCK_SIZE);
-    if (g_state.config.blockSize > 0) {
-        frames = std::max(frames, static_cast<size_t>(g_state.config.blockSize));
-    }
-    if (g_state.config.periodSize > 0) {
-        frames = std::max(frames, static_cast<size_t>(g_state.config.periodSize));
-    }
-    if (g_state.config.loopback.periodFrames > 0) {
-        frames = std::max(frames, static_cast<size_t>(g_state.config.loopback.periodFrames));
-    }
-    frames = std::max(frames, streamValidInputPerBlock);
-    // 2x safety margin for bursty upstream (no reallocation in RT path)
-    return frames * 2;
-}
-
-// Pending rate change (set by input event handlers, processed in main loop)
-// Value: 0 = no change pending, >0 = detected input sample rate
-
-static void maybe_restore_soft_mute_params() {
-    if (!g_state.softMute.controller) {
-        return;
-    }
-    if (!g_state.softMute.restorePending.load(std::memory_order_acquire)) {
-        return;
-    }
-    SoftMute::MuteState st = g_state.softMute.controller->getState();
-    if (st != SoftMute::MuteState::PLAYING && st != SoftMute::MuteState::MUTED) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(g_state.softMute.opMutex);
-    if (!g_state.softMute.controller) {
-        return;
-    }
-    int fadeMs = g_state.softMute.restoreFadeMs.load(std::memory_order_relaxed);
-    int sr = g_state.softMute.restoreSampleRate.load(std::memory_order_relaxed);
-    g_state.softMute.controller->setFadeDuration(fadeMs);
-    g_state.softMute.controller->setSampleRate(sr);
-    g_state.softMute.restorePending.store(false, std::memory_order_release);
-}
-
-// Helper function for soft mute during filter switching (Issue #266)
-// Fade-out: 1.5 seconds, perform filter switch, fade-in: 1.5 seconds
-//
-// Thread safety & responsiveness:
-// - Called from ZeroMQ command thread, guarded by a mutex to serialize parameter updates
-// - Non-blocking: start fade-out, perform switch, then trigger fade-in with minimal wait
-// - Original fade parameters are restored in the audio thread once the transition settles
-
-static void applySoftMuteForFilterSwitch(std::function<bool()> filterSwitchFunc) {
-    using namespace DaemonConstants;
-
-    if (!g_state.softMute.controller) {
-        // If soft mute not initialized, perform switch without mute
-        filterSwitchFunc();
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(g_state.softMute.opMutex);
-
-    // Cancel any stale pending restore (new switch supersedes)
-    g_state.softMute.restorePending.store(false, std::memory_order_release);
-
-    // Save current fade duration for restoration
-    int originalFadeDuration = g_state.softMute.controller->getFadeDuration();
-    int outputSampleRate = g_state.softMute.controller->getSampleRate();
-
-    // Update fade duration for filter switching
-    // Note: This is called from command thread, but audio thread may be processing.
-    // The fade calculation will use the new duration from the next audio frame.
-    g_state.softMute.controller->setFadeDuration(FILTER_SWITCH_FADE_MS);
-    g_state.softMute.controller->setSampleRate(outputSampleRate);
-
-    std::cout << "[Filter Switch] Starting fade-out (" << (FILTER_SWITCH_FADE_MS / 1000.0)
-              << "s)..." << '\n';
-    g_state.softMute.controller->startFadeOut();
-
-    // Wait until near-silent (or timeout) before switching to avoid audible glitches.
-    // NOTE: This runs on the command thread. Use a bounded timeout to avoid hanging the UI
-    // if the audio thread is not advancing (e.g., output not running).
-    auto fade_start = std::chrono::steady_clock::now();
-    const auto fade_timeout = std::chrono::milliseconds(FILTER_SWITCH_FADE_TIMEOUT_MS);
-    while (true) {
-        SoftMute::MuteState st = g_state.softMute.controller->getState();
-        float gain = g_state.softMute.controller->getCurrentGain();
-        if (st == SoftMute::MuteState::MUTED || gain <= 0.001f) {
-            break;
-        }
-        if (std::chrono::steady_clock::now() - fade_start > fade_timeout) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Perform filter switch while fade-out is progressing
-    bool pauseOk = true;
-    if (g_state.audioPipeline) {
-        g_state.audioPipeline->requestRtPause();
-        pauseOk = g_state.audioPipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
-        if (!pauseOk) {
-            LOG_ERROR("[Filter Switch] RT pause handshake timed out (aborting switch)");
-        }
-    }
-
-    bool switch_success = false;
-    if (pauseOk) {
-        switch_success = filterSwitchFunc();
-    }
-
-    if (g_state.audioPipeline) {
-        g_state.audioPipeline->resumeRtPause();
-    }
-
-    if (switch_success) {
-        // Start fade-in after filter switch
-        std::cout << "[Filter Switch] Starting fade-in (" << (FILTER_SWITCH_FADE_MS / 1000.0)
-                  << "s)..." << '\n';
-        g_state.softMute.controller->startFadeIn();
-
-        // Mark pending restoration to be applied once transition completes
-        g_state.softMute.restoreFadeMs.store(originalFadeDuration, std::memory_order_relaxed);
-        g_state.softMute.restoreSampleRate.store(outputSampleRate, std::memory_order_relaxed);
-        g_state.softMute.restorePending.store(true, std::memory_order_release);
-    } else {
-        // If switch failed, restore original state immediately
-        std::cerr << "[Filter Switch] Switch failed, restoring audio state" << '\n';
-        g_state.softMute.controller->setPlaying();
-        g_state.softMute.controller->setFadeDuration(originalFadeDuration);
-        g_state.softMute.controller->setSampleRate(outputSampleRate);
-    }
-}
-
-// Audio buffer for thread communication (managed component)
-static daemon_output::PlaybackBufferManager& playback_buffer() {
-    if (!g_state.playback.buffer) {
-        g_state.playback.buffer = std::make_unique<daemon_output::PlaybackBufferManager>(
-            []() { return get_max_output_buffer_frames(); });
-    }
-    return *g_state.playback.buffer;
-}
-
 static audio_pipeline::HeadroomControllerDependencies make_headroom_dependencies(
     daemon_core::api::EventDispatcher* dispatcher) {
     audio_pipeline::HeadroomControllerDependencies deps{};
@@ -416,116 +257,6 @@ static void publish_filter_switch_event(const std::string& filterPath, PhaseType
 
 static void initialize_streaming_cache_manager();
 
-static void elevate_realtime_priority(const char* name, int priority = 65) {
-#ifdef __linux__
-    // RT scheduling can freeze remote shells if something spins.
-    // Allow disabling via env for containerized debugging.
-    // - MAGICBOX_ENABLE_RT=0 disables SCHED_FIFO attempts.
-    const char* enableRt = std::getenv("MAGICBOX_ENABLE_RT");
-    if (enableRt && std::string(enableRt) == "0") {
-        LOG_WARN("[RT] {} thread: SCHED_FIFO disabled via MAGICBOX_ENABLE_RT=0", name);
-        return;
-    }
-    sched_param params{};
-    params.sched_priority = priority;
-    int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &params);
-    if (ret != 0) {
-        LOG_WARN("[RT] Failed to set {} thread to SCHED_FIFO (errno={}): {}", name, ret,
-                 std::strerror(ret));
-    } else {
-        LOG_INFO("[RT] {} thread priority set to SCHED_FIFO {}", name, priority);
-    }
-#else
-    (void)name;
-    (void)priority;
-#endif
-}
-
-static size_t get_playback_ready_threshold(size_t period_size) {
-    bool crossfeedActive = false;
-    size_t crossfeedBlockSize = 0;
-    size_t producerBlockSize = 0;
-
-    if (g_state.crossfeed.enabled.load(std::memory_order_relaxed)) {
-        std::lock_guard<std::mutex> cf_lock(g_state.crossfeed.crossfeedMutex);
-        if (g_state.crossfeed.processor) {
-            crossfeedActive = true;
-            crossfeedBlockSize = g_state.crossfeed.processor->getStreamValidInputPerBlock();
-        }
-    }
-
-    if (g_state.upsampler) {
-        // StreamValidInputPerBlock() is in input frames. Multiply by upsample ratio to obtain the
-        // number of samples the producer actually contributes to the playback ring per block so the
-        // ALSA thread can wake up as soon as a full GPU block finishes.
-        size_t streamBlock = g_state.upsampler->getStreamValidInputPerBlock();
-        int upsampleRatio = g_state.upsampler->getUpsampleRatio();
-        if (streamBlock > 0 && upsampleRatio > 0) {
-            producerBlockSize = streamBlock * static_cast<size_t>(upsampleRatio);
-        }
-    }
-
-    return PlaybackBuffer::computeReadyThreshold(period_size, crossfeedActive, crossfeedBlockSize,
-                                                 producerBlockSize);
-}
-
-// Fallback manager (Issue #139)
-
-// Crossfeed enable/disable safety (Issue #888)
-// - Avoid mixing pre/post switch audio by clearing playback + streaming caches.
-// - Do not touch SoftMute here; caller wraps this with a fade-out/in.
-static bool reset_streaming_caches_for_switch() {
-    struct RtPauseGuard {
-        audio_pipeline::AudioPipeline* pipeline = nullptr;
-        bool ok = true;
-        explicit RtPauseGuard(audio_pipeline::AudioPipeline* p) : pipeline(p) {
-            if (!pipeline) {
-                return;
-            }
-            pipeline->requestRtPause();
-            ok = pipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
-            if (!ok) {
-                pipeline->resumeRtPause();
-            }
-        }
-        ~RtPauseGuard() {
-            if (pipeline && ok) {
-                pipeline->resumeRtPause();
-            }
-        }
-    } pauseGuard(g_state.audioPipeline.get());
-
-    if (!pauseGuard.ok) {
-        return false;
-    }
-
-    playback_buffer().reset();
-    playback_buffer().cv().notify_all();
-
-    {
-        std::lock_guard<std::mutex> lock(g_state.streaming.streamingMutex);
-        if (!g_state.streaming.streamInputLeft.empty()) {
-            std::fill(g_state.streaming.streamInputLeft.begin(),
-                      g_state.streaming.streamInputLeft.end(), 0.0f);
-        }
-        if (!g_state.streaming.streamInputRight.empty()) {
-            std::fill(g_state.streaming.streamInputRight.begin(),
-                      g_state.streaming.streamInputRight.end(), 0.0f);
-        }
-        g_state.streaming.streamAccumulatedLeft = 0;
-        g_state.streaming.streamAccumulatedRight = 0;
-        g_state.streaming.upsamplerOutputLeft.clear();
-        g_state.streaming.upsamplerOutputRight.clear();
-        if (g_state.upsampler) {
-            g_state.upsampler->resetStreaming();
-        }
-    }
-
-    { g_state.crossfeed.resetRequested.store(true, std::memory_order_release); }
-
-    return true;
-}
-
 static void initialize_streaming_cache_manager() {
     streaming_cache::StreamingCacheDependencies deps;
     deps.flushAction = [](std::chrono::nanoseconds /*gap*/) -> bool {
@@ -553,7 +284,7 @@ static void initialize_streaming_cache_manager() {
             g_state.softMute.controller->startFadeOut();
         }
 
-        playback_buffer().reset();
+        daemon_output::playbackBuffer(g_state).reset();
 
         {
             std::lock_guard<std::mutex> streamLock(g_state.streaming.streamingMutex);
@@ -661,7 +392,7 @@ static void print_config_summary(const AppConfig& cfg) {
 static void reset_runtime_state() {
     g_state.managers.streamingCacheManager.reset();
 
-    playback_buffer().reset();
+    daemon_output::playbackBuffer(g_state).reset();
     g_state.streaming.streamInputLeft.clear();
     g_state.streaming.streamInputRight.clear();
     g_state.streaming.streamAccumulatedLeft = 0;
@@ -671,190 +402,6 @@ static void reset_runtime_state() {
 
     // Reset crossfeed streaming buffers
     daemon_audio::clearCrossfeedRuntimeBuffers(g_state.crossfeed);
-}
-
-static bool reinitialize_streaming_for_legacy_mode() {
-    if (!g_state.upsampler) {
-        return false;
-    }
-
-    std::lock_guard<std::mutex> streamLock(g_state.streaming.streamingMutex);
-    g_state.upsampler->resetStreaming();
-    playback_buffer().reset();
-
-    g_state.streaming.streamInputLeft.clear();
-    g_state.streaming.streamInputRight.clear();
-    g_state.streaming.streamAccumulatedLeft = 0;
-    g_state.streaming.streamAccumulatedRight = 0;
-    g_state.streaming.upsamplerOutputLeft.clear();
-    g_state.streaming.upsamplerOutputRight.clear();
-
-    // Rebuild legacy streams so the buffers match the full FFT (avoids invalid cudaMemset after
-    // disabling partitions).
-    if (!g_state.upsampler->initializeStreaming()) {
-        std::cerr << "[Partition] Failed to initialize legacy streaming buffers" << '\n';
-        return false;
-    }
-
-    size_t buffer_capacity =
-        compute_stream_buffer_capacity(g_state.upsampler->getStreamValidInputPerBlock());
-    g_state.streaming.streamInputLeft.resize(buffer_capacity, 0.0f);
-    g_state.streaming.streamInputRight.resize(buffer_capacity, 0.0f);
-    g_state.streaming.streamAccumulatedLeft = 0;
-    g_state.streaming.streamAccumulatedRight = 0;
-
-    size_t upsampler_output_capacity =
-        buffer_capacity * static_cast<size_t>(g_state.upsampler->getUpsampleRatio());
-    g_state.streaming.upsamplerOutputLeft.reserve(upsampler_output_capacity);
-    g_state.streaming.upsamplerOutputRight.reserve(upsampler_output_capacity);
-
-    return true;
-}
-
-static bool handle_rate_switch(int newInputRate) {
-    if (!g_state.upsampler || !g_state.upsampler->isMultiRateEnabled()) {
-        std::cerr << "[Rate] Multi-rate mode not enabled" << '\n';
-        return false;
-    }
-
-    int currentRate = g_state.upsampler->getCurrentInputRate();
-    if (currentRate == newInputRate) {
-        std::cout << "[Rate] Already at target rate: " << newInputRate << " Hz" << '\n';
-        return true;
-    }
-
-    std::cout << "[Rate] Switching: " << currentRate << " Hz -> " << newInputRate << " Hz" << '\n';
-
-    int savedRate = currentRate;
-    ConvolutionEngine::RateFamily targetFamily = ConvolutionEngine::detectRateFamily(newInputRate);
-    if (targetFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
-        targetFamily = ConvolutionEngine::RateFamily::RATE_44K;
-    }
-
-    if (g_state.softMute.controller) {
-        g_state.softMute.controller->startFadeOut();
-        auto startTime = std::chrono::steady_clock::now();
-        while (g_state.softMute.controller->isTransitioning()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            auto elapsed = std::chrono::steady_clock::now() - startTime;
-            if (elapsed > std::chrono::milliseconds(200)) {
-                std::cerr << "[Rate] Warning: Fade-out timeout" << '\n';
-                break;
-            }
-        }
-    }
-
-    int newOutputRate = g_state.upsampler->getOutputSampleRate();
-    int newUpsampleRatio = g_state.upsampler->getUpsampleRatio();
-    size_t buffer_capacity = 0;
-
-    struct RtPauseGuard {
-        audio_pipeline::AudioPipeline* pipeline = nullptr;
-        bool ok = true;
-        explicit RtPauseGuard(audio_pipeline::AudioPipeline* p) : pipeline(p) {
-            if (!pipeline) {
-                return;
-            }
-            pipeline->requestRtPause();
-            ok = pipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
-            if (!ok) {
-                LOG_ERROR("[Rate] RT pause handshake timed out (aborting rate switch)");
-            }
-        }
-        ~RtPauseGuard() {
-            if (pipeline) {
-                pipeline->resumeRtPause();
-            }
-        }
-    } pauseGuard(g_state.audioPipeline.get());
-
-    if (!pauseGuard.ok) {
-        if (g_state.softMute.controller) {
-            g_state.softMute.controller->setPlaying();
-        }
-        return false;
-    }
-
-    {
-        std::lock_guard<std::mutex> streamLock(g_state.streaming.streamingMutex);
-
-        g_state.upsampler->resetStreaming();
-
-        playback_buffer().reset();
-        g_state.streaming.streamInputLeft.clear();
-        g_state.streaming.streamInputRight.clear();
-        g_state.streaming.streamAccumulatedLeft = 0;
-        g_state.streaming.streamAccumulatedRight = 0;
-
-        if (!g_state.upsampler->switchToInputRate(newInputRate)) {
-            std::cerr << "[Rate] Failed to switch rate, rolling back" << '\n';
-            if (g_state.upsampler->switchToInputRate(savedRate)) {
-                std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
-                          << '\n';
-            } else {
-                std::cerr << "[Rate] ERROR: Rollback failed!" << '\n';
-            }
-            if (g_state.softMute.controller) {
-                g_state.softMute.controller->startFadeIn();
-            }
-            return false;
-        }
-
-        if (!g_state.upsampler->initializeStreaming()) {
-            std::cerr << "[Rate] Failed to re-initialize streaming mode, rolling back" << '\n';
-            if (g_state.upsampler->switchToInputRate(savedRate)) {
-                if (g_state.upsampler->initializeStreaming()) {
-                    std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
-                              << '\n';
-                }
-            }
-            if (g_state.softMute.controller) {
-                g_state.softMute.controller->startFadeIn();
-            }
-            return false;
-        }
-
-        g_state.rates.inputSampleRate = newInputRate;
-        g_set_rate_family(targetFamily);
-        newOutputRate = g_state.upsampler->getOutputSampleRate();
-        newUpsampleRatio = g_state.upsampler->getUpsampleRatio();
-
-        buffer_capacity =
-            compute_stream_buffer_capacity(g_state.upsampler->getStreamValidInputPerBlock());
-        g_state.streaming.streamInputLeft.resize(buffer_capacity, 0.0f);
-        g_state.streaming.streamInputRight.resize(buffer_capacity, 0.0f);
-        g_state.streaming.streamAccumulatedLeft = 0;
-        g_state.streaming.streamAccumulatedRight = 0;
-        size_t upsampler_output_capacity =
-            buffer_capacity * static_cast<size_t>(g_state.upsampler->getUpsampleRatio());
-        g_state.streaming.upsamplerOutputLeft.reserve(upsampler_output_capacity);
-        g_state.streaming.upsamplerOutputRight.reserve(upsampler_output_capacity);
-
-        if (g_state.softMute.controller) {
-            delete g_state.softMute.controller;
-        }
-        g_state.softMute.controller = new SoftMute::Controller(50, newOutputRate);
-    }
-
-    if (g_state.crossfeed.processor) {
-        std::lock_guard<std::mutex> cfLock(g_state.crossfeed.crossfeedMutex);
-        auto status = daemon_audio::switchCrossfeedRateFamilyLocked(g_state.crossfeed,
-                                                                    g_state.config, targetFamily);
-        if (status == daemon_audio::CrossfeedSwitchStatus::Failed) {
-            std::cerr << "[Rate] Warning: Failed to switch crossfeed HRTF rate family" << '\n';
-        }
-    }
-
-    if (g_state.softMute.controller) {
-        g_state.softMute.controller->startFadeIn();
-    }
-
-    std::cout << "[Rate] Switch complete: " << newInputRate << " Hz (" << newUpsampleRatio
-              << "x -> " << newOutputRate << " Hz)" << '\n';
-    std::cout << "[Rate] Streaming buffers re-initialized: " << buffer_capacity
-              << " samples capacity" << '\n';
-
-    return true;
 }
 
 static void load_runtime_config() {
@@ -931,520 +478,7 @@ static void load_runtime_config() {
     g_state.gains.effective.store(initialOutput, std::memory_order_relaxed);
 }
 
-static snd_pcm_format_t parse_i2s_format(const std::string& formatStr) {
-    // Same set as loopback (MVP)
-    return daemon_input::parseLoopbackFormat(formatStr);
-}
-
-static bool validate_i2s_config(const AppConfig& cfg) {
-    if (!cfg.i2s.enabled) {
-        return true;
-    }
-    if (cfg.i2s.device.empty()) {
-        LOG_ERROR("[I2S] device must not be empty");
-        return false;
-    }
-    if (cfg.i2s.channels != CHANNELS) {
-        LOG_ERROR("[I2S] Unsupported channels {} (expected {})", cfg.i2s.channels, CHANNELS);
-        return false;
-    }
-    if (cfg.i2s.periodFrames == 0) {
-        LOG_ERROR("[I2S] periodFrames must be > 0");
-        return false;
-    }
-    if (parse_i2s_format(cfg.i2s.format) == SND_PCM_FORMAT_UNKNOWN) {
-        LOG_ERROR("[I2S] Unsupported format '{}'", cfg.i2s.format);
-        return false;
-    }
-    // sampleRate may be 0 (follow runtime/negotiated); otherwise accept MVP rates.
-    if (cfg.i2s.sampleRate != 0 && cfg.i2s.sampleRate != 44100 && cfg.i2s.sampleRate != 48000) {
-        LOG_ERROR("[I2S] Unsupported sample rate {} (expected 0/44100/48000)", cfg.i2s.sampleRate);
-        return false;
-    }
-    return true;
-}
-
-static snd_pcm_t* open_i2s_capture(const std::string& device, snd_pcm_format_t format,
-                                   unsigned int requested_rate, unsigned int channels,
-                                   snd_pcm_uframes_t& period_frames, unsigned int& actual_rate) {
-    const snd_pcm_uframes_t requested_period = period_frames;
-    actual_rate = 0;
-
-    auto expand_device_candidates = [](const std::string& configured) {
-        std::vector<std::string> candidates;
-        candidates.reserve(3);
-        candidates.push_back(configured);
-
-        auto add_unique = [&](std::string v) {
-            if (v.empty()) {
-                return;
-            }
-            for (const auto& existing : candidates) {
-                if (existing == v) {
-                    return;
-                }
-            }
-            candidates.push_back(std::move(v));
-        };
-
-        auto has_prefix = [&](const char* prefix) { return configured.rfind(prefix, 0) == 0; };
-
-        // ALSA "hw/plughw" allow both:
-        // - card,device
-        // - card,device,subdevice
-        // Field reports show Jetson environments where one form works and the other fails.
-        if (has_prefix("hw:") || has_prefix("plughw:")) {
-            const int commas =
-                static_cast<int>(std::count(configured.begin(), configured.end(), ','));
-            if (commas == 1) {
-                add_unique(configured + ",0");
-            } else if (commas >= 2) {
-                const auto lastComma = configured.rfind(',');
-                if (lastComma != std::string::npos) {
-                    add_unique(configured.substr(0, lastComma));
-                }
-            }
-        }
-
-        return candidates;
-    };
-
-    const auto device_candidates = expand_device_candidates(device);
-
-    auto try_open = [&](const std::string& target_device,
-                        unsigned int candidate_rate) -> snd_pcm_t* {
-        const bool auto_rate = candidate_rate == 0;
-        const std::string rate_label = auto_rate ? "auto" : std::to_string(candidate_rate);
-        snd_pcm_uframes_t local_period = requested_period;
-        snd_pcm_t* handle = nullptr;
-
-        // Use non-blocking mode so shutdown doesn't hang on snd_pcm_readi().
-        int err =
-            snd_pcm_open(&handle, target_device.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
-        if (err < 0) {
-            LOG_ERROR("[I2S] Cannot open capture device {}: {}", target_device, snd_strerror(err));
-            return nullptr;
-        }
-
-        snd_pcm_hw_params_t* hw_params;
-        snd_pcm_hw_params_alloca(&hw_params);
-        snd_pcm_hw_params_any(handle, hw_params);
-
-        if ((err = snd_pcm_hw_params_set_access(handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) <
-                0 ||
-            (err = snd_pcm_hw_params_set_format(handle, hw_params, format)) < 0) {
-            LOG_ERROR("[I2S] Cannot set access/format: {}", snd_strerror(err));
-            snd_pcm_close(handle);
-            return nullptr;
-        }
-
-        if ((err = snd_pcm_hw_params_set_channels(handle, hw_params, channels)) < 0) {
-            LOG_ERROR("[I2S] Cannot set channels {}: {}", channels, snd_strerror(err));
-            snd_pcm_close(handle);
-            return nullptr;
-        }
-
-        unsigned int rate_near = candidate_rate;
-        if (!auto_rate) {
-            if ((err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate_near, nullptr)) <
-                0) {
-                LOG_ERROR("[I2S] Cannot set rate {}: {}", candidate_rate, snd_strerror(err));
-                snd_pcm_close(handle);
-                return nullptr;
-            }
-            if (rate_near != candidate_rate) {
-                LOG_ERROR("[I2S] Requested rate {} not supported (got {})", candidate_rate,
-                          rate_near);
-                snd_pcm_close(handle);
-                return nullptr;
-            }
-        }
-
-        snd_pcm_uframes_t buffer_frames =
-            static_cast<snd_pcm_uframes_t>(std::max<uint32_t>(local_period * 4, local_period));
-        if ((err = snd_pcm_hw_params_set_period_size_near(handle, hw_params, &local_period,
-                                                          nullptr)) < 0) {
-            LOG_ERROR("[I2S] Cannot set period size: {}", snd_strerror(err));
-            snd_pcm_close(handle);
-            return nullptr;
-        }
-        buffer_frames = std::max<snd_pcm_uframes_t>(buffer_frames, local_period * 2);
-        if ((err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_frames)) < 0) {
-            LOG_ERROR("[I2S] Cannot set buffer size: {}", snd_strerror(err));
-            snd_pcm_close(handle);
-            return nullptr;
-        }
-
-        if ((err = snd_pcm_hw_params(handle, hw_params)) < 0) {
-            LOG_ERROR(
-                "[I2S] Cannot apply hardware parameters (rate {}, ch {}, fmt {}, "
-                "period {} frames, buffer {} frames): {}",
-                rate_label, channels, snd_pcm_format_name(format), local_period, buffer_frames,
-                snd_strerror(err));
-            snd_pcm_close(handle);
-            return nullptr;
-        }
-
-        snd_pcm_hw_params_get_period_size(hw_params, &local_period, nullptr);
-        snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_frames);
-        unsigned int effective_rate = candidate_rate;
-        snd_pcm_hw_params_get_rate(hw_params, &effective_rate, nullptr);
-        if (!auto_rate && effective_rate != candidate_rate) {
-            LOG_ERROR("[I2S] Negotiated rate {} differs from requested {}", effective_rate,
-                      candidate_rate);
-            snd_pcm_close(handle);
-            return nullptr;
-        }
-
-        if ((err = snd_pcm_prepare(handle)) < 0) {
-            LOG_ERROR("[I2S] Cannot prepare capture device: {}", snd_strerror(err));
-            snd_pcm_close(handle);
-            return nullptr;
-        }
-
-        // Ensure non-blocking is effective even if driver flips it.
-        snd_pcm_nonblock(handle, 1);
-
-        period_frames = local_period;
-        actual_rate = effective_rate;
-
-        LOG_INFO(
-            "[I2S] Capture device {} configured ({} Hz, {} ch, fmt={}, period {} frames, "
-            "buffer {} frames)",
-            target_device, actual_rate, channels, snd_pcm_format_name(format), period_frames,
-            buffer_frames);
-
-        return handle;
-    };
-
-    std::vector<unsigned int> rate_candidates;
-    if (requested_rate == 0) {
-        rate_candidates = {0u, 44100u, 48000u};
-    } else {
-        rate_candidates = {requested_rate};
-    }
-
-    for (const auto& candidate_device : device_candidates) {
-        for (unsigned int candidate_rate : rate_candidates) {
-            snd_pcm_t* handle = try_open(candidate_device, candidate_rate);
-            if (handle) {
-                if (candidate_device != device) {
-                    LOG_WARN("[I2S] Using ALSA device fallback '{}' (configured was '{}')",
-                             candidate_device, device);
-                }
-                return handle;
-            }
-        }
-    }
-
-    return nullptr;
-}
-
-static void i2s_capture_thread(const std::string& device, snd_pcm_format_t format,
-                               unsigned int requested_rate, unsigned int channels,
-                               snd_pcm_uframes_t period_frames) {
-    elevate_realtime_priority("I2S capture");
-
-    if (channels != static_cast<unsigned int>(CHANNELS)) {
-        LOG_ERROR("[I2S] Unsupported channel count {} (expected {})", channels, CHANNELS);
-        return;
-    }
-
-    const snd_pcm_uframes_t configured_period_frames = period_frames;
-    std::vector<int16_t> buffer16;
-    std::vector<int32_t> buffer32;
-    std::vector<uint8_t> buffer24;
-    std::vector<float> floatBuffer;
-
-    g_state.i2s.captureRunning.store(true, std::memory_order_release);
-
-    while (g_state.flags.running.load(std::memory_order_acquire)) {
-        snd_pcm_uframes_t negotiated_period = configured_period_frames;
-        unsigned int actual_rate = requested_rate;
-        snd_pcm_t* handle = open_i2s_capture(device, format, requested_rate, channels,
-                                             negotiated_period, actual_rate);
-        {
-            std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
-            g_state.i2s.handle = handle;
-        }
-
-        if (!handle) {
-            // Device not ready / unplugged. Retry with backoff.
-            g_state.i2s.captureReady.store(false, std::memory_order_release);
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            continue;
-        }
-
-        auto resizeBuffers = [&](snd_pcm_uframes_t frames) {
-            if (format == SND_PCM_FORMAT_S16_LE) {
-                buffer16.assign(frames * channels, 0);
-            } else if (format == SND_PCM_FORMAT_S32_LE) {
-                buffer32.assign(frames * channels, 0);
-            } else if (format == SND_PCM_FORMAT_S24_3LE) {
-                buffer24.assign(static_cast<size_t>(frames) * channels * 3, 0);
-            }
-        };
-        resizeBuffers(negotiated_period);
-
-        // If the hardware rate differs from current engine input rate, schedule follow-up.
-        // (Actual reinit is handled in main loop; network-driven follow is #824.)
-        if (actual_rate == 44100 || actual_rate == 48000) {
-            int current = g_state.rates.inputSampleRate;
-            if (current != static_cast<int>(actual_rate)) {
-                LOG_WARN("[I2S] Detected input rate {} Hz (engine {} Hz). Scheduling rate follow.",
-                         actual_rate, current);
-                g_state.rates.pendingRateChange.store(static_cast<int>(actual_rate),
-                                                      std::memory_order_release);
-            }
-        }
-
-        g_state.i2s.captureReady.store(true, std::memory_order_release);
-
-        bool needReopen = false;
-        while (g_state.flags.running.load(std::memory_order_acquire)) {
-            // Important: For I2S capture in external-clock/slave scenarios, we must keep draining
-            // the ALSA capture buffer. Applying backpressure here can stall reads long enough to
-            // trigger capture overruns (XRUN), resulting in periodic "burst + noise" artifacts.
-            //
-            // If downstream is behind, we prefer to drop at the daemon-level playback queue
-            // (PlaybackBufferManager::enqueue enforces capacity) rather than blocking capture.
-
-            void* rawBuffer = nullptr;
-            if (format == SND_PCM_FORMAT_S16_LE) {
-                rawBuffer = buffer16.data();
-            } else if (format == SND_PCM_FORMAT_S32_LE) {
-                rawBuffer = buffer32.data();
-            } else if (format == SND_PCM_FORMAT_S24_3LE) {
-                rawBuffer = buffer24.data();
-            } else {
-                needReopen = false;
-                break;
-            }
-
-            snd_pcm_sframes_t frames = snd_pcm_readi(handle, rawBuffer, negotiated_period);
-            if (frames == -EAGAIN) {
-                daemon_input::waitForCaptureReady(handle);
-                continue;
-            }
-            if (frames == -EPIPE) {
-                LOG_WARN("[I2S] XRUN detected, recovering");
-                // Use recover() to handle driver-specific XRUN recovery requirements.
-                if (snd_pcm_recover(handle, frames, 1) < 0) {
-                    snd_pcm_prepare(handle);
-                }
-                continue;
-            }
-            if (frames < 0) {
-                LOG_WARN("[I2S] Read error: {}", snd_strerror(frames));
-                if (snd_pcm_recover(handle, frames, 1) < 0) {
-                    // Treat as a device fault; close and attempt reopen.
-                    LOG_ERROR("[I2S] Recover failed, attempting reopen");
-                    needReopen = true;
-                    break;
-                }
-                continue;
-            }
-            if (frames == 0) {
-                daemon_input::waitForCaptureReady(handle);
-                continue;
-            }
-
-            if (!daemon_input::convertPcmToFloat(rawBuffer, format, static_cast<size_t>(frames),
-                                                 channels, floatBuffer)) {
-                LOG_ERROR("[I2S] Unsupported format during conversion");
-                needReopen = true;
-                break;
-            }
-
-            if (g_state.audioPipeline) {
-                g_state.audioPipeline->process(floatBuffer.data(), static_cast<uint32_t>(frames));
-            }
-        }
-
-        snd_pcm_drop(handle);
-        snd_pcm_close(handle);
-        {
-            std::lock_guard<std::mutex> lock(g_state.i2s.handleMutex);
-            g_state.i2s.handle = nullptr;
-        }
-        g_state.i2s.captureReady.store(false, std::memory_order_release);
-
-        if (!needReopen) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }
-
-    g_state.i2s.captureRunning.store(false, std::memory_order_release);
-    g_state.i2s.captureReady.store(false, std::memory_order_release);
-    LOG_INFO("[I2S] Capture thread terminated");
-}
-
 // ALSA output thread (705.6kHz direct to DAC)
-void alsa_output_thread() {
-    elevate_realtime_priority("ALSA output");
-
-    daemon_output::AlsaPcmController pcmController(daemon_output::AlsaPcmControllerDependencies{
-        .config = &g_state.config,
-        .dacManager = g_state.managers.dacManager.get(),
-        .streamingCacheManager = g_state.managers.streamingCacheManager.get(),
-        .fallbackManager = g_state.fallbackManager,
-        .running = &g_state.flags.running,
-        .outputReady = &g_state.flags.outputReady,
-        .currentOutputRate =
-            []() { return g_state.rates.currentOutputRate.load(std::memory_order_acquire); },
-    });
-
-    if (!pcmController.openSelected()) {
-        return;
-    }
-
-    auto period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
-    if (period_size == 0) {
-        period_size = static_cast<snd_pcm_uframes_t>(
-            (g_state.config.periodSize > 0) ? g_state.config.periodSize : 32768);
-    }
-    std::vector<int32_t> interleaved_buffer(period_size * CHANNELS);
-    std::vector<float> float_buffer(period_size * CHANNELS);  // for soft mute processing
-    auto& bufferManager = playback_buffer();
-
-    // Main playback loop
-    while (g_state.flags.running) {
-        // Heartbeat check every few hundred loops
-        static int alive_counter = 0;
-        if (++alive_counter > 200) {  // ~200 iterations ~ a few seconds depending on buffer wait
-            alive_counter = 0;
-            if (!pcmController.alive()) {
-                LOG_EVERY_N(WARN, 5, "[ALSA] PCM disconnected/suspended, attempting reopen...");
-                pcmController.close();
-                while (g_state.flags.running && !pcmController.openSelected()) {
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                }
-                period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
-                if (period_size == 0) {
-                    period_size = static_cast<snd_pcm_uframes_t>(
-                        (g_state.config.periodSize > 0) ? g_state.config.periodSize : 32768);
-                }
-                interleaved_buffer.resize(period_size * CHANNELS);
-                float_buffer.resize(period_size * CHANNELS);
-                continue;
-            }
-        }
-
-        // Issue #219: Check for pending ALSA reconfiguration (output rate changed)
-        if (g_state.rates.alsaReconfigureNeeded.exchange(false, std::memory_order_acquire)) {
-            int new_output_rate = g_state.rates.alsaNewOutputRate.load(std::memory_order_acquire);
-            if (new_output_rate > 0) {
-                LOG_INFO("[Main] Reconfiguring ALSA for new output rate {} Hz", new_output_rate);
-
-                // Reconfigure ALSA with new rate
-                if (pcmController.reconfigure(new_output_rate)) {
-                    period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
-                    if (period_size == 0) {
-                        period_size = static_cast<snd_pcm_uframes_t>(
-                            (g_state.config.periodSize > 0) ? g_state.config.periodSize : 32768);
-                    }
-                    interleaved_buffer.resize(period_size * CHANNELS);
-                    float_buffer.resize(period_size * CHANNELS);
-
-                    // Update soft mute sample rate
-                    if (g_state.softMute.controller) {
-                        g_state.softMute.controller->setSampleRate(new_output_rate);
-                    }
-
-                    LOG_INFO("[Main] ALSA reconfiguration successful");
-                } else {
-                    // Failed to reconfigure - try to reopen with old rate
-                    LOG_ERROR("[Main] ALSA reconfiguration failed, attempting recovery...");
-                    int old_rate = g_state.rates.currentOutputRate.load(std::memory_order_acquire);
-                    if (!pcmController.reconfigure(old_rate)) {
-                        LOG_ERROR("[Main] ALSA recovery failed, waiting for reconnect...");
-                    }
-                }
-            }
-        }
-
-        if (auto pendingDevice = g_state.managers.dacManager->consumePendingChange()) {
-            std::string nextDevice = *pendingDevice;
-            if (!nextDevice.empty() && nextDevice != pcmController.device()) {
-                LOG_INFO("[ALSA] Switching output to {}", nextDevice);
-                if (!pcmController.switchDevice(nextDevice)) {
-                    continue;
-                }
-                period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
-                if (period_size == 0) {
-                    period_size = static_cast<snd_pcm_uframes_t>(
-                        (g_state.config.periodSize > 0) ? g_state.config.periodSize : 32768);
-                }
-                interleaved_buffer.resize(period_size * CHANNELS);
-                float_buffer.resize(period_size * CHANNELS);
-            }
-        }
-
-        // Wait for GPU processed data (dynamic threshold to avoid underflow with crossfeed)
-        std::unique_lock<std::mutex> lock(bufferManager.mutex());
-        size_t ready_threshold = get_playback_ready_threshold(static_cast<size_t>(period_size));
-        bufferManager.cv().wait_for(
-            lock, std::chrono::milliseconds(200), [&bufferManager, ready_threshold] {
-                return bufferManager.queuedFramesLocked() >= ready_threshold ||
-                       !g_state.flags.running;
-            });
-
-        if (!g_state.flags.running) {
-            break;
-        }
-
-        lock.unlock();
-
-        audio_pipeline::RenderResult renderResult;
-        if (g_state.audioPipeline) {
-            renderResult = g_state.audioPipeline->renderOutput(static_cast<size_t>(period_size),
-                                                               interleaved_buffer, float_buffer,
-                                                               g_state.softMute.controller);
-        } else {
-            renderResult.framesRequested = period_size;
-            renderResult.framesRendered = period_size;
-            renderResult.wroteSilence = true;
-            std::fill(interleaved_buffer.begin(), interleaved_buffer.end(), 0);
-        }
-
-        // Wake any producers that are throttling on "space available".
-        // renderOutput() advances the output read position under its own lock; notifying here is
-        // safe.
-        bufferManager.cv().notify_all();
-
-        // Apply pending soft mute parameter restoration once transition completes
-        maybe_restore_soft_mute_params();
-
-        // Write to ALSA device
-        long frames_written = pcmController.writeInterleaved(interleaved_buffer.data(),
-                                                             static_cast<size_t>(period_size));
-        if (frames_written < 0) {
-            // Device may be gone; attempt reopen
-            LOG_EVERY_N(ERROR, 10, "[ALSA] Write error: {}, retrying reopen...",
-                        snd_strerror(frames_written));
-            pcmController.close();
-            while (g_state.flags.running && !pcmController.openSelected()) {
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-            }
-            if (!pcmController.isOpen()) {
-                continue;
-            }
-            period_size = static_cast<snd_pcm_uframes_t>(pcmController.periodFrames());
-            if (period_size == 0) {
-                period_size = static_cast<snd_pcm_uframes_t>(
-                    (g_state.config.periodSize > 0) ? g_state.config.periodSize : 32768);
-            }
-            interleaved_buffer.resize(period_size * CHANNELS);
-            float_buffer.resize(period_size * CHANNELS);
-        }
-    }
-
-    // Cleanup
-    pcmController.close();
-    LOG_INFO("[ALSA] Output thread terminated");
-}
-
 int main(int argc, char* argv[]) {
     // Early initialization with stderr output only (before PID lock)
     // This allows logging during PID lock acquisition
@@ -1514,25 +548,23 @@ int main(int argc, char* argv[]) {
         }
 
         g_state.upsampler = buildResult.upsampler.release();
-        ConvolutionEngine::RateFamily initialFamily = buildResult.initialRateFamily;
+        ConvolutionEngine::RateFamily activeFamily = buildResult.initialRateFamily;
 
         if (g_state.config.multiRateEnabled) {
             g_state.rates.currentInputRate.store(buildResult.currentInputRate,
                                                  std::memory_order_release);
             g_state.rates.currentOutputRate.store(buildResult.currentOutputRate,
                                                   std::memory_order_release);
-            g_set_rate_family(ConvolutionEngine::detectRateFamily(g_state.rates.inputSampleRate));
+
+            activeFamily = ConvolutionEngine::detectRateFamily(g_state.rates.inputSampleRate);
+            if (activeFamily == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
+                activeFamily = ConvolutionEngine::RateFamily::RATE_44K;
+            }
+            g_state.rates.currentRateFamilyInt.store(static_cast<int>(activeFamily),
+                                                     std::memory_order_release);
         }
 
-        // Set g_state.rates.activeRateFamily and g_state.rates.activePhaseType for headroom
-        // tracking
-        if (g_state.config.multiRateEnabled) {
-            // Rate family already set during initializeMultiRate()
-            // g_state.rates.activeRateFamily is set via g_set_rate_family() above
-        } else {
-            g_state.rates.activeRateFamily = initialFamily;
-        }
-
+        g_state.rates.activeRateFamily = activeFamily;
         g_state.rates.activePhaseType = g_state.config.phaseType;
         std::string filterPath;
         if (g_state.managers.headroomController) {
@@ -1541,8 +573,8 @@ int main(int argc, char* argv[]) {
         publish_filter_switch_event(filterPath, g_state.rates.activePhaseType, true);
 
         // Pre-allocate streaming input buffers (avoid RT reallocations)
-        size_t buffer_capacity =
-            compute_stream_buffer_capacity(g_state.upsampler->getStreamValidInputPerBlock());
+        size_t buffer_capacity = audio_pipeline::computeStreamBufferCapacity(
+            g_state, g_state.upsampler->getStreamValidInputPerBlock());
         g_state.streaming.streamInputLeft.resize(buffer_capacity, 0.0f);
         g_state.streaming.streamInputRight.resize(buffer_capacity, 0.0f);
         std::cout << "Streaming buffer capacity: " << buffer_capacity
@@ -1597,8 +629,10 @@ int main(int argc, char* argv[]) {
             pipelineDeps.crossfeedEnabled = &g_state.crossfeed.enabled;
             pipelineDeps.crossfeedResetRequested = &g_state.crossfeed.resetRequested;
             pipelineDeps.crossfeedProcessor = g_state.crossfeed.processor;
-            pipelineDeps.buffer.playbackBuffer = &playback_buffer();
-            pipelineDeps.maxOutputBufferFrames = []() { return get_max_output_buffer_frames(); };
+            pipelineDeps.buffer.playbackBuffer = &daemon_output::playbackBuffer(g_state);
+            pipelineDeps.maxOutputBufferFrames = []() {
+                return daemon_output::maxOutputBufferFrames(g_state);
+            };
             pipelineDeps.currentOutputRate = []() {
                 return g_state.rates.currentOutputRate.load(std::memory_order_acquire);
             };
@@ -1686,12 +720,14 @@ int main(int argc, char* argv[]) {
         controlDeps.dispatcher = g_state.managers.eventDispatcher.get();
         controlDeps.quitMainLoop = []() {};
         controlDeps.buildRuntimeStats = []() { return build_runtime_stats_dependencies(); };
-        controlDeps.bufferCapacityFrames = []() { return get_max_output_buffer_frames(); };
+        controlDeps.bufferCapacityFrames = []() {
+            return daemon_output::maxOutputBufferFrames(g_state);
+        };
         controlDeps.applySoftMuteForFilterSwitch = [](std::function<bool()> fn) {
-            applySoftMuteForFilterSwitch(std::move(fn));
+            audio_pipeline::applySoftMuteForFilterSwitch(g_state, std::move(fn));
         };
         controlDeps.resetStreamingCachesForSwitch = []() {
-            return reset_streaming_caches_for_switch();
+            return audio_pipeline::resetStreamingCachesForSwitch(g_state);
         };
         controlDeps.refreshHeadroom = [](const std::string& reason) {
             if (g_state.managers.headroomController) {
@@ -1699,7 +735,7 @@ int main(int argc, char* argv[]) {
             }
         };
         controlDeps.reinitializeStreamingForLegacyMode = []() {
-            return reinitialize_streaming_for_legacy_mode();
+            return audio_pipeline::reinitializeStreamingForLegacyMode(g_state);
         };
         controlDeps.setPreferredOutputDevice = [](AppConfig& cfg, const std::string& device) {
             set_preferred_output_device(cfg, device);
@@ -1728,7 +764,7 @@ int main(int argc, char* argv[]) {
             g_state.managers.dacManager->start();
         }
         std::cout << "Starting ALSA output thread..." << '\n';
-        std::thread alsa_thread(alsa_output_thread);
+        std::thread alsa_thread(daemon_output::alsaOutputThread, std::ref(g_state));
 
         std::thread loopback_thread;
         std::thread i2s_thread;
@@ -1739,7 +775,7 @@ int main(int argc, char* argv[]) {
             exitCode = 1;
             startupFailed = true;
             g_state.flags.running = false;
-            playback_buffer().cv().notify_all();
+            daemon_output::playbackBuffer(g_state).cv().notify_all();
         };
 
         if (g_state.config.i2s.enabled && g_state.config.loopback.enabled) {
@@ -1747,10 +783,11 @@ int main(int argc, char* argv[]) {
         }
 
         if (!startupFailed && g_state.config.i2s.enabled) {
-            if (!validate_i2s_config(g_state.config)) {
+            if (!daemon_input::validateI2sConfig(g_state.config)) {
                 failStartup("Invalid I2S config");
             } else {
-                snd_pcm_format_t i2s_format = parse_i2s_format(g_state.config.i2s.format);
+                snd_pcm_format_t i2s_format =
+                    daemon_input::parseI2sFormat(g_state.config.i2s.format);
                 // i2s.sampleRate==0 means "follow engine/runtime negotiated input rate".
                 // ALSA hw_params typically requires an explicit rate, so default to current engine
                 // rate.
@@ -1761,10 +798,10 @@ int main(int argc, char* argv[]) {
                 std::cout << "Starting I2S capture thread (" << g_state.config.i2s.device
                           << ", fmt=" << g_state.config.i2s.format << ", rate=" << i2s_rate
                           << ", period=" << g_state.config.i2s.periodFrames << ")" << '\n';
-                i2s_thread =
-                    std::thread(i2s_capture_thread, g_state.config.i2s.device, i2s_format, i2s_rate,
-                                g_state.config.i2s.channels,
-                                static_cast<snd_pcm_uframes_t>(g_state.config.i2s.periodFrames));
+                i2s_thread = std::thread(
+                    daemon_input::i2sCaptureThread, std::ref(g_state), g_state.config.i2s.device,
+                    i2s_format, i2s_rate, g_state.config.i2s.channels,
+                    static_cast<snd_pcm_uframes_t>(g_state.config.i2s.periodFrames));
 
                 // Wait briefly for I2S thread to become ready
                 bool i2s_ready = false;
@@ -1792,7 +829,7 @@ int main(int argc, char* argv[]) {
                           << ", period=" << g_state.config.loopback.periodFrames << ")" << '\n';
 
                 daemon_input::LoopbackCaptureDependencies loopbackDeps{
-                    .playbackBuffer = &playback_buffer(),
+                    .playbackBuffer = &daemon_output::playbackBuffer(g_state),
                     .running = &g_state.flags.running,
                     .currentOutputRate = &g_state.rates.currentOutputRate,
                     .audioPipeline = &g_state.managers.audioPipelineRaw,
@@ -1863,7 +900,7 @@ int main(int argc, char* argv[]) {
                     int pending =
                         g_state.rates.pendingRateChange.exchange(0, std::memory_order_acq_rel);
                     if (pending > 0 && (pending == 44100 || pending == 48000)) {
-                        (void)handle_rate_switch(pending);
+                        (void)audio_pipeline::handleRateSwitch(g_state, pending);
                     }
                     shutdownManager.tick();
                 }
@@ -1881,7 +918,7 @@ int main(int argc, char* argv[]) {
         // Step 5: Signal worker threads to stop and wait for them
         std::cout << "  Step 5: Stopping worker threads..." << '\n';
         g_state.flags.running = false;
-        playback_buffer().cv().notify_all();
+        daemon_output::playbackBuffer(g_state).cv().notify_all();
         if (controlPlane) {
             controlPlane->stop();
         }
