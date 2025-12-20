@@ -35,9 +35,13 @@ def _resolve_default_opra_path() -> Path:
     cached_path = manager.current_path / DATABASE_FILENAME
     if cached_path.exists():
         return cached_path
-    return (
-        Path(__file__).parent.parent / "data" / "opra-db" / "dist" / "database_v1.jsonl"
-    )
+    return DEFAULT_OPRA_PATH
+
+
+# Default path to OPRA submodule database
+DEFAULT_OPRA_PATH = (
+    Path(__file__).parent.parent / "data" / "opra-db" / "dist" / "database_v1.jsonl"
+)
 
 
 @dataclass
