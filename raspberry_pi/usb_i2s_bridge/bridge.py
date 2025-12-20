@@ -29,9 +29,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Optional, Tuple
+from typing import IO, TYPE_CHECKING, Optional, Tuple
 
-from .control_plane import ControlPlaneSync
+if TYPE_CHECKING:
+    from .control_plane import ControlPlaneSync
 
 _CONFIG_OVERRIDES: dict[str, str] = {}
 
@@ -534,10 +535,15 @@ def _persist_status(
         reporter.submit(payload)
 
 
-def _build_control_sync(cfg: UsbI2sBridgeConfig) -> ControlPlaneSync | None:
+def _build_control_sync(cfg: UsbI2sBridgeConfig) -> "ControlPlaneSync | None":
     endpoint = (cfg.control_endpoint or "").strip()
     if not endpoint:
         return None
+    # NOTE:
+    # `raspi-control-api` (Pi Control API) もこのモジュールから設定デフォルトを参照する。
+    # そのコンテナでは ZeroMQ が不要なため、ここは遅延importにして import 時の依存を避ける。
+    from .control_plane import ControlPlaneSync
+
     return ControlPlaneSync(
         endpoint=endpoint,
         peer_endpoint=(cfg.control_peer or "").strip() or None,
