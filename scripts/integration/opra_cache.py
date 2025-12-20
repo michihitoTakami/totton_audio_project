@@ -59,6 +59,7 @@ def compute_sha256(path: Path) -> str:
 @dataclass
 class OpraSyncState:
     status: str = "idle"
+    job_id: str | None = None
     current_commit: str | None = None
     previous_commit: str | None = None
     last_updated_at: str | None = None
@@ -69,6 +70,7 @@ class OpraSyncState:
     def from_dict(cls, data: dict[str, Any]) -> "OpraSyncState":
         return cls(
             status=data.get("status", "idle"),
+            job_id=data.get("job_id"),
             current_commit=data.get("current_commit"),
             previous_commit=data.get("previous_commit"),
             last_updated_at=data.get("last_updated_at"),
@@ -79,6 +81,7 @@ class OpraSyncState:
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
+            "job_id": self.job_id,
             "current_commit": self.current_commit,
             "previous_commit": self.previous_commit,
             "last_updated_at": self.last_updated_at,
@@ -209,9 +212,12 @@ class OpraCacheManager:
         with self.state_path.open("w", encoding="utf-8") as handle:
             json.dump(state.to_dict(), handle, ensure_ascii=True, indent=2)
 
-    def set_status(self, status: str, error: str | None = None) -> None:
+    def set_status(
+        self, status: str, error: str | None = None, job_id: str | None = None
+    ) -> None:
         state = self.load_state()
         state.status = status
+        state.job_id = job_id
         state.last_error = error
         state.last_updated_at = _now_iso()
         state.versions = self._list_version_names()
@@ -244,6 +250,7 @@ class OpraCacheManager:
             state.previous_commit = current_commit
         state.current_commit = safe_sha
         state.status = "ready"
+        state.job_id = None
         state.last_error = None
         state.last_updated_at = _now_iso()
         state.versions = self._list_version_names()

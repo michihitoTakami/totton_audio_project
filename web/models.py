@@ -633,6 +633,53 @@ class OpraEqResponse(BaseModel):
     attribution: OpraEqAttribution
 
 
+class OpraSyncMetadata(BaseModel):
+    """Metadata for a synced OPRA database version."""
+
+    commit_sha: str
+    source: str
+    source_url: str
+    downloaded_at: str
+    sha256: str
+    size_bytes: int
+    stats: dict[str, Any] = {}
+
+
+class OpraSyncStatusResponse(BaseModel):
+    """OPRA sync status response model."""
+
+    status: str
+    job_id: Optional[str] = None
+    current_commit: Optional[str] = None
+    previous_commit: Optional[str] = None
+    last_updated_at: Optional[str] = None
+    last_error: Optional[str] = None
+    versions: list[str] = []
+    current_metadata: Optional[OpraSyncMetadata] = None
+
+
+class OpraSyncAvailableResponse(BaseModel):
+    """OPRA sync availability response model."""
+
+    source: str
+    latest: str
+    source_url: str
+
+
+class OpraSyncUpdateRequest(BaseModel):
+    """OPRA sync update request model."""
+
+    target: str = Field(description="latest or commit SHA")
+    source: Literal["github_raw", "cloudflare"]
+
+
+class OpraSyncJobResponse(BaseModel):
+    """OPRA sync job response model."""
+
+    job_id: str
+    status: str
+
+
 # ============================================================================
 # Request Models
 # ============================================================================
