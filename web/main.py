@@ -22,6 +22,7 @@ from .routers import (
     eq_router,
     i2s_router,
     opra_router,
+    opra_sync_router,
     output_mode_router,
     partitioned_router,
     pi_router,
@@ -160,7 +161,7 @@ Control interface for the GPU-accelerated audio upsampler daemon.
 - **Real-time Stats**: WebSocket endpoint for live statistics
 
 ### Authentication
-No authentication required (local network only).
+Most endpoints do not require authentication (local network only).
     """,
         version="1.0.0",
         openapi_tags=effective_tags,
@@ -180,6 +181,7 @@ No authentication required (local network only).
     app.include_router(daemon_router)
     app.include_router(eq_router)
     app.include_router(opra_router)
+    app.include_router(opra_sync_router)
     app.include_router(dac_router)
     app.include_router(crossfeed_router)
     app.include_router(partitioned_router)

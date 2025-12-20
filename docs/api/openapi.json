@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "GPU Upsampler Control",
-    "description": "\n## GPU Audio Upsampler Web API\n\nControl interface for the GPU-accelerated audio upsampler daemon.\n\n### Features\n- **Daemon Control**: Start/stop/restart the audio processing daemon\n- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)\n- **OPRA Integration**: Access the OPRA headphone EQ database\n- **Real-time Stats**: WebSocket endpoint for live statistics\n\n### Authentication\nNo authentication required (local network only).\n    ",
+    "description": "\n## GPU Audio Upsampler Web API\n\nControl interface for the GPU-accelerated audio upsampler daemon.\n\n### Features\n- **Daemon Control**: Start/stop/restart the audio processing daemon\n- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)\n- **OPRA Integration**: Access the OPRA headphone EQ database\n- **Real-time Stats**: WebSocket endpoint for live statistics\n\n### Authentication\nMost endpoints do not require authentication (local network only).\n    ",
     "version": "1.0.0"
   },
   "paths": {
@@ -931,6 +931,136 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opra/sync/status": {
+      "get": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Sync Status",
+        "description": "Return current OPRA sync status.",
+        "operationId": "opra_sync_status_api_opra_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraSyncStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opra/sync/available": {
+      "get": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Sync Available",
+        "description": "Check available OPRA updates for the given source.",
+        "operationId": "opra_sync_available_api_opra_sync_available_get",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "github_raw",
+              "title": "Source"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraSyncAvailableResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opra/sync/update": {
+      "post": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Sync Update",
+        "description": "Kick off OPRA sync update in background.",
+        "operationId": "opra_sync_update_api_opra_sync_update_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpraSyncUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraSyncJobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opra/sync/rollback": {
+      "post": {
+        "tags": [
+          "opra"
+        ],
+        "summary": "Opra Sync Rollback",
+        "description": "Rollback to the previous OPRA version.",
+        "operationId": "opra_sync_rollback_api_opra_sync_rollback_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpraSyncJobResponse"
                 }
               }
             }
@@ -3147,6 +3277,205 @@
         ],
         "title": "OpraStats",
         "description": "OPRA database statistics response model."
+      },
+      "OpraSyncAvailableResponse": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "latest": {
+            "type": "string",
+            "title": "Latest"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "latest",
+          "source_url"
+        ],
+        "title": "OpraSyncAvailableResponse",
+        "description": "OPRA sync availability response model."
+      },
+      "OpraSyncJobResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "OpraSyncJobResponse",
+        "description": "OPRA sync job response model."
+      },
+      "OpraSyncMetadata": {
+        "properties": {
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "downloaded_at": {
+            "type": "string",
+            "title": "Downloaded At"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "stats": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Stats",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "commit_sha",
+          "source",
+          "source_url",
+          "downloaded_at",
+          "sha256",
+          "size_bytes"
+        ],
+        "title": "OpraSyncMetadata",
+        "description": "Metadata for a synced OPRA database version."
+      },
+      "OpraSyncStatusResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "current_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Commit"
+          },
+          "previous_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Commit"
+          },
+          "last_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Updated At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Versions",
+            "default": []
+          },
+          "current_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpraSyncMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "OpraSyncStatusResponse",
+        "description": "OPRA sync status response model."
+      },
+      "OpraSyncUpdateRequest": {
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "description": "latest or commit SHA"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "github_raw",
+              "cloudflare"
+            ],
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target",
+          "source"
+        ],
+        "title": "OpraSyncUpdateRequest",
+        "description": "OPRA sync update request model."
       },
       "OpraVendor": {
         "properties": {
