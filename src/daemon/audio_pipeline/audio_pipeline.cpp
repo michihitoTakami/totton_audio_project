@@ -857,6 +857,7 @@ void AudioPipeline::workerLoop() {
 
             bool inferenceOk = false;
             bool inferenceAttempted = false;
+            bool backendValid = false;
             bool bypassChunk = false;
             double realtimeFactor = 0.0;
 
@@ -866,9 +867,38 @@ void AudioPipeline::workerLoop() {
                     (status.mode == delimiter::ProcessingMode::Bypass) || status.bypassLocked;
             }
 
-            if (!bypassChunk && delimiterBackend_ && deps_.config &&
-                deps_.config->delimiter.enabled &&
-                static_cast<int>(delimiterBackend_->expectedSampleRate()) == workerInputRate_) {
+            const bool backendEnabled =
+                (deps_.config && deps_.config->delimiter.enabled && delimiterBackend_);
+            const bool rateMatch =
+                (backendEnabled &&
+                 static_cast<int>(delimiterBackend_->expectedSampleRate()) == workerInputRate_);
+            backendValid = backendEnabled && rateMatch;
+
+            if (backendEnabled && !rateMatch) {
+                LOG_EVERY_N(WARN, 10,
+                            "[AudioPipeline] Delimiter sample rate mismatch (expected={}Hz, "
+                            "input={}Hz). Forcing bypass.",
+                            delimiterBackend_->expectedSampleRate(), workerInputRate_);
+                if (delimiterSafety_) {
+                    delimiter::InferenceResult res{delimiter::InferenceStatus::InvalidConfig,
+                                                   "delimiter sample rate mismatch"};
+                    (void)delimiterSafety_->observeInferenceResult(res);
+                    updateDelimiterStatus(delimiterSafety_->status());
+                }
+                bypassChunk = true;
+            } else if (!backendEnabled && deps_.config && deps_.config->delimiter.enabled) {
+                LOG_EVERY_N(WARN, 10,
+                            "[AudioPipeline] Delimiter backend unavailable. Forcing bypass.");
+                if (delimiterSafety_) {
+                    delimiter::InferenceResult res{delimiter::InferenceStatus::InvalidConfig,
+                                                   "delimiter backend unavailable"};
+                    (void)delimiterSafety_->observeInferenceResult(res);
+                    updateDelimiterStatus(delimiterSafety_->status());
+                }
+                bypassChunk = true;
+            }
+
+            if (!bypassChunk && backendValid) {
                 inferenceAttempted = true;
                 auto start = std::chrono::steady_clock::now();
                 auto res = delimiterBackend_->process(
@@ -901,7 +931,7 @@ void AudioPipeline::workerLoop() {
             bool overloadTriggered = false;
             if (delimiterSafety_) {
                 overloadTriggered = delimiterSafety_->observeOverload(realtimeFactor, queueSeconds);
-                if (!overloadTriggered && (inferenceOk || !inferenceAttempted)) {
+                if (!overloadTriggered && backendValid && (inferenceOk || !inferenceAttempted)) {
                     delimiterSafety_->observeHealthy();
                 }
                 auto status = delimiterSafety_->status();
