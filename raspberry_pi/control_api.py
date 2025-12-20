@@ -20,6 +20,12 @@ from raspberry_pi.usb_i2s_bridge.bridge import UsbI2sBridgeConfig
 DEFAULT_BIND_INTERFACE = os.getenv("RPI_CONTROL_BIND_INTERFACE", "usb0").strip()
 DEFAULT_BIND_HOST = os.getenv("RPI_CONTROL_BIND_HOST", "").strip()
 DEFAULT_BIND_SUBNET = os.getenv("RPI_CONTROL_BIND_SUBNET", "192.168.55.0/24").strip()
+DEFAULT_BIND_WAIT_SECS = float(
+    os.getenv("RPI_CONTROL_BIND_WAIT_SECS", "30").strip() or "30"
+)
+DEFAULT_BIND_RETRY_SECS = float(
+    os.getenv("RPI_CONTROL_BIND_RETRY_SECS", "1").strip() or "1"
+)
 DEFAULT_PORT = int(os.getenv("RPI_CONTROL_PORT", "8081"))
 DEFAULT_STATUS_PATH = Path(
     os.getenv("RPI_CONTROL_STATUS_PATH", "/var/run/usb-i2s-bridge/status.json")
@@ -91,6 +97,35 @@ def _resolve_any_interface_in_subnet(
         except ValueError:
             continue
     return None
+
+
+def _is_bindable(host: str, port: int) -> bool:
+    """Return True if (host, port) can be bound right now (best-effort)."""
+    try:
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+            return True
+        finally:
+            sock.close()
+    except OSError:
+        return False
+
+
+def _resolve_bind_host() -> str:
+    """Resolve bind host from explicit host / interface / subnet."""
+    if DEFAULT_BIND_HOST:
+        return DEFAULT_BIND_HOST
+    ip = _resolve_interface_ip(DEFAULT_BIND_INTERFACE)
+    if ip:
+        return ip
+    ip = _resolve_any_interface_in_subnet(DEFAULT_BIND_SUBNET)
+    if ip:
+        return ip
+    return ""
 
 
 class UsbI2sConfig(BaseModel):
@@ -470,19 +505,43 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    host = args.host.strip()
-    if not host:
-        host = _resolve_interface_ip(DEFAULT_BIND_INTERFACE) or ""
-    if not host:
-        host = _resolve_any_interface_in_subnet(DEFAULT_BIND_SUBNET) or ""
-    if not host:
-        raise SystemExit(
-            "[raspi-control-api] ERROR: bind host is not set and interface auto-detect failed. "
-            "Set RPI_CONTROL_BIND_HOST (e.g. 192.168.55.100), "
-            "or set RPI_CONTROL_BIND_INTERFACE / RPI_CONTROL_BIND_SUBNET appropriately."
+    explicit_host = args.host.strip()
+
+    # NOTE:
+    # 起動直後は USB ネットワークのIPがまだ付いていないことがある。
+    # bind できるまで少し待つ（成功したら即起動、タイムアウトしたら exit 非0 → restart）。
+    wait_secs = max(0.0, DEFAULT_BIND_WAIT_SECS)
+    retry_secs = max(0.2, DEFAULT_BIND_RETRY_SECS)
+    deadline = time.monotonic() + wait_secs
+    last_state = ""
+
+    while True:
+        host = explicit_host or _resolve_bind_host()
+        if host and _is_bindable(host, args.port):
+            break
+
+        state = (
+            f"host={host or '(none)'} port={args.port} "
+            f"(interface={DEFAULT_BIND_INTERFACE}, subnet={DEFAULT_BIND_SUBNET}, "
+            f"explicit_host={'yes' if explicit_host else 'no'})"
         )
+        if state != last_state:
+            print(f"[raspi-control-api] waiting for bindable address: {state}")
+            last_state = state
+
+        if time.monotonic() >= deadline:
+            raise SystemExit(
+                "[raspi-control-api] ERROR: failed to resolve/bind address within "
+                f"{wait_secs:.0f}s. Last state: {state}. "
+                "Set RPI_CONTROL_BIND_HOST (e.g. 192.168.55.100) or adjust "
+                "RPI_CONTROL_BIND_INTERFACE / RPI_CONTROL_BIND_SUBNET."
+            )
+
+        time.sleep(retry_secs)
+
     print(
-        f"[raspi-control-api] bind={host}:{args.port} (interface={DEFAULT_BIND_INTERFACE}, subnet={DEFAULT_BIND_SUBNET})"
+        f"[raspi-control-api] bind={host}:{args.port} "
+        f"(interface={DEFAULT_BIND_INTERFACE}, subnet={DEFAULT_BIND_SUBNET}, wait={wait_secs:.0f}s)"
     )
     app_instance = create_app(
         config_path=args.config,
