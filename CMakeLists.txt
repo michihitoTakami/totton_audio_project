@@ -475,6 +475,10 @@ add_executable(cpu_tests
     tests/cpp/audio/test_playback_buffer_threshold.cpp
     tests/cpp/daemon/test_alsa_write_loop.cpp
     tests/cpp/daemon/test_runtime_stats.cpp
+    tests/cpp/daemon/test_stream_buffer_sizing.cpp
+    tests/cpp/daemon/test_playback_buffer_access.cpp
+    tests/cpp/daemon/test_switch_actions.cpp
+    tests/cpp/daemon/test_i2s_capture_config.cpp
     tests/cpp/audio/test_audio_pipeline.cpp
     tests/cpp/core/test_precision_traits.cpp
     src/daemon/audio/crossfeed_manager.cpp
@@ -483,12 +487,16 @@ add_executable(cpu_tests
     src/daemon/audio_pipeline/headroom_controller.cpp
     src/daemon/audio_pipeline/rate_switcher.cpp
     src/daemon/audio_pipeline/soft_mute_runner.cpp
+    src/daemon/audio_pipeline/switch_actions.cpp
     src/daemon/control/handlers/handler_registry.cpp
+    src/daemon/input/loopback_capture.cpp
+    src/daemon/input/i2s_capture.cpp
     src/daemon/metrics/stats_file.cpp
     src/daemon/metrics/runtime_stats.cpp
     src/daemon/pcm/dac_manager.cpp
     src/daemon/output/alsa_output.cpp
     src/daemon/output/playback_buffer_manager.cpp
+    src/daemon/output/playback_buffer_access.cpp
 )
 target_link_libraries(cpu_tests
     GTest::gtest_main
@@ -499,6 +507,7 @@ target_link_libraries(cpu_tests
     fallback_manager
     soft_mute
     dac_capability
+    ${ALSA_LIBRARIES}
 )
 target_include_directories(cpu_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
