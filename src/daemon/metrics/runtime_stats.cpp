@@ -3,10 +3,13 @@
 #include "convolution_engine.h"
 #include "core/daemon_constants.h"
 #include "daemon/metrics/stats_file.h"
+#include "daemon/output/playback_buffer_manager.h"
+#include "delimiter/safety_controller.h"
 #include "logging/metrics.h"
 
 #include <chrono>
 #include <cmath>
+#include <mutex>
 #include <string>
 
 namespace runtime_stats {
@@ -84,6 +87,75 @@ nlohmann::json buildFallbackJson(const Dependencies& deps) {
     }
 
     return fallback;
+}
+
+const char* delimiterModeToString(int value) {
+    switch (static_cast<delimiter::ProcessingMode>(value)) {
+    case delimiter::ProcessingMode::Active:
+        return "active";
+    case delimiter::ProcessingMode::Bypass:
+        return "bypass";
+    }
+    return "unknown";
+}
+
+const char* delimiterReasonToString(int value) {
+    switch (static_cast<delimiter::FallbackReason>(value)) {
+    case delimiter::FallbackReason::None:
+        return "none";
+    case delimiter::FallbackReason::InferenceFailure:
+        return "inference_failure";
+    case delimiter::FallbackReason::Overload:
+        return "overload";
+    case delimiter::FallbackReason::Manual:
+        return "manual";
+    }
+    return "unknown";
+}
+
+nlohmann::json buildDelimiterJson(const Dependencies& deps) {
+    nlohmann::json dl;
+    dl["enabled"] = (deps.config ? deps.config->delimiter.enabled : false);
+    if (deps.delimiterMode) {
+        dl["mode"] = delimiterModeToString(deps.delimiterMode->load(std::memory_order_relaxed));
+    } else {
+        dl["mode"] = "unknown";
+    }
+    if (deps.delimiterFallbackReason) {
+        dl["fallback_reason"] =
+            delimiterReasonToString(deps.delimiterFallbackReason->load(std::memory_order_relaxed));
+    } else {
+        dl["fallback_reason"] = "unknown";
+    }
+    dl["bypass_locked"] =
+        (deps.delimiterBypassLocked ? deps.delimiterBypassLocked->load(std::memory_order_relaxed)
+                                    : false);
+    return dl;
+}
+
+struct OutputBufferSnapshot {
+    size_t frames = 0;
+    float seconds = 0.0f;
+    size_t capacity = 0;
+    float usagePercent = 0.0f;
+};
+
+OutputBufferSnapshot collectOutputBufferSnapshot(const Dependencies& deps,
+                                                 std::size_t bufferCapacityFrames, int outputRate) {
+    OutputBufferSnapshot snapshot;
+    snapshot.capacity = bufferCapacityFrames;
+    if (deps.playbackBuffer) {
+        std::lock_guard<std::mutex> lock(deps.playbackBuffer->mutex());
+        snapshot.frames = deps.playbackBuffer->queuedFramesLocked();
+    }
+    if (snapshot.capacity > 0) {
+        snapshot.usagePercent =
+            100.0f * static_cast<float>(snapshot.frames) / static_cast<float>(snapshot.capacity);
+    }
+    if (outputRate > 0) {
+        snapshot.seconds = static_cast<float>(snapshot.frames) / static_cast<float>(outputRate);
+    }
+    return snapshot;
 }
 
 }  // namespace
@@ -255,6 +327,7 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
     stats["peaks"] = peaks;
 
     stats["fallback"] = buildFallbackJson(deps);
+    stats["delimiter"] = buildDelimiterJson(deps);
 
     // ALSA/engine diagnostics for debugging (XRUN, buffer/period config, etc.)
     // - XRUN count is recorded in the ALSA output path (see alsa_pcm_controller.cpp)
@@ -293,12 +366,23 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
     upsampler["error_blocks_right"] = upsamplerErrorBlocksRight();
     stats["upsampler_streaming"] = upsampler;
 
+    auto bufferSnapshot = collectOutputBufferSnapshot(deps, bufferCapacityFrames, outputRate);
+    nlohmann::json outputBufferJson;
+    outputBufferJson["output_buffer_frames"] = bufferSnapshot.frames;
+    outputBufferJson["output_buffer_seconds"] = bufferSnapshot.seconds;
+    outputBufferJson["output_buffer_capacity_frames"] = bufferSnapshot.capacity;
+    outputBufferJson["output_buffer_usage_percent"] = bufferSnapshot.usagePercent;
+    outputBufferJson["buffer_drops_total"] = droppedFrames();
+    outputBufferJson["output_ready"] =
+        (deps.outputReady ? deps.outputReady->load(std::memory_order_acquire) : false);
+    stats["output_buffer"] = outputBufferJson;
+
     return stats;
 }
 
 void writeStatsFile(const Dependencies& deps, std::size_t bufferCapacityFrames,
-                    const std::string& path) {
-    auto stats = collect(deps, bufferCapacityFrames);
+                    const std::string& path, const nlohmann::json* precomputedStats) {
+    auto stats = precomputedStats ? *precomputedStats : collect(deps, bufferCapacityFrames);
     daemon_metrics::StatsFile statsFile(path);
     (void)statsFile.writeJsonAtomically(stats);
 }

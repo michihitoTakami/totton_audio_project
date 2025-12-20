@@ -23,9 +23,19 @@ CURRENT_DIR = Path(__file__).parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
+from opra_cache import DATABASE_FILENAME, OpraCacheManager  # noqa: E402
 from modern_target import (  # noqa: E402
     MODERN_TARGET_CORRECTION_BAND,
 )
+
+
+def _resolve_default_opra_path() -> Path:
+    """Resolve OPRA database path, preferring synced cache if available."""
+    manager = OpraCacheManager()
+    cached_path = manager.current_path / DATABASE_FILENAME
+    if cached_path.exists():
+        return cached_path
+    return DEFAULT_OPRA_PATH
 
 
 # Default path to OPRA submodule database
@@ -241,7 +251,7 @@ class OpraDatabase:
         Args:
             db_path: Path to database_v1.jsonl. If None, uses default submodule path.
         """
-        self.db_path = db_path or DEFAULT_OPRA_PATH
+        self.db_path = db_path or _resolve_default_opra_path()
         self._vendors: dict[str, dict] = {}
         self._products: dict[str, dict] = {}
         self._eq_profiles: dict[str, dict] = {}
@@ -255,7 +265,7 @@ class OpraDatabase:
         if not self.db_path.exists():
             raise FileNotFoundError(
                 f"OPRA database not found at {self.db_path}. "
-                "Run 'git submodule update --init' to fetch OPRA data."
+                "Run OPRA sync or 'git submodule update --init' to fetch OPRA data."
             )
 
         with open(self.db_path, encoding="utf-8") as f:

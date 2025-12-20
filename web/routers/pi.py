@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Callable, TypeVar
 
 from fastapi import APIRouter, HTTPException, Query
@@ -18,11 +19,13 @@ from ..services.pi_client import (
 )
 
 router = APIRouter(prefix="/pi", tags=["pi"])
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
 def _handle_error(exc: PiClientError) -> HTTPException:
+    logger.warning("Pi API proxy failed: %s", exc)
     if isinstance(exc, PiConnectionError):
         return HTTPException(status_code=502, detail=str(exc))
     if isinstance(exc, PiResponseError):

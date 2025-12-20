@@ -14,6 +14,10 @@ namespace ConvolutionEngine {
 class GPUUpsampler;
 }
 
+namespace daemon_output {
+class PlaybackBufferManager;
+}
+
 namespace runtime_stats {
 
 struct Dependencies {
@@ -28,6 +32,11 @@ struct Dependencies {
     const std::atomic<float>* outputGain = nullptr;
     const std::atomic<float>* limiterGain = nullptr;
     const std::atomic<float>* effectiveGain = nullptr;
+    const std::atomic<int>* delimiterMode = nullptr;
+    const std::atomic<int>* delimiterFallbackReason = nullptr;
+    const std::atomic<bool>* delimiterBypassLocked = nullptr;
+    daemon_output::PlaybackBufferManager* playbackBuffer = nullptr;
+    const std::atomic<bool>* outputReady = nullptr;
 };
 
 void reset();
@@ -63,6 +72,6 @@ std::size_t upsamplerErrorBlocksRight();
 
 nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrames);
 void writeStatsFile(const Dependencies& deps, std::size_t bufferCapacityFrames,
-                    const std::string& path);
+                    const std::string& path, const nlohmann::json* precomputedStats = nullptr);
 
 }  // namespace runtime_stats

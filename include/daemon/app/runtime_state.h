@@ -6,6 +6,7 @@
 #include "core/config_loader.h"
 #include "core/daemon_constants.h"
 #include "daemon/api/dependencies.h"
+#include "delimiter/safety_controller.h"
 
 #include <alsa/asoundlib.h>
 #include <atomic>
@@ -120,6 +121,12 @@ struct LoopbackState {
     std::atomic<bool> captureReady{false};
 };
 
+struct DelimiterState {
+    std::atomic<int> mode{static_cast<int>(delimiter::ProcessingMode::Active)};
+    std::atomic<int> fallbackReason{static_cast<int>(delimiter::FallbackReason::None)};
+    std::atomic<bool> bypassLocked{false};
+};
+
 struct I2sState {
     std::mutex handleMutex;
     snd_pcm_t* handle = nullptr;
@@ -162,6 +169,7 @@ struct RuntimeState {
     CrossfeedState crossfeed;
     ManagerState managers;
     LoopbackState loopback;
+    DelimiterState delimiter;
     I2sState i2s;
 
     FallbackManager::Manager* fallbackManager = nullptr;

@@ -1,5 +1,6 @@
 #include "audio/filter_headroom.h"
 #include "daemon/metrics/runtime_stats.h"
+#include "delimiter/safety_controller.h"
 #include "gtest/gtest.h"
 
 #include <atomic>
@@ -41,6 +42,9 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     std::atomic<float> limiterGain(0.95f);
     std::atomic<float> effectiveGain(1.05f);
     std::atomic<bool> fallbackActive(false);
+    std::atomic<int> delimiterMode(static_cast<int>(delimiter::ProcessingMode::Bypass));
+    std::atomic<int> delimiterReason(static_cast<int>(delimiter::FallbackReason::Overload));
+    std::atomic<bool> delimiterLocked(true);
     int inputRate = 48000;
 
     runtime_stats::recordClip();
@@ -59,6 +63,12 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
 
     auto deps = makeDeps(config, headroom, headroomGain, outputGain, limiterGain, effectiveGain,
                          fallbackActive, inputRate);
+    deps.delimiterMode = &delimiterMode;
+    deps.delimiterFallbackReason = &delimiterReason;
+    deps.delimiterBypassLocked = &delimiterLocked;
+    std::atomic<bool> outputReady(true);
+    deps.outputReady = &outputReady;
+
     auto stats = runtime_stats::collect(deps, 2048);
 
     EXPECT_EQ(stats["clip_count"], 1);
@@ -67,6 +77,9 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     EXPECT_EQ(stats["buffer"]["capacity_frames"], 2048u);
     EXPECT_EQ(stats["buffer"]["dropped_frames"], 17u);
     EXPECT_EQ(stats["fallback"]["active"], false);
+    EXPECT_EQ(stats["delimiter"]["mode"], "bypass");
+    EXPECT_EQ(stats["delimiter"]["fallback_reason"], "overload");
+    EXPECT_EQ(stats["delimiter"]["bypass_locked"], true);
 
     EXPECT_FLOAT_EQ(stats["gain"]["headroom"].get<float>(), 0.75f);
     EXPECT_FLOAT_EQ(stats["gain"]["headroom_effective"].get<float>(), 1.1f);
@@ -83,6 +96,12 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     EXPECT_EQ(stats["upsampler_streaming"]["need_more_blocks_right"], 1u);
     EXPECT_EQ(stats["upsampler_streaming"]["error_blocks_left"], 1u);
     EXPECT_EQ(stats["upsampler_streaming"]["error_blocks_right"], 1u);
+    EXPECT_EQ(stats["output_buffer"]["output_buffer_frames"], 0u);
+    EXPECT_FLOAT_EQ(stats["output_buffer"]["output_buffer_seconds"].get<float>(), 0.0f);
+    EXPECT_EQ(stats["output_buffer"]["output_buffer_capacity_frames"], 2048u);
+    EXPECT_FLOAT_EQ(stats["output_buffer"]["output_buffer_usage_percent"].get<float>(), 0.0f);
+    EXPECT_EQ(stats["output_buffer"]["buffer_drops_total"], 17u);
+    EXPECT_TRUE(stats["output_buffer"]["output_ready"].get<bool>());
 }
 
 TEST(RuntimeStatsTest, WriteStatsFileCreatesJson) {
@@ -102,6 +121,8 @@ TEST(RuntimeStatsTest, WriteStatsFileCreatesJson) {
 
     auto deps = makeDeps(config, headroom, headroomGain, outputGain, limiterGain, effectiveGain,
                          fallbackActive, inputRate);
+    std::atomic<bool> outputReady(false);
+    deps.outputReady = &outputReady;
 
     auto tmpFile = std::filesystem::temp_directory_path() / "gpu_runtime_stats_test.json";
     std::error_code ec;
@@ -124,6 +145,9 @@ TEST(RuntimeStatsTest, WriteStatsFileCreatesJson) {
     EXPECT_EQ(data["upsampler_streaming"]["need_more_blocks_right"], 0u);
     EXPECT_EQ(data["upsampler_streaming"]["error_blocks_left"], 0u);
     EXPECT_EQ(data["upsampler_streaming"]["error_blocks_right"], 0u);
+    EXPECT_EQ(data["output_buffer"]["output_buffer_capacity_frames"], 1024u);
+    EXPECT_EQ(data["output_buffer"]["buffer_drops_total"], 5u);
+    EXPECT_FALSE(data["output_buffer"]["output_ready"]);
 
     std::filesystem::remove(tmpFile, ec);
 }

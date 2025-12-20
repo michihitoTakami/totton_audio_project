@@ -69,7 +69,8 @@ services:
       # ZeroMQ ブリッジを使う場合（任意）
       - RTP_BRIDGE_ENDPOINT=tcp://192.168.55.100:60000
       # Pi control API (USB-I2S bridge)
-      - MAGICBOX_PI_API_BASE=http://192.168.55.2:8081
+      # Pi の USB(gadget) 側IPは 192.168.55.100 を前提（mDNS が見えない構成でも到達できるよう固定）。
+      - MAGICBOX_PI_API_BASE=${MAGICBOX_PI_API_BASE:-http://192.168.55.100:8081}
       # Wait for ALSA devices to appear after cold boot
       - MAGICBOX_WAIT_AUDIO_SECS=8
       - MAGICBOX_WAIT_LOOPBACK=true

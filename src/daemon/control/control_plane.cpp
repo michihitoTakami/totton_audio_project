@@ -138,6 +138,22 @@ bool applySoftMuteForCrossfeedSwitch(ControlPlaneDependencies& deps,
     return ok;
 }
 
+void logOutputBufferUsageWarning(const nlohmann::json& stats) {
+    if (!stats.contains("output_buffer")) {
+        return;
+    }
+    const auto& buffer = stats["output_buffer"];
+    double usage = buffer.value("output_buffer_usage_percent", 0.0);
+    if (!(usage > 80.0)) {
+        return;
+    }
+    size_t frames = buffer.value("output_buffer_frames", 0u);
+    size_t capacity = buffer.value("output_buffer_capacity_frames", 0u);
+    bool ready = buffer.value("output_ready", false);
+    LOG_WARN("Output buffer high ({}): {}/{} frames ({:.1f}%)", ready ? "READY" : "DISCONNECTED",
+             frames, capacity, usage);
+}
+
 }  // namespace
 
 ControlPlane::ControlPlane(ControlPlaneDependencies deps) : deps_(std::move(deps)) {}
@@ -232,8 +248,11 @@ void ControlPlane::startStatsThread() {
     statsThread_ = std::thread([this]() {
         size_t lastLoggedClips = 0;
         while (statsThreadRunning_.load(std::memory_order_acquire)) {
-            runtime_stats::writeStatsFile(deps_.buildRuntimeStats(), deps_.bufferCapacityFrames(),
-                                          deps_.statsFilePath);
+            auto bufferCapacity = deps_.bufferCapacityFrames();
+            auto runtimeDeps = deps_.buildRuntimeStats();
+            auto stats = runtime_stats::collect(runtimeDeps, bufferCapacity);
+            runtime_stats::writeStatsFile(runtimeDeps, bufferCapacity, deps_.statsFilePath, &stats);
+            logOutputBufferUsageWarning(stats);
             size_t total = runtime_stats::totalSamples();
             size_t clips = runtime_stats::clipCount();
             if (clips > lastLoggedClips && total > 0) {
