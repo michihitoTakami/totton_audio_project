@@ -1672,80 +1672,107 @@ bool GPUUpsampler::initializePartitionedStreaming() {
 bool GPUUpsampler::processPartitionBlock(PartitionState& state, cudaStream_t stream,
                                          const Sample* d_newSamples, int newSamples,
                                          Sample* d_channelOverlap, StreamFloatVector& partitionOutput) {
-    try {
-        int samplesToUse = std::min(newSamples, state.validOutput);
-        if (samplesToUse <= 0) {
-            return true;
-        }
+    int samplesToUse = std::min(newSamples, state.validOutput);
+    if (samplesToUse <= 0) {
+        return true;
+    }
 
-        Utils::checkCudaError(
-            cudaMemsetAsync(state.d_timeDomain, 0, state.descriptor.fftSize * sizeof(Sample),
-                            stream),
-            "cudaMemset partition time buffer");
+    auto checkCuda = [&](cudaError_t error, const char* context) -> bool {
+        return Utils::checkCudaErrorCode(error, context) == AudioEngine::ErrorCode::OK;
+    };
 
-        if (state.overlapSize > 0 && d_channelOverlap) {
-            Utils::checkCudaError(
+    auto checkCufft = [&](cufftResult result, const char* context) -> bool {
+        return Utils::checkCufftErrorCode(result, context) == AudioEngine::ErrorCode::OK;
+    };
+
+    if (!checkCuda(cudaMemsetAsync(state.d_timeDomain, 0,
+                                   state.descriptor.fftSize * sizeof(Sample), stream),
+                   "cudaMemset partition time buffer")) {
+        partitionOutput.clear();
+        return false;
+    }
+
+    if (state.overlapSize > 0 && d_channelOverlap) {
+        if (!checkCuda(
                 cudaMemcpyAsync(state.d_timeDomain, d_channelOverlap,
                                 state.overlapSize * sizeof(Sample),
                                 cudaMemcpyDeviceToDevice, stream),
-                "cudaMemcpy partition overlap prepend");
+                "cudaMemcpy partition overlap prepend")) {
+            partitionOutput.clear();
+            return false;
         }
+    }
 
-        Utils::checkCudaError(
+    if (!checkCuda(
             cudaMemcpyAsync(state.d_timeDomain + state.overlapSize, d_newSamples,
                             samplesToUse * sizeof(Sample), cudaMemcpyDeviceToDevice, stream),
-            "cudaMemcpy partition block");
+            "cudaMemcpy partition block")) {
+        partitionOutput.clear();
+        return false;
+    }
 
-        if (state.overlapSize > 0 && d_channelOverlap) {
-            int overlapOffset = std::max(0, samplesToUse);
-            size_t maxCopy =
-                static_cast<size_t>(state.descriptor.fftSize) - static_cast<size_t>(overlapOffset);
-            size_t overlapSamples =
-                std::min(maxCopy, static_cast<size_t>(state.overlapSize));
-            if (overlapSamples > 0) {
-                Utils::checkCudaError(
+    if (state.overlapSize > 0 && d_channelOverlap) {
+        int overlapOffset = std::max(0, samplesToUse);
+        size_t maxCopy =
+            static_cast<size_t>(state.descriptor.fftSize) - static_cast<size_t>(overlapOffset);
+        size_t overlapSamples = std::min(maxCopy, static_cast<size_t>(state.overlapSize));
+        if (overlapSamples > 0) {
+            if (!checkCuda(
                     cudaMemcpyAsync(d_channelOverlap, state.d_timeDomain + overlapOffset,
                                     overlapSamples * sizeof(Sample),
                                     cudaMemcpyDeviceToDevice, stream),
-                    "cudaMemcpy partition overlap save");
+                    "cudaMemcpy partition overlap save")) {
+                partitionOutput.clear();
+                return false;
             }
         }
+    }
 
-        Utils::checkCufftError(cufftSetStream(state.planForward, stream),
-                               "cufftSetStream partition forward");
-        Utils::checkCufftError(
-            Precision::execForward(state.planForward, state.d_timeDomain, state.d_inputFFT),
-            "cufftExecR2C partition block");
-
-        int threadsPerBlock = 256;
-        int blocks = (state.fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
-        Complex* activeFilter = state.d_filterFFT[state.activeFilterIndex];
-        complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-            state.d_inputFFT, activeFilter, state.fftComplexSize);
-
-        Utils::checkCufftError(cufftSetStream(state.planInverse, stream),
-                               "cufftSetStream partition inverse");
-        Utils::checkCufftError(
-            Precision::execInverse(state.planInverse, state.d_inputFFT, state.d_timeDomain),
-            "cufftExecC2R partition block");
-
-        ScaleType scale = Precision::scaleFactor(state.descriptor.fftSize);
-        int scaleBlocks = (state.descriptor.fftSize + threadsPerBlock - 1) / threadsPerBlock;
-        scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
-            state.d_timeDomain, state.descriptor.fftSize, scale);
-
-        partitionOutput.resize(samplesToUse);
-        registerStreamOutputBuffer(partitionOutput, stream);
-        Utils::checkCudaError(
-            downconvertToHost(partitionOutput.data(), state.d_timeDomain + state.overlapSize,
-                              samplesToUse, stream),
-            "downconvert partition output");
-        return true;
-
-    } catch (const std::exception& e) {
-        LOG_ERROR("[Partition] Error: {}", e.what());
+    if (!checkCufft(cufftSetStream(state.planForward, stream),
+                    "cufftSetStream partition forward")) {
+        partitionOutput.clear();
         return false;
     }
+    if (!checkCufft(
+            Precision::execForward(state.planForward, state.d_timeDomain, state.d_inputFFT),
+            "cufftExecR2C partition block")) {
+        partitionOutput.clear();
+        return false;
+    }
+
+    int threadsPerBlock = 256;
+    int blocks = (state.fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
+    Complex* activeFilter = state.d_filterFFT[state.activeFilterIndex];
+    complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
+        state.d_inputFFT, activeFilter, state.fftComplexSize);
+
+    if (!checkCufft(cufftSetStream(state.planInverse, stream),
+                    "cufftSetStream partition inverse")) {
+        partitionOutput.clear();
+        return false;
+    }
+    if (!checkCufft(
+            Precision::execInverse(state.planInverse, state.d_inputFFT, state.d_timeDomain),
+            "cufftExecC2R partition block")) {
+        partitionOutput.clear();
+        return false;
+    }
+
+    ScaleType scale = Precision::scaleFactor(state.descriptor.fftSize);
+    int scaleBlocks = (state.descriptor.fftSize + threadsPerBlock - 1) / threadsPerBlock;
+    scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
+        state.d_timeDomain, state.descriptor.fftSize, scale);
+
+    partitionOutput.resize(samplesToUse);
+    registerStreamOutputBuffer(partitionOutput, stream);
+    if (!checkCuda(
+            downconvertToHost(partitionOutput.data(), state.d_timeDomain + state.overlapSize,
+                              samplesToUse, stream),
+            "downconvert partition output")) {
+        partitionOutput.clear();
+        return false;
+    }
+    return true;
 }
 
 void GPUUpsampler::setActiveHostCoefficients(const std::vector<float>& source) {

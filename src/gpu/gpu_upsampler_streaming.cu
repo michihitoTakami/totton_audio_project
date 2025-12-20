@@ -271,12 +271,61 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                                              streamInputBuffer, streamInputAccumulated);
     }
 
-    try {
-        const int channelIndex = getStreamingChannelIndex(stream);
-        auto& ch = streamingChannels_[channelIndex];
-        const bool isLeft = (channelIndex == 1);
-        const bool isRight = (channelIndex == 2);
-        const bool isStereo = isLeft || isRight;
+    const int channelIndex = getStreamingChannelIndex(stream);
+    auto& ch = streamingChannels_[channelIndex];
+    const bool isLeft = (channelIndex == 1);
+    const bool isRight = (channelIndex == 2);
+    const bool isStereo = isLeft || isRight;
+    bool producedOutput = false;
+    bool producedOldValid = false;
+
+    auto resetStreamingFlags = [&]() {
+        ch.inFlight = false;
+        ch.stagedOldValid = false;
+        if (isStereo) {
+            streamingStereoInFlight_ = false;
+            streamingStereoLeftQueued_ = false;
+            streamingStereoDeliveredMask_ = 0;
+        }
+    };
+
+    auto outputSilence = [&]() -> bool {
+        if (validOutputPerBlock_ <= 0) {
+            outputData.clear();
+            return false;
+        }
+        const size_t silenceFrames = static_cast<size_t>(validOutputPerBlock_);
+        if (outputData.capacity() < silenceFrames) {
+            LOG_EVERY_N(ERROR, 100,
+                        "[Streaming] Output buffer capacity too small for fail-safe silence: "
+                        "need {}, cap={}",
+                        validOutputPerBlock_,
+                        outputData.capacity());
+            outputData.clear();
+            return false;
+        }
+        outputData.resize(silenceFrames);
+        std::fill(outputData.begin(), outputData.end(), 0.0f);
+        return true;
+    };
+
+    auto handleRtFailure = [&](const char* context) -> bool {
+        (void)context;
+        resetStreamingFlags();
+        streamInputAccumulated = 0;
+        if (producedOutput) {
+            return true;
+        }
+        return outputSilence();
+    };
+
+    auto checkCuda = [&](cudaError_t error, const char* context) -> bool {
+        return Utils::checkCudaErrorCode(error, context) == AudioEngine::ErrorCode::OK;
+    };
+
+    auto checkCufft = [&](cufftResult result, const char* context) -> bool {
+        return Utils::checkCufftErrorCode(result, context) == AudioEngine::ErrorCode::OK;
+    };
 
         // Bypass mode: ratio 1 means input is already at output rate
         // Skip GPU convolution ONLY if EQ is not applied
@@ -347,10 +396,12 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                       ch.stagedInput.begin());
 
             // Step 3a: Transfer input to GPU
-            Utils::checkCudaError(
-                copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
-                                                      samplesToProcess, stream),
-                "cudaMemcpy streaming input to device");
+            if (!checkCuda(
+                    copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
+                                                          samplesToProcess, stream),
+                    "cudaMemcpy streaming input to device")) {
+                return handleRtFailure("cudaMemcpy streaming input to device");
+            }
 
             // Step 3b: Zero-padding (upsampling)
             int threadsPerBlock = 256;
@@ -361,41 +412,53 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             // Step 3c: Overlap-Save FFT convolution
             int fftComplexSize = fftSize_ / 2 + 1;
 
-            Utils::checkCudaError(
-                cudaMemsetAsync(ch.d_streamPadded, 0, fftSize_ * sizeof(Sample), stream),
-                "cudaMemset streaming padded");
+            if (!checkCuda(
+                    cudaMemsetAsync(ch.d_streamPadded, 0, fftSize_ * sizeof(Sample), stream),
+                    "cudaMemset streaming padded")) {
+                return handleRtFailure("cudaMemset streaming padded");
+            }
 
             Sample* d_overlap = (channelIndex == 2) ? d_overlapRight_
                                 : (channelIndex == 1) ? d_overlapLeft_
                                                       : d_overlapMono_;
 
             if (adjustedOverlapSize > 0) {
-                Utils::checkCudaError(
-                    cudaMemcpyAsync(ch.d_streamPadded, d_overlap,
-                                    adjustedOverlapSize * sizeof(Sample),
-                                    cudaMemcpyDeviceToDevice, stream),
-                    "cudaMemcpy streaming overlap D2D");
+                if (!checkCuda(
+                        cudaMemcpyAsync(ch.d_streamPadded, d_overlap,
+                                        adjustedOverlapSize * sizeof(Sample),
+                                        cudaMemcpyDeviceToDevice, stream),
+                        "cudaMemcpy streaming overlap D2D")) {
+                    return handleRtFailure("cudaMemcpy streaming overlap D2D");
+                }
             }
 
-            Utils::checkCudaError(
-                cudaMemcpyAsync(ch.d_streamPadded + adjustedOverlapSize, ch.d_streamUpsampled,
-                                validOutputPerBlock_ * sizeof(Sample),
-                                cudaMemcpyDeviceToDevice, stream),
-                "cudaMemcpy streaming block to padded");
+            if (!checkCuda(
+                    cudaMemcpyAsync(ch.d_streamPadded + adjustedOverlapSize, ch.d_streamUpsampled,
+                                    validOutputPerBlock_ * sizeof(Sample),
+                                    cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy streaming block to padded")) {
+                return handleRtFailure("cudaMemcpy streaming block to padded");
+            }
 
-            Utils::checkCufftError(cufftSetStream(fftPlanForward_, stream), "cufftSetStream forward");
-            Utils::checkCufftError(
-                Precision::execForward(fftPlanForward_, ch.d_streamPadded, ch.d_streamInputFFT),
-                "cufftExecR2C streaming");
+            if (!checkCufft(cufftSetStream(fftPlanForward_, stream), "cufftSetStream forward")) {
+                return handleRtFailure("cufftSetStream forward");
+            }
+            if (!checkCufft(
+                    Precision::execForward(fftPlanForward_, ch.d_streamPadded, ch.d_streamInputFFT),
+                    "cufftExecR2C streaming")) {
+                return handleRtFailure("cufftExecR2C streaming");
+            }
 
             bool crossfadeEnabled = phaseCrossfade_.active && ch.d_streamInputFFTBackup &&
                                     ch.d_streamConvResultOld && phaseCrossfade_.previousFilter;
             if (crossfadeEnabled) {
-                Utils::checkCudaError(
-                    cudaMemcpyAsync(ch.d_streamInputFFTBackup, ch.d_streamInputFFT,
-                                    fftComplexSize * sizeof(Complex),
-                                    cudaMemcpyDeviceToDevice, stream),
-                    "cudaMemcpy backup FFT for crossfade");
+                if (!checkCuda(
+                        cudaMemcpyAsync(ch.d_streamInputFFTBackup, ch.d_streamInputFFT,
+                                        fftComplexSize * sizeof(Complex),
+                                        cudaMemcpyDeviceToDevice, stream),
+                        "cudaMemcpy backup FFT for crossfade")) {
+                    return handleRtFailure("cudaMemcpy backup FFT for crossfade");
+                }
             }
 
             threadsPerBlock = 256;
@@ -403,61 +466,83 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
                 ch.d_streamInputFFT, d_activeFilterFFT_, fftComplexSize);
 
-            Utils::checkCufftError(cufftSetStream(fftPlanInverse_, stream), "cufftSetStream inverse");
-            Utils::checkCufftError(
-                Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT, ch.d_streamConvResult),
-                "cufftExecC2R streaming");
+            if (!checkCufft(cufftSetStream(fftPlanInverse_, stream), "cufftSetStream inverse")) {
+                return handleRtFailure("cufftSetStream inverse");
+            }
+            if (!checkCufft(
+                    Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT,
+                                           ch.d_streamConvResult),
+                    "cufftExecC2R streaming")) {
+                return handleRtFailure("cufftExecC2R streaming");
+            }
 
             ScaleType scale = Precision::scaleFactor(fftSize_);
             int scaleBlocks = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
             scaleKernel<<<scaleBlocks, threadsPerBlock, 0, stream>>>(
                 ch.d_streamConvResult, fftSize_, scale);
 
-            Utils::checkCudaError(
-                downconvertToHost(ch.stagedOutput.data(), ch.d_streamConvResult + adjustedOverlapSize,
-                                  validOutputPerBlock_, stream),
-                "downconvert streaming output to host");
+            if (!checkCuda(
+                    downconvertToHost(ch.stagedOutput.data(),
+                                      ch.d_streamConvResult + adjustedOverlapSize,
+                                      validOutputPerBlock_, stream),
+                    "downconvert streaming output to host")) {
+                return handleRtFailure("downconvert streaming output to host");
+            }
 
             if (crossfadeEnabled) {
-                Utils::checkCudaError(
-                    cudaMemcpyAsync(ch.d_streamInputFFT, ch.d_streamInputFFTBackup,
-                                    fftComplexSize * sizeof(Complex),
-                                    cudaMemcpyDeviceToDevice, stream),
-                    "cudaMemcpy restore FFT for crossfade");
+                if (!checkCuda(
+                        cudaMemcpyAsync(ch.d_streamInputFFT, ch.d_streamInputFFTBackup,
+                                        fftComplexSize * sizeof(Complex),
+                                        cudaMemcpyDeviceToDevice, stream),
+                        "cudaMemcpy restore FFT for crossfade")) {
+                    return handleRtFailure("cudaMemcpy restore FFT for crossfade");
+                }
                 complexMultiplyKernel<<<blocks, threadsPerBlock, 0, stream>>>(
                     ch.d_streamInputFFT, phaseCrossfade_.previousFilter, fftComplexSize);
-                Utils::checkCufftError(
-                    Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT, ch.d_streamConvResultOld),
-                    "cufftExecC2R crossfade old filter");
+                if (!checkCufft(
+                        Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT,
+                                               ch.d_streamConvResultOld),
+                        "cufftExecC2R crossfade old filter")) {
+                    return handleRtFailure("cufftExecC2R crossfade old filter");
+                }
                 int scaleBlocksOld = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
                 scaleKernel<<<scaleBlocksOld, threadsPerBlock, 0, stream>>>(
                     ch.d_streamConvResultOld, fftSize_, scale);
-                Utils::checkCudaError(
-                    downconvertToHost(ch.stagedOldOutput.data(),
-                                      ch.d_streamConvResultOld + adjustedOverlapSize,
-                                      validOutputPerBlock_, stream),
-                    "downconvert crossfade old output");
+                if (!checkCuda(
+                        downconvertToHost(ch.stagedOldOutput.data(),
+                                          ch.d_streamConvResultOld + adjustedOverlapSize,
+                                          validOutputPerBlock_, stream),
+                        "downconvert crossfade old output")) {
+                    return handleRtFailure("downconvert crossfade old output");
+                }
             }
             ch.stagedOldValid = crossfadeEnabled;
 
             if (adjustedOverlapSize > 0) {
                 if (validOutputPerBlock_ >= adjustedOverlapSize) {
                     int overlapStart = validOutputPerBlock_ - adjustedOverlapSize;
-                    Utils::checkCudaError(
-                        cudaMemcpyAsync(d_overlap, ch.d_streamUpsampled + overlapStart,
-                                        adjustedOverlapSize * sizeof(Sample),
-                                        cudaMemcpyDeviceToDevice, stream),
-                        "cudaMemcpy streaming overlap tail");
+                    if (!checkCuda(
+                            cudaMemcpyAsync(d_overlap, ch.d_streamUpsampled + overlapStart,
+                                            adjustedOverlapSize * sizeof(Sample),
+                                            cudaMemcpyDeviceToDevice, stream),
+                            "cudaMemcpy streaming overlap tail")) {
+                        return handleRtFailure("cudaMemcpy streaming overlap tail");
+                    }
                 } else {
-                    Utils::checkCudaError(
-                        cudaMemcpyAsync(d_overlap, ch.d_streamPadded + validOutputPerBlock_,
-                                        adjustedOverlapSize * sizeof(Sample),
-                                        cudaMemcpyDeviceToDevice, stream),
-                        "cudaMemcpy streaming overlap fallback");
+                    if (!checkCuda(
+                            cudaMemcpyAsync(d_overlap, ch.d_streamPadded + validOutputPerBlock_,
+                                            adjustedOverlapSize * sizeof(Sample),
+                                            cudaMemcpyDeviceToDevice, stream),
+                            "cudaMemcpy streaming overlap fallback")) {
+                        return handleRtFailure("cudaMemcpy streaming overlap fallback");
+                    }
                 }
             }
 
-            Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize legacy streaming");
+            if (!checkCuda(cudaStreamSynchronize(stream),
+                           "cudaStreamSynchronize legacy streaming")) {
+                return handleRtFailure("cudaStreamSynchronize legacy streaming");
+            }
 
             if (outputData.capacity() < static_cast<size_t>(validOutputPerBlock_)) {
                 LOG_EVERY_N(ERROR, 100,
@@ -492,8 +577,6 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         }
 
         // If a previous block has completed, deliver its staged output without blocking.
-        bool producedOutput = false;
-        bool producedOldValid = false;
         if (isStereo) {
             if (streamingStereoInFlight_ && streamingStereoDoneEvent_ &&
                 cudaEventQuery(streamingStereoDoneEvent_) == cudaSuccess) {
@@ -605,11 +688,12 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                   ch.stagedInput.begin());
 
         // Step 3a: Transfer input to GPU
-        Utils::checkCudaError(
-            copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
-                                                  samplesToProcess, stream),
-            "cudaMemcpy streaming input to device"
-        );
+        if (!checkCuda(
+                copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
+                                                      samplesToProcess, stream),
+                "cudaMemcpy streaming input to device")) {
+            return handleRtFailure("cudaMemcpy streaming input to device");
+        }
 
         // Step 3b: Zero-padding (upsampling)
         int threadsPerBlock = 256;
@@ -622,10 +706,10 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         int fftComplexSize = fftSize_ / 2 + 1;
 
         // Prepare input: [overlap | new samples]
-        Utils::checkCudaError(
-            cudaMemsetAsync(ch.d_streamPadded, 0, fftSize_ * sizeof(Sample), stream),
-            "cudaMemset streaming padded"
-        );
+        if (!checkCuda(cudaMemsetAsync(ch.d_streamPadded, 0, fftSize_ * sizeof(Sample), stream),
+                       "cudaMemset streaming padded")) {
+            return handleRtFailure("cudaMemset streaming padded");
+        }
 
         // Select device-resident overlap buffer
         Sample* d_overlap = (channelIndex == 2) ? d_overlapRight_
@@ -634,40 +718,45 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
 
         // Copy overlap from previous block (D2D)
         if (adjustedOverlapSize > 0) {
-            Utils::checkCudaError(
-                cudaMemcpyAsync(ch.d_streamPadded, d_overlap,
-                               adjustedOverlapSize * sizeof(Sample), cudaMemcpyDeviceToDevice, stream),
-                "cudaMemcpy streaming overlap D2D"
-            );
+            if (!checkCuda(
+                    cudaMemcpyAsync(ch.d_streamPadded, d_overlap,
+                                   adjustedOverlapSize * sizeof(Sample),
+                                   cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy streaming overlap D2D")) {
+                return handleRtFailure("cudaMemcpy streaming overlap D2D");
+            }
         }
 
         // Copy new samples
-        Utils::checkCudaError(
-            cudaMemcpyAsync(ch.d_streamPadded + adjustedOverlapSize, ch.d_streamUpsampled,
-                           validOutputPerBlock_ * sizeof(Sample), cudaMemcpyDeviceToDevice, stream),
-            "cudaMemcpy streaming block to padded"
-        );
+        if (!checkCuda(
+                cudaMemcpyAsync(ch.d_streamPadded + adjustedOverlapSize, ch.d_streamUpsampled,
+                               validOutputPerBlock_ * sizeof(Sample),
+                               cudaMemcpyDeviceToDevice, stream),
+                "cudaMemcpy streaming block to padded")) {
+            return handleRtFailure("cudaMemcpy streaming block to padded");
+        }
 
         // FFT convolution
-        Utils::checkCufftError(
-            cufftSetStream(fftPlanForward_, stream),
-            "cufftSetStream forward"
-        );
+        if (!checkCufft(cufftSetStream(fftPlanForward_, stream), "cufftSetStream forward")) {
+            return handleRtFailure("cufftSetStream forward");
+        }
 
-        Utils::checkCufftError(
-            Precision::execForward(fftPlanForward_, ch.d_streamPadded, ch.d_streamInputFFT),
-            "cufftExecR2C streaming"
-        );
+        if (!checkCufft(
+                Precision::execForward(fftPlanForward_, ch.d_streamPadded, ch.d_streamInputFFT),
+                "cufftExecR2C streaming")) {
+            return handleRtFailure("cufftExecR2C streaming");
+        }
 
         bool crossfadeEnabled = phaseCrossfade_.active && ch.d_streamInputFFTBackup &&
                                 ch.d_streamConvResultOld && phaseCrossfade_.previousFilter;
         if (crossfadeEnabled) {
-            Utils::checkCudaError(
-                cudaMemcpyAsync(ch.d_streamInputFFTBackup, ch.d_streamInputFFT,
-                                fftComplexSize * sizeof(Complex),
-                                cudaMemcpyDeviceToDevice, stream),
-                "cudaMemcpy backup FFT for crossfade"
-            );
+            if (!checkCuda(
+                    cudaMemcpyAsync(ch.d_streamInputFFTBackup, ch.d_streamInputFFT,
+                                    fftComplexSize * sizeof(Complex),
+                                    cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy backup FFT for crossfade")) {
+                return handleRtFailure("cudaMemcpy backup FFT for crossfade");
+            }
         }
 
         threadsPerBlock = 256;
@@ -676,15 +765,15 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
             ch.d_streamInputFFT, d_activeFilterFFT_, fftComplexSize
         );
 
-        Utils::checkCufftError(
-            cufftSetStream(fftPlanInverse_, stream),
-            "cufftSetStream inverse"
-        );
+        if (!checkCufft(cufftSetStream(fftPlanInverse_, stream), "cufftSetStream inverse")) {
+            return handleRtFailure("cufftSetStream inverse");
+        }
 
-        Utils::checkCufftError(
-            Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT, ch.d_streamConvResult),
-            "cufftExecC2R streaming"
-        );
+        if (!checkCufft(
+                Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT, ch.d_streamConvResult),
+                "cufftExecC2R streaming")) {
+            return handleRtFailure("cufftExecC2R streaming");
+        }
 
         // Scale
         ScaleType scale = Precision::scaleFactor(fftSize_);
@@ -694,19 +783,22 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         );
 
         // Extract valid output (staged to pinned host buffer)
-        Utils::checkCudaError(
-            downconvertToHost(ch.stagedOutput.data(), ch.d_streamConvResult + adjustedOverlapSize,
-                              validOutputPerBlock_, stream),
-            "downconvert streaming output to host"
-        );
+        if (!checkCuda(
+                downconvertToHost(ch.stagedOutput.data(),
+                                  ch.d_streamConvResult + adjustedOverlapSize,
+                                  validOutputPerBlock_, stream),
+                "downconvert streaming output to host")) {
+            return handleRtFailure("downconvert streaming output to host");
+        }
 
         if (crossfadeEnabled) {
-            Utils::checkCudaError(
-                cudaMemcpyAsync(ch.d_streamInputFFT, ch.d_streamInputFFTBackup,
-                                fftComplexSize * sizeof(Complex),
-                                cudaMemcpyDeviceToDevice, stream),
-                "cudaMemcpy restore FFT for crossfade"
-            );
+            if (!checkCuda(
+                    cudaMemcpyAsync(ch.d_streamInputFFT, ch.d_streamInputFFTBackup,
+                                    fftComplexSize * sizeof(Complex),
+                                    cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy restore FFT for crossfade")) {
+                return handleRtFailure("cudaMemcpy restore FFT for crossfade");
+            }
 
             threadsPerBlock = 256;
             blocks = (fftComplexSize + threadsPerBlock - 1) / threadsPerBlock;
@@ -714,22 +806,25 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
                 ch.d_streamInputFFT, phaseCrossfade_.previousFilter, fftComplexSize
             );
 
-            Utils::checkCufftError(
-                Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT, ch.d_streamConvResultOld),
-                "cufftExecC2R crossfade old filter"
-            );
+            if (!checkCufft(
+                    Precision::execInverse(fftPlanInverse_, ch.d_streamInputFFT,
+                                           ch.d_streamConvResultOld),
+                    "cufftExecC2R crossfade old filter")) {
+                return handleRtFailure("cufftExecC2R crossfade old filter");
+            }
 
             int scaleBlocksOld = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
             scaleKernel<<<scaleBlocksOld, threadsPerBlock, 0, stream>>>(
                 ch.d_streamConvResultOld, fftSize_, scale
             );
 
-            Utils::checkCudaError(
-                downconvertToHost(ch.stagedOldOutput.data(),
-                                  ch.d_streamConvResultOld + adjustedOverlapSize,
-                                  validOutputPerBlock_, stream),
-                "downconvert crossfade old output"
-            );
+            if (!checkCuda(
+                    downconvertToHost(ch.stagedOldOutput.data(),
+                                      ch.d_streamConvResultOld + adjustedOverlapSize,
+                                      validOutputPerBlock_, stream),
+                    "downconvert crossfade old output")) {
+                return handleRtFailure("downconvert crossfade old output");
+            }
         }
         ch.stagedOldValid = crossfadeEnabled;
 
@@ -737,45 +832,49 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         if (adjustedOverlapSize > 0) {
             if (validOutputPerBlock_ >= adjustedOverlapSize) {
                 int overlapStart = validOutputPerBlock_ - adjustedOverlapSize;
-                Utils::checkCudaError(
-                    cudaMemcpyAsync(d_overlap, ch.d_streamUpsampled + overlapStart,
-                                    adjustedOverlapSize * sizeof(Sample),
-                                    cudaMemcpyDeviceToDevice, stream),
-                    "cudaMemcpy streaming overlap tail"
-                );
+                if (!checkCuda(
+                        cudaMemcpyAsync(d_overlap, ch.d_streamUpsampled + overlapStart,
+                                        adjustedOverlapSize * sizeof(Sample),
+                                        cudaMemcpyDeviceToDevice, stream),
+                        "cudaMemcpy streaming overlap tail")) {
+                    return handleRtFailure("cudaMemcpy streaming overlap tail");
+                }
             } else {
                 // Fallback: insufficient samples in this block, preserve previous overlap
-                Utils::checkCudaError(
-                    cudaMemcpyAsync(d_overlap, ch.d_streamPadded + validOutputPerBlock_,
-                                    adjustedOverlapSize * sizeof(Sample),
-                                    cudaMemcpyDeviceToDevice, stream),
-                    "cudaMemcpy streaming overlap fallback"
-                );
+                if (!checkCuda(
+                        cudaMemcpyAsync(d_overlap, ch.d_streamPadded + validOutputPerBlock_,
+                                        adjustedOverlapSize * sizeof(Sample),
+                                        cudaMemcpyDeviceToDevice, stream),
+                        "cudaMemcpy streaming overlap fallback")) {
+                    return handleRtFailure("cudaMemcpy streaming overlap fallback");
+                }
             }
         }
 
         // Record per-channel completion event (used for stereo coordination too)
-        Utils::checkCudaError(
-            cudaEventRecord(ch.doneEvent, stream),
-            "cudaEventRecord streaming done"
-        );
+        if (!checkCuda(cudaEventRecord(ch.doneEvent, stream),
+                       "cudaEventRecord streaming done")) {
+            return handleRtFailure("cudaEventRecord streaming done");
+        }
         if (isStereo) {
             if (isLeft) {
                 streamingStereoLeftQueued_ = true;
             } else if (isRight) {
                 // Build a joint completion event after both channel events are in the graph
-                Utils::checkCudaError(
-                    cudaStreamWaitEvent(stream_, streamingChannels_[1].doneEvent, 0),
-                    "cudaStreamWaitEvent stereo left done"
-                );
-                Utils::checkCudaError(
-                    cudaStreamWaitEvent(stream_, streamingChannels_[2].doneEvent, 0),
-                    "cudaStreamWaitEvent stereo right done"
-                );
-                Utils::checkCudaError(
-                    cudaEventRecord(streamingStereoDoneEvent_, stream_),
-                    "cudaEventRecord streaming stereo done"
-                );
+                if (!checkCuda(
+                        cudaStreamWaitEvent(stream_, streamingChannels_[1].doneEvent, 0),
+                        "cudaStreamWaitEvent stereo left done")) {
+                    return handleRtFailure("cudaStreamWaitEvent stereo left done");
+                }
+                if (!checkCuda(
+                        cudaStreamWaitEvent(stream_, streamingChannels_[2].doneEvent, 0),
+                        "cudaStreamWaitEvent stereo right done")) {
+                    return handleRtFailure("cudaStreamWaitEvent stereo right done");
+                }
+                if (!checkCuda(cudaEventRecord(streamingStereoDoneEvent_, stream_),
+                               "cudaEventRecord streaming stereo done")) {
+                    return handleRtFailure("cudaEventRecord streaming stereo done");
+                }
                 streamingStereoInFlight_ = true;
                 streamingStereoLeftQueued_ = false;
                 streamingStereoDeliveredMask_ = 0;
@@ -794,22 +893,60 @@ bool GPUUpsampler::processStreamBlock(const float* inputData,
         streamInputAccumulated = remaining;
 
         return producedOutput;
-
-    } catch (const std::exception& e) {
-        LOG_ERROR("Error in processStreamBlock: {}", e.what());
-        return false;
-    }
 }
 
 bool GPUUpsampler::processPartitionedStreamBlock(
     const float* inputData, size_t inputFrames, StreamFloatVector& outputData,
     cudaStream_t stream, StreamFloatVector& streamInputBuffer, size_t& streamInputAccumulated) {
-    try {
-        const int channelIndex = getStreamingChannelIndex(stream);
-        auto& ch = streamingChannels_[channelIndex];
-        const bool isLeft = (channelIndex == 1);
-        const bool isRight = (channelIndex == 2);
-        const bool isStereo = isLeft || isRight;
+    const int channelIndex = getStreamingChannelIndex(stream);
+    auto& ch = streamingChannels_[channelIndex];
+    const bool isLeft = (channelIndex == 1);
+    const bool isRight = (channelIndex == 2);
+    const bool isStereo = isLeft || isRight;
+    bool producedOutput = false;
+
+    auto resetStreamingFlags = [&]() {
+        ch.inFlight = false;
+        if (isStereo) {
+            streamingStereoInFlight_ = false;
+            streamingStereoLeftQueued_ = false;
+            streamingStereoDeliveredMask_ = 0;
+        }
+    };
+
+    auto outputSilence = [&]() -> bool {
+        if (validOutputPerBlock_ <= 0) {
+            outputData.clear();
+            return false;
+        }
+        const size_t silenceFrames = static_cast<size_t>(validOutputPerBlock_);
+        if (outputData.capacity() < silenceFrames) {
+            LOG_EVERY_N(ERROR, 100,
+                        "[Partition] Output buffer capacity too small for fail-safe silence: "
+                        "need {}, cap={}",
+                        validOutputPerBlock_,
+                        outputData.capacity());
+            outputData.clear();
+            return false;
+        }
+        outputData.resize(silenceFrames);
+        std::fill(outputData.begin(), outputData.end(), 0.0f);
+        return true;
+    };
+
+    auto handleRtFailure = [&](const char* context) -> bool {
+        (void)context;
+        resetStreamingFlags();
+        streamInputAccumulated = 0;
+        if (producedOutput) {
+            return true;
+        }
+        return outputSilence();
+    };
+
+    auto checkCuda = [&](cudaError_t error, const char* context) -> bool {
+        return Utils::checkCudaErrorCode(error, context) == AudioEngine::ErrorCode::OK;
+    };
 
         if (upsampleRatio_ == 1 && !eqApplied_) {
             if (outputData.capacity() < inputFrames) {
@@ -865,10 +1002,12 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                       streamInputBuffer.begin() + static_cast<std::ptrdiff_t>(samplesToProcess),
                       ch.stagedInput.begin());
 
-            Utils::checkCudaError(
-                copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
-                                                      samplesToProcess, stream),
-                "cudaMemcpy partition stream input");
+            if (!checkCuda(
+                    copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
+                                                          samplesToProcess, stream),
+                    "cudaMemcpy partition stream input")) {
+                return handleRtFailure("cudaMemcpy partition stream input");
+            }
 
             int threadsPerBlock = 256;
             int blocks = (samplesToProcess + threadsPerBlock - 1) / threadsPerBlock;
@@ -885,11 +1024,13 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                 Sample* overlap = (channelIndex == 2) ? state.d_overlapRight : state.d_overlapLeft;
                 if (!processPartitionBlock(state, stream, ch.d_streamUpsampled, newSamples, overlap,
                                            ch.stagedPartitionOutputs[idx])) {
-                    return false;
+                    return handleRtFailure("processPartitionBlock");
                 }
             }
 
-            Utils::checkCudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize partition");
+            if (!checkCuda(cudaStreamSynchronize(stream), "cudaStreamSynchronize partition")) {
+                return handleRtFailure("cudaStreamSynchronize partition");
+            }
 
             if (outputData.capacity() < static_cast<size_t>(newSamples)) {
                 LOG_EVERY_N(ERROR, 100,
@@ -919,7 +1060,6 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         }
 
         // If a previous block has completed, deliver its output without blocking.
-        bool producedOutput = false;
         if (isStereo) {
             if (streamingStereoInFlight_ && streamingStereoDoneEvent_ &&
                 cudaEventQuery(streamingStereoDoneEvent_) == cudaSuccess) {
@@ -1020,10 +1160,12 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                   streamInputBuffer.begin() + static_cast<std::ptrdiff_t>(samplesToProcess),
                   ch.stagedInput.begin());
 
-        Utils::checkCudaError(
-            copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
-                                                  samplesToProcess, stream),
-            "cudaMemcpy partition stream input");
+        if (!checkCuda(
+                copyHostToDeviceSamplesConvertedAsync(ch.d_streamInput, ch.stagedInput.data(),
+                                                      samplesToProcess, stream),
+                "cudaMemcpy partition stream input")) {
+            return handleRtFailure("cudaMemcpy partition stream input");
+        }
 
         int threadsPerBlock = 256;
         int blocks = (samplesToProcess + threadsPerBlock - 1) / threadsPerBlock;
@@ -1054,27 +1196,33 @@ bool GPUUpsampler::processPartitionedStreamBlock(
             }
             if (!processPartitionBlock(state, stream, ch.d_streamUpsampled, newSamples, overlap,
                                        ch.stagedPartitionOutputs[idx])) {
-                return false;
+                return handleRtFailure("processPartitionBlock");
             }
         }
 
         // Record completion event for this channel (used for stereo coordination too)
-        Utils::checkCudaError(
-            cudaEventRecord(ch.doneEvent, stream),
-            "cudaEventRecord partition streaming done");
+        if (!checkCuda(cudaEventRecord(ch.doneEvent, stream),
+                       "cudaEventRecord partition streaming done")) {
+            return handleRtFailure("cudaEventRecord partition streaming done");
+        }
         if (isStereo) {
             if (isLeft) {
                 streamingStereoLeftQueued_ = true;
             } else if (isRight) {
-                Utils::checkCudaError(
-                    cudaStreamWaitEvent(stream_, streamingChannels_[1].doneEvent, 0),
-                    "cudaStreamWaitEvent partition stereo left done");
-                Utils::checkCudaError(
-                    cudaStreamWaitEvent(stream_, streamingChannels_[2].doneEvent, 0),
-                    "cudaStreamWaitEvent partition stereo right done");
-                Utils::checkCudaError(
-                    cudaEventRecord(streamingStereoDoneEvent_, stream_),
-                    "cudaEventRecord partition streaming stereo done");
+                if (!checkCuda(
+                        cudaStreamWaitEvent(stream_, streamingChannels_[1].doneEvent, 0),
+                        "cudaStreamWaitEvent partition stereo left done")) {
+                    return handleRtFailure("cudaStreamWaitEvent partition stereo left done");
+                }
+                if (!checkCuda(
+                        cudaStreamWaitEvent(stream_, streamingChannels_[2].doneEvent, 0),
+                        "cudaStreamWaitEvent partition stereo right done")) {
+                    return handleRtFailure("cudaStreamWaitEvent partition stereo right done");
+                }
+                if (!checkCuda(cudaEventRecord(streamingStereoDoneEvent_, stream_),
+                               "cudaEventRecord partition streaming stereo done")) {
+                    return handleRtFailure("cudaEventRecord partition streaming stereo done");
+                }
                 streamingStereoInFlight_ = true;
                 streamingStereoLeftQueued_ = false;
                 streamingStereoDeliveredMask_ = 0;
@@ -1093,11 +1241,6 @@ bool GPUUpsampler::processPartitionedStreamBlock(
         streamInputAccumulated = remaining;
 
         return producedOutput;
-
-    } catch (const std::exception& e) {
-        LOG_ERROR("Error in processPartitionedStreamBlock: {}", e.what());
-        return false;
-    }
 }
 
 }  // namespace ConvolutionEngine
