@@ -1,6 +1,7 @@
 #ifndef CONFIG_LOADER_H
 #define CONFIG_LOADER_H
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -98,6 +99,33 @@ struct AppConfig {
         bool xrunTriggersFallback = true;    // Whether XRUN triggers immediate fallback
         int monitorIntervalMs = 100;         // GPU monitoring interval (milliseconds)
     } fallback;
+
+    // De-limiter inference backend selection (Issue #1017 / Epic #1006)
+    // Notes:
+    // - This config only selects/parameterizes the backend. The high-latency worker path that
+    //   calls it is implemented in follow-up issues (#1010/#1014).
+    struct DelimiterConfig {
+        bool enabled = false;
+
+        // Backend name (case-insensitive):
+        // - "bypass": no-op (identity), used for wiring/health-check
+        // - "ort": ONNX Runtime backend (expected to run out-of-process or optional dependency)
+        std::string backend = "bypass";
+
+        struct OrtConfig {
+            // Path to ONNX model file.
+            std::string modelPath = "";
+
+            // Execution provider (case-insensitive): "cpu" | "cuda" | "tensorrt"
+            std::string provider = "cpu";
+
+            // Optional tuning (left as future extension; defaults are safe)
+            int intraOpThreads = 0;  // 0 = ORT default
+        } ort;
+
+        // Some backends may require fixed sample rate (De-limiter research assumes 44.1kHz).
+        uint32_t expectedSampleRate = 44100;
+    } delimiter;
 
     OutputConfig output;
 };
