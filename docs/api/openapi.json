@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "GPU Upsampler Control",
-    "description": "\n## GPU Audio Upsampler Web API\n\nControl interface for the GPU-accelerated audio upsampler daemon.\n\n### Features\n- **Daemon Control**: Start/stop/restart the audio processing daemon\n- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)\n- **OPRA Integration**: Access the OPRA headphone EQ database\n- **Real-time Stats**: WebSocket endpoint for live statistics\n\n### Authentication\nMost endpoints do not require authentication (local network only).\nAdmin endpoints (e.g., /api/opra/sync/*) require HTTP Basic.\n    ",
+    "description": "\n## GPU Audio Upsampler Web API\n\nControl interface for the GPU-accelerated audio upsampler daemon.\n\n### Features\n- **Daemon Control**: Start/stop/restart the audio processing daemon\n- **EQ Management**: Import and manage EQ profiles (AutoEq/Equalizer APO format)\n- **OPRA Integration**: Access the OPRA headphone EQ database\n- **Real-time Stats**: WebSocket endpoint for live statistics\n\n### Authentication\nMost endpoints do not require authentication (local network only).\n    ",
     "version": "1.0.0"
   },
   "paths": {
@@ -957,12 +957,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBasic": []
-          }
-        ]
+        }
       }
     },
     "/api/opra/sync/available": {
@@ -973,11 +968,6 @@
         "summary": "Opra Sync Available",
         "description": "Check available OPRA updates for the given source.",
         "operationId": "opra_sync_available_api_opra_sync_available_get",
-        "security": [
-          {
-            "HTTPBasic": []
-          }
-        ],
         "parameters": [
           {
             "name": "source",
@@ -1053,12 +1043,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBasic": []
-          }
-        ]
+        }
       }
     },
     "/api/opra/sync/rollback": {
@@ -1080,12 +1065,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBasic": []
-          }
-        ]
+        }
       }
     },
     "/dac/state": {
@@ -4475,12 +4455,6 @@
         ],
         "title": "ZmqPingResponse",
         "description": "ZeroMQ ping response model."
-      }
-    },
-    "securitySchemes": {
-      "HTTPBasic": {
-        "type": "http",
-        "scheme": "basic"
       }
     }
   },

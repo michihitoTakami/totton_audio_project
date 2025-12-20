@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from ..models import (
     OpraSyncAvailableResponse,
@@ -10,7 +10,6 @@ from ..models import (
     OpraSyncStatusResponse,
     OpraSyncUpdateRequest,
 )
-from ..services.admin_auth import require_admin_basic
 from ..services.opra_sync import (
     get_opra_cache_manager,
     load_current_metadata,
@@ -24,7 +23,6 @@ from ..services.opra_sync import (
 router = APIRouter(
     prefix="/api/opra/sync",
     tags=["opra"],
-    dependencies=[Depends(require_admin_basic)],
 )
 
 
