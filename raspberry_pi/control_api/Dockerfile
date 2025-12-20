@@ -7,7 +7,7 @@ RUN apt-get update \
 WORKDIR /opt/raspi-control
 COPY raspberry_pi /opt/raspi-control/raspberry_pi
 
-RUN pip install --no-cache-dir fastapi uvicorn docker
+RUN pip install --no-cache-dir fastapi uvicorn docker pyzmq
 
 ENV PYTHONPATH=/opt/raspi-control
 

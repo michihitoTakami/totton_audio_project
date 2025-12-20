@@ -350,22 +350,26 @@ function piSettingsPage() {
         actionInProgress: false,
         piApiLastError: null,
         latencyProfiles: {
-            // NOTE: 実際の体感遅延はデバイス/環境に依存するため “目安”。
+            // NOTE: 実際の体感遅延はデバイス/環境に依存するため "目安"。
             // ALSA buffer/latency と queue を同じ比率でスケールさせ、操作感を揃える。
+            // 推定遅延 = buffer + queue の一部 (period単位で読み書きされるため実効遅延は小さい)
             low: {
-                alsa_buffer_time_us: 100000,
-                alsa_latency_time_us: 10000,
-                queue_time_ns: 50000000,
+                // 推定遅延: ~30-50ms (XRUNリスクあり、高品質環境向け)
+                alsa_buffer_time_us: 50000,   // 50ms
+                alsa_latency_time_us: 5000,   // 5ms (period)
+                queue_time_ns: 20000000,      // 20ms
             },
             medium: {
-                alsa_buffer_time_us: 200000,
-                alsa_latency_time_us: 20000,
-                queue_time_ns: 100000000,
+                // 推定遅延: ~70-100ms (バランス型、通常使用推奨)
+                alsa_buffer_time_us: 100000,  // 100ms
+                alsa_latency_time_us: 10000,  // 10ms (period)
+                queue_time_ns: 50000000,      // 50ms
             },
             safe: {
-                alsa_buffer_time_us: 400000,
-                alsa_latency_time_us: 40000,
-                queue_time_ns: 200000000,
+                // 推定遅延: ~150-200ms (安定性重視、XRUN多発時向け)
+                alsa_buffer_time_us: 200000,  // 200ms
+                alsa_latency_time_us: 20000,  // 20ms (period)
+                queue_time_ns: 100000000,     // 100ms
             },
         },
         devicePresets: [
