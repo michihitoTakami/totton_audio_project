@@ -141,14 +141,15 @@ class ResourceMonitor:
         self.gpu_samples: list[float] = []
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._process = None
-        self._nvml = None
-        self._nvml_handle = None
+        self._process: Optional[Any] = None
+        self._nvml_handle: Optional[Any] = None
+        self._nvml_get_util: Optional[Callable[[Any], Any]] = None
+        self._nvml_shutdown: Optional[Callable[[], None]] = None
 
     @staticmethod
     def start(sample_interval: float = 0.25) -> Optional["ResourceMonitor"]:
         try:
-            import psutil  # type: ignore
+            import psutil
         except Exception:
             return None
 
@@ -157,24 +158,21 @@ class ResourceMonitor:
         monitor._process.cpu_percent(None)
 
         try:
-            from pynvml import (  # type: ignore
+            from pynvml import (
                 nvmlDeviceGetHandleByIndex,
                 nvmlDeviceGetUtilizationRates,
                 nvmlInit,
                 nvmlShutdown,
             )
 
-            monitor._nvml = {
-                "init": nvmlInit,
-                "shutdown": nvmlShutdown,
-                "get_handle": nvmlDeviceGetHandleByIndex,
-                "get_util": nvmlDeviceGetUtilizationRates,
-            }
             nvmlInit()
             monitor._nvml_handle = nvmlDeviceGetHandleByIndex(0)
+            monitor._nvml_get_util = nvmlDeviceGetUtilizationRates
+            monitor._nvml_shutdown = nvmlShutdown
         except Exception:
-            monitor._nvml = None
             monitor._nvml_handle = None
+            monitor._nvml_get_util = None
+            monitor._nvml_shutdown = None
 
         monitor._thread = threading.Thread(target=monitor._run, daemon=True)
         monitor._thread.start()
@@ -182,11 +180,15 @@ class ResourceMonitor:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            cpu = float(self._process.cpu_percent(interval=self.sample_interval))
-            self.cpu_samples.append(cpu)
-            if self._nvml and self._nvml_handle:
+            if self._process is None:
+                time.sleep(self.sample_interval)
+                continue
+            self.cpu_samples.append(
+                float(self._process.cpu_percent(interval=self.sample_interval))
+            )
+            if self._nvml_handle and self._nvml_get_util:
                 try:
-                    util = self._nvml["get_util"](self._nvml_handle)
+                    util = self._nvml_get_util(self._nvml_handle)
                     self.gpu_samples.append(float(util.gpu))
                 except Exception:
                     pass
@@ -195,9 +197,9 @@ class ResourceMonitor:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2.0)
-        if self._nvml:
+        if self._nvml_shutdown:
             try:
-                self._nvml["shutdown"]()
+                self._nvml_shutdown()
             except Exception:
                 pass
 
@@ -327,7 +329,7 @@ def _build_onnx_infer(
     model_path: Path, provider: ExecutionProvider, intra_op_threads: int
 ) -> InferFn:
     try:
-        import onnxruntime as ort  # type: ignore
+        import onnxruntime as ort
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "onnxruntime is not available. Install with: uv sync --extra onnxruntime"

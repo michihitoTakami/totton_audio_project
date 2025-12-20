@@ -2682,11 +2682,21 @@
           "running": {
             "type": "boolean",
             "title": "Running"
+          },
+          "pid_file": {
+            "type": "string",
+            "title": "Pid File"
+          },
+          "binary_path": {
+            "type": "string",
+            "title": "Binary Path"
           }
         },
         "type": "object",
         "required": [
-          "running"
+          "running",
+          "pid_file",
+          "binary_path"
         ],
         "title": "DaemonStatus",
         "description": "Daemon status response model."

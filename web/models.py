@@ -188,6 +188,8 @@ class DaemonStatus(BaseModel):
     """Daemon status response model."""
 
     running: bool
+    pid_file: str
+    binary_path: str
 
 
 class ZmqPingResponse(BaseModel):
