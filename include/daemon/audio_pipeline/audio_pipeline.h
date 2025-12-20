@@ -7,6 +7,7 @@
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/playback_buffer_manager.h"
+#include "delimiter/safety_controller.h"
 #include "io/audio_ring_buffer.h"
 #include "logging/logger.h"
 
@@ -26,6 +27,7 @@
 
 namespace delimiter {
 class InferenceBackend;
+class SafetyController;
 }  // namespace delimiter
 
 namespace audio_pipeline {
@@ -81,6 +83,9 @@ struct Dependencies {
     std::function<size_t()> maxOutputBufferFrames;
     std::function<int()> currentInputRate;
     std::function<int()> currentOutputRate;
+    std::atomic<int>* delimiterMode = nullptr;
+    std::atomic<int>* delimiterFallbackReason = nullptr;
+    std::atomic<bool>* delimiterBypassLocked = nullptr;
 
     // Test hook: override delimiter backend creation (defaults to createDelimiterInferenceBackend).
     std::function<std::unique_ptr<delimiter::InferenceBackend>(const AppConfig::DelimiterConfig&)>
@@ -113,6 +118,7 @@ class AudioPipeline {
     void workerLoop();
     void resetHighLatencyState(const char* reason);
     void resetHighLatencyStateLocked(const char* reason);
+    void updateDelimiterStatus(const delimiter::SafetyStatus& status);
 
     bool hasBufferState() const;
     bool isUpsamplerAvailable() const;
@@ -141,6 +147,7 @@ class AudioPipeline {
     // High-latency worker path (Fix #1010 / Epic #1006)
     bool highLatencyEnabled_ = false;
     std::unique_ptr<delimiter::InferenceBackend> delimiterBackend_;
+    std::unique_ptr<delimiter::SafetyController> delimiterSafety_;
     std::thread workerThread_;
     std::atomic<bool> workerStop_{false};
     std::atomic<bool> workerFailed_{false};

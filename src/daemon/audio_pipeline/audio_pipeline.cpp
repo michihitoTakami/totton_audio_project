@@ -20,6 +20,11 @@ constexpr float kDefaultChunkSec = 6.0f;
 constexpr float kDefaultOverlapSec = 0.25f;
 constexpr int kMaxHighLatencyInitRate = 192000;
 constexpr float kHighLatencyInputBufferSeconds = 20.0f;
+constexpr std::size_t kDelimiterFailureCountToBypass = 3;
+constexpr std::size_t kDelimiterOverloadCountToBypass = 3;
+constexpr std::size_t kDelimiterRecoveryCountToRestore = 5;
+constexpr double kDelimiterMaxRealtimeFactor = 1.15;
+constexpr double kDelimiterMaxQueueSecondsFactor = 2.0;
 
 inline size_t safeRoundFrames(double seconds, int sampleRate) {
     if (seconds <= 0.0 || sampleRate <= 0) {
@@ -85,6 +90,19 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     workRight_.resize(initialFrames);
 
     highLatencyEnabled_ = (deps_.config && deps_.config->delimiter.enabled);
+    if (highLatencyEnabled_) {
+        if (deps_.delimiterMode) {
+            deps_.delimiterMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                       std::memory_order_relaxed);
+        }
+        if (deps_.delimiterFallbackReason) {
+            deps_.delimiterFallbackReason->store(static_cast<int>(delimiter::FallbackReason::None),
+                                                 std::memory_order_relaxed);
+        }
+        if (deps_.delimiterBypassLocked) {
+            deps_.delimiterBypassLocked->store(false, std::memory_order_relaxed);
+        }
+    }
     if (highLatencyEnabled_) {
         if (deps_.delimiterBackendFactory) {
             delimiterBackend_ = deps_.delimiterBackendFactory(deps_.config->delimiter);
@@ -681,6 +699,19 @@ void AudioPipeline::resetHighLatencyStateLocked(const char* reason) {
     }
 }
 
+void AudioPipeline::updateDelimiterStatus(const delimiter::SafetyStatus& status) {
+    if (deps_.delimiterMode) {
+        deps_.delimiterMode->store(static_cast<int>(status.mode), std::memory_order_relaxed);
+    }
+    if (deps_.delimiterFallbackReason) {
+        deps_.delimiterFallbackReason->store(static_cast<int>(status.lastFallbackReason),
+                                             std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBypassLocked) {
+        deps_.delimiterBypassLocked->store(status.bypassLocked, std::memory_order_relaxed);
+    }
+}
+
 void AudioPipeline::workerLoop() {
     try {
         int inputRate = pickInitialInputRate(deps_);
@@ -728,6 +759,21 @@ void AudioPipeline::workerLoop() {
         const size_t maxFramesPerCall = std::max<size_t>(1, workLeft_.capacity());
         downstreamInterleaved_.assign(maxFramesPerCall * 2, 0.0f);
 
+        const double maxQueueSeconds =
+            std::max(1.0, static_cast<double>(chunkSec) * kDelimiterMaxQueueSecondsFactor);
+        delimiter::SafetyConfig safetyConfig;
+        safetyConfig.sampleRate = workerInputRate_;
+        safetyConfig.fadeDurationMs = std::max(1, static_cast<int>(std::lround(overlapSec * 1000)));
+        safetyConfig.failureCountToBypass = kDelimiterFailureCountToBypass;
+        safetyConfig.overloadCountToBypass = kDelimiterOverloadCountToBypass;
+        safetyConfig.recoveryCountToRestore = kDelimiterRecoveryCountToRestore;
+        safetyConfig.maxRealtimeFactor = kDelimiterMaxRealtimeFactor;
+        safetyConfig.maxQueueSeconds = maxQueueSeconds;
+        safetyConfig.lockOnFailure = true;
+        safetyConfig.lockOnOverload = false;
+        delimiterSafety_ = std::make_unique<delimiter::SafetyController>(safetyConfig);
+        updateDelimiterStatus(delimiterSafety_->status());
+
         while (!workerStop_.load(std::memory_order_acquire)) {
             if (deps_.running && !deps_.running->load(std::memory_order_acquire)) {
                 break;
@@ -745,6 +791,11 @@ void AudioPipeline::workerLoop() {
                             std::min(readInterleaved_.size(), inputInterleaved_.availableToRead());
                         (void)inputInterleaved_.read(readInterleaved_.data(), chunk);
                     }
+                }
+                if (delimiterSafety_) {
+                    (void)delimiterSafety_->observeOverload(kDelimiterMaxRealtimeFactor + 1.0,
+                                                            maxQueueSeconds + 1.0);
+                    updateDelimiterStatus(delimiterSafety_->status());
                 }
             }
 
@@ -805,12 +856,30 @@ void AudioPipeline::workerLoop() {
                       chunkInputRight_.end(), prevInputTailRight_.begin());
 
             bool inferenceOk = false;
-            if (delimiterBackend_ && deps_.config && deps_.config->delimiter.enabled &&
+            bool inferenceAttempted = false;
+            bool bypassChunk = false;
+            double realtimeFactor = 0.0;
+
+            if (delimiterSafety_) {
+                auto status = delimiterSafety_->status();
+                bypassChunk =
+                    (status.mode == delimiter::ProcessingMode::Bypass) || status.bypassLocked;
+            }
+
+            if (!bypassChunk && delimiterBackend_ && deps_.config &&
+                deps_.config->delimiter.enabled &&
                 static_cast<int>(delimiterBackend_->expectedSampleRate()) == workerInputRate_) {
+                inferenceAttempted = true;
+                auto start = std::chrono::steady_clock::now();
                 auto res = delimiterBackend_->process(
                     delimiter::StereoPlanarView{chunkInputLeft_.data(), chunkInputRight_.data(),
                                                 chunkFrames_},
                     chunkOutputLeft_, chunkOutputRight_);
+                auto end = std::chrono::steady_clock::now();
+                double elapsed =
+                    std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count();
+                realtimeFactor = (chunkSec > 0.0f) ? (elapsed / chunkSec) : 0.0;
+
                 inferenceOk = (res.status == delimiter::InferenceStatus::Ok);
                 if (!inferenceOk) {
                     LOG_EVERY_N(WARN, 10,
@@ -818,9 +887,34 @@ void AudioPipeline::workerLoop() {
                                 "falling back to bypass for this chunk",
                                 static_cast<int>(res.status), res.message);
                 }
+
+                if (delimiterSafety_) {
+                    (void)delimiterSafety_->observeInferenceResult(res);
+                }
             }
 
-            if (!inferenceOk) {
+            double queueSeconds = 0.0;
+            if (workerInputRate_ > 0) {
+                queueSeconds = static_cast<double>(inputInterleaved_.availableToRead()) /
+                               (2.0 * static_cast<double>(workerInputRate_));
+            }
+            bool overloadTriggered = false;
+            if (delimiterSafety_) {
+                overloadTriggered = delimiterSafety_->observeOverload(realtimeFactor, queueSeconds);
+                if (!overloadTriggered && (inferenceOk || !inferenceAttempted)) {
+                    delimiterSafety_->observeHealthy();
+                }
+                auto status = delimiterSafety_->status();
+                updateDelimiterStatus(status);
+                bypassChunk = bypassChunk || (status.mode == delimiter::ProcessingMode::Bypass) ||
+                              status.bypassLocked;
+            }
+
+            if (!inferenceOk || overloadTriggered) {
+                bypassChunk = true;
+            }
+
+            if (bypassChunk) {
                 chunkOutputLeft_ = chunkInputLeft_;
                 chunkOutputRight_ = chunkInputRight_;
             }

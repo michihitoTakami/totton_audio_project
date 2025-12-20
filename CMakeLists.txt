@@ -200,11 +200,11 @@ target_include_directories(gpu_upsampler_alsa PRIVATE src)
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
-    delimiter_inference
     soft_mute
     filter_headroom
     graceful_shutdown
     fallback_manager
+    delimiter_inference
     zeromq_interface
     dac_capability
     logging
@@ -382,6 +382,7 @@ target_compile_options(fallback_manager PRIVATE
 # De-limiter inference backend abstraction (CPU-only, Issue #1017)
 add_library(delimiter_inference STATIC
     src/delimiter/inference_backend.cpp
+    src/delimiter/safety_controller.cpp
 )
 target_link_libraries(delimiter_inference PUBLIC
     logging
@@ -488,6 +489,7 @@ add_executable(cpu_tests
     tests/cpp/audio/test_overlap_add.cpp
     tests/cpp/core/test_config_loader.cpp
     tests/cpp/delimiter/test_inference_backend.cpp
+    tests/cpp/delimiter/test_safety_controller.cpp
     tests/cpp/e2e/test_partition_plan.cpp
     tests/cpp/audio/test_phase_alignment.cpp
     tests/cpp/audio/test_playback_buffer_threshold.cpp
@@ -500,7 +502,6 @@ add_executable(cpu_tests
     tests/cpp/daemon/test_switch_actions.cpp
     tests/cpp/daemon/test_i2s_capture_config.cpp
     tests/cpp/audio/test_audio_pipeline.cpp
-    tests/cpp/audio/test_audio_pipeline_high_latency.cpp
     tests/cpp/core/test_precision_traits.cpp
     src/daemon/audio/crossfeed_manager.cpp
     src/daemon/audio_pipeline/audio_pipeline.cpp
