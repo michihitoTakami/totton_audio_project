@@ -63,8 +63,6 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
 
     auto deps = makeDeps(config, headroom, headroomGain, outputGain, limiterGain, effectiveGain,
                          fallbackActive, inputRate);
-    auto deps = makeDeps(config, headroom, headroomGain, outputGain, limiterGain, effectiveGain,
-                         fallbackActive, inputRate);
     deps.delimiterMode = &delimiterMode;
     deps.delimiterFallbackReason = &delimiterReason;
     deps.delimiterBypassLocked = &delimiterLocked;
