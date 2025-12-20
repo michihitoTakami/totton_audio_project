@@ -107,3 +107,18 @@ w(t) = 0.5 - 0.5\cos(\pi t),\quad t \in [0,1]
   - `AudioUtils::overlapAddStereoChunks()`
 
 この実装は **設計の数式/窓の一致**を確認する目的の参照であり、RT経路へ直接組み込むのは #1010 で行う。
+
+---
+
+## 7. 性能計測とデフォルト決定（Fix #1015）
+
+- ストリーミング時の **平均処理速度>1.0x**（throughput_x >= 1）が目標。chunkSec=6.0 / overlapSec=0.25 を基本とし、Jetson Orin Nano（最小ターゲット）で計測して維持できるか確認する。
+- 計測スクリプト: `scripts/delimiter/benchmark_streaming.py`
+  - 例:
+    `uv sync --extra onnxruntime --extra benchmark`
+    `uv run python scripts/delimiter/benchmark_streaming.py --input test_data/example.wav --model /path/to/delimiter.onnx --provider cpu --chunk-sec 6.0 --overlap-sec 0.25 --measure-resources --report reports/delimiter_bench.json`
+  - 出力: chunkごとの推論時間、平均/95パーセンタイル、throughput_x（速いほど良い）、推定初期遅延（chunkSec）、hop秒（chunkSec - overlapSec）、CPU/GPU使用率（psutil/nvidia-ml-py3がある場合）。
+- デフォルト運用: throughput_x が 1 未満になった場合は
+  - chunkSec を短くする（初期遅延は増えるが計算量が減る）
+  - overlapSec を縮める（境界品質とトレードオフ）
+  - 推論プロバイダを GPU/TensorRT に切替える
