@@ -19,6 +19,9 @@ services:
     environment:
       # 設定は /var/lib/usb-i2s-bridge/config.env に集約
       USB_I2S_CONFIG_PATH: /var/lib/usb-i2s-bridge/config.env
+      # NOTE(#1079): Pi → Jetson の状態送信をデフォルト有効化（必要なら config.env 側で上書き/無効化）
+      # 典型: USB直結構成の Jetson は 192.168.55.1
+      USB_I2S_STATUS_REPORT_URL: ${USB_I2S_STATUS_REPORT_URL:-http://192.168.55.1/i2s/peer-status}
     restart: always
     logging:
       driver: "json-file"

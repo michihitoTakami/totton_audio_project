@@ -1764,7 +1764,7 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
     parser.add_argument(
         "--status-report-url",
         default=_env_str("USB_I2S_STATUS_REPORT_URL", _DEFAULT_STATUS_REPORT_URL),
-        help="Jetson Web(:80)へ状態をPOSTするURL（例: http://jetson/i2s/peer-status）。空なら無効。",
+        help="Jetson Web(:80)へ状態をPOSTするURL（例: http://192.168.55.1/i2s/peer-status）。空なら無効。",
     )
     parser.add_argument(
         "--status-report-timeout-ms",
