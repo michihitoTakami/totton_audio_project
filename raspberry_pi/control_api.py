@@ -8,8 +8,9 @@ import os
 import shlex
 import subprocess
 import time
+from ipaddress import ip_address, ip_network
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -18,6 +19,7 @@ from raspberry_pi.usb_i2s_bridge.bridge import UsbI2sBridgeConfig
 
 DEFAULT_BIND_INTERFACE = os.getenv("RPI_CONTROL_BIND_INTERFACE", "usb0").strip()
 DEFAULT_BIND_HOST = os.getenv("RPI_CONTROL_BIND_HOST", "").strip()
+DEFAULT_BIND_SUBNET = os.getenv("RPI_CONTROL_BIND_SUBNET", "192.168.55.0/24").strip()
 DEFAULT_PORT = int(os.getenv("RPI_CONTROL_PORT", "8081"))
 DEFAULT_STATUS_PATH = Path(
     os.getenv("RPI_CONTROL_STATUS_PATH", "/var/run/usb-i2s-bridge/status.json")
@@ -52,6 +54,43 @@ def _resolve_interface_ip(interface: str) -> Optional[str]:
         return None
     finally:
         sock.close()
+
+
+def _iter_interface_names() -> list[str]:
+    """Best-effort interface enumeration (Linux)."""
+    try:
+        import socket
+
+        return [name for _, name in socket.if_nameindex()]
+    except Exception:
+        return []
+
+
+def _resolve_any_interface_in_subnet(
+    subnet_cidr: str,
+    *,
+    interface_names: Optional[list[str]] = None,
+    resolver: Callable[[str], Optional[str]] = _resolve_interface_ip,
+) -> Optional[str]:
+    """Find first interface IP that belongs to the given subnet."""
+    try:
+        target_net = ip_network(subnet_cidr, strict=False)
+    except ValueError:
+        return None
+
+    names = interface_names if interface_names is not None else _iter_interface_names()
+    for name in names:
+        if not name or name == "lo":
+            continue
+        ip = resolver(name)
+        if not ip:
+            continue
+        try:
+            if ip_address(ip) in target_net:
+                return ip
+        except ValueError:
+            continue
+    return None
 
 
 class UsbI2sConfig(BaseModel):
@@ -392,7 +431,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--host",
         default=DEFAULT_BIND_HOST,
-        help="bind host (default: auto-detect from interface; exits if auto-detect fails)",
+        help=(
+            "bind host (default: auto-detect from interface/subnet; "
+            "exits if auto-detect fails)"
+        ),
     )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
@@ -432,10 +474,16 @@ def main(argv: list[str] | None = None) -> None:
     if not host:
         host = _resolve_interface_ip(DEFAULT_BIND_INTERFACE) or ""
     if not host:
+        host = _resolve_any_interface_in_subnet(DEFAULT_BIND_SUBNET) or ""
+    if not host:
         raise SystemExit(
             "[raspi-control-api] ERROR: bind host is not set and interface auto-detect failed. "
-            "Set RPI_CONTROL_BIND_HOST (e.g. 192.168.55.100) or fix RPI_CONTROL_BIND_INTERFACE."
+            "Set RPI_CONTROL_BIND_HOST (e.g. 192.168.55.100), "
+            "or set RPI_CONTROL_BIND_INTERFACE / RPI_CONTROL_BIND_SUBNET appropriately."
         )
+    print(
+        f"[raspi-control-api] bind={host}:{args.port} (interface={DEFAULT_BIND_INTERFACE}, subnet={DEFAULT_BIND_SUBNET})"
+    )
     app_instance = create_app(
         config_path=args.config,
         status_path=args.status,

@@ -105,7 +105,8 @@ Jetson 側も `raspberry_pi/usb_i2s_bridge/control_agent.py` を `python3 -m ras
 Pi 側に軽量の FastAPI を常駐させ、Jetson から USB 経由で制御します。
 
 - Docker Compose では `raspi-control-api` サービスとして起動します。
-- デフォルト bind は `usb0` を自動検出します。**検出に失敗した場合は到達不能になるため、プロセスを終了（非0）して restart で再試行します。**
+- デフォルト bind は `RPI_CONTROL_BIND_INTERFACE`（既定 `usb0`）を自動検出し、失敗した場合は **`RPI_CONTROL_BIND_SUBNET`（既定 `192.168.55.0/24`）に属するIPを持つインターフェースを探索**します。
+  - それでも検出に失敗した場合は到達不能になるため、プロセスを終了（非0）して restart で再試行します。
   - 環境によりインターフェース名や起動順が異なる場合は `RPI_CONTROL_BIND_HOST`（例: `192.168.55.100`）を明示してください。
 - **ポート 80 は使用しない**（Jetson 側 nginx へ戻るため）。既定は `8081`。
 - `raspi-control-api` は **docker.sock をマウントすることが前提**（再起動/反映に必須）。
