@@ -3,10 +3,12 @@
 #include "convolution_engine.h"
 #include "core/daemon_constants.h"
 #include "daemon/metrics/stats_file.h"
+#include "daemon/output/playback_buffer_manager.h"
 #include "delimiter/safety_controller.h"
 
 #include <chrono>
 #include <cmath>
+#include <mutex>
 #include <string>
 
 namespace runtime_stats {
@@ -128,6 +130,31 @@ nlohmann::json buildDelimiterJson(const Dependencies& deps) {
         (deps.delimiterBypassLocked ? deps.delimiterBypassLocked->load(std::memory_order_relaxed)
                                     : false);
     return dl;
+}
+
+struct OutputBufferSnapshot {
+    size_t frames = 0;
+    float seconds = 0.0f;
+    size_t capacity = 0;
+    float usagePercent = 0.0f;
+};
+
+OutputBufferSnapshot collectOutputBufferSnapshot(const Dependencies& deps,
+                                                 std::size_t bufferCapacityFrames, int outputRate) {
+    OutputBufferSnapshot snapshot;
+    snapshot.capacity = bufferCapacityFrames;
+    if (deps.playbackBuffer) {
+        std::lock_guard<std::mutex> lock(deps.playbackBuffer->mutex());
+        snapshot.frames = deps.playbackBuffer->queuedFramesLocked();
+    }
+    if (snapshot.capacity > 0) {
+        snapshot.usagePercent =
+            100.0f * static_cast<float>(snapshot.frames) / static_cast<float>(snapshot.capacity);
+    }
+    if (outputRate > 0) {
+        snapshot.seconds = static_cast<float>(snapshot.frames) / static_cast<float>(outputRate);
+    }
+    return snapshot;
 }
 
 }  // namespace
@@ -322,12 +349,23 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
     upsampler["error_blocks_right"] = upsamplerErrorBlocksRight();
     stats["upsampler_streaming"] = upsampler;
 
+    auto bufferSnapshot = collectOutputBufferSnapshot(deps, bufferCapacityFrames, outputRate);
+    nlohmann::json outputBufferJson;
+    outputBufferJson["output_buffer_frames"] = bufferSnapshot.frames;
+    outputBufferJson["output_buffer_seconds"] = bufferSnapshot.seconds;
+    outputBufferJson["output_buffer_capacity_frames"] = bufferSnapshot.capacity;
+    outputBufferJson["output_buffer_usage_percent"] = bufferSnapshot.usagePercent;
+    outputBufferJson["buffer_drops_total"] = droppedFrames();
+    outputBufferJson["output_ready"] =
+        (deps.outputReady ? deps.outputReady->load(std::memory_order_acquire) : false);
+    stats["output_buffer"] = outputBufferJson;
+
     return stats;
 }
 
 void writeStatsFile(const Dependencies& deps, std::size_t bufferCapacityFrames,
-                    const std::string& path) {
-    auto stats = collect(deps, bufferCapacityFrames);
+                    const std::string& path, const nlohmann::json* precomputedStats) {
+    auto stats = precomputedStats ? *precomputedStats : collect(deps, bufferCapacityFrames);
     daemon_metrics::StatsFile statsFile(path);
     (void)statsFile.writeJsonAtomically(stats);
 }
