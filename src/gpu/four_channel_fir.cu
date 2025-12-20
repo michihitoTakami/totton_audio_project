@@ -440,6 +440,23 @@ bool FourChannelFIR::processStreamBlock(const float* inputL, const float* inputR
         return true;
     }
 
+    auto handleRtFailure = [&](const char* context) -> bool {
+        (void)context;
+        outputL.clear();
+        outputR.clear();
+        streamInputAccumulatedL = 0;
+        streamInputAccumulatedR = 0;
+        return false;
+    };
+
+    auto checkCuda = [&](cudaError_t error, const char* context) -> bool {
+        return Utils::checkCudaErrorCode(error, context) == AudioEngine::ErrorCode::OK;
+    };
+
+    auto checkCufft = [&](cufftResult result, const char* context) -> bool {
+        return Utils::checkCufftErrorCode(result, context) == AudioEngine::ErrorCode::OK;
+    };
+
     const size_t requiredL = streamInputAccumulatedL + inputFrames;
     const size_t requiredR = streamInputAccumulatedR + inputFrames;
     if (requiredL > streamInputBufferL.size() || requiredR > streamInputBufferR.size()) {
@@ -499,129 +516,181 @@ bool FourChannelFIR::processStreamBlock(const float* inputL, const float* inputR
     const int blocksTime = (fftSize_ + threadsPerBlock - 1) / threadsPerBlock;
 
     // Prepare padded input with previous overlap
-    Utils::checkCudaError(cudaMemsetAsync(d_paddedInputL_, 0, fftSize_ * sizeof(Sample), workStream),
-                          "memset padded input L");
-    Utils::checkCudaError(cudaMemsetAsync(d_paddedInputR_, 0, fftSize_ * sizeof(Sample), workStream),
-                          "memset padded input R");
-
-    if (overlapSize_ > 0) {
-        Utils::checkCudaError(
-            cudaMemcpyAsync(d_paddedInputL_, d_overlapInputL_, overlapSize_ * sizeof(Sample),
-                            cudaMemcpyDeviceToDevice, workStream),
-            "copy overlap L");
-        Utils::checkCudaError(
-            cudaMemcpyAsync(d_paddedInputR_, d_overlapInputR_, overlapSize_ * sizeof(Sample),
-                            cudaMemcpyDeviceToDevice, workStream),
-            "copy overlap R");
+    if (!checkCuda(cudaMemsetAsync(d_paddedInputL_, 0, fftSize_ * sizeof(Sample), workStream),
+                   "memset padded input L")) {
+        return handleRtFailure("memset padded input L");
+    }
+    if (!checkCuda(cudaMemsetAsync(d_paddedInputR_, 0, fftSize_ * sizeof(Sample), workStream),
+                   "memset padded input R")) {
+        return handleRtFailure("memset padded input R");
     }
 
-    Utils::checkCudaError(
-        copyHostFloatToDeviceSamplesAsync(d_paddedInputL_ + overlapSize_, streamInputBufferL.data(),
-                                          streamValidInputPerBlock_, workStream, d_inputScratchL_),
-        "copy input L to device");
-    Utils::checkCudaError(
-        copyHostFloatToDeviceSamplesAsync(d_paddedInputR_ + overlapSize_, streamInputBufferR.data(),
-                                          streamValidInputPerBlock_, workStream, d_inputScratchR_),
-        "copy input R to device");
+    if (overlapSize_ > 0) {
+        if (!checkCuda(
+                cudaMemcpyAsync(d_paddedInputL_, d_overlapInputL_, overlapSize_ * sizeof(Sample),
+                                cudaMemcpyDeviceToDevice, workStream),
+                "copy overlap L")) {
+            return handleRtFailure("copy overlap L");
+        }
+        if (!checkCuda(
+                cudaMemcpyAsync(d_paddedInputR_, d_overlapInputR_, overlapSize_ * sizeof(Sample),
+                                cudaMemcpyDeviceToDevice, workStream),
+                "copy overlap R")) {
+            return handleRtFailure("copy overlap R");
+        }
+    }
 
-    Utils::checkCufftError(cufftSetStream(fftPlanForward_, workStream),
-                           "cufftSetStream forward four_channel_fir");
-    Utils::checkCufftError(Precision::execForward(fftPlanForward_, d_paddedInputL_, d_fftInputL_),
-                           "fft forward L");
-    Utils::checkCufftError(Precision::execForward(fftPlanForward_, d_paddedInputR_, d_fftInputR_),
-                           "fft forward R");
+    if (!checkCuda(
+            copyHostFloatToDeviceSamplesAsync(d_paddedInputL_ + overlapSize_,
+                                              streamInputBufferL.data(),
+                                              streamValidInputPerBlock_, workStream,
+                                              d_inputScratchL_),
+            "copy input L to device")) {
+        return handleRtFailure("copy input L to device");
+    }
+    if (!checkCuda(
+            copyHostFloatToDeviceSamplesAsync(d_paddedInputR_ + overlapSize_,
+                                              streamInputBufferR.data(),
+                                              streamValidInputPerBlock_, workStream,
+                                              d_inputScratchR_),
+            "copy input R to device")) {
+        return handleRtFailure("copy input R to device");
+    }
+
+    if (!checkCufft(cufftSetStream(fftPlanForward_, workStream),
+                    "cufftSetStream forward four_channel_fir")) {
+        return handleRtFailure("cufftSetStream forward four_channel_fir");
+    }
+    if (!checkCufft(Precision::execForward(fftPlanForward_, d_paddedInputL_, d_fftInputL_),
+                    "fft forward L")) {
+        return handleRtFailure("fft forward L");
+    }
+    if (!checkCufft(Precision::execForward(fftPlanForward_, d_paddedInputR_, d_fftInputR_),
+                    "fft forward R")) {
+        return handleRtFailure("fft forward R");
+    }
 
     // LL / LR use left input FFT
-    Utils::checkCudaError(
-        cudaMemcpyAsync(d_convLL_, d_fftInputL_, fftComplexSize * sizeof(Complex),
-                        cudaMemcpyDeviceToDevice, workStream),
-        "copy FFT LL");
-    Utils::checkCudaError(
-        cudaMemcpyAsync(d_convLR_, d_fftInputL_, fftComplexSize * sizeof(Complex),
-                        cudaMemcpyDeviceToDevice, workStream),
-        "copy FFT LR");
+    if (!checkCuda(
+            cudaMemcpyAsync(d_convLL_, d_fftInputL_, fftComplexSize * sizeof(Complex),
+                            cudaMemcpyDeviceToDevice, workStream),
+            "copy FFT LL")) {
+        return handleRtFailure("copy FFT LL");
+    }
+    if (!checkCuda(
+            cudaMemcpyAsync(d_convLR_, d_fftInputL_, fftComplexSize * sizeof(Complex),
+                            cudaMemcpyDeviceToDevice, workStream),
+            "copy FFT LR")) {
+        return handleRtFailure("copy FFT LR");
+    }
     complexMultiplyKernel<<<blocksComplex, threadsPerBlock, 0, workStream>>>(
         d_convLL_, d_activeFilterFFT_[0], fftComplexSize);
     complexMultiplyKernel<<<blocksComplex, threadsPerBlock, 0, workStream>>>(
         d_convLR_, d_activeFilterFFT_[1], fftComplexSize);
 
     // RL / RR use right input FFT
-    Utils::checkCudaError(
-        cudaMemcpyAsync(d_convRL_, d_fftInputR_, fftComplexSize * sizeof(Complex),
-                        cudaMemcpyDeviceToDevice, workStream),
-        "copy FFT RL");
-    Utils::checkCudaError(
-        cudaMemcpyAsync(d_convRR_, d_fftInputR_, fftComplexSize * sizeof(Complex),
-                        cudaMemcpyDeviceToDevice, workStream),
-        "copy FFT RR");
+    if (!checkCuda(
+            cudaMemcpyAsync(d_convRL_, d_fftInputR_, fftComplexSize * sizeof(Complex),
+                            cudaMemcpyDeviceToDevice, workStream),
+            "copy FFT RL")) {
+        return handleRtFailure("copy FFT RL");
+    }
+    if (!checkCuda(
+            cudaMemcpyAsync(d_convRR_, d_fftInputR_, fftComplexSize * sizeof(Complex),
+                            cudaMemcpyDeviceToDevice, workStream),
+            "copy FFT RR")) {
+        return handleRtFailure("copy FFT RR");
+    }
     complexMultiplyKernel<<<blocksComplex, threadsPerBlock, 0, workStream>>>(
         d_convRL_, d_activeFilterFFT_[2], fftComplexSize);
     complexMultiplyKernel<<<blocksComplex, threadsPerBlock, 0, workStream>>>(
         d_convRR_, d_activeFilterFFT_[3], fftComplexSize);
 
-    Utils::checkCudaError(cudaMemsetAsync(d_outputL_, 0, fftSize_ * sizeof(Sample), workStream),
-                          "memset output L");
-    Utils::checkCudaError(cudaMemsetAsync(d_outputR_, 0, fftSize_ * sizeof(Sample), workStream),
-                          "memset output R");
+    if (!checkCuda(cudaMemsetAsync(d_outputL_, 0, fftSize_ * sizeof(Sample), workStream),
+                   "memset output L")) {
+        return handleRtFailure("memset output L");
+    }
+    if (!checkCuda(cudaMemsetAsync(d_outputR_, 0, fftSize_ * sizeof(Sample), workStream),
+                   "memset output R")) {
+        return handleRtFailure("memset output R");
+    }
 
-    Utils::checkCufftError(cufftSetStream(fftPlanInverse_, workStream),
-                           "cufftSetStream inverse four_channel_fir");
+    if (!checkCufft(cufftSetStream(fftPlanInverse_, workStream),
+                    "cufftSetStream inverse four_channel_fir")) {
+        return handleRtFailure("cufftSetStream inverse four_channel_fir");
+    }
 
     // LL -> outL
-    Utils::checkCufftError(Precision::execInverse(fftPlanInverse_, d_convLL_, d_tempTime_),
-                           "ifft LL");
+    if (!checkCufft(Precision::execInverse(fftPlanInverse_, d_convLL_, d_tempTime_), "ifft LL")) {
+        return handleRtFailure("ifft LL");
+    }
     scaleKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_tempTime_, fftSize_,
                                                                 Precision::scaleFactor(fftSize_));
     accumulateAddKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_outputL_, d_tempTime_,
                                                                         fftSize_);
 
     // RL -> outL
-    Utils::checkCufftError(Precision::execInverse(fftPlanInverse_, d_convRL_, d_tempTime_),
-                           "ifft RL");
+    if (!checkCufft(Precision::execInverse(fftPlanInverse_, d_convRL_, d_tempTime_), "ifft RL")) {
+        return handleRtFailure("ifft RL");
+    }
     scaleKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_tempTime_, fftSize_,
                                                                 Precision::scaleFactor(fftSize_));
     accumulateAddKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_outputL_, d_tempTime_,
                                                                         fftSize_);
 
     // LR -> outR
-    Utils::checkCufftError(Precision::execInverse(fftPlanInverse_, d_convLR_, d_tempTime_),
-                           "ifft LR");
+    if (!checkCufft(Precision::execInverse(fftPlanInverse_, d_convLR_, d_tempTime_), "ifft LR")) {
+        return handleRtFailure("ifft LR");
+    }
     scaleKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_tempTime_, fftSize_,
                                                                 Precision::scaleFactor(fftSize_));
     accumulateAddKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_outputR_, d_tempTime_,
                                                                         fftSize_);
 
     // RR -> outR
-    Utils::checkCufftError(Precision::execInverse(fftPlanInverse_, d_convRR_, d_tempTime_),
-                           "ifft RR");
+    if (!checkCufft(Precision::execInverse(fftPlanInverse_, d_convRR_, d_tempTime_), "ifft RR")) {
+        return handleRtFailure("ifft RR");
+    }
     scaleKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_tempTime_, fftSize_,
                                                                 Precision::scaleFactor(fftSize_));
     accumulateAddKernel<<<blocksTime, threadsPerBlock, 0, workStream>>>(d_outputR_, d_tempTime_,
                                                                         fftSize_);
 
-    Utils::checkCudaError(cudaStreamSynchronize(workStream), "stream sync four_channel_fir");
+    if (!checkCuda(cudaStreamSynchronize(workStream), "stream sync four_channel_fir")) {
+        return handleRtFailure("stream sync four_channel_fir");
+    }
 
-    Utils::checkCudaError(
-        copyDeviceToHostSamples<Precision>(outputL.data(), d_outputL_ + overlapSize_,
-                                           validOutputPerBlock_),
-        "copy output L");
-    Utils::checkCudaError(
-        copyDeviceToHostSamples<Precision>(outputR.data(), d_outputR_ + overlapSize_,
-                                           validOutputPerBlock_),
-        "copy output R");
+    if (!checkCuda(
+            copyDeviceToHostSamples<Precision>(outputL.data(), d_outputL_ + overlapSize_,
+                                               validOutputPerBlock_),
+            "copy output L")) {
+        return handleRtFailure("copy output L");
+    }
+    if (!checkCuda(
+            copyDeviceToHostSamples<Precision>(outputR.data(), d_outputR_ + overlapSize_,
+                                               validOutputPerBlock_),
+            "copy output R")) {
+        return handleRtFailure("copy output R");
+    }
 
     // Update overlap (tail of current input)
     if (overlapSize_ > 0) {
-        Utils::checkCudaError(
-            cudaMemcpyAsync(d_overlapInputL_, d_paddedInputL_ + streamValidInputPerBlock_,
-                            overlapSize_ * sizeof(Sample), cudaMemcpyDeviceToDevice, workStream),
-            "update overlap L");
-        Utils::checkCudaError(
-            cudaMemcpyAsync(d_overlapInputR_, d_paddedInputR_ + streamValidInputPerBlock_,
-                            overlapSize_ * sizeof(Sample), cudaMemcpyDeviceToDevice, workStream),
-            "update overlap R");
-        Utils::checkCudaError(cudaStreamSynchronize(workStream),
-                              "stream sync after overlap update four_channel_fir");
+        if (!checkCuda(
+                cudaMemcpyAsync(d_overlapInputL_, d_paddedInputL_ + streamValidInputPerBlock_,
+                                overlapSize_ * sizeof(Sample), cudaMemcpyDeviceToDevice, workStream),
+                "update overlap L")) {
+            return handleRtFailure("update overlap L");
+        }
+        if (!checkCuda(
+                cudaMemcpyAsync(d_overlapInputR_, d_paddedInputR_ + streamValidInputPerBlock_,
+                                overlapSize_ * sizeof(Sample), cudaMemcpyDeviceToDevice, workStream),
+                "update overlap R")) {
+            return handleRtFailure("update overlap R");
+        }
+        if (!checkCuda(cudaStreamSynchronize(workStream),
+                       "stream sync after overlap update four_channel_fir")) {
+            return handleRtFailure("stream sync after overlap update four_channel_fir");
+        }
     }
 
     // Shift host accumulation buffers

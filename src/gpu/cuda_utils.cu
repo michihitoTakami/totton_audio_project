@@ -141,9 +141,9 @@ AudioEngine::ErrorCode checkCudaErrorCode(cudaError_t error, const char* context
 
     // Log the error
     if (context) {
-        LOG_ERROR("CUDA Error in {}: {}", context, cudaGetErrorString(error));
+        LOG_EVERY_N(ERROR, 100, "CUDA Error in {}: {}", context, cudaGetErrorString(error));
     } else {
-        LOG_ERROR("CUDA Error: {}", cudaGetErrorString(error));
+        LOG_EVERY_N(ERROR, 100, "CUDA Error: {}", cudaGetErrorString(error));
     }
 
     return cudaErrorToErrorCode(error);
@@ -156,9 +156,9 @@ AudioEngine::ErrorCode checkCufftErrorCode(cufftResult result, const char* conte
 
     // Log the error
     if (context) {
-        LOG_ERROR("cuFFT Error in {}: {}", context, static_cast<int>(result));
+        LOG_EVERY_N(ERROR, 100, "cuFFT Error in {}: {}", context, static_cast<int>(result));
     } else {
-        LOG_ERROR("cuFFT Error: {}", static_cast<int>(result));
+        LOG_EVERY_N(ERROR, 100, "cuFFT Error: {}", static_cast<int>(result));
     }
 
     return AudioEngine::ErrorCode::GPU_CUFFT_ERROR;
