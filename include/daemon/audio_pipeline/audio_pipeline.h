@@ -81,6 +81,10 @@ struct Dependencies {
     std::function<size_t()> maxOutputBufferFrames;
     std::function<int()> currentInputRate;
     std::function<int()> currentOutputRate;
+
+    // Test hook: override delimiter backend creation (defaults to createDelimiterInferenceBackend).
+    std::function<std::unique_ptr<delimiter::InferenceBackend>(const AppConfig::DelimiterConfig&)>
+        delimiterBackendFactory;
 };
 
 struct RenderResult {
