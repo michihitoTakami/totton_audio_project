@@ -69,6 +69,7 @@
             {% set form_input_type = "select" %}
             {% set form_input_model = "dac.selected" %}
             {% set form_input_disabled = "actionInProgress || dac.loading" %}
+            {% set form_on_change = "dac.userSelected = true" %}
             {% set form_select_options = '<template x-for="device in dac.devices" :key="device.id"><option :value="device.id" x-text="device.name ? `${device.name} (${device.id})` : device.id"></option></template>' %}
             {% include 'components/form_group.html' %}
         </div>
@@ -192,7 +193,7 @@
 function systemPage() {
     return {
         health: { daemon_running: false, input_rate: 0, output_rate: 0 },
-        dac: { devices: [], runtime: null, loading: false, selected: '' },
+        dac: { devices: [], runtime: null, loading: false, selected: '', userSelected: false },
         currentLang: "{{ lang }}",
         partitioned: {
             enabled: false,
@@ -302,7 +303,10 @@ function systemPage() {
                 const res = await fetch('/dac/state');
                 if (!res.ok) return;
                 this.dac.runtime = await res.json();
-                if (!this.dac.selected && this.dac.runtime?.active_device) {
+                if (
+                    this.dac.runtime?.active_device &&
+                    (!this.dac.userSelected || !this.dac.selected)
+                ) {
                     this.dac.selected = this.dac.runtime.active_device;
                 }
             } catch (err) {

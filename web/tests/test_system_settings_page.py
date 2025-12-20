@@ -67,6 +67,8 @@ def test_system_dac_uses_select_box_not_list():
     # Select box is rendered via form_group.html
     assert "<select" in html
     assert 'x-model="dac.selected"' in html
+    assert "selectDac(dac.selected)" in html
+    assert "selectDac(device.id)" not in html
     assert "/dac/devices" in html
     assert "/dac/select" in html
 
