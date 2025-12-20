@@ -86,3 +86,23 @@ TEST(DelimiterSafetyController, AutoRestoreWhenHealthy) {
     auto status = controller.status();
     EXPECT_EQ(status.targetMode, delimiter::ProcessingMode::Active);
 }
+
+TEST(DelimiterSafetyController, ForceBypassAndForceActive) {
+    delimiter::SafetyConfig config;
+    config.sampleRate = 1000;
+    config.fadeDurationMs = 10;
+    delimiter::SafetyController controller(config);
+
+    controller.forceBypassLock(delimiter::FallbackReason::Manual, "user off");
+    auto status = controller.status();
+    EXPECT_EQ(status.mode, delimiter::ProcessingMode::Bypass);
+    EXPECT_TRUE(status.bypassLocked);
+    EXPECT_EQ(status.lastFallbackReason, delimiter::FallbackReason::Manual);
+
+    controller.forceActive("user on");
+    status = controller.status();
+    EXPECT_EQ(status.mode, delimiter::ProcessingMode::Active);
+    EXPECT_FALSE(status.bypassLocked);
+    EXPECT_EQ(status.lastFallbackReason, delimiter::FallbackReason::None);
+    EXPECT_EQ(status.targetMode, delimiter::ProcessingMode::Active);
+}
