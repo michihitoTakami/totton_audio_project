@@ -200,6 +200,7 @@ target_include_directories(gpu_upsampler_alsa PRIVATE src)
 target_link_libraries(gpu_upsampler_alsa
     gpu_upsampler_core
     eq_support
+    delimiter_inference
     soft_mute
     filter_headroom
     graceful_shutdown

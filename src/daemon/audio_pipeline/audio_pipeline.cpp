@@ -1,15 +1,57 @@
 #include "daemon/audio_pipeline/audio_pipeline.h"
 
 #include "audio/audio_utils.h"
+#include "audio/overlap_add.h"
 #include "daemon/metrics/runtime_stats.h"
+#include "delimiter/inference_backend.h"
 #include "logging/metrics.h"
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <thread>
 #include <vector>
 
 namespace audio_pipeline {
+
+namespace {
+
+constexpr float kDefaultChunkSec = 6.0f;
+constexpr float kDefaultOverlapSec = 0.25f;
+constexpr int kMaxHighLatencyInitRate = 192000;
+constexpr float kHighLatencyInputBufferSeconds = 20.0f;
+
+inline size_t safeRoundFrames(double seconds, int sampleRate) {
+    if (seconds <= 0.0 || sampleRate <= 0) {
+        return 0;
+    }
+    double frames = seconds * static_cast<double>(sampleRate);
+    if (frames < 1.0) {
+        return 1;
+    }
+    return static_cast<size_t>(std::llround(frames));
+}
+
+inline int pickInitialInputRate(const Dependencies& deps) {
+    if (deps.currentInputRate) {
+        int rate = deps.currentInputRate();
+        if (rate > 0) {
+            return rate;
+        }
+    }
+    if (deps.config && deps.config->loopback.sampleRate > 0) {
+        return static_cast<int>(deps.config->loopback.sampleRate);
+    }
+    if (deps.config && deps.config->i2s.sampleRate > 0) {
+        return static_cast<int>(deps.config->i2s.sampleRate);
+    }
+    if (deps.config && deps.config->delimiter.expectedSampleRate > 0) {
+        return static_cast<int>(deps.config->delimiter.expectedSampleRate);
+    }
+    return DaemonConstants::DEFAULT_INPUT_SAMPLE_RATE;
+}
+
+}  // namespace
 
 AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     if (!deps_.maxOutputBufferFrames) {
@@ -17,6 +59,9 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     }
     if (!deps_.currentOutputRate) {
         deps_.currentOutputRate = []() { return DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE; };
+    }
+    if (!deps_.currentInputRate) {
+        deps_.currentInputRate = []() { return DaemonConstants::DEFAULT_INPUT_SAMPLE_RATE; };
     }
 
     // 典型的には nFrames は ALSA/I2S の周期で固定。RT パスでの再確保を避けるため、
@@ -38,9 +83,43 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     workRight_.reserve(initialFrames);
     workLeft_.resize(initialFrames);
     workRight_.resize(initialFrames);
+
+    highLatencyEnabled_ = (deps_.config && deps_.config->delimiter.enabled);
+    if (highLatencyEnabled_) {
+        delimiterBackend_ = delimiter::createDelimiterInferenceBackend(deps_.config->delimiter);
+
+        int initRate = pickInitialInputRate(deps_);
+        int rateForCapacity = std::clamp(initRate, 1, kMaxHighLatencyInitRate);
+        size_t capacityFrames =
+            safeRoundFrames(static_cast<double>(kHighLatencyInputBufferSeconds), rateForCapacity);
+        capacityFrames = std::max<size_t>(capacityFrames, 1);
+        inputInterleaved_.init(capacityFrames * 2);
+
+        workerStop_.store(false, std::memory_order_release);
+        workerFailed_.store(false, std::memory_order_release);
+        workerThread_ = std::thread([this]() { workerLoop(); });
+
+        LOG_INFO("[AudioPipeline] High-latency worker enabled (delimiter backend: {})",
+                 delimiterBackend_ ? delimiterBackend_->name() : "null");
+    }
+}
+
+AudioPipeline::~AudioPipeline() {
+    workerStop_.store(true, std::memory_order_release);
+    inputCv_.notify_all();
+    if (workerThread_.joinable()) {
+        workerThread_.join();
+    }
 }
 
 bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
+    if (!highLatencyEnabled_) {
+        return processDirect(inputSamples, nFrames);
+    }
+    return enqueueInputForWorker(inputSamples, nFrames);
+}
+
+bool AudioPipeline::processDirect(const float* inputSamples, uint32_t nFrames) {
     struct RtScopeGuard {
         std::atomic<bool>& flag;
         explicit RtScopeGuard(std::atomic<bool>& f) : flag(f) {
@@ -331,6 +410,83 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
     return true;
 }
 
+bool AudioPipeline::enqueueInputForWorker(const float* inputSamples, uint32_t nFrames) {
+    if (!inputSamples || nFrames == 0 || !hasBufferState()) {
+        return false;
+    }
+
+    if (workerFailed_.load(std::memory_order_acquire)) {
+        // Safety-first: keep playback stable with silence when worker is down.
+        if (!deps_.config || !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
+            return false;
+        }
+        size_t ratio = static_cast<size_t>(deps_.config->upsampleRatio);
+        size_t outputFrames = static_cast<size_t>(nFrames) * ratio;
+        if (ratio == 0 || outputFrames == 0) {
+            return false;
+        }
+        deps_.upsamplerOutputLeft->assign(outputFrames, 0.0f);
+        deps_.upsamplerOutputRight->assign(outputFrames, 0.0f);
+        size_t stored =
+            enqueueOutputFramesLocked(*deps_.upsamplerOutputLeft, *deps_.upsamplerOutputRight);
+        if (stored > 0 && deps_.buffer.playbackBuffer) {
+            deps_.buffer.playbackBuffer->cv().notify_one();
+        }
+        return true;
+    }
+
+    const bool pauseRequested = (pauseRequestCount_.load(std::memory_order_acquire) > 0);
+    rtPaused_.store(pauseRequested, std::memory_order_release);
+
+    const bool cacheFlushPending =
+        deps_.streamingCacheManager && deps_.streamingCacheManager->hasPendingFlush();
+
+    if (!pauseRequested && deps_.streamingCacheManager) {
+        deps_.streamingCacheManager->handleInputBlock();
+    }
+
+    if (!isOutputReady()) {
+        logDroppingInput();
+        return false;
+    }
+
+    if (pauseRequested || cacheFlushPending) {
+        // Keep timeline stable and avoid mixing pre/post-switch audio.
+        inputDropDetected_.store(true, std::memory_order_release);
+        inputCv_.notify_one();
+        if (!deps_.config || !deps_.upsamplerOutputLeft || !deps_.upsamplerOutputRight) {
+            return false;
+        }
+        size_t ratio = static_cast<size_t>(deps_.config->upsampleRatio);
+        size_t outputFrames = static_cast<size_t>(nFrames) * ratio;
+        if (ratio == 0 || outputFrames == 0) {
+            return false;
+        }
+        deps_.upsamplerOutputLeft->assign(outputFrames, 0.0f);
+        deps_.upsamplerOutputRight->assign(outputFrames, 0.0f);
+        size_t stored =
+            enqueueOutputFramesLocked(*deps_.upsamplerOutputLeft, *deps_.upsamplerOutputRight);
+        if (stored > 0 && deps_.buffer.playbackBuffer) {
+            deps_.buffer.playbackBuffer->cv().notify_one();
+        }
+        return true;
+    }
+
+    const size_t samples = static_cast<size_t>(nFrames) * 2;
+    if (samples == 0) {
+        return false;
+    }
+
+    if (!inputInterleaved_.write(inputSamples, samples)) {
+        inputDropDetected_.store(true, std::memory_order_release);
+        logDroppingHighLatencyInput();
+        return false;
+    }
+
+    inputCv_.notify_one();
+    return true;
+}
+
 void AudioPipeline::requestRtPause() {
     pauseRequestCount_.fetch_add(1, std::memory_order_acq_rel);
 }
@@ -472,6 +628,254 @@ void AudioPipeline::logDroppingInput() {
     if (now - lastDropWarn_ > std::chrono::seconds(5)) {
         LOG_DEBUG("Dropping input: DAC not ready");
         lastDropWarn_ = now;
+    }
+}
+
+void AudioPipeline::logDroppingHighLatencyInput() {
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastInputDropWarn_ > std::chrono::seconds(5)) {
+        size_t available = inputInterleaved_.availableToRead();
+        size_t capacity = inputInterleaved_.capacity();
+        LOG_WARN(
+            "[AudioPipeline] High-latency input queue overflow (available={} samples, cap={}), "
+            "dropping input",
+            available, capacity);
+        lastInputDropWarn_ = now;
+    }
+}
+
+void AudioPipeline::resetHighLatencyState(const char* reason) {
+    std::lock_guard<std::mutex> lock(inputCvMutex_);
+    resetHighLatencyStateLocked(reason);
+}
+
+void AudioPipeline::resetHighLatencyStateLocked(const char* reason) {
+    (void)reason;
+    hasPrevChunk_ = false;
+    if (overlapFrames_ > 0) {
+        prevInputTailLeft_.assign(overlapFrames_, 0.0f);
+        prevInputTailRight_.assign(overlapFrames_, 0.0f);
+        prevOutputTailWeightedLeft_.assign(overlapFrames_, 0.0f);
+        prevOutputTailWeightedRight_.assign(overlapFrames_, 0.0f);
+    } else {
+        prevInputTailLeft_.clear();
+        prevInputTailRight_.clear();
+        prevOutputTailWeightedLeft_.clear();
+        prevOutputTailWeightedRight_.clear();
+    }
+    chunkInputLeft_.clear();
+    chunkInputRight_.clear();
+    chunkOutputLeft_.clear();
+    chunkOutputRight_.clear();
+    segmentLeft_.clear();
+    segmentRight_.clear();
+    readInterleaved_.clear();
+    readLeft_.clear();
+    readRight_.clear();
+    if (delimiterBackend_) {
+        delimiterBackend_->reset();
+    }
+}
+
+void AudioPipeline::workerLoop() {
+    try {
+        int inputRate = pickInitialInputRate(deps_);
+        if (deps_.currentInputRate) {
+            int probed = deps_.currentInputRate();
+            if (probed > 0) {
+                inputRate = probed;
+            }
+        }
+        workerInputRate_ = inputRate;
+
+        chunkFrames_ = safeRoundFrames(kDefaultChunkSec, workerInputRate_);
+        overlapFrames_ = safeRoundFrames(kDefaultOverlapSec, workerInputRate_);
+        overlapFrames_ = std::min(overlapFrames_, chunkFrames_ > 0 ? (chunkFrames_ - 1) : 0);
+        if (chunkFrames_ == 0 || overlapFrames_ == 0 || overlapFrames_ >= chunkFrames_) {
+            LOG_ERROR(
+                "[AudioPipeline] Invalid delimiter chunk parameters (chunkFrames={}, "
+                "overlapFrames={}, rate={})",
+                chunkFrames_, overlapFrames_, workerInputRate_);
+            workerFailed_.store(true, std::memory_order_release);
+            return;
+        }
+        if (overlapFrames_ > (chunkFrames_ / 2)) {
+            LOG_WARN(
+                "[AudioPipeline] overlapFrames too large (chunkFrames={}, overlapFrames={}), "
+                "clamping to chunk/2",
+                chunkFrames_, overlapFrames_);
+            overlapFrames_ = chunkFrames_ / 2;
+        }
+        hopFrames_ = chunkFrames_ - overlapFrames_;
+        fadeIn_ = AudioUtils::makeRaisedCosineFade(overlapFrames_);
+
+        prevInputTailLeft_.assign(overlapFrames_, 0.0f);
+        prevInputTailRight_.assign(overlapFrames_, 0.0f);
+        prevOutputTailWeightedLeft_.assign(overlapFrames_, 0.0f);
+        prevOutputTailWeightedRight_.assign(overlapFrames_, 0.0f);
+
+        const size_t maxFramesPerCall = std::max<size_t>(1, workLeft_.capacity());
+        downstreamInterleaved_.assign(maxFramesPerCall * 2, 0.0f);
+
+        while (!workerStop_.load(std::memory_order_acquire)) {
+            if (deps_.running && !deps_.running->load(std::memory_order_acquire)) {
+                break;
+            }
+
+            if (inputDropDetected_.exchange(false, std::memory_order_acq_rel)) {
+                resetHighLatencyState("input drop");
+
+                // Drop all pending input to avoid stitching mismatched segments.
+                size_t avail = inputInterleaved_.availableToRead();
+                if (avail > 0) {
+                    readInterleaved_.assign(std::min(avail, inputInterleaved_.capacity()), 0.0f);
+                    while (inputInterleaved_.availableToRead() > 0) {
+                        size_t chunk =
+                            std::min(readInterleaved_.size(), inputInterleaved_.availableToRead());
+                        (void)inputInterleaved_.read(readInterleaved_.data(), chunk);
+                    }
+                }
+            }
+
+            const bool needFullChunk = !hasPrevChunk_;
+            const size_t needFrames = needFullChunk ? chunkFrames_ : hopFrames_;
+            const size_t needSamples = needFrames * 2;
+
+            {
+                std::unique_lock<std::mutex> lock(inputCvMutex_);
+                inputCv_.wait_for(lock, std::chrono::milliseconds(50), [&]() {
+                    return workerStop_.load(std::memory_order_acquire) ||
+                           (deps_.running && !deps_.running->load(std::memory_order_acquire)) ||
+                           inputInterleaved_.availableToRead() >= needSamples;
+                });
+            }
+
+            if (workerStop_.load(std::memory_order_acquire)) {
+                break;
+            }
+            if (deps_.running && !deps_.running->load(std::memory_order_acquire)) {
+                break;
+            }
+            if (inputInterleaved_.availableToRead() < needSamples) {
+                continue;
+            }
+
+            readInterleaved_.assign(needSamples, 0.0f);
+            if (!inputInterleaved_.read(readInterleaved_.data(), needSamples)) {
+                continue;
+            }
+
+            readLeft_.assign(needFrames, 0.0f);
+            readRight_.assign(needFrames, 0.0f);
+            for (size_t i = 0; i < needFrames; ++i) {
+                readLeft_[i] = readInterleaved_[i * 2];
+                readRight_[i] = readInterleaved_[i * 2 + 1];
+            }
+
+            chunkInputLeft_.assign(chunkFrames_, 0.0f);
+            chunkInputRight_.assign(chunkFrames_, 0.0f);
+            if (needFullChunk) {
+                std::copy(readLeft_.begin(), readLeft_.end(), chunkInputLeft_.begin());
+                std::copy(readRight_.begin(), readRight_.end(), chunkInputRight_.begin());
+            } else {
+                std::copy(prevInputTailLeft_.begin(), prevInputTailLeft_.end(),
+                          chunkInputLeft_.begin());
+                std::copy(prevInputTailRight_.begin(), prevInputTailRight_.end(),
+                          chunkInputRight_.begin());
+                std::copy(readLeft_.begin(), readLeft_.end(),
+                          chunkInputLeft_.begin() + static_cast<std::ptrdiff_t>(overlapFrames_));
+                std::copy(readRight_.begin(), readRight_.end(),
+                          chunkInputRight_.begin() + static_cast<std::ptrdiff_t>(overlapFrames_));
+            }
+
+            std::copy(chunkInputLeft_.end() - static_cast<std::ptrdiff_t>(overlapFrames_),
+                      chunkInputLeft_.end(), prevInputTailLeft_.begin());
+            std::copy(chunkInputRight_.end() - static_cast<std::ptrdiff_t>(overlapFrames_),
+                      chunkInputRight_.end(), prevInputTailRight_.begin());
+
+            bool inferenceOk = false;
+            if (delimiterBackend_ && deps_.config && deps_.config->delimiter.enabled &&
+                static_cast<int>(delimiterBackend_->expectedSampleRate()) == workerInputRate_) {
+                auto res = delimiterBackend_->process(
+                    delimiter::StereoPlanarView{chunkInputLeft_.data(), chunkInputRight_.data(),
+                                                chunkFrames_},
+                    chunkOutputLeft_, chunkOutputRight_);
+                inferenceOk = (res.status == delimiter::InferenceStatus::Ok);
+                if (!inferenceOk) {
+                    LOG_EVERY_N(WARN, 10,
+                                "[AudioPipeline] Delimiter inference failed (status={}, msg='{}'), "
+                                "falling back to bypass for this chunk",
+                                static_cast<int>(res.status), res.message);
+                }
+            }
+
+            if (!inferenceOk) {
+                chunkOutputLeft_ = chunkInputLeft_;
+                chunkOutputRight_ = chunkInputRight_;
+            }
+
+            segmentLeft_.assign(hopFrames_, 0.0f);
+            segmentRight_.assign(hopFrames_, 0.0f);
+            if (!hasPrevChunk_) {
+                std::copy(chunkOutputLeft_.begin(),
+                          chunkOutputLeft_.begin() + static_cast<std::ptrdiff_t>(hopFrames_),
+                          segmentLeft_.begin());
+                std::copy(chunkOutputRight_.begin(),
+                          chunkOutputRight_.begin() + static_cast<std::ptrdiff_t>(hopFrames_),
+                          segmentRight_.begin());
+            } else {
+                for (size_t i = 0; i < overlapFrames_; ++i) {
+                    segmentLeft_[i] =
+                        prevOutputTailWeightedLeft_[i] + chunkOutputLeft_[i] * fadeIn_[i];
+                    segmentRight_[i] =
+                        prevOutputTailWeightedRight_[i] + chunkOutputRight_[i] * fadeIn_[i];
+                }
+                for (size_t i = overlapFrames_; i < hopFrames_; ++i) {
+                    segmentLeft_[i] = chunkOutputLeft_[i];
+                    segmentRight_[i] = chunkOutputRight_[i];
+                }
+            }
+
+            for (size_t i = 0; i < overlapFrames_; ++i) {
+                float fadeOut = fadeIn_[overlapFrames_ - 1 - i];
+                prevOutputTailWeightedLeft_[i] = chunkOutputLeft_[hopFrames_ + i] * fadeOut;
+                prevOutputTailWeightedRight_[i] = chunkOutputRight_[hopFrames_ + i] * fadeOut;
+            }
+
+            hasPrevChunk_ = true;
+
+            size_t offset = 0;
+            while (offset < segmentLeft_.size()) {
+                size_t frames = std::min(maxFramesPerCall, segmentLeft_.size() - offset);
+
+                downstreamInterleaved_.assign(frames * 2, 0.0f);
+                for (size_t i = 0; i < frames; ++i) {
+                    downstreamInterleaved_[i * 2] = segmentLeft_[offset + i];
+                    downstreamInterleaved_[i * 2 + 1] = segmentRight_[offset + i];
+                }
+
+                if (deps_.buffer.playbackBuffer && deps_.running) {
+                    deps_.buffer.playbackBuffer->throttleProducerIfFull(*deps_.running,
+                                                                        deps_.currentOutputRate);
+                }
+
+                (void)processDirect(downstreamInterleaved_.data(), static_cast<uint32_t>(frames));
+                offset += frames;
+
+                if (workerStop_.load(std::memory_order_acquire)) {
+                    break;
+                }
+                if (deps_.running && !deps_.running->load(std::memory_order_acquire)) {
+                    break;
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR("[AudioPipeline] High-latency worker crashed: {}", e.what());
+        workerFailed_.store(true, std::memory_order_release);
+    } catch (...) {
+        LOG_ERROR("[AudioPipeline] High-latency worker crashed (unknown exception)");
+        workerFailed_.store(true, std::memory_order_release);
     }
 }
 

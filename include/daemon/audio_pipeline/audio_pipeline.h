@@ -7,6 +7,7 @@
 #include "daemon/audio_pipeline/streaming_cache_manager.h"
 #include "daemon/metrics/runtime_stats.h"
 #include "daemon/output/playback_buffer_manager.h"
+#include "io/audio_ring_buffer.h"
 #include "logging/logger.h"
 
 #include <cuda_runtime_api.h>
@@ -18,9 +19,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
+
+namespace delimiter {
+class InferenceBackend;
+}  // namespace delimiter
 
 namespace audio_pipeline {
 
@@ -50,6 +56,7 @@ struct Dependencies {
     const AppConfig* config = nullptr;
     Upsampler upsampler;
     OutputState output;
+    std::atomic<bool>* running = nullptr;
     std::atomic<bool>* fallbackActive = nullptr;
     std::atomic<bool>* outputReady = nullptr;
     std::atomic<bool>* crossfeedEnabled = nullptr;
@@ -72,6 +79,7 @@ struct Dependencies {
     streaming_cache::StreamingCacheManager* streamingCacheManager = nullptr;
     BufferResources buffer;
     std::function<size_t()> maxOutputBufferFrames;
+    std::function<int()> currentInputRate;
     std::function<int()> currentOutputRate;
 };
 
@@ -84,6 +92,7 @@ struct RenderResult {
 class AudioPipeline {
    public:
     explicit AudioPipeline(Dependencies deps);
+    ~AudioPipeline();
     bool process(const float* inputSamples, uint32_t nFrames);
     void requestRtPause();
     void resumeRtPause();
@@ -95,10 +104,17 @@ class AudioPipeline {
     const BufferResources& bufferResources() const;
 
    private:
+    bool processDirect(const float* inputSamples, uint32_t nFrames);
+    bool enqueueInputForWorker(const float* inputSamples, uint32_t nFrames);
+    void workerLoop();
+    void resetHighLatencyState(const char* reason);
+    void resetHighLatencyStateLocked(const char* reason);
+
     bool hasBufferState() const;
     bool isUpsamplerAvailable() const;
     bool isOutputReady() const;
     void logDroppingInput();
+    void logDroppingHighLatencyInput();
     void trimInternal(size_t minFramesToRemove);
     float computeStereoPeak(const float* left, const float* right, size_t frames) const;
     float applyOutputLimiter(float* interleaved, size_t frames);
@@ -117,6 +133,42 @@ class AudioPipeline {
     // RT パスで毎回 std::vector を生成しないためのワークバッファ (Issue #894)
     std::vector<float> workLeft_;
     std::vector<float> workRight_;
+
+    // High-latency worker path (Fix #1010 / Epic #1006)
+    bool highLatencyEnabled_ = false;
+    std::unique_ptr<delimiter::InferenceBackend> delimiterBackend_;
+    std::thread workerThread_;
+    std::atomic<bool> workerStop_{false};
+    std::atomic<bool> workerFailed_{false};
+    std::atomic<bool> inputDropDetected_{false};
+    std::chrono::steady_clock::time_point lastInputDropWarn_{std::chrono::steady_clock::now() -
+                                                             std::chrono::seconds(6)};
+
+    std::mutex inputCvMutex_;
+    std::condition_variable inputCv_;
+    AudioRingBuffer inputInterleaved_;
+
+    // Worker-owned state (single consumer thread)
+    int workerInputRate_ = 0;
+    size_t chunkFrames_ = 0;
+    size_t overlapFrames_ = 0;
+    size_t hopFrames_ = 0;
+    std::vector<float> fadeIn_;
+    std::vector<float> prevInputTailLeft_;
+    std::vector<float> prevInputTailRight_;
+    std::vector<float> prevOutputTailWeightedLeft_;
+    std::vector<float> prevOutputTailWeightedRight_;
+    std::vector<float> chunkInputLeft_;
+    std::vector<float> chunkInputRight_;
+    std::vector<float> chunkOutputLeft_;
+    std::vector<float> chunkOutputRight_;
+    std::vector<float> readInterleaved_;
+    std::vector<float> readLeft_;
+    std::vector<float> readRight_;
+    std::vector<float> segmentLeft_;
+    std::vector<float> segmentRight_;
+    std::vector<float> downstreamInterleaved_;
+    bool hasPrevChunk_ = false;
 };
 
 template <typename Container>
