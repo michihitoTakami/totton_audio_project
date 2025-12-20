@@ -20,6 +20,8 @@ CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
 DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
 RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
 PROFILE="${MAGICBOX_PROFILE:-base}"
+DATA_ROOT="${GPU_OS_DATA_DIR:-${DATA_DIR:-/var/lib/gpu_upsampler}}"
+OPRA_CACHE_DIR="${DATA_ROOT}/opra"
 : "${MAGICBOX_ENABLE_RTP:=false}"
 : "${MAGICBOX_RTP_AUTOSTART:=false}"
 
@@ -39,6 +41,13 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
+}
+
+prepare_opra_cache_dir() {
+    # Ensure OPRA cache layout exists on the mounted volume with writable perms
+    mkdir -p "${OPRA_CACHE_DIR}/versions" "${OPRA_CACHE_DIR}/lock"
+    chmod 775 "${OPRA_CACHE_DIR}" || true
+    chown -R magicbox:magicbox "${OPRA_CACHE_DIR}" 2>/dev/null || true
 }
 
 wait_for_alsa() {
@@ -119,6 +128,7 @@ configure_jetson_ape_i2s() {
 }
 
 prepare_config() {
+    prepare_opra_cache_dir
     mkdir -p "$CONFIG_DIR"
 
     if [[ ! -f "$DEFAULT_CONFIG" ]]; then
