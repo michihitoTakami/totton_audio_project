@@ -40,6 +40,7 @@ services:
     environment:
       RPI_CONTROL_BIND_INTERFACE: ${RPI_CONTROL_BIND_INTERFACE:-usb0}
       RPI_CONTROL_BIND_HOST: ${RPI_CONTROL_BIND_HOST:-}
+      RPI_CONTROL_BIND_SUBNET: ${RPI_CONTROL_BIND_SUBNET:-192.168.55.0/24}
       RPI_CONTROL_PORT: ${RPI_CONTROL_PORT:-8081}
       RPI_CONTROL_CONFIG_PATH: /var/lib/usb-i2s-bridge/config.env
       RPI_CONTROL_STATUS_PATH: /var/run/usb-i2s-bridge/status.json
