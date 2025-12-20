@@ -218,6 +218,24 @@ TEST_F(ConfigLoaderTest, LoadI2sSectionClampsChannelsAndDefaultsPeriodFrames) {
     EXPECT_EQ(config.i2s.periodFrames, 1024u);
 }
 
+TEST_F(ConfigLoaderTest, LoadDelimiterChunkingParameters) {
+    writeConfig(R"({
+        "delimiter": {
+            "enabled": true,
+            "expectedSampleRate": 44100,
+            "chunkSec": 5.5,
+            "overlapSec": 0.2
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+    EXPECT_TRUE(config.delimiter.enabled);
+    EXPECT_EQ(config.delimiter.expectedSampleRate, 44100u);
+    EXPECT_FLOAT_EQ(config.delimiter.chunkSec, 5.5f);
+    EXPECT_FLOAT_EQ(config.delimiter.overlapSec, 0.2f);
+}
+
 TEST_F(ConfigLoaderTest, LoadI2sSectionAllowsSampleRateZero) {
     writeConfig(R"({
         "i2s": {

@@ -86,7 +86,11 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
 
     highLatencyEnabled_ = (deps_.config && deps_.config->delimiter.enabled);
     if (highLatencyEnabled_) {
-        delimiterBackend_ = delimiter::createDelimiterInferenceBackend(deps_.config->delimiter);
+        if (deps_.delimiterBackendFactory) {
+            delimiterBackend_ = deps_.delimiterBackendFactory(deps_.config->delimiter);
+        } else {
+            delimiterBackend_ = delimiter::createDelimiterInferenceBackend(deps_.config->delimiter);
+        }
 
         int initRate = pickInitialInputRate(deps_);
         int rateForCapacity = std::clamp(initRate, 1, kMaxHighLatencyInitRate);
@@ -688,8 +692,15 @@ void AudioPipeline::workerLoop() {
         }
         workerInputRate_ = inputRate;
 
-        chunkFrames_ = safeRoundFrames(kDefaultChunkSec, workerInputRate_);
-        overlapFrames_ = safeRoundFrames(kDefaultOverlapSec, workerInputRate_);
+        float chunkSec = (deps_.config && deps_.config->delimiter.chunkSec > 0.0f)
+                             ? deps_.config->delimiter.chunkSec
+                             : kDefaultChunkSec;
+        float overlapSec = (deps_.config && deps_.config->delimiter.overlapSec > 0.0f)
+                               ? deps_.config->delimiter.overlapSec
+                               : kDefaultOverlapSec;
+
+        chunkFrames_ = safeRoundFrames(chunkSec, workerInputRate_);
+        overlapFrames_ = safeRoundFrames(overlapSec, workerInputRate_);
         overlapFrames_ = std::min(overlapFrames_, chunkFrames_ > 0 ? (chunkFrames_ - 1) : 0);
         if (chunkFrames_ == 0 || overlapFrames_ == 0 || overlapFrames_ >= chunkFrames_) {
             LOG_ERROR(

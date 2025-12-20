@@ -112,6 +112,10 @@ struct AppConfig {
         // - "ort": ONNX Runtime backend (expected to run out-of-process or optional dependency)
         std::string backend = "bypass";
 
+        // High-latency worker chunking parameters (Fix #1009 / #1010)
+        float chunkSec = 6.0f;
+        float overlapSec = 0.25f;
+
         struct OrtConfig {
             // Path to ONNX model file.
             std::string modelPath = "";

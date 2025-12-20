@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -397,6 +398,18 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                     int sr = dl["expectedSampleRate"].get<int>();
                     if (sr > 0) {
                         outConfig.delimiter.expectedSampleRate = static_cast<uint32_t>(sr);
+                    }
+                }
+                if (dl.contains("chunkSec") && dl["chunkSec"].is_number()) {
+                    float sec = dl["chunkSec"].get<float>();
+                    if (std::isfinite(sec) && sec > 0.0f) {
+                        outConfig.delimiter.chunkSec = sec;
+                    }
+                }
+                if (dl.contains("overlapSec") && dl["overlapSec"].is_number()) {
+                    float sec = dl["overlapSec"].get<float>();
+                    if (std::isfinite(sec) && sec > 0.0f) {
+                        outConfig.delimiter.overlapSec = sec;
                     }
                 }
 
