@@ -68,3 +68,62 @@ def test_opra_sync_update_starts_job(monkeypatch, tmp_path: Path):
     manager = OpraCacheManager()
     state = manager.load_state()
     assert state.current_commit == "abc1234"
+
+
+def test_opra_sync_requires_admin_token(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("GPU_OS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MAGICBOX_ADMIN_TOKEN", "secret-token")
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.get("/api/opra/sync/status")
+    assert resp.status_code == 401
+
+    resp_ok = client.get(
+        "/api/opra/sync/status", headers={"X-Admin-Token": "secret-token"}
+    )
+    assert resp_ok.status_code == 200
+
+
+def test_opra_sync_rollback_via_router(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("GPU_OS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MAGICBOX_ADMIN_TOKEN", "secret-token")
+
+    manager = OpraCacheManager()
+    db_path = tmp_path / "database_v1.jsonl"
+    _write_sample_db(db_path)
+
+    first_sha = "abc1111"
+    second_sha = "def2222"
+
+    metadata = manager.build_metadata(
+        commit_sha=first_sha,
+        source="manual",
+        source_url="file://local",
+        database_path=db_path,
+        stats={"vendor": 1},
+    )
+    manager.install_version(first_sha, db_path, metadata)
+    manager.activate_version(first_sha)
+
+    metadata = manager.build_metadata(
+        commit_sha=second_sha,
+        source="manual",
+        source_url="file://local",
+        database_path=db_path,
+        stats={"vendor": 1},
+    )
+    manager.install_version(second_sha, db_path, metadata)
+    manager.activate_version(second_sha)
+
+    app = create_app()
+    client = TestClient(app)
+    resp = client.post(
+        "/api/opra/sync/rollback", headers={"X-Admin-Token": "secret-token"}
+    )
+    assert resp.status_code == 202
+
+    state = manager.load_state()
+    assert state.current_commit == first_sha
+    assert state.previous_commit == second_sha

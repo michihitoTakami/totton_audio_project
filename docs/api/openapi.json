@@ -946,6 +946,24 @@
         "summary": "Opra Sync Status",
         "description": "Return current OPRA sync status.",
         "operationId": "opra_sync_status_api_opra_sync_status_get",
+        "parameters": [
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -953,6 +971,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpraSyncStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -977,6 +1005,22 @@
               "type": "string",
               "default": "github_raw",
               "title": "Source"
+            }
+          },
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
             }
           }
         ],
@@ -1012,15 +1056,33 @@
         "summary": "Opra Sync Update",
         "description": "Kick off OPRA sync update in background.",
         "operationId": "opra_sync_update_api_opra_sync_update_post",
+        "parameters": [
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/OpraSyncUpdateRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "202": {
@@ -1054,6 +1116,24 @@
         "summary": "Opra Sync Rollback",
         "description": "Rollback to the previous OPRA version.",
         "operationId": "opra_sync_rollback_api_opra_sync_rollback_post",
+        "parameters": [
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
         "responses": {
           "202": {
             "description": "Successful Response",
@@ -1061,6 +1141,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpraSyncJobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
