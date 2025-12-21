@@ -45,6 +45,14 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     std::atomic<int> delimiterMode(static_cast<int>(delimiter::ProcessingMode::Bypass));
     std::atomic<int> delimiterReason(static_cast<int>(delimiter::FallbackReason::Overload));
     std::atomic<bool> delimiterLocked(true);
+    std::atomic<bool> delimiterEnabled(true);
+    std::atomic<bool> delimiterWarmup(true);
+    std::atomic<std::size_t> delimiterQueueSamples(128);
+    std::atomic<double> delimiterQueueSeconds(0.5);
+    std::atomic<double> delimiterLastInferenceMs(42.0);
+    std::atomic<bool> delimiterBackendAvailable(true);
+    std::atomic<bool> delimiterBackendValid(false);
+    std::atomic<int> delimiterTargetMode(static_cast<int>(delimiter::ProcessingMode::Active));
     int inputRate = 48000;
 
     runtime_stats::recordClip();
@@ -66,6 +74,14 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     deps.delimiterMode = &delimiterMode;
     deps.delimiterFallbackReason = &delimiterReason;
     deps.delimiterBypassLocked = &delimiterLocked;
+    deps.delimiterEnabled = &delimiterEnabled;
+    deps.delimiterWarmup = &delimiterWarmup;
+    deps.delimiterQueueSamples = &delimiterQueueSamples;
+    deps.delimiterQueueSeconds = &delimiterQueueSeconds;
+    deps.delimiterLastInferenceMs = &delimiterLastInferenceMs;
+    deps.delimiterBackendAvailable = &delimiterBackendAvailable;
+    deps.delimiterBackendValid = &delimiterBackendValid;
+    deps.delimiterTargetMode = &delimiterTargetMode;
     std::atomic<bool> outputReady(true);
     deps.outputReady = &outputReady;
 
@@ -78,8 +94,16 @@ TEST(RuntimeStatsTest, CollectsUpdatedValues) {
     EXPECT_EQ(stats["buffer"]["dropped_frames"], 17u);
     EXPECT_EQ(stats["fallback"]["active"], false);
     EXPECT_EQ(stats["delimiter"]["mode"], "bypass");
+    EXPECT_EQ(stats["delimiter"]["target_mode"], "active");
     EXPECT_EQ(stats["delimiter"]["fallback_reason"], "overload");
     EXPECT_EQ(stats["delimiter"]["bypass_locked"], true);
+    EXPECT_EQ(stats["delimiter"]["enabled"], true);
+    EXPECT_EQ(stats["delimiter"]["warmup"], true);
+    EXPECT_EQ(stats["delimiter"]["queue_samples"], 128u);
+    EXPECT_DOUBLE_EQ(stats["delimiter"]["queue_seconds"].get<double>(), 0.5);
+    EXPECT_DOUBLE_EQ(stats["delimiter"]["last_inference_ms"].get<double>(), 42.0);
+    EXPECT_EQ(stats["delimiter"]["backend_available"], true);
+    EXPECT_EQ(stats["delimiter"]["backend_valid"], false);
 
     EXPECT_FLOAT_EQ(stats["gain"]["headroom"].get<float>(), 0.75f);
     EXPECT_FLOAT_EQ(stats["gain"]["headroom_effective"].get<float>(), 1.1f);

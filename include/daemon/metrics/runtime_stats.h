@@ -35,6 +35,14 @@ struct Dependencies {
     const std::atomic<int>* delimiterMode = nullptr;
     const std::atomic<int>* delimiterFallbackReason = nullptr;
     const std::atomic<bool>* delimiterBypassLocked = nullptr;
+    const std::atomic<bool>* delimiterEnabled = nullptr;
+    const std::atomic<bool>* delimiterWarmup = nullptr;
+    const std::atomic<std::size_t>* delimiterQueueSamples = nullptr;
+    const std::atomic<double>* delimiterQueueSeconds = nullptr;
+    const std::atomic<double>* delimiterLastInferenceMs = nullptr;
+    const std::atomic<bool>* delimiterBackendAvailable = nullptr;
+    const std::atomic<bool>* delimiterBackendValid = nullptr;
+    const std::atomic<int>* delimiterTargetMode = nullptr;
     daemon_output::PlaybackBufferManager* playbackBuffer = nullptr;
     const std::atomic<bool>* outputReady = nullptr;
 };

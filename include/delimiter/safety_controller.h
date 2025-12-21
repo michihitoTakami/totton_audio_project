@@ -53,6 +53,8 @@ class SafetyController {
 
     bool requestBypass(FallbackReason reason, const std::string& detail);
     bool requestActive(bool userRequested, const std::string& detail);
+    void forceBypassLock(FallbackReason reason, const std::string& detail);
+    void forceActive(const std::string& detail);
 
     bool observeInferenceResult(const InferenceResult& result);
     bool observeOverload(double realtimeFactor, double queueSeconds);

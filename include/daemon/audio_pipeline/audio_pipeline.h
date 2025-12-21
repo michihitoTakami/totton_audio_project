@@ -22,6 +22,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -86,10 +87,33 @@ struct Dependencies {
     std::atomic<int>* delimiterMode = nullptr;
     std::atomic<int>* delimiterFallbackReason = nullptr;
     std::atomic<bool>* delimiterBypassLocked = nullptr;
+    std::atomic<bool>* delimiterEnabled = nullptr;
+    std::atomic<bool>* delimiterWarmup = nullptr;
+    std::atomic<std::size_t>* delimiterQueueSamples = nullptr;
+    std::atomic<double>* delimiterQueueSeconds = nullptr;
+    std::atomic<double>* delimiterLastInferenceMs = nullptr;
+    std::atomic<bool>* delimiterBackendAvailable = nullptr;
+    std::atomic<bool>* delimiterBackendValid = nullptr;
+    std::atomic<int>* delimiterTargetMode = nullptr;
 
     // Test hook: override delimiter backend creation (defaults to createDelimiterInferenceBackend).
     std::function<std::unique_ptr<delimiter::InferenceBackend>(const AppConfig::DelimiterConfig&)>
         delimiterBackendFactory;
+};
+
+struct DelimiterStatusSnapshot {
+    delimiter::ProcessingMode mode = delimiter::ProcessingMode::Active;
+    delimiter::ProcessingMode targetMode = delimiter::ProcessingMode::Active;
+    delimiter::FallbackReason fallbackReason = delimiter::FallbackReason::None;
+    bool bypassLocked = false;
+    bool enabled = false;
+    bool warmup = false;
+    bool backendAvailable = false;
+    bool backendValid = false;
+    double queueSeconds = 0.0;
+    std::size_t queueSamples = 0;
+    double lastInferenceMs = 0.0;
+    std::string detail;
 };
 
 struct RenderResult {
@@ -107,6 +131,9 @@ class AudioPipeline {
     void resumeRtPause();
     bool waitForRtPaused(std::chrono::milliseconds timeout) const;
     bool waitForRtQuiescent(std::chrono::milliseconds timeout) const;
+    bool requestDelimiterEnable();
+    bool requestDelimiterDisable();
+    DelimiterStatusSnapshot delimiterStatus() const;
     RenderResult renderOutput(size_t frames, std::vector<int32_t>& interleavedOut,
                               std::vector<float>& floatScratch, SoftMute::Controller* softMute);
     void trimOutputBuffer(size_t minFramesToRemove);
@@ -119,6 +146,10 @@ class AudioPipeline {
     void resetHighLatencyState(const char* reason);
     void resetHighLatencyStateLocked(const char* reason);
     void updateDelimiterStatus(const delimiter::SafetyStatus& status);
+    void applyDelimiterCommand();
+    void updateDelimiterTelemetry(bool backendEnabled, bool backendValid, double queueSeconds,
+                                  std::size_t queueSamples);
+    void recordInferenceDurationMs(double durationMs);
 
     bool hasBufferState() const;
     bool isUpsamplerAvailable() const;
@@ -180,6 +211,18 @@ class AudioPipeline {
     std::vector<float> segmentRight_;
     std::vector<float> downstreamInterleaved_;
     bool hasPrevChunk_ = false;
+
+    enum class DelimiterCommand { None, Enable, Disable };
+    std::atomic<int> delimiterCommand_{static_cast<int>(DelimiterCommand::None)};
+    std::atomic<bool> delimiterWarmup_{false};
+    std::atomic<std::size_t> delimiterQueueSamples_{0};
+    std::atomic<double> delimiterQueueSeconds_{0.0};
+    std::atomic<double> delimiterLastInferenceMs_{0.0};
+    std::atomic<bool> delimiterBackendAvailable_{false};
+    std::atomic<bool> delimiterBackendValid_{false};
+    std::atomic<int> delimiterTargetMode_{static_cast<int>(delimiter::ProcessingMode::Active)};
+    mutable std::mutex delimiterDetailMutex_;
+    std::string delimiterDetail_;
 };
 
 template <typename Container>

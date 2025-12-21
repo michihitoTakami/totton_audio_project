@@ -115,11 +115,21 @@ const char* delimiterReasonToString(int value) {
 
 nlohmann::json buildDelimiterJson(const Dependencies& deps) {
     nlohmann::json dl;
-    dl["enabled"] = (deps.config ? deps.config->delimiter.enabled : false);
+    bool enabled = (deps.config ? deps.config->delimiter.enabled : false);
+    if (deps.delimiterEnabled) {
+        enabled = deps.delimiterEnabled->load(std::memory_order_relaxed);
+    }
+    dl["enabled"] = enabled;
     if (deps.delimiterMode) {
         dl["mode"] = delimiterModeToString(deps.delimiterMode->load(std::memory_order_relaxed));
     } else {
         dl["mode"] = "unknown";
+    }
+    if (deps.delimiterTargetMode) {
+        dl["target_mode"] =
+            delimiterModeToString(deps.delimiterTargetMode->load(std::memory_order_relaxed));
+    } else {
+        dl["target_mode"] = dl["mode"];
     }
     if (deps.delimiterFallbackReason) {
         dl["fallback_reason"] =
@@ -130,6 +140,23 @@ nlohmann::json buildDelimiterJson(const Dependencies& deps) {
     dl["bypass_locked"] =
         (deps.delimiterBypassLocked ? deps.delimiterBypassLocked->load(std::memory_order_relaxed)
                                     : false);
+    dl["warmup"] =
+        (deps.delimiterWarmup ? deps.delimiterWarmup->load(std::memory_order_relaxed) : false);
+    dl["queue_samples"] = static_cast<std::size_t>(
+        deps.delimiterQueueSamples ? deps.delimiterQueueSamples->load(std::memory_order_relaxed)
+                                   : 0);
+    dl["queue_seconds"] =
+        (deps.delimiterQueueSeconds ? deps.delimiterQueueSeconds->load(std::memory_order_relaxed)
+                                    : 0.0);
+    dl["last_inference_ms"] = (deps.delimiterLastInferenceMs
+                                   ? deps.delimiterLastInferenceMs->load(std::memory_order_relaxed)
+                                   : 0.0);
+    dl["backend_available"] = (deps.delimiterBackendAvailable
+                                   ? deps.delimiterBackendAvailable->load(std::memory_order_relaxed)
+                                   : enabled);
+    dl["backend_valid"] =
+        (deps.delimiterBackendValid ? deps.delimiterBackendValid->load(std::memory_order_relaxed)
+                                    : enabled);
     return dl;
 }
 
