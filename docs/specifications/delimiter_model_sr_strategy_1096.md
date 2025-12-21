@@ -67,9 +67,11 @@ EPIC #1095 の De-Limiter は、現状 C++ 側の `InferenceBackend` がプレ�
 - ONNX の I/O 仕様（例: 入力 `(1,2,T)`）は C++ 実装で明確に固定・検証する
 
 ### #1098（モデル配備/設定/ライセンス表記）
-- upstream の MIT を根拠に、**NOTICE/ATTRIBUTION** を整備する
-- 重み/ONNX の配布は、まずは **外部DL + チェックサム検証**（repoに巨大バイナリを常駐させない）を第一案とする
-  - 実際に git 管理する/しないは #1098 で最終決定
+- upstream MIT を根拠に **NOTICE/ATTRIBUTION** を整備済み（`data/delimiter/weights/LICENSE.upstream` / `NOTICE.md` / `THIRD_PARTY_LICENSES.md`）
+- 重み/ONNX は **外部DL + ローカル生成** 方針
+  - 取得: `scripts/delimiter/download_assets.py`（SHA256検証、manifest: `data/delimiter/weights/manifest.json`）
+  - ONNX: `scripts/delimiter/export_onnx.py` で `data/delimiter/weights/jeonchangbin49-de-limiter/44100/delimiter.onnx` を生成（git非管理）
+- 設定サンプル（SR=44100/48k系）: `config_samples/delimiter/*.json` を参照
 
 ### #1099（オフライン検証スクリプト）
 - 現状の「44.1k 正規化 + resample-back」設計はこの SR 方針と一致
