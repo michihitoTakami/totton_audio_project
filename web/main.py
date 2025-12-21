@@ -19,6 +19,7 @@ from .routers import (
     crossfeed_router,
     dac_router,
     daemon_router,
+    delimiter_router,
     eq_router,
     i2s_router,
     opra_router,
@@ -31,6 +32,7 @@ from .routers import (
 from .templates.pages import (
     render_dashboard,
     render_eq_settings,
+    render_delimiter,
     render_pi_settings,
     render_system,
 )
@@ -60,6 +62,10 @@ tags_metadata = [
     {
         "name": "crossfeed",
         "description": "Crossfeed (HRTF-based headphone virtualization) control",
+    },
+    {
+        "name": "delimiter",
+        "description": "De-limiter runtime control and status",
     },
     {
         "name": "output",
@@ -184,6 +190,7 @@ Most endpoints do not require authentication (local network only).
     app.include_router(opra_sync_router)
     app.include_router(dac_router)
     app.include_router(crossfeed_router)
+    app.include_router(delimiter_router)
     app.include_router(partitioned_router)
     app.include_router(output_mode_router)
     app.include_router(pi_router)
@@ -244,6 +251,15 @@ async def system_page(request: Request, lang: str | None = None):
     resolved_lang = _resolve_lang(request, lang)
     return _render_with_lang(
         content=render_system(lang=resolved_lang), lang=resolved_lang
+    )
+
+
+@app.get("/delimiter", response_class=HTMLResponse)
+async def delimiter_page(request: Request, lang: str | None = None):
+    """Serve the De-limiter page."""
+    resolved_lang = _resolve_lang(request, lang)
+    return _render_with_lang(
+        content=render_delimiter(lang=resolved_lang), lang=resolved_lang
     )
 
 

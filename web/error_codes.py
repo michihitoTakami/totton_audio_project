@@ -24,6 +24,7 @@ class ErrorCategory(str, Enum):
     GPU_CUDA = "gpu_cuda"
     VALIDATION = "validation"
     CROSSFEED = "crossfeed"  # #150
+    DELIMITER = "delimiter"  # #1012
     INTERNAL = "internal"
 
 
@@ -80,6 +81,11 @@ class ErrorCode(str, Enum):
     CROSSFEED_INVALID_RATE_FAMILY = "CROSSFEED_INVALID_RATE_FAMILY"
     CROSSFEED_NOT_IMPLEMENTED = "CROSSFEED_NOT_IMPLEMENTED"
     CROSSFEED_INVALID_FILTER_SIZE = "CROSSFEED_INVALID_FILTER_SIZE"
+
+    # De-limiter (0x7000) - #1012
+    DELIMITER_UNAVAILABLE = "DELIMITER_UNAVAILABLE"
+    DELIMITER_ENABLE_FAILED = "DELIMITER_ENABLE_FAILED"
+    DELIMITER_DISABLE_FAILED = "DELIMITER_DISABLE_FAILED"
 
 
 @dataclass(frozen=True)
@@ -201,6 +207,16 @@ ERROR_MAPPINGS: dict[ErrorCode, ErrorMapping] = {
     ErrorCode.CROSSFEED_INVALID_FILTER_SIZE: ErrorMapping(
         400, ErrorCategory.CROSSFEED, "Invalid Filter Size"
     ),
+    # De-limiter (3 codes)
+    ErrorCode.DELIMITER_UNAVAILABLE: ErrorMapping(
+        503, ErrorCategory.DELIMITER, "De-limiter Unavailable"
+    ),
+    ErrorCode.DELIMITER_ENABLE_FAILED: ErrorMapping(
+        500, ErrorCategory.DELIMITER, "Failed to Enable De-limiter"
+    ),
+    ErrorCode.DELIMITER_DISABLE_FAILED: ErrorMapping(
+        500, ErrorCategory.DELIMITER, "Failed to Disable De-limiter"
+    ),
 }
 
 # Default mapping for unknown error codes
@@ -243,5 +259,7 @@ def get_category_from_code(error_code: str) -> ErrorCategory:
         return ErrorCategory.VALIDATION
     elif error_code.startswith("CROSSFEED_"):
         return ErrorCategory.CROSSFEED
+    elif error_code.startswith("DELIMITER_"):
+        return ErrorCategory.DELIMITER
     else:
         return ErrorCategory.INTERNAL

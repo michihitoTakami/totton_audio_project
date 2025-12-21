@@ -159,6 +159,23 @@ class PeakLevels(BaseModel):
     post_gain: PeakStage = Field(default_factory=PeakStage)
 
 
+class DelimiterStatus(BaseModel):
+    """De-limiter runtime status."""
+
+    enabled: bool = False
+    backend_available: bool = False
+    backend_valid: bool = False
+    mode: str = "unknown"
+    target_mode: str = "unknown"
+    fallback_reason: str = "unknown"
+    bypass_locked: bool = False
+    warmup: bool = False
+    queue_seconds: float = 0.0
+    queue_samples: int = 0
+    last_inference_ms: float = 0.0
+    detail: Optional[str] = None
+
+
 class Status(BaseModel):
     """System status response model."""
 
@@ -182,6 +199,7 @@ class Status(BaseModel):
     rendered_silence_frames: int = 0
     alsa_buffer_size_config: int = 0
     alsa_period_size_config: int = 0
+    delimiter: Optional[DelimiterStatus] = None
 
 
 class DaemonStatus(BaseModel):
@@ -717,6 +735,14 @@ class ApiResponse(BaseModel):
     message: str
     data: Optional[dict[str, Any]] = None
     restart_required: bool = False
+
+
+class DelimiterActionResponse(BaseModel):
+    """Response model for De-limiter enable/disable actions."""
+
+    success: bool
+    status: DelimiterStatus
+    message: Optional[str] = None
 
 
 # ============================================================================

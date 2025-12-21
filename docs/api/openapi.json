@@ -1514,6 +1514,72 @@
         }
       }
     },
+    "/delimiter/status": {
+      "get": {
+        "tags": [
+          "delimiter"
+        ],
+        "summary": "Get Delimiter Status",
+        "description": "Get current De-limiter status.",
+        "operationId": "get_delimiter_status_delimiter_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelimiterStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/delimiter/enable": {
+      "post": {
+        "tags": [
+          "delimiter"
+        ],
+        "summary": "Enable Delimiter",
+        "description": "Enable De-limiter processing.",
+        "operationId": "enable_delimiter_delimiter_enable_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelimiterActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/delimiter/disable": {
+      "post": {
+        "tags": [
+          "delimiter"
+        ],
+        "summary": "Disable Delimiter",
+        "description": "Disable De-limiter processing.",
+        "operationId": "disable_delimiter_delimiter_disable_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelimiterActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/partitioned-convolution": {
       "get": {
         "tags": [
@@ -1886,6 +1952,53 @@
         "summary": "System Page",
         "description": "Serve the System page.",
         "operationId": "system_page_system_get",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lang"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/delimiter": {
+      "get": {
+        "summary": "Delimiter Page",
+        "description": "Serve the De-limiter page.",
+        "operationId": "delimiter_page_delimiter_get",
         "parameters": [
           {
             "name": "lang",
@@ -2700,6 +2813,108 @@
         ],
         "title": "DaemonStatus",
         "description": "Daemon status response model."
+      },
+      "DelimiterActionResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DelimiterStatus"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "status"
+        ],
+        "title": "DelimiterActionResponse",
+        "description": "Response model for De-limiter enable/disable actions."
+      },
+      "DelimiterStatus": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "backend_available": {
+            "type": "boolean",
+            "title": "Backend Available",
+            "default": false
+          },
+          "backend_valid": {
+            "type": "boolean",
+            "title": "Backend Valid",
+            "default": false
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode",
+            "default": "unknown"
+          },
+          "target_mode": {
+            "type": "string",
+            "title": "Target Mode",
+            "default": "unknown"
+          },
+          "fallback_reason": {
+            "type": "string",
+            "title": "Fallback Reason",
+            "default": "unknown"
+          },
+          "bypass_locked": {
+            "type": "boolean",
+            "title": "Bypass Locked",
+            "default": false
+          },
+          "warmup": {
+            "type": "boolean",
+            "title": "Warmup",
+            "default": false
+          },
+          "queue_seconds": {
+            "type": "number",
+            "title": "Queue Seconds",
+            "default": 0.0
+          },
+          "queue_samples": {
+            "type": "integer",
+            "title": "Queue Samples",
+            "default": 0
+          },
+          "last_inference_ms": {
+            "type": "number",
+            "title": "Last Inference Ms",
+            "default": 0.0
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "DelimiterStatus",
+        "description": "De-limiter runtime status."
       },
       "DevicesResponse": {
         "properties": {
@@ -4440,6 +4655,16 @@
             "type": "integer",
             "title": "Alsa Period Size Config",
             "default": 0
+          },
+          "delimiter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelimiterStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -4536,6 +4761,10 @@
     {
       "name": "crossfeed",
       "description": "Crossfeed (HRTF-based headphone virtualization) control"
+    },
+    {
+      "name": "delimiter",
+      "description": "De-limiter runtime control and status"
     },
     {
       "name": "output",
