@@ -98,3 +98,18 @@ def test_validation_requires_type(tmp_path: Path) -> None:
     path.write_text('{"id":"no_type"}\n', encoding="utf-8")
     with pytest.raises(OpraDownloadError):
         validate_database(path, sample_lines=1)
+
+
+def test_download_rejects_broken_jsonl(tmp_path: Path) -> None:
+    commit_sha = "badfeed"  # pragma: allowlist secret
+    raw_url = f"{OPRA_RAW_BASE}/{commit_sha}/dist/database_v1.jsonl"
+    fetcher = FetchRecorder({raw_url: b'{"type":"vendor"\n'})
+
+    with pytest.raises(OpraDownloadError):
+        download_opra_database(
+            target=commit_sha,
+            source="github_raw",
+            fetcher=fetcher,
+            temp_dir=tmp_path,
+            sample_lines=5,
+        )
