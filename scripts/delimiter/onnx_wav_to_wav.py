@@ -12,6 +12,7 @@ import soundfile as sf
 from scipy.signal import resample_poly
 
 
+DEFAULT_EXPECTED_SAMPLE_RATE = 44100
 ExecutionProvider = Literal["cpu", "cuda", "tensorrt"]
 
 
@@ -23,6 +24,41 @@ def _as_stereo(x: np.ndarray) -> np.ndarray:
     if x.ndim == 2 and x.shape[1] == 2:
         return x
     raise ValueError(f"Unsupported channel layout: shape={x.shape}")
+
+
+def _rms(x: np.ndarray) -> float:
+    if x.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(x, dtype=np.float64))))
+
+
+def _integrated_lufs(x: np.ndarray, sr: int) -> float | None:
+    try:
+        import pyloudnorm as pyln
+    except Exception:
+        return None
+
+    data = x if x.ndim == 1 else x
+    try:
+        meter = pyln.Meter(sr)
+        return float(meter.integrated_loudness(data))
+    except Exception:
+        return None
+
+
+def _analyze_audio(audio: np.ndarray, sr: int) -> dict[str, Any]:
+    from scripts.analysis.check_headroom import analyze_buffer
+
+    stats = analyze_buffer(audio)
+    stats["sample_rate"] = int(sr)
+    stats["duration_sec"] = float(len(audio) / sr if sr else 0.0)
+    stats["rms"] = _rms(audio)
+    stats["lufs"] = _integrated_lufs(audio, int(sr))
+    return stats
+
+
+def _fmt_lufs(value: float | None) -> str:
+    return f"{value:.2f} LUFS" if value is not None else "n/a"
 
 
 def _resample(audio: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
@@ -52,8 +88,8 @@ def _overlap_add(
 
     channels = int(chunks[0].shape[1])
     out_len = hop * (len(chunks) - 1) + int(chunks[0].shape[0])
-    out = np.zeros((out_len, channels), dtype=np.float32)
-    wsum = np.zeros((out_len,), dtype=np.float32)
+    out: np.ndarray = np.zeros((out_len, channels), dtype=np.float32)
+    wsum: np.ndarray = np.zeros((out_len,), dtype=np.float32)
 
     if overlap > 0:
         t = np.linspace(0.0, 1.0, overlap, endpoint=True, dtype=np.float32)
@@ -64,7 +100,7 @@ def _overlap_add(
     for i, chunk in enumerate(chunks):
         start = i * hop
         length = int(chunk.shape[0])
-        w = np.ones((length,), dtype=np.float32)
+        w: np.ndarray = np.ones((length,), dtype=np.float32)
         if overlap > 0 and i > 0:
             w[:overlap] = fade
         if overlap > 0 and i < len(chunks) - 1:
@@ -93,7 +129,7 @@ def _providers_for(ep: ExecutionProvider) -> list[str]:
 
 
 def _infer_onnx(
-    audio_44100_stereo: np.ndarray,
+    audio_stereo: np.ndarray,
     *,
     model_path: Path,
     provider: ExecutionProvider,
@@ -124,7 +160,7 @@ def _infer_onnx(
     )
 
     input_name = session.get_inputs()[0].name
-    x = audio_44100_stereo.T[None, :, :].astype(np.float32)  # (1, 2, T)
+    x: np.ndarray = audio_stereo.T[None, :, :].astype(np.float32)  # (1, 2, T)
 
     outputs = session.run(None, {input_name: x})
     if not outputs:
@@ -167,6 +203,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--overlap-sec", type=float, default=0.25, help="Crossfade overlap")
     p.add_argument(
+        "--expected-sample-rate",
+        type=int,
+        default=DEFAULT_EXPECTED_SAMPLE_RATE,
+        help="Target sample rate for inference (input will be resampled)",
+    )
+    p.add_argument(
         "--intra-op-threads",
         type=int,
         default=0,
@@ -193,29 +235,34 @@ def main() -> None:
     audio = np.asarray(audio, dtype=np.float32)
     audio = _as_stereo(audio)
 
-    audio_44100 = _resample(audio, sr_in=int(sr), sr_out=44100)
+    if args.expected_sample_rate <= 0:
+        raise ValueError("--expected-sample-rate must be positive")
+
+    target_sr = int(args.expected_sample_rate)
+    audio_target = _resample(audio, sr_in=int(sr), sr_out=target_sr)
+    in_stats = _analyze_audio(audio, int(sr))
 
     t0 = time.perf_counter()
     meta: dict[str, Any] = {}
     if args.chunk_sec <= 0:
-        out_44100, meta = _infer_onnx(
-            audio_44100,
+        out_target, meta = _infer_onnx(
+            audio_target,
             model_path=args.model,
             provider=args.provider,
             intra_op_threads=int(args.intra_op_threads),
         )
     else:
-        sr_infer = 44100
+        sr_infer = target_sr
         chunk_len = int(round(float(args.chunk_sec) * sr_infer))
         overlap = int(round(float(args.overlap_sec) * sr_infer))
         hop = chunk_len - overlap
         if hop <= 0:
             raise ValueError("chunk-sec must be > overlap-sec")
 
-        total_len = int(audio_44100.shape[0])
+        total_len = int(audio_target.shape[0])
         if total_len <= chunk_len:
             padded = np.pad(
-                audio_44100, ((0, chunk_len - total_len), (0, 0)), mode="constant"
+                audio_target, ((0, chunk_len - total_len), (0, 0)), mode="constant"
             )
             out_chunk, meta = _infer_onnx(
                 padded,
@@ -223,10 +270,10 @@ def main() -> None:
                 provider=args.provider,
                 intra_op_threads=int(args.intra_op_threads),
             )
-            out_44100 = out_chunk[:total_len]
+            out_target = out_chunk[:total_len]
         else:
             pad = (hop - (max(0, total_len - chunk_len) % hop)) % hop
-            padded = np.pad(audio_44100, ((0, pad), (0, 0)), mode="constant")
+            padded = np.pad(audio_target, ((0, pad), (0, 0)), mode="constant")
 
             chunks_out: list[np.ndarray] = []
             for start in range(0, padded.shape[0] - chunk_len + 1, hop):
@@ -239,26 +286,41 @@ def main() -> None:
                 )
                 chunks_out.append(out_chunk)
 
-            out_44100 = _overlap_add(
+            out_target = _overlap_add(
                 chunks_out, hop=hop, overlap=overlap, total_len=padded.shape[0]
             )[:total_len]
 
     dt = time.perf_counter() - t0
 
-    out_audio = out_44100
-    out_sr = 44100
-    if args.resample_back and int(sr) != 44100:
-        out_audio = _resample(out_44100, sr_in=44100, sr_out=int(sr))
+    out_audio = out_target
+    out_sr = target_sr
+    if args.resample_back and int(sr) != target_sr:
+        out_audio = _resample(out_target, sr_in=target_sr, sr_out=int(sr))
         out_sr = int(sr)
+    meta["expected_sample_rate"] = target_sr
+    meta["input_sample_rate"] = int(sr)
+    meta["output_sample_rate"] = int(out_sr)
+    meta["resample_back"] = bool(args.resample_back and int(sr) != target_sr)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     sf.write(args.output, out_audio, out_sr)
 
+    out_stats = _analyze_audio(out_audio, out_sr)
     duration = float(len(audio) / sr) if sr else 0.0
     rtf = (dt / duration) if duration > 0 else None
 
-    print(f"[input] sr={sr} ch=2 dur={duration:.3f}s")
-    print(f"[output] sr={out_sr} ch=2")
+    print(
+        f"[input] sr={sr} ch=2 dur={duration:.3f}s "
+        f"peak={in_stats['peak_linear']:.6f} ({in_stats['peak_dbfs']:.2f} dBFS) "
+        f"clip={in_stats['clip_count']} ({in_stats['clip_rate']*100:.6f}%) "
+        f"rms={in_stats['rms']:.6f} lufs={_fmt_lufs(in_stats['lufs'])}"
+    )
+    print(
+        f"[output] sr={out_sr} ch=2 "
+        f"peak={out_stats['peak_linear']:.6f} ({out_stats['peak_dbfs']:.2f} dBFS) "
+        f"clip={out_stats['clip_count']} ({out_stats['clip_rate']*100:.6f}%) "
+        f"rms={out_stats['rms']:.6f} lufs={_fmt_lufs(out_stats['lufs'])}"
+    )
     print(
         f"[perf] elapsed={dt:.3f}s rtf={rtf:.3f} (lower is faster)"
         if rtf is not None
@@ -267,8 +329,16 @@ def main() -> None:
 
     if args.report:
         report = {
-            "input": {"path": str(args.input), "sample_rate": int(sr)},
-            "output": {"path": str(args.output), "sample_rate": int(out_sr)},
+            "input": {
+                "path": str(args.input),
+                "sample_rate": int(sr),
+                "stats": in_stats,
+            },
+            "output": {
+                "path": str(args.output),
+                "sample_rate": int(out_sr),
+                "stats": out_stats,
+            },
             "perf": {"elapsed_sec": dt, "rtf": rtf},
             "meta": meta,
         }

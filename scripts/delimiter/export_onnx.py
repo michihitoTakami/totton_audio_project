@@ -39,8 +39,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--opset",
         type=int,
-        default=17,
-        help="ONNX opset version",
+        default=18,
+        help="ONNX opset version (default: 18 for better operator coverage)",
+    )
+    p.add_argument(
+        "--use-dynamo",
+        action="store_true",
+        help="Use torch.export-based exporter (default: legacy exporter via dynamo=False)",
     )
     return p.parse_args()
 
@@ -85,16 +90,18 @@ def main() -> int:
         "enhanced": {0: "batch", 2: "frames"},
     }
 
+    export_kwargs = {
+        "input_names": ["input"],
+        "output_names": ["enhanced"],
+        "dynamic_axes": dynamic_axes,
+        "opset_version": args.opset,
+        "training": torch.onnx.TrainingMode.EVAL,
+    }
+    if not args.use_dynamo:
+        export_kwargs["dynamo"] = False
+
     with torch.no_grad():
-        torch.onnx.export(
-            model,
-            dummy,
-            args.output,
-            input_names=["input"],
-            output_names=["enhanced"],
-            dynamic_axes=dynamic_axes,
-            opset_version=args.opset,
-        )
+        torch.onnx.export(model, dummy, args.output, **export_kwargs)
 
     print(
         f"Exported ONNX to {args.output} (sample_rate={sample_rate}, frames={frames})"

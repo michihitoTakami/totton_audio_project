@@ -26,11 +26,52 @@ uv run python scripts/delimiter/export_onnx.py \
   --output data/delimiter/weights/jeonchangbin49-de-limiter/44100/delimiter.onnx
 ```
 
-- upstream ハッシュ（`tr -d ':'` で生ハッシュ）
-  - `all.pth` SHA256 `df:d9:1f:96:05:c6:55:38:ac:ab:eb:9d:56:50:c2:11:19:61:1a:9e:04:93:de:3e:1f:30:05:76:a9:92:5e:c9` (9 424 379 bytes)
-  - `all.json` SHA256 `b5:17:a0:19:1f:44:ed:88:9c:83:9d:79:df:f6:e0:07:5d:c5:40:57:d1:ab:0f:1d:55:58:1a:95:bb:90:ae:27` (25 455 bytes)
+- upstream ハッシュ
+  - `all.pth` SHA256 `dfd91f9605c65538acabeb9d5650c21119611a9e0493de3e1f300576a9925ec9` (9 424 379 bytes)
+  - `all.json` SHA256 `b517a0191f44ed889c839d79dff6e0075dc54057d1ab0f1d55581a95bb90ae27` (25 455 bytes)
 - `manifest`: `data/delimiter/weights/manifest.json`
 
 ### 注意点
 - 推論 SR は **常に 44100**。48k 系は #1100 のリサンプル統合後に有効化する。
 - ONNX Runtime ビルドに応じて `provider` を `cpu/cuda/tensorrt` から選択。サンプルは安全のため `cpu` をデフォルトにしている。
+
+---
+
+## オフライン検証パス（#1099 実行例）
+
+### PyTorch weights 版（WAV→WAV）
+
+```bash
+uv run python scripts/delimiter/offline_wav_to_wav.py \
+  --input test_data/input.wav \
+  --output /tmp/output.wav \
+  --backend delimiter \
+  --expected-sample-rate 44100 \
+  --chunk-sec 6.0 \
+  --overlap-sec 0.25 \
+  --resample-back \
+  --debug-dir /tmp/delimiter_debug \
+  --report /tmp/delimiter_report.json
+```
+
+- 入出力ともに **peak / clip率 / RMS / LUFS** を標準出力で確認できる（LUFSは `pyloudnorm` が無い場合 `n/a`）。
+- `--expected-sample-rate` で推論SRを指定（既定 44100）。入力が異なる場合は自動リサンプルし、`--resample-back` で元SRへ戻す。
+- `--report` には上記メトリクスと処理時間/RTF、デバッグパスをJSONで保存。
+
+### ONNX Runtime 版（WAV→WAV）
+
+```bash
+uv run python scripts/delimiter/onnx_wav_to_wav.py \
+  --input test_data/input.wav \
+  --output /tmp/output.wav \
+  --model data/delimiter/weights/jeonchangbin49-de-limiter/44100/delimiter.onnx \
+  --provider cpu \
+  --expected-sample-rate 44100 \
+  --chunk-sec 6.0 \
+  --overlap-sec 0.25 \
+  --resample-back \
+  --report /tmp/delimiter_report_ort.json
+```
+
+- 出力はPyTorch版と同様に peak / clip率 / RMS / LUFS / RTF を表示。
+- `provider` で `cpu/cuda/tensorrt` を切替可能（環境に応じて ORT のビルドが必要）。
