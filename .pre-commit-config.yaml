@@ -27,7 +27,7 @@ repos:
       - id: clang-tidy
         args: [-p=build]
         files: \.(c|cpp)$
-        exclude: ^build/|^raspberry_pi/|^jetson_pcm_receiver/
+        exclude: ^(third_party/|samples/|build/|raspberry_pi/|jetson_pcm_receiver/)
         stages: [pre-push]
 
   # General file checks
