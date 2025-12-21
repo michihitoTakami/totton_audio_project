@@ -131,8 +131,9 @@ VkFFTResult runR2CSample() {
     double elapsedMs = 0.0;
     resFFT = performVulkanFFTiFFT(&gpu, &app, &launchParams, 1, &elapsedMs);
     if (resFFT != VKFFT_SUCCESS) {
-        if (appInitialized)
+        if (appInitialized) {
             deleteVkFFT(&app);
+        }
         cleanupVulkan(gpu, buffer, memory);
         return resFFT;
     }
@@ -140,8 +141,9 @@ VkFFTResult runR2CSample() {
     std::vector<float> output(hostBuffer.size(), 0.0f);
     resFFT = transferDataToCPU(&gpu, output.data(), &buffer, bufferSize);
     if (resFFT != VKFFT_SUCCESS) {
-        if (appInitialized)
+        if (appInitialized) {
             deleteVkFFT(&app);
+        }
         cleanupVulkan(gpu, buffer, memory);
         return resFFT;
     }

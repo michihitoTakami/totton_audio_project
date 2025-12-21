@@ -41,9 +41,9 @@ target_compile_definitions(vkfft_minimal PRIVATE VKFFT_BACKEND=0 VK_API_VERSION=
 target_link_libraries(vkfft_minimal PRIVATE
     vkfft
     Vulkan::Vulkan
-    glslang::glslang
-    glslang::OGLCompiler
-    glslang::OSDependent
-    glslang::glslang-default-resource-limits
-    glslang::SPIRV
+    glslang
+    OGLCompiler
+    OSDependent
+    glslang-default-resource-limits
+    SPIRV
 )
