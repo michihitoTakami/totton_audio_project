@@ -14,9 +14,11 @@ TRANSLATIONS = {
         "nav.dashboard": "Dashboard",
         "nav.eq": "EQ Settings",
         "nav.crossfeed": "Crossfeed",
+        "nav.delimiter": "De-limiter",
         "nav.system": "System",
         "nav.pi": "Pi Settings",
         "common.coming_soon": "Coming Soon",
+        "delimiter.subtitle": "AI limiter control & telemetry",
         # Dashboard page
         "dashboard.subtitle": "System Overview",
         "dashboard.daemon": "Daemon",
@@ -319,9 +321,11 @@ TRANSLATIONS = {
         "nav.dashboard": "ダッシュボード",
         "nav.eq": "EQ設定",
         "nav.crossfeed": "クロスフィード",
+        "nav.delimiter": "De-limiter",
         "nav.system": "システム",
         "nav.pi": "Pi設定",
         "common.coming_soon": "近日公開",
+        "delimiter.subtitle": "AIリミッターの制御とステータス",
         # System page
         "system.subtitle": "デーモン・DAC・パーティション設定",
         "system.health.title": "システムヘルス",

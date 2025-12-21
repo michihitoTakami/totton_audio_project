@@ -51,60 +51,6 @@
         </div>
     {% endcall %}
 
-    {% call panels.card_panel(t.get('system.delimiter.title')) %}
-        <div class="card-row wrap">
-            {% set toggle_id = "delimiter-toggle" %}
-            {% set toggle_label = t.get('system.delimiter.toggle') %}
-            {% set toggle_desc = t.get('system.delimiter.desc') %}
-            {% set alpine_model = "delimiter.enabled" %}
-            {% set alpine_click = "toggleDelimiter()" %}
-            {% set alpine_disabled = "delimiter.loading || actionInProgress || !health.daemon_running || !delimiter.backendAvailable" %}
-            {% include 'components/toggle_switch.html' %}
-            {{ buttons.btn_primary(t.get('system.delimiter.refresh'), icon='🔄', click='fetchDelimiter()', disabled='delimiter.loading', extra_class='btn-secondary') }}
-        </div>
-
-        <div class="grid-3">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.state') }}</div>
-                <div class="mono" x-text="delimiterStatusLabel()"></div>
-                <div class="muted small" x-text="delimiter.backendValid ? '{{ t.get('system.delimiter.backend_valid') }}' : '{{ t.get('system.delimiter.backend_invalid') }}'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.mode') }}</div>
-                <div class="mono" x-text="delimiter.mode"></div>
-                <div class="muted small">{{ t.get('system.delimiter.target_mode') }} <span class="mono" x-text="delimiter.target_mode"></span></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.fallback') }}</div>
-                <div class="mono" x-text="delimiter.fallback_reason"></div>
-                <div class="muted small" x-show="delimiter.bypass_locked">{{ t.get('system.delimiter.locked') }}</div>
-            </div>
-        </div>
-
-        <div class="grid-3">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.queue') }}</div>
-                <div class="mono" x-text="formatQueueSeconds()"></div>
-                <div class="muted small" x-text="`${delimiter.queue_samples} {{ t.get('system.delimiter.queue_samples') }}`"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.last_inference') }}</div>
-                <div class="mono" x-text="formatInferenceMs()"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.detail') }}</div>
-                <div class="mono" x-text="delimiter.detail || '{{ t.get('system.delimiter.no_detail') }}'"></div>
-            </div>
-        </div>
-
-        <div class="alert alert-warning" x-show="!delimiter.backendAvailable">
-            <span x-text="delimiter.backendHint"></span>
-        </div>
-        <div class="alert alert-warning" x-show="delimiter.error">
-            <span x-text="delimiter.error"></span>
-        </div>
-    {% endcall %}
-
     {% call panels.card_panel(t.get('system.dac.title')) %}
         <div class="card-row wrap">
             <div class="stack">
@@ -249,23 +195,6 @@ function systemPage() {
         health: { daemon_running: false, input_rate: 0, output_rate: 0 },
         dac: { devices: [], runtime: null, loading: false, selected: '', userSelected: false },
         currentLang: "{{ lang }}",
-        delimiter: {
-            loading: false,
-            enabled: false,
-            backendAvailable: false,
-            backendValid: false,
-            warmup: false,
-            mode: 'unknown',
-            target_mode: 'unknown',
-            fallback_reason: 'unknown',
-            bypass_locked: false,
-            queue_seconds: 0,
-            queue_samples: 0,
-            last_inference_ms: 0,
-            detail: '',
-            error: '',
-            backendHint: "{{ t.get('system.delimiter.backend_hint') }}",
-        },
         partitioned: {
             enabled: false,
             fast_partition_taps: 32768,
@@ -291,7 +220,6 @@ function systemPage() {
             setInterval(() => {
                 this.fetchStatus();
                 this.fetchDacState();
-                this.fetchDelimiter();
             }, 5000);
         },
 
@@ -300,7 +228,6 @@ function systemPage() {
                 this.fetchStatus(),
                 this.fetchDacDevices(),
                 this.fetchDacState(),
-                this.fetchDelimiter(),
                 this.fetchPartitioned(),
             ]);
         },
@@ -329,98 +256,6 @@ function systemPage() {
                 this.debug.alsa_period_size_config = data.alsa_period_size_config ?? 0;
             } catch (err) {
                 console.error('status fetch failed', err);
-            }
-        },
-
-        applyDelimiterStatus(status) {
-            const safe = status && typeof status === 'object' ? status : {};
-            this.delimiter.enabled = Boolean(safe.enabled);
-            this.delimiter.backendAvailable = Boolean(safe.backend_available);
-            this.delimiter.backendValid = Boolean(safe.backend_valid);
-            this.delimiter.warmup = Boolean(safe.warmup);
-            this.delimiter.mode = safe.mode || 'unknown';
-            this.delimiter.target_mode = safe.target_mode || 'unknown';
-            this.delimiter.fallback_reason = safe.fallback_reason || 'unknown';
-            this.delimiter.bypass_locked = Boolean(safe.bypass_locked);
-            this.delimiter.queue_seconds = Number(safe.queue_seconds || 0);
-            this.delimiter.queue_samples = Number(safe.queue_samples || 0);
-            this.delimiter.last_inference_ms = Number(safe.last_inference_ms || 0);
-            this.delimiter.detail = safe.detail || '';
-        },
-
-        async fetchDelimiter() {
-            this.delimiter.loading = true;
-            this.delimiter.error = '';
-            try {
-                const res = await fetch('/delimiter/status');
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(data.detail || data.message || 'Failed to fetch De-limiter');
-                }
-                this.applyDelimiterStatus(data);
-            } catch (err) {
-                this.delimiter.error = err.message;
-                this.delimiter.backendAvailable = false;
-            } finally {
-                this.delimiter.loading = false;
-            }
-        },
-
-        delimiterStatusLabel() {
-            if (!this.health.daemon_running) {
-                return '{{ t.get("system.delimiter.status_daemon_down") }}';
-            }
-            if (!this.delimiter.backendAvailable) {
-                return '{{ t.get("system.delimiter.status_unavailable") }}';
-            }
-            if (this.delimiter.bypass_locked) {
-                return '{{ t.get("system.delimiter.status_locked") }}';
-            }
-            if (this.delimiter.enabled) {
-                return this.delimiter.warmup
-                    ? '{{ t.get("system.delimiter.status_warmup") }}'
-                    : '{{ t.get("system.delimiter.status_on") }}';
-            }
-            return '{{ t.get("system.delimiter.status_off") }}';
-        },
-
-        formatQueueSeconds() {
-            const seconds = Number(this.delimiter.queue_seconds || 0);
-            return `${seconds.toFixed(2)} s`;
-        },
-
-        formatInferenceMs() {
-            const ms = Number(this.delimiter.last_inference_ms || 0);
-            return `${ms.toFixed(2)} ms`;
-        },
-
-        async toggleDelimiter() {
-            if (this.delimiter.loading || this.actionInProgress) return;
-            const enable = !this.delimiter.enabled;
-            this.delimiter.loading = true;
-            this.actionInProgress = true;
-            try {
-                const res = await fetch(enable ? '/delimiter/enable' : '/delimiter/disable', {
-                    method: 'POST',
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(data.detail || data.message || 'Toggle failed');
-                }
-                const status = data.status || data;
-                this.applyDelimiterStatus(status);
-                showToast(
-                    enable
-                        ? '{{ t.get("system.delimiter.toast_enabled") }}'
-                        : '{{ t.get("system.delimiter.toast_disabled") }}',
-                    'success'
-                );
-            } catch (err) {
-                this.delimiter.error = err.message;
-                showToast(err.message, 'error');
-            } finally {
-                this.delimiter.loading = false;
-                this.actionInProgress = false;
             }
         },
 
