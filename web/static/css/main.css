@@ -1729,6 +1729,39 @@ body::before {
     flex-wrap: wrap;
 }
 
+.kv-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.kv-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(0, 255, 255, 0.03);
+    border: 1px solid rgba(0, 255, 255, 0.12);
+    border-radius: 8px;
+}
+
+.kv-key {
+    color: rgba(224, 224, 224, 0.9);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.kv-sep {
+    color: rgba(0, 255, 255, 0.7);
+    font-weight: 700;
+}
+
+.kv-value {
+    color: rgba(224, 224, 224, 0.95);
+    font-family: 'Courier New', monospace;
+    word-break: break-all;
+}
+
 .config-notes {
     display: grid;
     gap: 10px;

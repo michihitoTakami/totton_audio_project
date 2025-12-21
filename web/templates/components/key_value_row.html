@@ -1,0 +1,12 @@
+{# Key-value row with "::" separator for compact display #}
+{% macro kv_row(label, value_text=None, value_binding=None, value_class="mono", show=None) -%}
+<div class="kv-row" {% if show %}x-show="{{ show }}"{% endif %}>
+    <span class="kv-key">{{ label }}</span>
+    <span class="kv-sep">::</span>
+    {% if value_binding %}
+    <span class="kv-value {{ value_class }}" x-text="{{ value_binding }}"></span>
+    {% else %}
+    <span class="kv-value {{ value_class }}">{{ value_text }}</span>
+    {% endif %}
+</div>
+{%- endmacro %}
