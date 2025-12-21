@@ -123,8 +123,8 @@ def _overlap_add(
 
     channels = int(chunks[0].shape[1])
     out_len = hop * (len(chunks) - 1) + int(chunks[0].shape[0])
-    out = np.zeros((out_len, channels), dtype=np.float32)
-    wsum = np.zeros((out_len,), dtype=np.float32)
+    out: np.ndarray = np.zeros((out_len, channels), dtype=np.float32)
+    wsum: np.ndarray = np.zeros((out_len,), dtype=np.float32)
 
     if overlap > 0:
         t = np.linspace(0.0, 1.0, overlap, endpoint=True, dtype=np.float32)
@@ -135,7 +135,7 @@ def _overlap_add(
     for i, chunk in enumerate(chunks):
         start = i * hop
         length = int(chunk.shape[0])
-        w = np.ones((length,), dtype=np.float32)
+        w: np.ndarray = np.ones((length,), dtype=np.float32)
         if overlap > 0 and i > 0:
             w[:overlap] = fade
         if overlap > 0 and i < len(chunks) - 1:
@@ -185,7 +185,9 @@ def _write_debug_artifacts(
         in_ab = in_resampled
         out_ab = out_resampled
 
-    gap = np.zeros((int(round(max(0.0, ab_gap_sec) * output_sr)), 2), dtype=np.float32)
+    gap: np.ndarray = np.zeros(
+        (int(round(max(0.0, ab_gap_sec) * output_sr)), 2), dtype=np.float32
+    )
     ab = np.concatenate([in_ab, gap, out_ab], axis=0)
 
     input_path = debug_dir / "input.wav"
