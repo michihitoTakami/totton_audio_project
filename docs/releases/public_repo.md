@@ -103,7 +103,12 @@ Public Repo は “利用/運用/仕様” を目的とし、Private実装に直
 
 ### 同期の粒度
 
-- 原則: Private `main` の安定点（リリース/タグ/明示トリガー）で Public を更新
+- **推奨（初期運用）**: **リリースタグ時のみ** Public を更新する
+  - `v*` タグの push、または GitHub Release の `published` をトリガーにする
+  - 目的: 「公開して良い状態」を人間が宣言したタイミングだけ同期し、無駄な実行・枠消費・事故（意図しない公開）を避ける
+- **代替案**: **prod（production）へデプロイ成功したタイミングのみ** Public を更新する
+  - 前提: 既存のデプロイパイプラインが GitHub の `deployment` / `deployment_status`（environment=production）を発行できる、または `workflow_run` で “deploy workflow 成功” を検知できる
+  - 目的: 「本番に出たもの＝公開して良いもの」という運用に揃える
 - Public のコミットメッセージは以下に統一：
   - `Public export from private@<SHA>`
 
