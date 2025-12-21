@@ -44,6 +44,7 @@ async def get_status():
         rendered_silence_frames=stats.get("rendered_silence_frames", 0),
         alsa_buffer_size_config=stats.get("alsa_buffer_size_config", 0),
         alsa_period_size_config=stats.get("alsa_period_size_config", 0),
+        delimiter=stats.get("delimiter"),
     )
 
 

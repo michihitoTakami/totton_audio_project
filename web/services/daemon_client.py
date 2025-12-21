@@ -393,6 +393,20 @@ class DaemonClient:
         """Trigger a DAC rescan on the daemon."""
         return self.send_json_command_v2("DAC_RESCAN")
 
+    # ========== De-limiter Commands (#1012) ==========
+
+    def delimiter_status(self) -> DaemonResponse:
+        """Get De-limiter runtime status."""
+        return self.send_json_command_v2("DELIMITER_STATUS")
+
+    def delimiter_enable(self) -> DaemonResponse:
+        """Enable De-limiter processing."""
+        return self.send_json_command_v2("DELIMITER_ENABLE")
+
+    def delimiter_disable(self) -> DaemonResponse:
+        """Disable De-limiter processing."""
+        return self.send_json_command_v2("DELIMITER_DISABLE")
+
     # ========== Crossfeed Commands (#150) ==========
 
     def crossfeed_enable(self) -> DaemonResponse:

@@ -321,6 +321,20 @@ def load_stats() -> dict:
         "rendered_silence_frames": 0,
         "alsa_buffer_size_config": 0,
         "alsa_period_size_config": 0,
+        "delimiter": {
+            "enabled": False,
+            "backend_available": False,
+            "backend_valid": False,
+            "mode": "unknown",
+            "target_mode": "unknown",
+            "fallback_reason": "unknown",
+            "bypass_locked": False,
+            "warmup": False,
+            "queue_seconds": 0.0,
+            "queue_samples": 0,
+            "last_inference_ms": 0.0,
+            "detail": None,
+        },
     }
     if not STATS_FILE_PATH.exists():
         return default_stats
@@ -354,6 +368,10 @@ def load_stats() -> dict:
         if not isinstance(alsa, dict):
             alsa = {}
 
+        delimiter = data.get("delimiter", {}) if isinstance(data, dict) else {}
+        if not isinstance(delimiter, dict):
+            delimiter = {}
+
         return {
             "clip_rate": clip_rate,
             "clip_count": clip,
@@ -379,6 +397,23 @@ def load_stats() -> dict:
             ),
             "alsa_buffer_size_config": int(alsa.get("buffer_size_config", 0) or 0),
             "alsa_period_size_config": int(alsa.get("period_size_config", 0) or 0),
+            "delimiter": {
+                "enabled": bool(delimiter.get("enabled", False)),
+                "backend_available": bool(delimiter.get("backend_available", False)),
+                "backend_valid": bool(delimiter.get("backend_valid", False)),
+                "mode": delimiter.get("mode", "unknown") or "unknown",
+                "target_mode": delimiter.get("target_mode", "unknown") or "unknown",
+                "fallback_reason": delimiter.get("fallback_reason", "unknown")
+                or "unknown",
+                "bypass_locked": bool(delimiter.get("bypass_locked", False)),
+                "warmup": bool(delimiter.get("warmup", False)),
+                "queue_seconds": float(delimiter.get("queue_seconds", 0.0) or 0.0),
+                "queue_samples": int(delimiter.get("queue_samples", 0) or 0),
+                "last_inference_ms": float(
+                    delimiter.get("last_inference_ms", 0.0) or 0.0
+                ),
+                "detail": delimiter.get("detail"),
+            },
         }
     except (json.JSONDecodeError, IOError):
         return default_stats

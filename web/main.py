@@ -19,6 +19,7 @@ from .routers import (
     crossfeed_router,
     dac_router,
     daemon_router,
+    delimiter_router,
     eq_router,
     i2s_router,
     opra_router,
@@ -60,6 +61,10 @@ tags_metadata = [
     {
         "name": "crossfeed",
         "description": "Crossfeed (HRTF-based headphone virtualization) control",
+    },
+    {
+        "name": "delimiter",
+        "description": "De-limiter runtime control and status",
     },
     {
         "name": "output",
@@ -184,6 +189,7 @@ Most endpoints do not require authentication (local network only).
     app.include_router(opra_sync_router)
     app.include_router(dac_router)
     app.include_router(crossfeed_router)
+    app.include_router(delimiter_router)
     app.include_router(partitioned_router)
     app.include_router(output_mode_router)
     app.include_router(pi_router)
