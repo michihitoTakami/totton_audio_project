@@ -267,32 +267,6 @@
         </div>
     {% endcall %}
 
-    {% call panels.card_panel(t.get('pi.notes.title')) %}
-        <div class="config-notes">
-            <div class="config-note">{{ t.get('pi.notes.device_preset') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.latency_preset') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.capture_playback') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.channels') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.fallback_rate') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.preferred_format') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.passthrough') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.buffer_time') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.latency_time') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.queue_time') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.fade_ms') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.poll_interval') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.restart_backoff') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.keep_silence') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.status_report_url') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.status_report_timeout') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.status_report_min_interval') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.control_endpoint') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.control_peer') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.control_require_peer') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.control_poll_interval') }}</div>
-            <div class="config-note">{{ t.get('pi.notes.control_timeout') }}</div>
-        </div>
-    {% endcall %}
 </div>
 {% endblock %}
 
