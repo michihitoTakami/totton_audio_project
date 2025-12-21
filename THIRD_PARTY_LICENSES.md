@@ -12,7 +12,7 @@
   - **コード**: MIT
 - **帰属表示**: `NOTICE.md` および OPRA の `README.md` に従ってください。
 
-本プロジェクトでは、`OPRA sync` で取得したキャッシュ（`opra/versions/<commit>/database_v1.jsonl`）を利用します。取得元のコミット/URL/ハッシュは `metadata.json` に記録されます。開発・CI用には軽量フィクスチャ `tests/fixtures/opra/database_v1.sample.jsonl` を使用できます（`OPRA_DATABASE_PATH`）。
+本プロジェクトでは、`OPRA sync` で取得したキャッシュ（`opra/versions/<commit>/database_v1.jsonl`）を利用します。取得元のコミット/URL/ハッシュは `metadata.json` に記録されます。開発・CI用には軽量フィクスチャ `tests/python/fixtures/opra/database_v1.sample.jsonl` を使用できます（`OPRA_DATABASE_PATH`）。
 
 ---
 

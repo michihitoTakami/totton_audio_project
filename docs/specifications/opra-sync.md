@@ -202,9 +202,9 @@ Docker/Jetsonを想定し、永続化ボリュームに配置する。
 
 ## 開発/CI 向けの軽量フィクスチャ
 - ネットワークが使えない環境でも動作確認できるよう、最小OPRAサンプルを同梱。
-  - パス: `tests/fixtures/opra/database_v1.sample.jsonl`
+  - パス: `tests/python/fixtures/opra/database_v1.sample.jsonl`
 - `OPRA_DATABASE_PATH` を設定するとこのフィクスチャを強制利用できる。
-  - 例: `OPRA_DATABASE_PATH=tests/fixtures/opra/database_v1.sample.jsonl uv run pytest tests/python/test_opra.py`
+  - 例: `OPRA_DATABASE_PATH=tests/python/fixtures/opra/database_v1.sample.jsonl uv run pytest tests/python/test_opra.py`
 
 ---
 
