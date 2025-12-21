@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+FROM nvcr.io/nvidia/l4t-cuda:r36.4.0-runtime
 
 LABEL org.opencontainers.image.source="https://github.com/michihitoTakami/michy_os"
 LABEL org.opencontainers.image.description="jetson-pcm-receiver (PCM over TCP -> ALSA Loopback)"
