@@ -31,6 +31,17 @@ TEST(DelimiterInferenceBackend, BypassCopiesInput) {
     EXPECT_EQ(rightOut, rightIn);
 }
 
+TEST(DelimiterInferenceBackend, BypassRespectsExpectedSampleRate) {
+    AppConfig::DelimiterConfig cfg;
+    cfg.enabled = true;
+    cfg.backend = "bypass";
+    cfg.expectedSampleRate = 48000;
+
+    auto backend = delimiter::createDelimiterInferenceBackend(cfg);
+    ASSERT_NE(backend, nullptr);
+    EXPECT_EQ(backend->expectedSampleRate(), 48000u);
+}
+
 TEST(DelimiterInferenceBackend, DisabledAlwaysBypasses) {
     AppConfig::DelimiterConfig cfg;
     cfg.enabled = false;
@@ -39,4 +50,28 @@ TEST(DelimiterInferenceBackend, DisabledAlwaysBypasses) {
     auto backend = delimiter::createDelimiterInferenceBackend(cfg);
     ASSERT_NE(backend, nullptr);
     EXPECT_STREQ(backend->name(), "bypass");
+}
+
+TEST(DelimiterInferenceBackend, OrtBackendReportsMissingModelOrBuild) {
+    AppConfig::DelimiterConfig cfg;
+    cfg.enabled = true;
+    cfg.backend = "ort";
+    cfg.ort.modelPath = "";
+
+    auto backend = delimiter::createDelimiterInferenceBackend(cfg);
+    ASSERT_NE(backend, nullptr);
+    EXPECT_STREQ(backend->name(), "ort");
+
+    std::vector<float> leftIn = {0.1f, 0.2f};
+    std::vector<float> rightIn = {0.3f, 0.4f};
+    std::vector<float> leftOut;
+    std::vector<float> rightOut;
+
+    auto res =
+        backend->process(delimiter::StereoPlanarView{leftIn.data(), rightIn.data(), leftIn.size()},
+                         leftOut, rightOut);
+    EXPECT_NE(res.status, delimiter::InferenceStatus::Ok);
+    EXPECT_FALSE(res.message.empty());
+    EXPECT_TRUE(leftOut.empty());
+    EXPECT_TRUE(rightOut.empty());
 }

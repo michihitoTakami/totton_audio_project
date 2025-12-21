@@ -38,8 +38,7 @@ class InferenceBackend {
 
     virtual const char* name() const = 0;
 
-    // Backend input/output sample rate expectation.
-    // Current De-limiter research assumes 44.1kHz.
+    // Backend input/output sample rate expectation (supports 44.1kHz or 48kHz).
     virtual uint32_t expectedSampleRate() const = 0;
 
     // Process one chunk.

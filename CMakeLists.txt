@@ -61,6 +61,17 @@ else()
     message(STATUS "GPU upsampler precision: float32")
 endif()
 
+# Optional: ONNX Runtime backend for De-limiter
+option(DELIMITER_ENABLE_ORT "Enable ONNX Runtime backend for De-limiter" OFF)
+if(DELIMITER_ENABLE_ORT)
+    find_package(onnxruntime CONFIG QUIET)
+    if(NOT onnxruntime_FOUND)
+        message(FATAL_ERROR
+            "DELIMITER_ENABLE_ORT=ON but onnxruntime was not found. "
+            "Install onnxruntime C++ package or set ONNXRUNTIME_ROOT.")
+    endif()
+endif()
+
 # Fetch dependencies
 include(FetchContent)
 
@@ -387,6 +398,10 @@ add_library(delimiter_inference STATIC
 target_link_libraries(delimiter_inference PUBLIC
     logging
 )
+if(DELIMITER_ENABLE_ORT)
+    target_link_libraries(delimiter_inference PUBLIC onnxruntime::onnxruntime)
+    target_compile_definitions(delimiter_inference PUBLIC DELIMITER_ENABLE_ORT)
+endif()
 target_include_directories(delimiter_inference PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
