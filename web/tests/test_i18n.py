@@ -105,7 +105,6 @@ class TestDashboardTranslations:
             "dashboard.low_latency.title",
             "dashboard.low_latency.toggle",
             "dashboard.low_latency.exclusive",
-            "dashboard.low_latency.warning",
             "dashboard.low_latency.info",
         ]
         for key in keys:
@@ -152,7 +151,6 @@ class TestDashboardTranslations:
             "dashboard.crossfeed.toggle",
             "dashboard.crossfeed.toggle_desc",
             "dashboard.crossfeed.head_size",
-            "dashboard.crossfeed.warning",
             "dashboard.crossfeed.info",
             "dashboard.crossfeed.license",
             "dashboard.crossfeed.license_link",
