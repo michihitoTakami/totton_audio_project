@@ -3,8 +3,8 @@
 OPRA Database Parser and EQ Converter.
 
 Reads OPRA headphone EQ database from the synced cache (`opra/current`) and
-converts to Equalizer APO format. If the cache is missing (development only),
-falls back to the OPRA submodule data.
+converts to Equalizer APO format. For development/CI without a synced cache,
+an explicit database path can be provided via `OPRA_DATABASE_PATH`.
 Source: https://github.com/opra-project/OPRA
 License: CC BY-SA 4.0
 
@@ -17,6 +17,7 @@ Usage:
 """
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,18 +33,17 @@ from modern_target import (  # noqa: E402
 
 
 def _resolve_default_opra_path() -> Path:
-    """Resolve OPRA database path, preferring synced cache if available."""
+    """Resolve OPRA database path (cache-first, env override allowed)."""
+    env_override = os.environ.get("OPRA_DATABASE_PATH")
+    if env_override:
+        return Path(env_override).expanduser()
+
     manager = OpraCacheManager()
-    cached_path = manager.current_path / DATABASE_FILENAME
-    if cached_path.exists():
-        return cached_path
-    return DEFAULT_OPRA_PATH
+    return manager.current_path / DATABASE_FILENAME
 
 
-# Default path to OPRA submodule database
-DEFAULT_OPRA_PATH = (
-    Path(__file__).parent.parent / "data" / "opra-db" / "dist" / "database_v1.jsonl"
-)
+# Default path to OPRA cache (or env override)
+DEFAULT_OPRA_PATH = _resolve_default_opra_path()
 
 
 @dataclass
@@ -243,8 +243,8 @@ class OpraDatabase:
     """
     OPRA headphone EQ database reader.
 
-    Prefers the OPRA cache (`opra/current/database_v1.jsonl`) and only falls
-    back to the OPRA submodule path for development environments.
+    Prefers the OPRA cache (`opra/current/database_v1.jsonl`). For development
+    or CI, the path can be overridden via `OPRA_DATABASE_PATH`.
     """
 
     def __init__(self, db_path: Path | None = None):
@@ -253,7 +253,7 @@ class OpraDatabase:
 
         Args:
             db_path: Path to database_v1.jsonl. If None, uses OPRA cache current
-                and falls back to the submodule path for development.
+                (or `OPRA_DATABASE_PATH` override for development/CI).
         """
         self.db_path = db_path or _resolve_default_opra_path()
         self._vendors: dict[str, dict] = {}
@@ -271,8 +271,8 @@ class OpraDatabase:
                 f"OPRA database not found at {self.db_path}. "
                 "Run OPRA sync to install the OPRA cache "
                 "(see docs/specifications/opra-sync.md). "
-                "For development, ensure OPRA data is available "
-                "(e.g., initialize the data/opra-db submodule)."
+                "For local dev/CI without network access, set OPRA_DATABASE_PATH "
+                "to a fixture (e.g., tests/fixtures/opra/database_v1.sample.jsonl)."
             )
 
         with open(self.db_path, encoding="utf-8") as f:

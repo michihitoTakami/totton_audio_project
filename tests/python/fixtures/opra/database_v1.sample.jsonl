@@ -1,0 +1,7 @@
+{"type":"vendor","id":"vendor_sennheiser","data":{"name":"Sennheiser"}}
+{"type":"vendor","id":"vendor_sony","data":{"name":"Sony"}}
+{"type":"product","id":"product_hd650","data":{"name":"HD650","type":"over-ear","vendor_id":"vendor_sennheiser"}}
+{"type":"product","id":"product_mdr_z1r","data":{"name":"MDR-Z1R","type":"over-ear","vendor_id":"vendor_sony"}}
+{"type":"eq","id":"eq_hd650_oratory1990","data":{"product_id":"product_hd650","name":"Sennheiser HD650","author":"oratory1990","details":"Harman Target","parameters":{"gain_db":-5.5,"bands":[{"type":"peak_dip","frequency":100.0,"gain_db":2.0,"q":0.7},{"type":"peak_dip","frequency":3000.0,"gain_db":-3.0,"q":1.5},{"type":"high_shelf","frequency":8000.0,"gain_db":1.5,"q":0.7}]}}}
+{"type":"eq","id":"eq_hd650_modern_target","data":{"product_id":"product_hd650","name":"Sennheiser HD650 Modern","author":"opra-team","details":"Modern target","parameters":{"gain_db":-4.0,"bands":[{"type":"low_shelf","frequency":90.0,"gain_db":3.0,"q":0.71},{"type":"high_shelf","frequency":7000.0,"gain_db":2.0,"q":0.71}]}}}
+{"type":"eq","id":"eq_mdr_z1r_autoeq","data":{"product_id":"product_mdr_z1r","name":"Sony MDR-Z1R","author":"AutoEQ","details":"AutoEQ KB5000_7","parameters":{"gain_db":-3.0,"bands":[{"type":"peak_dip","frequency":120.0,"gain_db":-2.0,"q":1.0},{"type":"peak_dip","frequency":2500.0,"gain_db":3.5,"q":1.2},{"type":"high_shelf","frequency":9000.0,"gain_db":-1.5,"q":0.7}]}}}

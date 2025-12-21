@@ -12,7 +12,7 @@
   - **コード**: MIT
 - **帰属表示**: `NOTICE.md` および OPRA の `README.md` に従ってください。
 
-このリポジトリでは OPRA を `data/opra-db` サブモジュールとして参照します。
+本プロジェクトでは、`OPRA sync` で取得したキャッシュ（`opra/versions/<commit>/database_v1.jsonl`）を利用します。取得元のコミット/URL/ハッシュは `metadata.json` に記録されます。開発・CI用には軽量フィクスチャ `tests/fixtures/opra/database_v1.sample.jsonl` を使用できます（`OPRA_DATABASE_PATH`）。
 
 ---
 
@@ -45,5 +45,4 @@
 
 ## OPRA 内の第三者情報
 
-OPRA サブモジュール自身が第三者データ（例: AutoEQ）由来のデータを含み得ます。
-OPRA 側で提供されている `data/opra-db/THIRD_PARTY_LICENSES.md` を参照し、必要に応じて追加の帰属表示を行ってください。
+OPRA データベースには第三者データ（例: AutoEQ）由来のデータが含まれます。詳細は OPRA リポジトリ同梱の `THIRD_PARTY_LICENSES.md` を参照し、必要に応じて追加の帰属表示を行ってください。
