@@ -136,6 +136,33 @@ magicbox-update-${VERSION}-<platform>.tar.gz
 
 ---
 
+## Raspberry Pi ブリッジ（UAC2 入力の受け口）
+
+本プロジェクトの「I/O 分離構成」では、**Raspberry Pi が UAC2 の受け口（入力ハブ）**となり、Jetson は **RTP 受信 + GPU 処理**に専念する。
+
+このとき「Pi 側の UAC2 としての受け口」は、OS 上では **ALSA の入力デバイス**として扱い、`raspberry_pi/usb_i2s_bridge` がそのデバイスから rate/format を取得して下流（I2S / RTP）へ流す。
+
+### 受け口の定義（MUST）
+
+- **受け口（UAC2 input）**: Pi 上の ALSA デバイス（`arecord` で開けるデバイス）
+  - `raspberry_pi/usb_i2s_bridge` の `USB_I2S_CAPTURE_DEVICE` が参照するものを **UAC2 input** とみなす
+  - デバイス名は環境依存（カード番号が変わるため）
+    - 例: `hw:3,0`
+    - 例: `hw:CARD=UAC2Gadget,DEV=0`（典型例。実体は `/proc/asound/cards` / `arecord -l` で確認）
+
+### 期待仕様（SHOULD）
+
+- **2ch**、44.1k 系/48k 系のレート切替に追従できること
+- 量子化は **24-in-32（`S32_LE`）を推奨**
+- レート/フォーマットは **変換せずにパススルー優先**（`USB_I2S_PASSTHROUGH=true` を想定）
+
+### 関連
+
+- Pi 側ブリッジ/制御 API: `raspberry_pi/docker-compose.yml`（`raspi_openapi.json`）
+- 運用/セットアップ（Pi 側 UAC2 受け口の説明）: `docs/setup/pi_bridge.md`
+
+---
+
 ## 第三者データ（OPRA / HUTUBS 等）の方針
 
 ### OPRA（ヘッドホンEQデータベース）
@@ -184,5 +211,6 @@ magicbox-update-${VERSION}-<platform>.tar.gz
 
 - `docs/jetson/deployment/ota-update.md`（パッケージ形式・OTA検証）
 - `docs/api/README.md`（OpenAPI 配布と更新）
+- `docs/setup/pi_bridge.md`（Raspberry Pi ブリッジ / UAC2 受け口）
 - `docs/specifications/opra-sync.md`（OPRA 初回取得/キャッシュ方針）
 - `docs/releases/public_repo.md`（公開範囲/配布物に含めるものの前提）
