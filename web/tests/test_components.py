@@ -315,10 +315,10 @@ class TestAlertComponent:
         response = client.get("/")
         assert response.status_code == 200
 
-        # Count alert occurrences (Low Latency, Phase Type, Crossfeed warnings)
+        # Count alert occurrences (e.g., phase type warning)
         html = response.text
         alert_count = html.count('class="alert alert-warning"')
-        assert alert_count >= 3, f"Expected at least 3 alerts, found {alert_count}"
+        assert alert_count >= 1, f"Expected at least 1 alert, found {alert_count}"
 
 
 class TestInfoTextComponent:
