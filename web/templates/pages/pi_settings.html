@@ -351,21 +351,21 @@ function piSettingsPage() {
         piApiLastError: null,
         latencyProfiles: {
             // NOTE: 実際の体感遅延はデバイス/環境に依存するため "目安"。
-            // ALSA buffer/latency と queue を同じ比率でスケールさせ、操作感を揃える。
+            // low を基準に 2倍、4倍でスケール。
             low: {
-                alsa_buffer_time_us: 100000,
-                alsa_latency_time_us: 10000,
-                queue_time_ns: 50000000,
+                alsa_buffer_time_us: 50000,   // 50ms
+                alsa_latency_time_us: 10000,  // 10ms
+                queue_time_ns: 20000000,      // 20ms
             },
             medium: {
-                alsa_buffer_time_us: 200000,
-                alsa_latency_time_us: 20000,
-                queue_time_ns: 100000000,
+                alsa_buffer_time_us: 100000,  // 100ms
+                alsa_latency_time_us: 10000,  // 10ms
+                queue_time_ns: 50000000,      // 50ms
             },
             safe: {
-                alsa_buffer_time_us: 400000,
-                alsa_latency_time_us: 40000,
-                queue_time_ns: 200000000,
+                alsa_buffer_time_us: 200000,  // 200ms
+                alsa_latency_time_us: 20000,  // 20ms
+                queue_time_ns: 100000000,     // 100ms
             },
         },
         devicePresets: [
