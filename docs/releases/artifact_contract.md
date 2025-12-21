@@ -17,6 +17,7 @@ Issue: #1053 / Epic: #1051
 - **実行可能な配布パッケージ（tarball）**
 - **OpenAPI 仕様（json）**
 - **SHA256（整合性チェック）**
+- **署名（改ざん検知 / 将来含む）**
 - **SBOM（ソフトウェア部品表）**
 
 ---
@@ -56,17 +57,24 @@ Issue: #1053 / Epic: #1051
 magicbox-update-${VERSION}-<platform>.tar.gz
 ├── manifest.json
 ├── checksums.sha256
+├── LICENSE
+├── LICENSE.ja.md
+├── NOTICE.md
+├── THIRD_PARTY_LICENSES.md
 ├── bin/
 ├── lib/
 ├── web/
 └── scripts/
 ```
 
+> `LICENSE` の条件（非商用再配布時に `LICENSE` / `NOTICE.md` / `THIRD_PARTY_LICENSES.md` を同梱する等）に整合させるため、tarball にはライセンス/帰属ファイルを **必ず含める**。
+
 #### manifest.json（最低要件）
 
 `manifest.json` は少なくとも以下を含む：
 
 - `version`: `${VERSION}`
+- `min_compatible`: 互換性下限（例: `1.0.0`）
 - `platform`: `jetson-arm64` | `pc-amd64`
 - `git_sha`: ビルド元コミット SHA
 - `build_time`: ISO8601
@@ -105,6 +113,25 @@ magicbox-update-${VERSION}-<platform>.tar.gz
 **SHOULD（推奨）**
 
 - `checksums.sha256`（Release 全アセットのまとめ）を追加する
+
+---
+
+### 3.5) 署名（改ざん検知）
+
+**SHOULD（推奨）**
+
+- tarball に対する **detached signature** を Release assets として提供する
+  - `magicbox-update-${VERSION}-jetson-arm64.tar.gz.sig`
+  - `magicbox-update-${VERSION}-pc-amd64.tar.gz.sig`（PC を出す場合）
+- 署名を提供する場合は、検証に必要な **公開鍵情報** を明示する
+  - 例: Release の本文に公開鍵 fingerprint を記載
+  - 例: Release assets として公開鍵（`.asc` 等）を添付
+
+検証例（概念）:
+
+- `gpg --verify magicbox-update-${VERSION}-jetson-arm64.tar.gz.sig magicbox-update-${VERSION}-jetson-arm64.tar.gz`
+
+> 署名の扱いは `docs/jetson/deployment/ota-update.md` の「セキュリティ / パッケージ署名（将来）」を参照。
 
 ---
 
