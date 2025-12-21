@@ -64,9 +64,12 @@ def test_delimiter_offline_poc_bypass_smoke(
     assert report.exists()
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["meta"]["backend"] == "bypass"
+    assert payload["meta"]["expected_sample_rate"] == 44100
     assert payload["debug"] is not None
     assert Path(payload["debug"]["waveform_png"]).exists()
     assert Path(payload["debug"]["ab_wav"]).exists()
+    assert "lufs" in payload["input"]["stats"]
+    assert "lufs" in payload["output"]["stats"]
 
     assert "[input]" in result.stdout
     assert "[output]" in result.stdout

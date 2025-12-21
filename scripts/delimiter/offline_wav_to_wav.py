@@ -15,6 +15,7 @@ from scipy.signal import resample_poly
 DEFAULT_WEIGHTS_URL_BASE = (
     "https://raw.githubusercontent.com/jeonchangbin49/De-limiter/main/weight"
 )
+DEFAULT_EXPECTED_SAMPLE_RATE = 44100
 DelimiterBackend = Literal["delimiter", "bypass"]
 
 
@@ -32,6 +33,36 @@ def _rms(x: np.ndarray) -> float:
     if x.size == 0:
         return 0.0
     return float(np.sqrt(np.mean(np.square(x, dtype=np.float64))))
+
+
+def _integrated_lufs(x: np.ndarray, sr: int) -> float | None:
+    """Compute integrated LUFS; return None if pyloudnorm is unavailable."""
+    try:
+        import pyloudnorm as pyln
+    except Exception:
+        return None
+
+    data = x if x.ndim == 1 else x
+    try:
+        meter = pyln.Meter(sr)
+        return float(meter.integrated_loudness(data))
+    except Exception:
+        return None
+
+
+def _analyze_audio(audio: np.ndarray, sr: int) -> dict[str, Any]:
+    from scripts.analysis.check_headroom import analyze_buffer
+
+    stats = analyze_buffer(audio)
+    stats["sample_rate"] = int(sr)
+    stats["duration_sec"] = float(len(audio) / sr if sr else 0.0)
+    stats["rms"] = _rms(audio)
+    stats["lufs"] = _integrated_lufs(audio, int(sr))
+    return stats
+
+
+def _fmt_lufs(value: float | None) -> str:
+    return f"{value:.2f} LUFS" if value is not None else "n/a"
 
 
 def _resample(audio: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
@@ -244,21 +275,23 @@ def _write_debug_artifacts(
 
 def run_backend(
     backend: DelimiterBackend,
-    audio_44100_stereo: np.ndarray,
+    audio_target_sr_stereo: np.ndarray,
     *,
     weights_dir: Path,
     use_gpu: bool,
     chunk_sec: float,
     overlap_sec: float,
+    expected_sample_rate: int,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     meta: dict[str, Any] = {
         "backend": backend,
         "chunk_sec": float(chunk_sec),
         "overlap_sec": float(overlap_sec),
+        "expected_sample_rate": int(expected_sample_rate),
     }
 
     if backend == "bypass":
-        return audio_44100_stereo, meta
+        return audio_target_sr_stereo, meta
 
     from scripts.delimiter.model import (
         DelimiterDependencyError,
@@ -291,24 +324,24 @@ def run_backend(
     with torch.no_grad():
         if chunk_sec <= 0:
             x = (
-                torch.from_numpy(audio_44100_stereo.T).unsqueeze(0).to(device)
+                torch.from_numpy(audio_target_sr_stereo.T).unsqueeze(0).to(device)
             )  # (1, 2, T)
             y = model(x)
             out = y[1] if isinstance(y, (tuple, list)) and len(y) >= 2 else y
             out_np = out.squeeze(0).detach().cpu().numpy().T.astype(np.float32)
             return out_np, meta
 
-        sr = 44100
+        sr = int(expected_sample_rate)
         chunk_len = int(round(chunk_sec * sr))
         overlap = int(round(overlap_sec * sr))
         hop = chunk_len - overlap
         if hop <= 0:
             raise ValueError("chunk_sec must be > overlap_sec")
 
-        total_len = int(audio_44100_stereo.shape[0])
+        total_len = int(audio_target_sr_stereo.shape[0])
         if total_len <= chunk_len:
             padded = np.pad(
-                audio_44100_stereo,
+                audio_target_sr_stereo,
                 ((0, chunk_len - total_len), (0, 0)),
                 mode="constant",
             )
@@ -319,7 +352,7 @@ def run_backend(
             return out_np[:total_len], meta
 
         pad = (hop - (max(0, total_len - chunk_len) % hop)) % hop
-        padded = np.pad(audio_44100_stereo, ((0, pad), (0, 0)), mode="constant")
+        padded = np.pad(audio_target_sr_stereo, ((0, pad), (0, 0)), mode="constant")
 
         chunks_out: list[np.ndarray] = []
         for start in range(0, padded.shape[0] - chunk_len + 1, hop):
@@ -365,6 +398,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--use-gpu", action="store_true", help="Use CUDA if available")
     p.add_argument(
+        "--expected-sample-rate",
+        type=int,
+        default=DEFAULT_EXPECTED_SAMPLE_RATE,
+        help="Target sample rate for inference (resample input to this)",
+    )
+    p.add_argument(
         "--chunk-sec",
         type=float,
         default=6.0,
@@ -406,16 +445,18 @@ def main() -> None:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-    from scripts.analysis.check_headroom import analyze_buffer
-
     audio, sr = sf.read(args.input)
     audio = np.asarray(audio, dtype=np.float32)
     audio = _as_stereo(audio)
 
-    in_stats = analyze_buffer(audio)
-    in_rms = _rms(audio)
+    if args.expected_sample_rate <= 0:
+        raise ValueError("--expected-sample-rate must be positive")
 
-    audio_44100 = _resample(audio, sr_in=int(sr), sr_out=44100)
+    target_sr = int(args.expected_sample_rate)
+
+    in_stats = _analyze_audio(audio, int(sr))
+
+    audio_target = _resample(audio, sr_in=int(sr), sr_out=target_sr)
 
     if args.backend == "delimiter":
         _ensure_weights(
@@ -425,27 +466,37 @@ def main() -> None:
         )
 
     t0 = time.perf_counter()
-    out_44100, meta = run_backend(
+    out_target, meta = run_backend(
         args.backend,
-        audio_44100,
+        audio_target,
         weights_dir=args.weights_dir,
         use_gpu=bool(args.use_gpu),
         chunk_sec=float(args.chunk_sec),
         overlap_sec=float(args.overlap_sec),
+        expected_sample_rate=target_sr,
     )
     dt = time.perf_counter() - t0
 
-    out_audio = out_44100
-    out_sr = 44100
-    if args.resample_back and int(sr) != 44100:
-        out_audio = _resample(out_44100, sr_in=44100, sr_out=int(sr))
+    weight_sr = meta.get("weights", {}).get("sample_rate")
+    if args.backend == "delimiter" and weight_sr is not None:
+        if int(weight_sr) != target_sr:
+            raise ValueError(
+                f"Weight sample rate ({weight_sr}) does not match --expected-sample-rate ({target_sr})"
+            )
+
+    out_audio = out_target
+    out_sr = target_sr
+    if args.resample_back and int(sr) != target_sr:
+        out_audio = _resample(out_target, sr_in=target_sr, sr_out=int(sr))
         out_sr = int(sr)
+    meta["input_sample_rate"] = int(sr)
+    meta["output_sample_rate"] = int(out_sr)
+    meta["resample_back"] = bool(args.resample_back and int(sr) != target_sr)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     sf.write(args.output, out_audio, out_sr)
 
-    out_stats = analyze_buffer(out_audio)
-    out_rms = _rms(out_audio)
+    out_stats = _analyze_audio(out_audio, out_sr)
 
     duration = float(len(audio) / sr) if sr else 0.0
     rtf = (dt / duration) if duration > 0 else None
@@ -454,13 +505,13 @@ def main() -> None:
         f"[input] sr={sr} ch=2 dur={duration:.3f}s "
         f"peak={in_stats['peak_linear']:.6f} ({in_stats['peak_dbfs']:.2f} dBFS) "
         f"clip={in_stats['clip_count']} ({in_stats['clip_rate']*100:.6f}%) "
-        f"rms={in_rms:.6f}"
+        f"rms={in_stats['rms']:.6f} lufs={_fmt_lufs(in_stats['lufs'])}"
     )
     print(
         f"[output] sr={out_sr} ch=2 "
         f"peak={out_stats['peak_linear']:.6f} ({out_stats['peak_dbfs']:.2f} dBFS) "
         f"clip={out_stats['clip_count']} ({out_stats['clip_rate']*100:.6f}%) "
-        f"rms={out_rms:.6f}"
+        f"rms={out_stats['rms']:.6f} lufs={_fmt_lufs(out_stats['lufs'])}"
     )
     print(
         f"[perf] elapsed={dt:.3f}s rtf={rtf:.3f} (lower is faster)"
@@ -488,13 +539,11 @@ def main() -> None:
                 "path": str(args.input),
                 "sample_rate": int(sr),
                 "stats": in_stats,
-                "rms": in_rms,
             },
             "output": {
                 "path": str(args.output),
                 "sample_rate": int(out_sr),
                 "stats": out_stats,
-                "rms": out_rms,
             },
             "perf": {"elapsed_sec": dt, "rtf": rtf},
             "meta": meta,
