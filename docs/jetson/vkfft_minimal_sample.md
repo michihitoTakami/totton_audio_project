@@ -1,12 +1,12 @@
 # VkFFT 最小サンプル (Issue #1108)
 
-Jetson Orin Nano と PC (RTX2070S) の双方で **VkFFT の 1D R2C/C2R** が実行できるか確認するための最小サンプルを追加した。`GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE=ON` で有効化すると、`samples/vkfft_minimal/vkfft_minimal` がビルドされる。
+Jetson Orin Nano と PC (RTX2070S) の双方で **VkFFT の 1D R2C/C2R** が実行できるか確認するための最小サンプルを追加した。`ENABLE_VULKAN=ON` で Vulkan バックエンドを有効化すると自動で `GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE` が ON になり、`samples/vkfft_minimal/vkfft_minimal` がビルドされる（個別に ON にする場合も `ENABLE_VULKAN=ON` が必須）。
 
 ## 依存関係
 - Vulkan ランタイム/開発ヘッダ (`libvulkan-dev`) が導入済みであること
 - 最新ドライバ (Jetson/PC ともに `vulkaninfo` が通る状態)
 - CMake 3.18+ / Ninja (任意)
-- glslang は FetchContent で自動取得するため追加インストール不要
+- glslang / VkFFT は `ENABLE_VULKAN=ON` 時に FetchContent で自動取得するため追加インストール不要（`VKFFT_GIT_TAG` でバージョン上書き可）
 
 Jetson/PC 共通の追加パッケージ例:
 ```bash
@@ -15,7 +15,7 @@ sudo apt-get install -y libvulkan-dev vulkan-validationlayers-dev
 
 ## ビルド手順
 ```bash
-cmake -B build-vkfft -DCMAKE_BUILD_TYPE=Release -DGPU_UPSAMPLER_BUILD_VKFFT_SAMPLE=ON
+cmake -B build-vkfft -DCMAKE_BUILD_TYPE=Release -DENABLE_VULKAN=ON
 cmake --build build-vkfft -j"$(nproc)"
 ```
 

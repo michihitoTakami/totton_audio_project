@@ -73,6 +73,9 @@ if(ENABLE_VULKAN AND NOT GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE)
     # Vulkan有効時は最小サンプルを自動ビルドしてツールチェーン確認を行う
     set(GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE ON CACHE BOOL "Build VkFFT Vulkan minimal sample (Issue #1108)" FORCE)
 endif()
+if(GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE AND NOT ENABLE_VULKAN)
+    message(FATAL_ERROR "GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE=ON requires ENABLE_VULKAN=ON")
+endif()
 if(GPU_UPSAMPLER_USE_FLOAT64)
     add_compile_definitions(GPU_UPSAMPLER_USE_FLOAT64)
     message(STATUS "GPU upsampler precision: float64 (double)")
@@ -93,6 +96,59 @@ endif()
 
 # Fetch dependencies
 include(FetchContent)
+
+# Vulkan dependencies (VkFFT + glslang) are only needed when Vulkan backend is enabled.
+if(ENABLE_VULKAN)
+    find_package(Vulkan REQUIRED)
+
+    set(VKFFT_GIT_TAG "v1.3.4" CACHE STRING "VkFFT git tag/commit to fetch")
+
+    # Thin glslang build: disable optional tools/tests to speed up fetch content builds.
+    set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+    set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+    set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        glslang
+        GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
+        GIT_TAG 12.3.1
+    )
+    FetchContent_MakeAvailable(glslang)
+
+    FetchContent_Declare(
+        vkfft
+        GIT_REPOSITORY https://github.com/DTolm/VkFFT.git
+        GIT_TAG ${VKFFT_GIT_TAG}
+    )
+    FetchContent_GetProperties(vkfft)
+    if(NOT vkfft_POPULATED)
+        FetchContent_Populate(vkfft)
+    endif()
+
+    # Header-only interface for VkFFT includes.
+    add_library(vkfft_headers INTERFACE)
+    target_include_directories(vkfft_headers INTERFACE
+        ${vkfft_SOURCE_DIR}/vkFFT
+    )
+
+    # Common Vulkan shader/FFT deps used by Vulkan targets (sample and future backend).
+    add_library(vulkan_shader_libs INTERFACE)
+    target_link_libraries(vulkan_shader_libs INTERFACE
+        Vulkan::Vulkan
+        glslang
+        OGLCompiler
+        OSDependent
+        glslang-default-resource-limits
+        SPIRV
+        vkfft_headers
+    )
+    target_include_directories(vulkan_shader_libs INTERFACE
+        ${glslang_SOURCE_DIR}/glslang/Include
+    )
+endif()
 
 # cppzmq (C++ bindings for ZeroMQ - header-only)
 FetchContent_Declare(

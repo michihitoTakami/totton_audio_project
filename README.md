@@ -242,7 +242,7 @@ cmake --build build -j$(nproc)
   cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=OFF -DENABLE_VULKAN=ON
   cmake --build build -j$(nproc) vkfft_minimal  # VkFFT最小サンプル
   ```
-  - `ENABLE_VULKAN=ON` で `GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE` が自動有効化され、VkFFT最小サンプル `vkfft_minimal` でVulkan toolchainを確認できます。
+  - `ENABLE_VULKAN=ON` で `GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE` が自動有効化され、VkFFT最小サンプル `vkfft_minimal` でVulkan toolchainを確認できます（`VKFFT_GIT_TAG` で取得バージョンを上書き可能）。
 - CUDAとVulkanを併用する場合
   ```bash
   cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=ON -DENABLE_VULKAN=ON
