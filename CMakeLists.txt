@@ -1,19 +1,31 @@
 cmake_minimum_required(VERSION 3.18)
-project(GPUAudioUpsampler LANGUAGES CXX CUDA)
+project(GPUAudioUpsampler LANGUAGES CXX)
+
+option(ENABLE_CUDA "Build CUDA backend (default: ON)" ON)
+option(ENABLE_VULKAN "Build Vulkan backend / samples (default: OFF)" OFF)
+
+if(NOT ENABLE_CUDA AND NOT ENABLE_VULKAN)
+    message(FATAL_ERROR "At least one backend must be enabled: ENABLE_CUDA or ENABLE_VULKAN")
+endif()
 
 # Standard install directories (bin, lib, etc.)
 include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+if(ENABLE_CUDA)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+endif()
 
 # Export compile commands for clang-tidy
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Find required packages
-find_package(CUDAToolkit REQUIRED)
+if(ENABLE_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SNDFILE REQUIRED sndfile)
 pkg_check_modules(ALSA REQUIRED alsa)
@@ -33,28 +45,34 @@ else()
     message(STATUS "  To enable: sudo apt-get install libsystemd-dev && cmake -B build")
 endif()
 
+set(HAVE_NVML FALSE)
 # NVML for GPU utilization monitoring (optional)
 # On minimal Jetson environments or some container setups, NVML may not be available
-if(TARGET CUDA::nvml)
+if(ENABLE_CUDA AND TARGET CUDA::nvml)
     set(HAVE_NVML TRUE)
     message(STATUS "NVML found - GPU utilization monitoring enabled")
 else()
-    set(HAVE_NVML FALSE)
-    message(STATUS "NVML not found - GPU utilization monitoring disabled (stub)")
+    message(STATUS "NVML not found or CUDA disabled - GPU utilization monitoring disabled (stub)")
 endif()
 
-# Detect platform: Jetson vs PC
-# Jetson Orin Nano = SM 8.7 (Ampere), RTX 2070 Super = SM 7.5 (Turing)
-if(EXISTS "/etc/nv_tegra_release")
-    set(GPU_CUDA_ARCH "87")
-    message(STATUS "Detected Jetson platform - CUDA arch ${GPU_CUDA_ARCH}")
-else()
-    set(GPU_CUDA_ARCH "75")
-    message(STATUS "Detected PC platform - CUDA arch ${GPU_CUDA_ARCH}")
+if(ENABLE_CUDA)
+    # Detect platform: Jetson vs PC
+    # Jetson Orin Nano = SM 8.7 (Ampere), RTX 2070 Super = SM 7.5 (Turing)
+    if(EXISTS "/etc/nv_tegra_release")
+        set(GPU_CUDA_ARCH "87")
+        message(STATUS "Detected Jetson platform - CUDA arch ${GPU_CUDA_ARCH}")
+    else()
+        set(GPU_CUDA_ARCH "75")
+        message(STATUS "Detected PC platform - CUDA arch ${GPU_CUDA_ARCH}")
+    endif()
 endif()
 
 option(GPU_UPSAMPLER_USE_FLOAT64 "Build GPU upsampler with float64 pipeline" OFF)
 option(GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE "Build VkFFT Vulkan minimal sample (Issue #1108)" OFF)
+if(ENABLE_VULKAN AND NOT GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE)
+    # Vulkan有効時は最小サンプルを自動ビルドしてツールチェーン確認を行う
+    set(GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE ON CACHE BOOL "Build VkFFT Vulkan minimal sample (Issue #1108)" FORCE)
+endif()
 if(GPU_UPSAMPLER_USE_FLOAT64)
     add_compile_definitions(GPU_UPSAMPLER_USE_FLOAT64)
     message(STATUS "GPU upsampler precision: float64 (double)")
@@ -117,143 +135,145 @@ include_directories(
     ${ALSA_INCLUDE_DIRS}
 )
 
-# Core library (static) - Phase 2 GPU upsampling engine
-# Split into multiple files for maintainability (Issue #104)
-add_library(gpu_upsampler_core STATIC
-    src/audio/audio_io.cpp
-    src/gpu/convolution_kernels.cu
-    src/gpu/cuda_utils.cu
-    src/gpu/partition_plan.cpp
-    src/gpu/gpu_upsampler_core.cu
-    src/gpu/gpu_upsampler_multi_rate.cu
-    src/gpu/gpu_upsampler_streaming.cu
-    src/gpu/gpu_upsampler_eq.cu
-    src/gpu/four_channel_fir.cu
-    src/audio/phase_alignment.cpp
-    src/hrtf/woodworth_model.cpp
-)
+if(ENABLE_CUDA)
+    # Core library (static) - Phase 2 GPU upsampling engine
+    # Split into multiple files for maintainability (Issue #104)
+    add_library(gpu_upsampler_core STATIC
+        src/audio/audio_io.cpp
+        src/gpu/convolution_kernels.cu
+        src/gpu/cuda_utils.cu
+        src/gpu/partition_plan.cpp
+        src/gpu/gpu_upsampler_core.cu
+        src/gpu/gpu_upsampler_multi_rate.cu
+        src/gpu/gpu_upsampler_streaming.cu
+        src/gpu/gpu_upsampler_eq.cu
+        src/gpu/four_channel_fir.cu
+        src/audio/phase_alignment.cpp
+        src/hrtf/woodworth_model.cpp
+    )
 
-# CUDA architecture (auto-detected: Jetson=87, PC=75)
-set_target_properties(gpu_upsampler_core PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
-    POSITION_INDEPENDENT_CODE ON
-)
+    # CUDA architecture (auto-detected: Jetson=87, PC=75)
+    set_target_properties(gpu_upsampler_core PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
+        POSITION_INDEPENDENT_CODE ON
+    )
 
-# Link libraries for core
-target_link_libraries(gpu_upsampler_core PUBLIC
-    CUDA::cudart
-    CUDA::cufft
-    ${SNDFILE_LIBRARIES}
-    nlohmann_json::nlohmann_json
-)
+    # Link libraries for core
+    target_link_libraries(gpu_upsampler_core PUBLIC
+        CUDA::cudart
+        CUDA::cufft
+        ${SNDFILE_LIBRARIES}
+        nlohmann_json::nlohmann_json
+    )
 
-# Conditionally link NVML if available
-if(HAVE_NVML)
-    target_link_libraries(gpu_upsampler_core PUBLIC CUDA::nvml)
-    target_compile_definitions(gpu_upsampler_core PUBLIC HAVE_NVML)
+    # Conditionally link NVML if available
+    if(HAVE_NVML)
+        target_link_libraries(gpu_upsampler_core PUBLIC CUDA::nvml)
+        target_compile_definitions(gpu_upsampler_core PUBLIC HAVE_NVML)
+    endif()
+
+    # Command-line executable
+    add_executable(gpu_upsampler
+        src/main.cpp
+    )
+
+    # Link against core library and eq_support
+    target_link_libraries(gpu_upsampler
+        gpu_upsampler_core
+        eq_support
+    )
+
+    # Compiler flags for core library
+    target_compile_options(gpu_upsampler_core PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+        $<$<COMPILE_LANGUAGE:CUDA>:-O3 --use_fast_math>
+    )
+
+    # Compiler flags for executable
+    target_compile_options(gpu_upsampler PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+    )
+
+    # ALSA Direct Output Daemon executable
+    add_executable(gpu_upsampler_alsa
+        src/alsa_daemon.cpp
+        src/core/partition_runtime_utils.cpp
+        src/daemon/app/process_resources.cpp
+        src/daemon/audio/crossfeed_manager.cpp
+        src/daemon/audio/upsampler_builder.cpp
+        src/daemon/audio_pipeline/audio_pipeline.cpp
+        src/daemon/audio_pipeline/filter_manager.cpp
+        src/daemon/audio_pipeline/headroom_controller.cpp
+        src/daemon/audio_pipeline/rate_switcher.cpp
+        src/daemon/audio_pipeline/soft_mute_runner.cpp
+        src/daemon/audio_pipeline/switch_actions.cpp
+        src/daemon/input/loopback_capture.cpp
+        src/daemon/input/i2s_capture.cpp
+        src/daemon/control/handlers/handler_registry.cpp
+        src/daemon/core/pid_lock.cpp
+        src/daemon/pcm/dac_manager.cpp
+        src/daemon/control/control_plane.cpp
+        src/daemon/output/alsa_output.cpp
+        src/daemon/output/alsa_pcm_controller.cpp
+        src/daemon/output/alsa_output_thread.cpp
+        src/daemon/output/playback_buffer_manager.cpp
+        src/daemon/output/playback_buffer_access.cpp
+        src/daemon/control/zmq_server.cpp
+        src/daemon/metrics/stats_file.cpp
+        src/daemon/metrics/runtime_stats.cpp
+        src/daemon/shutdown_manager.cpp
+    )
+
+    target_include_directories(gpu_upsampler_alsa PRIVATE src)
+
+    # Link against core library, eq_support, ALSA, ZeroMQ, SoftMute, FallbackManager, and Logging
+    target_link_libraries(gpu_upsampler_alsa
+        gpu_upsampler_core
+        eq_support
+        soft_mute
+        filter_headroom
+        graceful_shutdown
+        fallback_manager
+        delimiter_inference
+        zeromq_interface
+        dac_capability
+        logging
+        ${ALSA_LIBRARIES}
+        ${ZMQ_LIBRARIES}
+    )
+
+    # Conditionally link libsystemd for Type=notify support
+    if(HAVE_SYSTEMD)
+        target_link_libraries(gpu_upsampler_alsa ${SYSTEMD_LIBRARIES})
+        target_compile_definitions(gpu_upsampler_alsa PRIVATE HAVE_SYSTEMD)
+        target_include_directories(gpu_upsampler_alsa PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+    endif()
+
+    target_include_directories(gpu_upsampler_alsa PRIVATE
+        ${ZMQ_INCLUDE_DIRS}
+        ${cppzmq_SOURCE_DIR}
+    )
+
+    # Compiler flags for ALSA daemon
+    target_compile_options(gpu_upsampler_alsa PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+    )
+
+    # EQ Test executable
+    add_executable(test_eq
+        src/test_eq.cpp
+    )
+
+    target_link_libraries(test_eq
+        gpu_upsampler_core
+        eq_support
+    )
+
+    target_compile_options(test_eq PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+    )
 endif()
-
-# Command-line executable
-add_executable(gpu_upsampler
-    src/main.cpp
-)
-
-# Link against core library and eq_support
-target_link_libraries(gpu_upsampler
-    gpu_upsampler_core
-    eq_support
-)
-
-# Compiler flags for core library
-target_compile_options(gpu_upsampler_core PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-    $<$<COMPILE_LANGUAGE:CUDA>:-O3 --use_fast_math>
-)
-
-# Compiler flags for executable
-target_compile_options(gpu_upsampler PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-)
-
-# ALSA Direct Output Daemon executable
-add_executable(gpu_upsampler_alsa
-    src/alsa_daemon.cpp
-    src/core/partition_runtime_utils.cpp
-    src/daemon/app/process_resources.cpp
-    src/daemon/audio/crossfeed_manager.cpp
-    src/daemon/audio/upsampler_builder.cpp
-    src/daemon/audio_pipeline/audio_pipeline.cpp
-    src/daemon/audio_pipeline/filter_manager.cpp
-    src/daemon/audio_pipeline/headroom_controller.cpp
-    src/daemon/audio_pipeline/rate_switcher.cpp
-    src/daemon/audio_pipeline/soft_mute_runner.cpp
-    src/daemon/audio_pipeline/switch_actions.cpp
-    src/daemon/input/loopback_capture.cpp
-    src/daemon/input/i2s_capture.cpp
-    src/daemon/control/handlers/handler_registry.cpp
-    src/daemon/core/pid_lock.cpp
-    src/daemon/pcm/dac_manager.cpp
-    src/daemon/control/control_plane.cpp
-    src/daemon/output/alsa_output.cpp
-    src/daemon/output/alsa_pcm_controller.cpp
-    src/daemon/output/alsa_output_thread.cpp
-    src/daemon/output/playback_buffer_manager.cpp
-    src/daemon/output/playback_buffer_access.cpp
-    src/daemon/control/zmq_server.cpp
-    src/daemon/metrics/stats_file.cpp
-    src/daemon/metrics/runtime_stats.cpp
-    src/daemon/shutdown_manager.cpp
-)
-
-target_include_directories(gpu_upsampler_alsa PRIVATE src)
-
-# Link against core library, eq_support, ALSA, ZeroMQ, SoftMute, FallbackManager, and Logging
-target_link_libraries(gpu_upsampler_alsa
-    gpu_upsampler_core
-    eq_support
-    soft_mute
-    filter_headroom
-    graceful_shutdown
-    fallback_manager
-    delimiter_inference
-    zeromq_interface
-    dac_capability
-    logging
-    ${ALSA_LIBRARIES}
-    ${ZMQ_LIBRARIES}
-)
-
-# Conditionally link libsystemd for Type=notify support
-if(HAVE_SYSTEMD)
-    target_link_libraries(gpu_upsampler_alsa ${SYSTEMD_LIBRARIES})
-    target_compile_definitions(gpu_upsampler_alsa PRIVATE HAVE_SYSTEMD)
-    target_include_directories(gpu_upsampler_alsa PRIVATE ${SYSTEMD_INCLUDE_DIRS})
-endif()
-
-target_include_directories(gpu_upsampler_alsa PRIVATE
-    ${ZMQ_INCLUDE_DIRS}
-    ${cppzmq_SOURCE_DIR}
-)
-
-# Compiler flags for ALSA daemon
-target_compile_options(gpu_upsampler_alsa PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-)
-
-# EQ Test executable
-add_executable(test_eq
-    src/test_eq.cpp
-)
-
-target_link_libraries(test_eq
-    gpu_upsampler_core
-    eq_support
-)
-
-target_compile_options(test_eq PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-)
 
 # Error Codes Library (used by zeromq_interface and other components)
 add_library(error_codes STATIC
@@ -288,7 +308,9 @@ if(HAVE_NVML)
 endif()
 
 # Ensure spdlog headers propagate to targets that include logger.h.
-target_link_libraries(gpu_upsampler_core PUBLIC logging)
+if(ENABLE_CUDA)
+    target_link_libraries(gpu_upsampler_core PUBLIC logging)
+endif()
 
 # ZeroMQ Communication Library (CPU-only, no GPU required)
 add_library(zeromq_interface STATIC
@@ -325,20 +347,22 @@ target_compile_options(dac_capability PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
-# Auto-Negotiation Library (CPU-only)
-add_library(auto_negotiation STATIC
-    src/audio/auto_negotiation.cpp
-)
-target_link_libraries(auto_negotiation PUBLIC
-    dac_capability
-)
-target_include_directories(auto_negotiation PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
-    ${CUDAToolkit_INCLUDE_DIRS}
-)
-target_compile_options(auto_negotiation PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
-)
+if(ENABLE_CUDA)
+    # Auto-Negotiation Library (uses CUDA rate families)
+    add_library(auto_negotiation STATIC
+        src/audio/auto_negotiation.cpp
+    )
+    target_link_libraries(auto_negotiation PUBLIC
+        dac_capability
+    )
+    target_include_directories(auto_negotiation PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+        ${CUDAToolkit_INCLUDE_DIRS}
+    )
+    target_compile_options(auto_negotiation PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+    )
+endif()
 
 # Soft Mute Library (CPU-only, for glitch-free audio transitions)
 add_library(soft_mute STATIC
@@ -430,12 +454,14 @@ target_compile_options(eq_support PRIVATE
 )
 
 # Installation for command-line tool and library
-install(TARGETS gpu_upsampler DESTINATION bin)
-install(TARGETS gpu_upsampler_alsa DESTINATION bin)
-install(TARGETS gpu_upsampler_core DESTINATION lib)
+if(ENABLE_CUDA)
+    install(TARGETS gpu_upsampler DESTINATION bin)
+    install(TARGETS gpu_upsampler_alsa DESTINATION bin)
+    install(TARGETS gpu_upsampler_core DESTINATION lib)
+    install(TARGETS auto_negotiation DESTINATION lib)
+endif()
 install(TARGETS zeromq_interface DESTINATION lib)
 install(TARGETS dac_capability DESTINATION lib)
-install(TARGETS auto_negotiation DESTINATION lib)
 install(TARGETS soft_mute DESTINATION lib)
 install(TARGETS logging DESTINATION lib)
 install(TARGETS eq_support DESTINATION lib)
@@ -495,83 +521,84 @@ install(FILES ${CMAKE_BINARY_DIR}/gpu-upsampler.service
 enable_testing()
 include(GoogleTest)
 
-# CPU-only unit tests (no GPU required)
-# Tests: RateFamily, EQ Parser, EQ to FIR, Config Loader
-add_executable(cpu_tests
-    tests/cpp/audio/test_rate_family.cpp
-    tests/cpp/audio/test_eq_parser.cpp
-    tests/cpp/audio/test_eq_to_fir.cpp
-    tests/cpp/audio/test_filter_headroom_cache.cpp
-    tests/cpp/audio/test_overlap_add.cpp
-    tests/cpp/core/test_config_loader.cpp
-    tests/cpp/delimiter/test_inference_backend.cpp
-    tests/cpp/delimiter/test_safety_controller.cpp
-    tests/cpp/e2e/test_partition_plan.cpp
-    tests/cpp/audio/test_phase_alignment.cpp
-    tests/cpp/audio/test_playback_buffer_threshold.cpp
-    tests/cpp/daemon/test_alsa_write_loop.cpp
-    tests/cpp/daemon/test_loopback_helpers.cpp
-    tests/cpp/daemon/test_pid_lock.cpp
-    tests/cpp/daemon/test_runtime_stats.cpp
-    tests/cpp/daemon/test_stream_buffer_sizing.cpp
-    tests/cpp/daemon/test_playback_buffer_access.cpp
-    tests/cpp/daemon/test_switch_actions.cpp
-    tests/cpp/daemon/test_i2s_capture_config.cpp
-    tests/cpp/audio/test_audio_pipeline.cpp
-    tests/cpp/core/test_precision_traits.cpp
-    src/daemon/audio/crossfeed_manager.cpp
-    src/daemon/audio_pipeline/audio_pipeline.cpp
-    src/daemon/audio_pipeline/filter_manager.cpp
-    src/daemon/audio_pipeline/headroom_controller.cpp
-    src/daemon/audio_pipeline/rate_switcher.cpp
-    src/daemon/audio_pipeline/soft_mute_runner.cpp
-    src/daemon/audio_pipeline/switch_actions.cpp
-    src/daemon/control/handlers/handler_registry.cpp
-    src/daemon/core/pid_lock.cpp
-    src/daemon/input/loopback_capture.cpp
-    src/daemon/input/i2s_capture.cpp
-    src/daemon/metrics/stats_file.cpp
-    src/daemon/metrics/runtime_stats.cpp
-    src/daemon/pcm/dac_manager.cpp
-    src/daemon/output/alsa_output.cpp
-    src/daemon/output/playback_buffer_manager.cpp
-    src/daemon/output/playback_buffer_access.cpp
-)
-target_link_libraries(cpu_tests
-    GTest::gtest_main
-    gpu_upsampler_core
-    eq_support
-    logging
-    filter_headroom
-    fallback_manager
-    delimiter_inference
-    soft_mute
-    dac_capability
-    ${ALSA_LIBRARIES}
-)
-target_include_directories(cpu_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/src
-)
-gtest_discover_tests(cpu_tests)
+if(ENABLE_CUDA)
+    # CPU-side tests that rely on CUDA backend
+    add_executable(cpu_tests
+        tests/cpp/audio/test_rate_family.cpp
+        tests/cpp/audio/test_eq_parser.cpp
+        tests/cpp/audio/test_eq_to_fir.cpp
+        tests/cpp/audio/test_filter_headroom_cache.cpp
+        tests/cpp/audio/test_overlap_add.cpp
+        tests/cpp/core/test_config_loader.cpp
+        tests/cpp/delimiter/test_inference_backend.cpp
+        tests/cpp/delimiter/test_safety_controller.cpp
+        tests/cpp/e2e/test_partition_plan.cpp
+        tests/cpp/audio/test_phase_alignment.cpp
+        tests/cpp/audio/test_playback_buffer_threshold.cpp
+        tests/cpp/daemon/test_alsa_write_loop.cpp
+        tests/cpp/daemon/test_loopback_helpers.cpp
+        tests/cpp/daemon/test_pid_lock.cpp
+        tests/cpp/daemon/test_runtime_stats.cpp
+        tests/cpp/daemon/test_stream_buffer_sizing.cpp
+        tests/cpp/daemon/test_playback_buffer_access.cpp
+        tests/cpp/daemon/test_switch_actions.cpp
+        tests/cpp/daemon/test_i2s_capture_config.cpp
+        tests/cpp/audio/test_audio_pipeline.cpp
+        tests/cpp/core/test_precision_traits.cpp
+        src/daemon/audio/crossfeed_manager.cpp
+        src/daemon/audio_pipeline/audio_pipeline.cpp
+        src/daemon/audio_pipeline/filter_manager.cpp
+        src/daemon/audio_pipeline/headroom_controller.cpp
+        src/daemon/audio_pipeline/rate_switcher.cpp
+        src/daemon/audio_pipeline/soft_mute_runner.cpp
+        src/daemon/audio_pipeline/switch_actions.cpp
+        src/daemon/control/handlers/handler_registry.cpp
+        src/daemon/core/pid_lock.cpp
+        src/daemon/input/loopback_capture.cpp
+        src/daemon/input/i2s_capture.cpp
+        src/daemon/metrics/stats_file.cpp
+        src/daemon/metrics/runtime_stats.cpp
+        src/daemon/pcm/dac_manager.cpp
+        src/daemon/output/alsa_output.cpp
+        src/daemon/output/playback_buffer_manager.cpp
+        src/daemon/output/playback_buffer_access.cpp
+    )
+    target_link_libraries(cpu_tests
+        GTest::gtest_main
+        gpu_upsampler_core
+        eq_support
+        logging
+        filter_headroom
+        fallback_manager
+        delimiter_inference
+        soft_mute
+        dac_capability
+        ${ALSA_LIBRARIES}
+    )
+    target_include_directories(cpu_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    gtest_discover_tests(cpu_tests)
 
-# GPU integration tests (requires CUDA GPU)
-add_executable(gpu_tests
-    tests/gpu/test_convolution_engine.cu
-    tests/gpu/test_four_channel_fir.cu
-)
-target_link_libraries(gpu_tests
-    GTest::gtest_main
-    gpu_upsampler_core
-)
-target_include_directories(gpu_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-set_target_properties(gpu_tests PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
-)
-gtest_discover_tests(gpu_tests)
+    # GPU integration tests (requires CUDA GPU)
+    add_executable(gpu_tests
+        tests/gpu/test_convolution_engine.cu
+        tests/gpu/test_four_channel_fir.cu
+    )
+    target_link_libraries(gpu_tests
+        GTest::gtest_main
+        gpu_upsampler_core
+    )
+    target_include_directories(gpu_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    set_target_properties(gpu_tests PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
+    )
+    gtest_discover_tests(gpu_tests)
+endif()
 
 # ZeroMQ communication tests (CPU-only)
 add_executable(zmq_tests
@@ -626,31 +653,35 @@ target_include_directories(error_codes_tests PRIVATE
 gtest_discover_tests(error_codes_tests)
 
 # Auto-Negotiation tests (CPU-only, no ALSA hardware required)
-add_executable(auto_negotiation_tests
-    tests/cpp/audio/test_auto_negotiation.cpp
-)
-target_link_libraries(auto_negotiation_tests
-    GTest::gtest_main
-    auto_negotiation
-    gpu_upsampler_core
-)
-target_include_directories(auto_negotiation_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-gtest_discover_tests(auto_negotiation_tests)
+if(ENABLE_CUDA)
+    add_executable(auto_negotiation_tests
+        tests/cpp/audio/test_auto_negotiation.cpp
+    )
+    target_link_libraries(auto_negotiation_tests
+        GTest::gtest_main
+        auto_negotiation
+        gpu_upsampler_core
+    )
+    target_include_directories(auto_negotiation_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    gtest_discover_tests(auto_negotiation_tests)
+endif()
 
 # Rate Switch E2E tests (Issue #221)
-add_executable(rate_switch_e2e_tests
-    tests/cpp/e2e/test_rate_switch_e2e.cpp
-)
-target_link_libraries(rate_switch_e2e_tests
-    GTest::gtest_main
-    auto_negotiation
-)
-target_include_directories(rate_switch_e2e_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-gtest_discover_tests(rate_switch_e2e_tests)
+if(ENABLE_CUDA)
+    add_executable(rate_switch_e2e_tests
+        tests/cpp/e2e/test_rate_switch_e2e.cpp
+    )
+    target_link_libraries(rate_switch_e2e_tests
+        GTest::gtest_main
+        auto_negotiation
+    )
+    target_include_directories(rate_switch_e2e_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    gtest_discover_tests(rate_switch_e2e_tests)
+endif()
 
 # Soft Mute tests (CPU-only)
 add_executable(soft_mute_tests

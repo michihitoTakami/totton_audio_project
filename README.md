@@ -235,6 +235,27 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
+#### バックエンド切り替え（CUDA / Vulkan）
+- デフォルト: `ENABLE_CUDA=ON` / `ENABLE_VULKAN=OFF`（従来どおりCUDA必須）
+- Vulkanのみでのビルド（Pi5やVulkanツールチェーン確認用）
+  ```bash
+  cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=OFF -DENABLE_VULKAN=ON
+  cmake --build build -j$(nproc) vkfft_minimal  # VkFFT最小サンプル
+  ```
+  - `ENABLE_VULKAN=ON` で `GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE` が自動有効化され、VkFFT最小サンプル `vkfft_minimal` でVulkan toolchainを確認できます。
+- CUDAとVulkanを併用する場合
+  ```bash
+  cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=ON -DENABLE_VULKAN=ON
+  cmake --build build -j$(nproc)
+  ```
+
+Vulkan環境確認（Jetson Orin Nano / PC 共通の抜粋）
+- ドライバ/ICD: Jetsonは JetPack 6.x(L4T r36.x)、PCは推奨版 `nvidia-driver-XXX`。`ls /usr/share/vulkan/icd.d/nvidia_icd.json` でICD確認。
+- ツール: `sudo apt update && sudo apt install -y vulkan-tools libvulkan1`
+- 動作確認: `vulkaninfo --summary | grep -E "deviceName|Compute"` で compute queue が見えること。
+- トラブルシュート: `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json` を指定、/dev/nvidia* の権限は `sudo usermod -aG video,audio $USER` 後に再ログイン。
+- Pi5向けDockerビルドでも `-DENABLE_CUDA=OFF -DENABLE_VULKAN=ON` を渡せば CUDAToolkit 非依存でCMakeが通る構成にしています。
+
 ### 3. テスト実行
 
 ```bash
@@ -248,6 +269,7 @@ cmake --build build -j$(nproc)
 ./build/gpu_tests
 ./build/crossfeed_tests
 ```
+※ `ENABLE_CUDA=OFF` で構成した場合、CUDA依存の `cpu_tests` / `auto_negotiation_tests` / `gpu_tests` / `crossfeed_tests` は生成されず、ZeroMQ/Base64/SoftMuteなどのCPUテストのみが有効になります。
 
 ### 4. デーモン起動
 
