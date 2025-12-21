@@ -36,6 +36,20 @@
 
 ---
 
+## VkFFT (Vulkan FFT library)
+
+- **URL**: `https://github.com/DTolm/VkFFT`
+- **ライセンス**: MIT
+- **利用範囲**: Vulkan FFT 最小サンプル（Issue #1108）。ソース一式を `third_party/vkfft` に同梱。
+
+## glslang
+
+- **URL**: `https://github.com/KhronosGroup/glslang`
+- **ライセンス**: Apache-2.0
+- **利用範囲**: VkFFT（Vulkan backend）のシェーダコンパイルに使用。FetchContent でビルド時取得。
+
+---
+
 ## Python: pysofaconventions
 
 - **用途**: SOFA(HRTF) 読み込み

@@ -54,6 +54,7 @@ else()
 endif()
 
 option(GPU_UPSAMPLER_USE_FLOAT64 "Build GPU upsampler with float64 pipeline" OFF)
+option(GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE "Build VkFFT Vulkan minimal sample (Issue #1108)" OFF)
 if(GPU_UPSAMPLER_USE_FLOAT64)
     add_compile_definitions(GPU_UPSAMPLER_USE_FLOAT64)
     message(STATUS "GPU upsampler precision: float64 (double)")
@@ -699,3 +700,7 @@ target_include_directories(audio_input_stall_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 gtest_discover_tests(audio_input_stall_tests)
+
+if(GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE)
+    add_subdirectory(samples/vkfft_minimal)
+endif()

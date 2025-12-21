@@ -7,6 +7,8 @@
 # Run all (manually):
 #   uv run pre-commit run --all-files
 
+exclude: ^third_party/
+
 repos:
   # clang-format for C/C++/CUDA formatting
   - repo: https://github.com/pre-commit/mirrors-clang-format

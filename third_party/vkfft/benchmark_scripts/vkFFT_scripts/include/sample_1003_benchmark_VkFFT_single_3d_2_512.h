@@ -1,0 +1,6 @@
+#include "utils_VkFFT.h"
+#include "vkFFT.h"
+
+VkFFTResult sample_1003_benchmark_VkFFT_single_3d_2_512(VkGPU* vkGPU, uint64_t file_output,
+                                                        FILE* output,
+                                                        uint64_t isCompilerInitialized);
