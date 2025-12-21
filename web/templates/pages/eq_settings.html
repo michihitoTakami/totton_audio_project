@@ -55,87 +55,6 @@
         </div>
     </div>
 
-    {% call panels.card_panel(t.get('eq.opra_sync.title')) %}
-        <div class="card-row wrap">
-            <div class="stack">
-                <div class="muted">{{ t.get('eq.opra_sync.description') }}</div>
-                <div class="muted" style="margin-top: 6px;" x-show="opraSync.available && opraSync.available.latest">
-                    {{ t.get('eq.opra_sync.available_latest') }}:
-                    <span class="mono" x-text="opraSync.available.latest"></span>
-                    <span class="muted" x-show="opraSync.status && opraSync.available && opraSync.available.latest && (opraSync.available.latest !== (opraSync.status.current_metadata?.commit_sha || opraSync.status.current_commit))">
-                        ({{ t.get('eq.opra_sync.update_available') }})
-                    </span>
-                    <span class="muted" x-show="opraSync.status && opraSync.available && opraSync.available.latest && (opraSync.available.latest === (opraSync.status.current_metadata?.commit_sha || opraSync.status.current_commit))">
-                        ({{ t.get('eq.opra_sync.up_to_date') }})
-                    </span>
-                </div>
-            </div>
-            {{ buttons.btn_primary(t.get('eq.opra_sync.check'), icon='🔍', click='checkOpraAvailable()', disabled='opraSync.loading', extra_class='btn-secondary') }}
-            {{ buttons.btn_primary(t.get('eq.opra_sync.update'), icon='⬇️', click='startOpraUpdate()', disabled='opraSync.loading || opraSync.status?.status === "running"') }}
-            {{ buttons.btn_primary(t.get('eq.opra_sync.rollback'), icon='↩️', click='startOpraRollback()', disabled='opraSync.loading || opraSync.status?.status === "running" || !opraSync.status?.previous_commit', extra_class='btn-secondary') }}
-        </div>
-
-        <div class="form-grid" style="margin-top: 12px;">
-            {% set form_label = t.get('eq.opra_sync.source') %}
-            {% set form_input_type = "select" %}
-            {% set form_input_id = "opraSyncSource" %}
-            {% set form_input_model = "opraSync.source" %}
-            {% set form_input_disabled = "opraSync.loading || opraSync.status?.status === 'running'" %}
-            {% set form_select_options = '<option value=\"github_raw\">GitHub Raw (SHA固定)</option><option value=\"cloudflare\">Cloudflare (unknown)</option>' %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('eq.opra_sync.target') %}
-            {% set form_input_id = "opraSyncTarget" %}
-            {% set form_input_model = "opraSync.target" %}
-            {% set form_input_placeholder = t.get('eq.opra_sync.target_placeholder') %}
-            {% set form_input_disabled = "opraSync.loading || opraSync.status?.status === 'running'" %}
-            {% include 'components/form_group.html' %}
-        </div>
-
-        <div class="grid-2" style="margin-top: 12px;">
-            <div class="stack">
-                <div class="muted">{{ t.get('eq.opra_sync.current_commit') }}</div>
-                <div class="mono" x-text="opraSync.status?.current_metadata?.commit_sha || opraSync.status?.current_commit || '—'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('eq.opra_sync.downloaded_at') }}</div>
-                <div class="mono" x-text="formatIso(opraSync.status?.current_metadata?.downloaded_at)"></div>
-            </div>
-        </div>
-
-        <div class="grid-2" style="margin-top: 12px;">
-            <div class="stack">
-                <div class="muted">{{ t.get('eq.opra_sync.stats_vendors') }}</div>
-                <div class="mono" x-text="opraSync.status?.current_metadata?.stats?.vendor ?? opraSync.status?.current_metadata?.stats?.vendors ?? '—'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('eq.opra_sync.stats_products') }}</div>
-                <div class="mono" x-text="opraSync.status?.current_metadata?.stats?.product ?? opraSync.status?.current_metadata?.stats?.products ?? '—'"></div>
-            </div>
-        </div>
-
-        <div class="grid-2" style="margin-top: 12px;">
-            <div class="stack">
-                <div class="muted">{{ t.get('eq.opra_sync.stats_eq_profiles') }}</div>
-                <div class="mono" x-text="opraSync.status?.current_metadata?.stats?.eq ?? opraSync.status?.current_metadata?.stats?.eq_profiles ?? '—'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('eq.opra_sync.state') }}</div>
-                <div class="mono" x-text="formatOpraStatus(opraSync.status?.status)"></div>
-            </div>
-        </div>
-
-        <div class="stack" style="margin-top: 12px;" x-show="opraSync.status?.last_error">
-            <div class="muted">{{ t.get('eq.opra_sync.last_error') }}</div>
-            <div class="mono" x-text="opraSync.status.last_error"></div>
-        </div>
-
-        <div class="stack" style="margin-top: 12px;" x-show="opraSync.status?.previous_commit">
-            <div class="muted">{{ t.get('eq.opra_sync.previous_commit') }}</div>
-            <div class="mono" x-text="opraSync.status.previous_commit"></div>
-        </div>
-    {% endcall %}
-
     <!-- OPRA Headphone Search -->
     <div class="section">
         <h2 class="section-title">{{ t.get('eq.opra.title') }}</h2>
@@ -230,6 +149,38 @@
             </template>
         </div>
     </div>
+
+    {% call panels.card_panel(t.get('eq.opra_sync.title')) %}
+        <div class="card-row wrap">
+            <div class="stack">
+                <div class="muted">{{ t.get('eq.opra_sync.description') }}</div>
+            </div>
+            {{ buttons.btn_primary(t.get('eq.opra_sync.check'), icon='🔍', click='checkOpraAvailable()', disabled='opraSync.loading', extra_class='btn-secondary') }}
+            {{ buttons.btn_primary(t.get('eq.opra_sync.update'), icon='⬇️', click='startOpraUpdate()', disabled='opraSync.loading || opraSync.status?.status === "running"') }}
+            {{ buttons.btn_primary(t.get('eq.opra_sync.rollback'), icon='↩️', click='startOpraRollback()', disabled='opraSync.loading || opraSync.status?.status === "running" || !opraSync.status?.previous_commit', extra_class='btn-secondary') }}
+        </div>
+
+        <div class="form-grid" style="margin-top: 12px;">
+            {% set form_label = t.get('eq.opra_sync.source_target') %}
+            {% set form_input_type = "text" %}
+            {% set form_input_id = "opraSyncTargetRef" %}
+            {% set form_input_model = "opraSync.targetRef" %}
+            {% set form_input_placeholder = t.get('eq.opra_sync.target_placeholder') %}
+            {% set form_input_disabled = "opraSync.loading || opraSync.status?.status === 'running'" %}
+            {% include 'components/form_group.html' %}
+        </div>
+
+        <div class="grid-2" style="margin-top: 12px;">
+            <div class="stack">
+                <div class="muted">{{ t.get('eq.opra_sync.current_commit') }}</div>
+                <div class="mono" x-text="opraSync.status?.current_metadata?.commit_sha || opraSync.status?.current_commit || '—'"></div>
+            </div>
+            <div class="stack">
+                <div class="muted">{{ t.get('eq.opra_sync.downloaded_at') }}</div>
+                <div class="mono" x-text="formatIso(opraSync.status?.current_metadata?.downloaded_at)"></div>
+            </div>
+        </div>
+    {% endcall %}
 </div>
 {% endblock %}
 
@@ -245,8 +196,7 @@ function eqSettingsData() {
             filters: [],
         },
         opraSync: {
-            source: 'github_raw',
-            target: 'latest',
+            targetRef: 'latest',
             loading: false,
             status: null,
             available: null,
@@ -300,6 +250,20 @@ function eqSettingsData() {
             return this.opraSyncLabels[key] || this.opraSyncLabels.unknown;
         },
 
+        resolveOpraSyncParams() {
+            const ref = String(this.opraSync.targetRef || '').trim();
+            const normalized = ref.toLowerCase();
+            const source = normalized === 'cloudflare' ? 'cloudflare' : 'github_raw';
+            const target =
+                normalized === '' ||
+                normalized === 'latest' ||
+                normalized === 'cloudflare' ||
+                normalized === 'github_raw'
+                    ? 'latest'
+                    : ref;
+            return { source, target };
+        },
+
         async fetchOpraSyncStatus() {
             try {
                 const res = await fetch('/api/opra/sync/status');
@@ -313,9 +277,10 @@ function eqSettingsData() {
 
         async checkOpraAvailable() {
             if (this.opraSync.loading) return;
+            const { source } = this.resolveOpraSyncParams();
             this.opraSync.loading = true;
             try {
-                const res = await fetch(`/api/opra/sync/available?source=${encodeURIComponent(this.opraSync.source)}`);
+                const res = await fetch(`/api/opra/sync/available?source=${encodeURIComponent(source)}`);
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
                     throw new Error(data.detail || data.message || 'failed to check updates');
@@ -330,8 +295,9 @@ function eqSettingsData() {
         },
 
         async startOpraUpdate() {
-            const target = String(this.opraSync.target || '').trim() || 'latest';
-            if (!confirm(`{{ t.get("eq.opra_sync.confirm_update") }} (${target})`)) return;
+            const { source, target } = this.resolveOpraSyncParams();
+            const targetLabel = target || 'latest';
+            if (!confirm(`{{ t.get("eq.opra_sync.confirm_update") }} (${targetLabel})`)) return;
             if (this.opraSync.loading) return;
             this.opraSync.loading = true;
             try {
@@ -340,7 +306,7 @@ function eqSettingsData() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         target: target,
-                        source: this.opraSync.source,
+                        source: source,
                     }),
                 });
                 const data = await res.json().catch(() => ({}));
