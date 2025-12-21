@@ -38,6 +38,6 @@ VkFFT 1D R2C/C2R sample
 - Jetson でも同様に `maxerr` の範囲に収まることを確認する。
 
 ## メモ
-- VkFFT v1.3.4 を `third_party/vkfft` に同梱。
+- VkFFT は CMake FetchContent で `v1.3.4` をビルド時取得（Ubuntu等では `libvkfft-dev` の利用も可）。
 - glslang (Apache-2.0) を FetchContent でビルド時取得。オフライン環境では事前に依存をミラーしておくこと。
 - 本サンプルは Vulkan バックエンド導入検証用であり、既存 CUDA パスには影響しない。

@@ -1,1 +1,0 @@
-void sample_1_benchmark_rocFFT_double(bool file_output, FILE* output, int device_id);

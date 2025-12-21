@@ -1,1 +1,0 @@
-void sample_7_benchmark_rocFFT_single_Bluestein(bool file_output, FILE* output, int device_id);

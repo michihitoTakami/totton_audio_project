@@ -1,1 +1,0 @@
-void sample_1000_benchmark_cuFFT_single_2_4096(bool file_output, FILE* output, int device_id);

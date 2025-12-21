@@ -40,7 +40,7 @@
 
 - **URL**: `https://github.com/DTolm/VkFFT`
 - **ライセンス**: MIT
-- **利用範囲**: Vulkan FFT 最小サンプル（Issue #1108）。ソース一式を `third_party/vkfft` に同梱。
+- **利用範囲**: Vulkan FFT 最小サンプル（Issue #1108）。CMake FetchContent でビルド時に取得（Ubuntu等では `libvkfft-dev` の利用も可）。
 
 ## glslang
 

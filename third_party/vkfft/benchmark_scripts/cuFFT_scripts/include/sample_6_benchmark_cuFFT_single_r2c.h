@@ -1,1 +1,0 @@
-void sample_6_benchmark_cuFFT_single_r2c(bool file_output, FILE* output, int device_id);

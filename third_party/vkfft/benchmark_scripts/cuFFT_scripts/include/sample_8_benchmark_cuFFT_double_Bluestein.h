@@ -1,1 +1,0 @@
-void sample_8_benchmark_cuFFT_double_Bluestein(bool file_output, FILE* output, int device_id);
