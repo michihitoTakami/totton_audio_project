@@ -544,6 +544,7 @@ if(ENABLE_CUDA)
         tests/cpp/daemon/test_switch_actions.cpp
         tests/cpp/daemon/test_i2s_capture_config.cpp
         tests/cpp/audio/test_audio_pipeline.cpp
+        tests/cpp/audio/test_audio_pipeline_high_latency.cpp
         tests/cpp/core/test_precision_traits.cpp
         src/daemon/audio/crossfeed_manager.cpp
         src/daemon/audio_pipeline/audio_pipeline.cpp

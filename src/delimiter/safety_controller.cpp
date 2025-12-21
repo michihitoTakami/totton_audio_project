@@ -270,8 +270,13 @@ float SafetyController::fadeValue(std::size_t index) const {
 }
 
 void SafetyController::lockBypass(FallbackReason reason, const std::string& detail) {
+    recordDetail(reason, detail);
     bypassLocked_ = true;
-    requestBypass(reason, detail);
+    mode_ = ProcessingMode::Bypass;
+    targetMode_ = ProcessingMode::Bypass;
+    inTransition_ = false;
+    fadeIndex_ = 0;
+    LOG_WARN("Delimiter: locking bypass ({})", fallbackReasonToString(reason));
 }
 
 void SafetyController::recordDetail(FallbackReason reason, const std::string& detail) {
