@@ -7,8 +7,8 @@ def test_render_delimiter_english():
     """Delimiter page renders with English labels."""
     html = render_delimiter(lang="en", current_page="delimiter")
 
-    assert "De-limiter" in html
-    assert "AI limiter control" in html
+    assert "AI Loudness Care" in html
+    assert "loudness care" in html.lower()
     assert "queue" in html.lower()
     assert "/delimiter/status" in html
     assert "/delimiter/enable" in html
@@ -19,8 +19,7 @@ def test_render_delimiter_japanese():
     """Delimiter page renders with Japanese labels."""
     html = render_delimiter(lang="ja", current_page="delimiter")
 
-    assert "De-limiter" in html  # proper noun
-    assert "リミッター" in html or "AIリミッター" in html
+    assert "AIラウドネスケア" in html
     assert "キュー" in html or "queue" in html.lower()
 
 
