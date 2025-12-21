@@ -20,8 +20,8 @@ class TestErrorCodeEnum:
     """Tests for ErrorCode enum."""
 
     def test_all_codes_defined(self):
-        """Verify all error codes are defined (30 base + 4 crossfeed + 1 output)."""
-        assert len(ErrorCode) == 35
+        """Verify all error codes are defined (base + crossfeed + delimiter)."""
+        assert len(ErrorCode) == 38
 
     def test_no_duplicate_values(self):
         """Verify no duplicate enum values."""
@@ -57,11 +57,12 @@ class TestErrorCodeEnum:
         assert ErrorCode.GPU_CUFFT_ERROR in gpu_codes
 
     def test_validation_codes(self):
-        """Verify Validation category codes (6 codes)."""
+        """Verify Validation category codes (6 codes + ERR_UNSUPPORTED_MODE)."""
         validation_codes = [c for c in ErrorCode if c.value.startswith("VALIDATION_")]
         assert len(validation_codes) == 6
         assert ErrorCode.VALIDATION_PATH_TRAVERSAL in validation_codes
         assert ErrorCode.VALIDATION_INVALID_HEADPHONE in validation_codes
+        assert ErrorCode.ERR_UNSUPPORTED_MODE in ErrorCode
 
     def test_crossfeed_codes(self):
         """Verify Crossfeed/HRTF category codes (4 codes)."""
@@ -72,13 +73,21 @@ class TestErrorCodeEnum:
         assert ErrorCode.CROSSFEED_NOT_IMPLEMENTED in crossfeed_codes
         assert ErrorCode.CROSSFEED_INVALID_FILTER_SIZE in crossfeed_codes
 
+    def test_delimiter_codes(self):
+        """Verify De-limiter category codes (3 codes)."""
+        delimiter_codes = [c for c in ErrorCode if c.value.startswith("DELIMITER_")]
+        assert len(delimiter_codes) == 3
+        assert ErrorCode.DELIMITER_UNAVAILABLE in delimiter_codes
+        assert ErrorCode.DELIMITER_ENABLE_FAILED in delimiter_codes
+        assert ErrorCode.DELIMITER_DISABLE_FAILED in delimiter_codes
+
 
 class TestErrorCategory:
     """Tests for ErrorCategory enum."""
 
     def test_all_categories_defined(self):
-        """Verify all categories are defined (6 base + 1 crossfeed)."""
-        assert len(ErrorCategory) == 7
+        """Verify all categories are defined (base + crossfeed + delimiter)."""
+        assert len(ErrorCategory) == 8
 
     def test_category_values(self):
         """Verify category string values."""
@@ -88,6 +97,7 @@ class TestErrorCategory:
         assert ErrorCategory.GPU_CUDA.value == "gpu_cuda"
         assert ErrorCategory.VALIDATION.value == "validation"
         assert ErrorCategory.CROSSFEED.value == "crossfeed"
+        assert ErrorCategory.DELIMITER.value == "delimiter"
         assert ErrorCategory.INTERNAL.value == "internal"
 
 
@@ -95,8 +105,8 @@ class TestErrorMappings:
     """Tests for ERROR_MAPPINGS dictionary."""
 
     def test_all_codes_have_mappings(self):
-        """Verify all error codes have mappings (30 base + 4 crossfeed + 1 output)."""
-        assert len(ERROR_MAPPINGS) == 35
+        """Verify all error codes have mappings (including crossfeed & delimiter)."""
+        assert len(ERROR_MAPPINGS) == len(ErrorCode)
         for code in ErrorCode:
             assert code in ERROR_MAPPINGS, f"Missing mapping for {code}"
 
@@ -144,6 +154,7 @@ class TestErrorMappings:
             (ErrorCode.IPC_CONNECTION_FAILED, ErrorCategory.IPC_ZEROMQ),
             (ErrorCode.GPU_INIT_FAILED, ErrorCategory.GPU_CUDA),
             (ErrorCode.VALIDATION_INVALID_CONFIG, ErrorCategory.VALIDATION),
+            (ErrorCode.ERR_UNSUPPORTED_MODE, ErrorCategory.VALIDATION),
         ],
     )
     def test_category_mappings(self, error_code, expected_category):
