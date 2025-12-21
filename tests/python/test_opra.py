@@ -19,7 +19,7 @@ from scripts.integration.opra import (
 # Skip marker for tests requiring OPRA submodule
 requires_opra_submodule = pytest.mark.skipif(
     not Path(DEFAULT_OPRA_PATH).exists(),
-    reason="OPRA submodule not initialized. Run: git submodule update --init",
+    reason="OPRA data not installed. Run OPRA sync (or init submodule for dev)",
 )
 
 
@@ -772,7 +772,7 @@ class TestOpraErrorHandling:
             _ = db.vendor_count  # Triggers _ensure_loaded()
 
         assert "OPRA database not found" in str(exc_info.value)
-        assert "git submodule update --init" in str(exc_info.value)
+        assert "Run OPRA sync" in str(exc_info.value)
 
     def test_error_message_includes_helpful_instructions(self, tmp_path):
         """Error message should include helpful instructions for users."""
@@ -786,5 +786,5 @@ class TestOpraErrorHandling:
             error_msg = str(e)
             # Check for essential information
             assert "OPRA database not found" in error_msg
-            assert "git submodule update --init" in error_msg
+            assert "Run OPRA sync" in error_msg
             assert str(nonexistent_path) in error_msg
