@@ -9,9 +9,9 @@
     }
   },
   "bufferSize": 262144,
-  "periodSize": 32768,
+  "periodSize": 16384,
   "upsampleRatio": 16,
-  "blockSize": 4096,
+  "blockSize": 2048,
   "gain": 1.0,
   "headroomTarget": 0.92,
   "phaseType": "minimum",
