@@ -24,6 +24,10 @@
 #include "vkFFT/vkFFT_AppManagement/vkFFT_DeleteApp.h"
 #include "vkFFT/vkFFT_Structs/vkFFT_Structs.h"
 
+// Forward declaration to break mutual dependency with vkFFT_RunApp.h
+static inline VkFFTResult VkFFTAppend(VkFFTApplication* app, int inverse,
+                                      VkFFTLaunchParams* launchParams);
+
 static inline VkFFTResult VkFFTConfigureDescriptors(VkFFTApplication* app, VkFFTPlan* FFTPlan,
                                                     VkFFTAxis* axis, pfUINT axis_id,
                                                     pfUINT axis_upload_id, pfUINT inverse) {

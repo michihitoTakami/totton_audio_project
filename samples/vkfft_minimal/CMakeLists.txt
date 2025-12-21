@@ -34,6 +34,12 @@ add_executable(vkfft_minimal
 target_include_directories(vkfft_minimal PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/vkfft/benchmark_scripts/vkFFT_scripts/include
     ${CMAKE_SOURCE_DIR}/third_party/vkfft/benchmark_scripts
+    $<TARGET_PROPERTY:glslang,INTERFACE_INCLUDE_DIRECTORIES>
+    ${glslang_SOURCE_DIR}
+    ${glslang_SOURCE_DIR}/glslang
+    ${CMAKE_BINARY_DIR}/_deps/glslang-src
+    ${CMAKE_BINARY_DIR}/_deps/glslang-src/glslang
+    ${CMAKE_BINARY_DIR}/_deps/glslang-src/glslang/Include
 )
 
 target_compile_definitions(vkfft_minimal PRIVATE VKFFT_BACKEND=0 VK_API_VERSION=11)

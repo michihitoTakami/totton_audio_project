@@ -102,6 +102,7 @@ repos:
         language: system
         stages: [pre-push]
         pass_filenames: false
+        exclude: ^third_party/
         always_run: true
       - id: clang-tidy-jetson-pcm
         name: clang-tidy (jetson_pcm_receiver)

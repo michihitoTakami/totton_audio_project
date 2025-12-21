@@ -21,9 +21,13 @@
 // THE SOFTWARE.
 #ifndef VKFFT_DELETEAPP_H
 #define VKFFT_DELETEAPP_H
-#include "vkFFT/vkFFT_PlanManagement/vkFFT_API_handles/vkFFT_DeletePlan.h"
-#include "vkFFT/vkFFT_PlanManagement/vkFFT_API_handles/vkFFT_UpdateBuffers.h"
 #include "vkFFT/vkFFT_Structs/vkFFT_Structs.h"
+#include "vkFFT/vkFFT_PlanManagement/vkFFT_API_handles/vkFFT_DeletePlan.h"
+
+// Forward declaration to break cyclic include with vkFFT_UpdateBuffers.h
+static inline void deleteVkFFT(VkFFTApplication* app);
+
+#include "vkFFT/vkFFT_PlanManagement/vkFFT_API_handles/vkFFT_UpdateBuffers.h"
 
 static inline void deleteVkFFT(VkFFTApplication* app) {
 #if (VKFFT_BACKEND == 0)
