@@ -13,9 +13,8 @@
 ---
 
 ## 背景 / 現状
-- 現状は `data/opra-db` を git submodule として取り込み、`dist/database_v1.jsonl` を参照している。
-  - 実装: `scripts/integration/opra.py` の `DEFAULT_OPRA_PATH`
-- これだと「リリース時点の固定」「ランタイムでの更新」「オフラインフォールバック」「管理画面更新」が整理しづらい。
+- かつては `data/opra-db` を git submodule として取り込んでいたが、運用を **キャッシュ一本化（sync 前提）** に切り替える。
+- これにより「リリース時点の固定」「ランタイムでの更新」「オフラインフォールバック」「管理画面更新」を cache-first の1経路で扱える。
 
 ---
 
@@ -122,7 +121,7 @@ Docker/Jetsonを想定し、永続化ボリュームに配置する。
 
 ### 優先順位
 1. `${OPRA_DIR}/current/database_v1.jsonl`
-2. （開発環境のみ）従来の submodule パス `data/opra-db/dist/database_v1.jsonl`
+2. （開発/CIのみ）`OPRA_DATABASE_PATH` で明示指定したパス
 3. どちらも無い場合は 503（UIに「未インストール」表示）
 
 ---
@@ -182,8 +181,8 @@ Docker/Jetsonを想定し、永続化ボリュームに配置する。
 ## 互換性 / 既存実装への影響
 
 ### scripts/integration/opra.py
-- `DEFAULT_OPRA_PATH` を「submodule固定」から「OPRA_DIR/current を優先」に変更する。
-- DB未存在時のエラーメッセージも「submodule update」ではなく「同期/インストール」を案内する。
+- `DEFAULT_OPRA_PATH` は `OPRA_DIR/current` を参照し、環境変数 `OPRA_DATABASE_PATH` で上書き可能。
+- DB未存在時のエラーメッセージは「OPRA sync を実行」「ローカル fixture を指定」を案内する。
 
 ### routers/opra.py
 - 既存の検索/適用APIは基本維持。
@@ -198,6 +197,14 @@ Docker/Jetsonを想定し、永続化ボリュームに配置する。
 - 管理API（認証込み）
 - 管理画面UI（表示+操作）
 - Docker volume / 設定項目の追加
+
+---
+
+## 開発/CI 向けの軽量フィクスチャ
+- ネットワークが使えない環境でも動作確認できるよう、最小OPRAサンプルを同梱。
+  - パス: `tests/python/fixtures/opra/database_v1.sample.jsonl`
+- `OPRA_DATABASE_PATH` を設定するとこのフィクスチャを強制利用できる。
+  - 例: `OPRA_DATABASE_PATH=tests/python/fixtures/opra/database_v1.sample.jsonl uv run pytest tests/python/test_opra.py`
 
 ---
 

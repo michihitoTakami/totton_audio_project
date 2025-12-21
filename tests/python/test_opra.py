@@ -1,11 +1,17 @@
 """Tests for OPRA database parser and EQ converter."""
 
+import os
 from pathlib import Path
 
 import pytest
 
-from scripts.integration.opra import (
-    DEFAULT_OPRA_PATH,
+# Use bundled fixture data instead of requiring an external OPRA cache
+FIXTURE_DB_PATH = (
+    Path(__file__).parent / "fixtures" / "opra" / "database_v1.sample.jsonl"
+)
+os.environ.setdefault("OPRA_DATABASE_PATH", str(FIXTURE_DB_PATH))
+
+from scripts.integration.opra import (  # noqa: E402
     MODERN_TARGET_CORRECTION_BAND,
     EqBand,
     EqProfile,
@@ -16,11 +22,17 @@ from scripts.integration.opra import (
     slope_to_q,
 )
 
-# Skip marker for tests requiring OPRA submodule
-requires_opra_submodule = pytest.mark.skipif(
-    not Path(DEFAULT_OPRA_PATH).exists(),
-    reason="OPRA data not installed. Run OPRA sync (or init submodule for dev)",
-)
+
+@pytest.fixture(autouse=True)
+def reset_opra_db(monkeypatch):
+    """Ensure each test uses the bundled OPRA fixture database."""
+    monkeypatch.setenv("OPRA_DATABASE_PATH", str(FIXTURE_DB_PATH))
+    # Reset the module-level singleton to force reload per test
+    import scripts.integration.opra as opra_module
+
+    opra_module._db_instance = None
+    yield
+    opra_module._db_instance = None
 
 
 class TestSlopeToQ:
@@ -498,26 +510,25 @@ class TestModernTargetCorrection:
         assert "KB5000_7" not in original.details
 
 
-@requires_opra_submodule
 class TestOpraDatabase:
     """Tests for OpraDatabase class."""
 
     @pytest.fixture
     def db(self):
         """Get database instance."""
-        return OpraDatabase()
+        return OpraDatabase(db_path=FIXTURE_DB_PATH)
 
     def test_database_loads(self, db):
         """Database should load without errors."""
-        assert db.vendor_count > 0
-        assert db.product_count > 0
-        assert db.eq_profile_count > 0
+        assert db.vendor_count == 2
+        assert db.product_count == 2
+        assert db.eq_profile_count == 3
 
     def test_database_counts(self, db):
         """Database should have expected number of entries."""
-        assert db.vendor_count >= 600  # OPRA has 633+ vendors
-        assert db.product_count >= 5000  # OPRA has 5234+ products
-        assert db.eq_profile_count >= 8000  # OPRA has 8180+ profiles
+        assert db.vendor_count == 2
+        assert db.product_count == 2
+        assert db.eq_profile_count == 3
 
     def test_search_returns_results(self, db):
         """Search should return matching results."""
@@ -544,7 +555,7 @@ class TestOpraDatabase:
     def test_search_by_vendor(self, db):
         """Search should also match vendor name."""
         results = db.search("Sennheiser")
-        assert len(results) > 10  # Sennheiser has many products
+        assert len(results) == 1  # Fixture has single Sennheiser product
 
     def test_search_limit(self, db):
         """Search should respect limit parameter."""
@@ -599,13 +610,12 @@ class TestOpraDatabase:
         assert eq is None
 
 
-@requires_opra_submodule
 class TestOpraIntegration:
     """Integration tests for full OPRA workflow."""
 
     def test_search_and_convert_workflow(self):
         """Test complete workflow: search -> get profile -> convert to APO."""
-        db = OpraDatabase()
+        db = OpraDatabase(db_path=FIXTURE_DB_PATH)
 
         # Search
         results = db.search("HD650")
@@ -625,7 +635,6 @@ class TestOpraIntegration:
         assert profile.author != ""
 
 
-@requires_opra_submodule
 class TestOpraApi:
     """API layer tests for OPRA endpoints with apply_correction."""
 
