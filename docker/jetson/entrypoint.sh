@@ -45,7 +45,13 @@ log_error() {
 
 prepare_opra_cache_dir() {
     # Ensure OPRA cache layout exists on the mounted volume with writable perms
-    mkdir -p "${OPRA_CACHE_DIR}/versions" "${OPRA_CACHE_DIR}/lock"
+    if [[ -z "${OPRA_CACHE_DIR}" ]]; then
+        return 0
+    fi
+    if ! mkdir -p "${OPRA_CACHE_DIR}/versions" "${OPRA_CACHE_DIR}/lock"; then
+        log_warn "Failed to create OPRA cache dir: ${OPRA_CACHE_DIR} (continuing; set GPU_OS_DATA_DIR to writable path)"
+        return 0
+    fi
     chmod 775 "${OPRA_CACHE_DIR}" || true
     chown -R magicbox:magicbox "${OPRA_CACHE_DIR}" 2>/dev/null || true
 }
