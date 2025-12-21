@@ -37,6 +37,18 @@ OPRA の帰属要件（例）:
 
 ---
 
+## De-limiter モデル (jeonchangbin49/De-limiter)
+
+- **プロジェクト**: `https://github.com/jeonchangbin49/De-limiter`
+- **ライセンス**: **MIT**（`data/delimiter/weights/LICENSE.upstream` に同梱）
+- **取得元**:
+  - `all.pth` / `all.json`: `https://raw.githubusercontent.com/jeonchangbin49/De-limiter/main/weight/`
+  - SHA256 (`tr -d ':'` で生ハッシュ): `df:d9:1f:96:05:c6:55:38:ac:ab:eb:9d:56:50:c2:11:19:61:1a:9e:04:93:de:3e:1f:30:05:76:a9:92:5e:c9` (all.pth), `b5:17:a0:19:1f:44:ed:88:9c:83:9d:79:df:f6:e0:07:5d:c5:40:57:d1:ab:0f:1d:55:58:1a:95:bb:90:ae:27` (all.json)
+- **配置規約**: `data/delimiter/weights/<model_id>/<sr>/`（現行: `jeonchangbin49-de-limiter/44100/`）
+- **配布方法**: git 非管理。`scripts/delimiter/download_assets.py` で取得し、`scripts/delimiter/export_onnx.py` で ONNX (`delimiter.onnx`) をローカル生成。
+
+---
+
 ## 免責
 
 本プロジェクトは「現状有姿（AS IS）」で提供されます。

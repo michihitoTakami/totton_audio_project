@@ -1,0 +1,85 @@
+{
+  "_comment": "Sample config for 48k input path. De-limiter model expects 44.1k; resample before/after inference is required (#1096/#1100).",
+  "alsaDevice": "hw:AUDIO",
+  "output": {
+    "mode": "usb",
+    "options": {
+      "usb": {
+        "preferredDevice": "hw:AUDIO"
+      }
+    }
+  },
+  "bufferSize": 262144,
+  "periodSize": 16384,
+  "upsampleRatio": 16,
+  "blockSize": 2048,
+  "gain": 1.0,
+  "headroomTarget": 0.92,
+  "phaseType": "minimum",
+  "filterPath": "data/coefficients/filter_48k_16x_2m_min_phase.bin",
+  "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
+  "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_min_phase.bin",
+  "filterPath44kLinear": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
+  "filterPath48kLinear": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
+  "_comment_delimiter": "Pipeline will bypass until resample(48k->44.1k->48k) is implemented (#1100).",
+  "eqEnabled": false,
+  "eqProfilePath": "",
+  "partitionedConvolution": {
+    "enabled": true,
+    "fastPartitionTaps": 32768,
+    "minPartitionTaps": 32768,
+    "maxPartitions": 4,
+    "tailFftMultiple": 2
+  },
+  "crossfeed": {
+    "enabled": false,
+    "headSize": "m",
+    "hrtfPath": "data/crossfeed/hrtf/"
+  },
+  "delimiter": {
+    "enabled": true,
+    "backend": "ort",
+    "chunkSec": 6.0,
+    "overlapSec": 0.25,
+    "expectedSampleRate": 44100,
+    "ort": {
+      "modelPath": "data/delimiter/weights/jeonchangbin49-de-limiter/44100/delimiter.onnx",
+      "provider": "cpu",
+      "intraOpThreads": 0
+    }
+  },
+  "fallback": {
+    "enabled": true,
+    "gpuThreshold": 80.0,
+    "gpuThresholdCount": 3,
+    "gpuRecoveryThreshold": 70.0,
+    "gpuRecoveryCount": 5,
+    "xrunTriggersFallback": true,
+    "monitorIntervalMs": 100
+  },
+  "logging": {
+    "level": "info",
+    "filePath": "/var/log/gpu_upsampler/daemon.log",
+    "maxFileSize": 10485760,
+    "maxBackups": 5,
+    "consoleOutput": true,
+    "coloredOutput": true
+  },
+  "i2s": {
+    "enabled": true,
+    "device": "hw:APE,0",
+    "sampleRate": 48000,
+    "channels": 2,
+    "format": "S32_LE",
+    "periodFrames": 1024
+  },
+  "loopback": {
+    "enabled": false,
+    "device": "hw:Loopback,1,0",
+    "sampleRate": 48000,
+    "channels": 2,
+    "format": "S16_LE",
+    "periodFrames": 1024
+  },
+  "statsFilePath": "/tmp/gpu_upsampler_stats.json"
+}

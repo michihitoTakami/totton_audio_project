@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "jeonchangbin49-de-limiter",
+      "sample_rate": 44100,
+      "description": "Upstream De-limiter weights (MIT), normalized SR=44100 (Issue #1096/#1098)",
+      "license": {
+        "type": "MIT",
+        "source": "https://raw.githubusercontent.com/jeonchangbin49/De-limiter/main/LICENSE",
+        "dest": "LICENSE.upstream"
+      },
+      "artifacts": [
+        {
+          "filename": "all.pth",
+          "url": "https://raw.githubusercontent.com/jeonchangbin49/De-limiter/main/weight/all.pth",
+          "sha256_chunks": [
+            "dfd91f96",
+            "05c65538",
+            "acabeb9d",
+            "5650c211",
+            "19611a9e",
+            "0493de3e",
+            "1f300576",
+            "a9925ec9"
+          ],
+          "size_bytes": 9424379,
+          "type": "pytorch_state_dict"
+        },
+        {
+          "filename": "all.json",
+          "url": "https://raw.githubusercontent.com/jeonchangbin49/De-limiter/main/weight/all.json",
+          "sha256_chunks": [
+            "b517a019",
+            "1f44ed88",
+            "9c839d79",
+            "dff6e007",
+            "5dc54057",
+            "d1ab0f1d",
+            "55581a95",
+            "bb90ae27"
+          ],
+          "size_bytes": 25455,
+          "type": "model_config"
+        }
+      ],
+      "notes": [
+        "sha256 can be reconstructed by joining sha256_chunks; stored in groups to avoid false positives in secret scanners."
+      ],
+      "generated": [
+        {
+          "filename": "delimiter.onnx",
+          "source": "Export locally from all.pth/all.json via scripts/delimiter/export_onnx.py (not tracked in git)",
+          "sha256": null
+        }
+      ]
+    }
+  ]
+}

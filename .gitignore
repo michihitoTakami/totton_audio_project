@@ -79,4 +79,8 @@ data/crossfeed/raw/**/*_simulated.sofa
 .mypy_cache/
 
 # De-limiter weights (downloaded locally for PoC)
-data/delimiter/weight/
+data/delimiter/weights/**
+!data/delimiter/weights/README.md
+!data/delimiter/weights/manifest.json
+!data/delimiter/weights/LICENSE.upstream
+!data/delimiter/weights/.gitkeep

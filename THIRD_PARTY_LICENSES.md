@@ -24,6 +24,16 @@
 
 ---
 
+## De-limiter (jeonchangbin49/De-limiter)
+
+- **URL**: `https://github.com/jeonchangbin49/De-limiter`
+- **ライセンス**: MIT（`data/delimiter/weights/LICENSE.upstream` を参照）
+- **取得元**: `https://raw.githubusercontent.com/jeonchangbin49/De-limiter/main/weight/`
+- **配置**: `data/delimiter/weights/jeonchangbin49-de-limiter/44100/`（git 非管理、外部DL+ローカルONNXエクスポート）
+- **関連スクリプト**: `scripts/delimiter/download_assets.py`, `scripts/delimiter/export_onnx.py`
+
+---
+
 ## 主要ライブラリ（ビルド/実行時）
 
 注意: 下記は本リポジトリのビルド/実行に使われる依存関係の代表例です。配布形態（静的/動的リンク、同梱有無）により要求事項が変わり得るため、最終的な配布物に合わせて確認してください。
