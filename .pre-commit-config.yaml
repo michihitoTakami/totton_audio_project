@@ -7,6 +7,8 @@
 # Run all (manually):
 #   uv run pre-commit run --all-files
 
+exclude: ^third_party/
+
 repos:
   # clang-format for C/C++/CUDA formatting
   - repo: https://github.com/pre-commit/mirrors-clang-format
@@ -25,7 +27,7 @@ repos:
       - id: clang-tidy
         args: [-p=build]
         files: \.(c|cpp)$
-        exclude: ^build/|^raspberry_pi/|^jetson_pcm_receiver/
+        exclude: ^(third_party/|build/|raspberry_pi/|jetson_pcm_receiver/|samples/vkfft_minimal/)
         stages: [pre-push]
 
   # General file checks
@@ -100,6 +102,7 @@ repos:
         language: system
         stages: [pre-push]
         pass_filenames: false
+        exclude: ^third_party/
         always_run: true
       - id: clang-tidy-jetson-pcm
         name: clang-tidy (jetson_pcm_receiver)

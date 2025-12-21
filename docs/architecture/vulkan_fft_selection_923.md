@@ -13,9 +13,10 @@
   - 商用利用・同梱配布は基本的に可能
   - **必要条件**: 著作権表示とライセンス文を同梱（NOTICE/THIRD_PARTY_NOTICES等でも可）
 
-※実装取り込み時の運用案:
-- `third_party/vkfft/` にソースを配置し、`LICENSE` を必ず含める
-- もしくは submodule で管理し、配布物にライセンス同梱を行う
+※実装取り込み時の運用案（推奨）:
+- **OSパッケージ**（Ubuntu: `libvkfft-dev`）を優先して利用し、ライセンス情報は `THIRD_PARTY_LICENSES.md` に追記する
+- パッケージが使えない環境では、CMake **FetchContent**（tag/commitで固定）または **git submodule** で管理する
+- 大きな第三者ソースをリポジトリに丸ごとコピーしてコミットする運用は避ける（レビュー負荷/フック時間/容量増を招くため）
 
 ### 要件（Pi5 / Docker / 将来Androidを見据えた整理）
 Issue #923 の受け入れ条件に合わせ、最小限の要件を列挙する。
