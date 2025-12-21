@@ -127,7 +127,7 @@ struct AppConfig {
             int intraOpThreads = 0;  // 0 = ORT default
         } ort;
 
-        // Some backends may require fixed sample rate (De-limiter research assumes 44.1kHz).
+        // Some backends require fixed input sample rate (De-limiter supports 44.1k/48k).
         uint32_t expectedSampleRate = 44100;
     } delimiter;
 

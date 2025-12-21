@@ -74,6 +74,20 @@ static std::string validateOrtProvider(const std::string& str) {
     return "cpu";
 }
 
+static uint32_t sanitizeDelimiterSampleRate(int sr, bool verbose) {
+    constexpr uint32_t kRate44k = 44100;
+    constexpr uint32_t kRate48k = 48000;
+    if (sr == static_cast<int>(kRate44k) || sr == static_cast<int>(kRate48k)) {
+        return static_cast<uint32_t>(sr);
+    }
+    if (verbose) {
+        LOG_WARN(
+            "Config: delimiter.expectedSampleRate must be 44100 or 48000 (got {}), using 44100",
+            sr);
+    }
+    return kRate44k;
+}
+
 bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig, bool verbose) {
     outConfig = AppConfig{};
 
@@ -397,7 +411,8 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
                     dl["expectedSampleRate"].is_number_integer()) {
                     int sr = dl["expectedSampleRate"].get<int>();
                     if (sr > 0) {
-                        outConfig.delimiter.expectedSampleRate = static_cast<uint32_t>(sr);
+                        outConfig.delimiter.expectedSampleRate =
+                            sanitizeDelimiterSampleRate(sr, verbose);
                     }
                 }
                 if (dl.contains("chunkSec") && dl["chunkSec"].is_number()) {

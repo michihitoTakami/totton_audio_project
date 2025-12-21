@@ -236,6 +236,20 @@ TEST_F(ConfigLoaderTest, LoadDelimiterChunkingParameters) {
     EXPECT_FLOAT_EQ(config.delimiter.overlapSec, 0.2f);
 }
 
+TEST_F(ConfigLoaderTest, LoadDelimiterAllows48kSampleRate) {
+    writeConfig(R"({
+        "delimiter": {
+            "enabled": true,
+            "expectedSampleRate": 48000
+        }
+    })");
+
+    AppConfig config;
+    ASSERT_TRUE(loadAppConfig(testConfigPath, config, false));
+    EXPECT_TRUE(config.delimiter.enabled);
+    EXPECT_EQ(config.delimiter.expectedSampleRate, 48000u);
+}
+
 TEST_F(ConfigLoaderTest, LoadI2sSectionAllowsSampleRateZero) {
     writeConfig(R"({
         "i2s": {
