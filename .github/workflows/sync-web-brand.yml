@@ -68,7 +68,7 @@ jobs:
           set -euo pipefail
           cd "${CLONE_DIR}"
 
-          rsync -a --delete "${DEPLOY_DIR}/" .
+          rsync -a --delete --exclude ".git" "${DEPLOY_DIR}/" .
           git add -A
 
           if git diff --cached --quiet; then
