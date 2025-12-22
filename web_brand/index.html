@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+
+  <title>Totton Audio — Ultra High-Resolution Realtime Audio Processing</title>
+  <meta name="description" content="Totton Audio is a GPU-accelerated, realtime audio processing system for headphone users—ultra high-resolution upsampling, EQ correction, and a simple control UI." />
+
+  <meta property="og:title" content="Totton Audio" />
+  <meta property="og:description" content="GPU-accelerated realtime audio processing: ultra high-resolution upsampling, headphone EQ, and simple control UI." />
+  <meta property="og:type" content="website" />
+
+  <link rel="stylesheet" href="./assets/main.css" />
+
+  <!-- htmx 1.9.12 -->
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
+  <!-- Alpine.js 3.13.10 -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
+  <script defer src="./assets/app.js"></script>
+</head>
+<body hx-boost="true">
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="topbar" x-data="brandPage()" x-cloak>
+    <div class="topbar__inner">
+      <a class="brand" href="#top" aria-label="Totton Audio">
+        <span class="brand__mark" aria-hidden="true">⬡</span>
+        <span class="brand__name">Totton Audio</span>
+      </a>
+
+      <nav class="nav" aria-label="Primary">
+        <a class="nav__link" href="#features" x-text="t('nav.features')"></a>
+        <a class="nav__link" href="#architecture" x-text="t('nav.arch')"></a>
+        <a class="nav__link" href="#contact" x-text="t('nav.contact')"></a>
+      </nav>
+
+      <div class="topbar__actions">
+        <button
+          class="btn btn--ghost"
+          type="button"
+          :aria-pressed="lang === 'ja'"
+          hx-on:click="document.dispatchEvent(new CustomEvent('totton:set-lang', { detail: { lang: 'ja' } }))"
+        >
+          日本語
+        </button>
+        <button
+          class="btn btn--ghost"
+          type="button"
+          :aria-pressed="lang === 'en'"
+          hx-on:click="document.dispatchEvent(new CustomEvent('totton:set-lang', { detail: { lang: 'en' } }))"
+        >
+          EN
+        </button>
+        <a class="btn btn--primary" href="#contact">
+          <span class="btn__icon" aria-hidden="true">✦</span>
+          <span class="btn__label" x-text="t('cta.primary')"></span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top" class="container" x-data="brandPage()" x-cloak>
+    <section class="hero">
+      <div class="hero__left">
+        <div class="eyebrow" x-text="t('hero.eyebrow')"></div>
+        <h1 class="hero__title">
+          <span x-text="t('hero.titleA')"></span>
+          <span class="hero__titleAccent" x-text="t('hero.titleB')"></span>
+        </h1>
+        <p class="hero__lead" x-text="t('hero.lead')"></p>
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="#features">
+            <span class="btn__icon" aria-hidden="true">→</span>
+            <span class="btn__label" x-text="t('cta.explore')"></span>
+          </a>
+          <a class="btn btn--secondary" href="#contact">
+            <span class="btn__icon" aria-hidden="true">⌁</span>
+            <span class="btn__label" x-text="t('cta.contact')"></span>
+          </a>
+        </div>
+        <div class="hero__meta">
+          <div class="pill" x-text="t('meta.gpu')"></div>
+          <div class="pill" x-text="t('meta.minphase')"></div>
+          <div class="pill" x-text="t('meta.ui')"></div>
+        </div>
+      </div>
+
+      <div class="hero__right" aria-hidden="true">
+        <div class="hud">
+          <div class="hud__title">TOTTON AUDIO</div>
+          <div class="hud__grid">
+            <div class="hud__cell">
+              <div class="hud__k">UPSAMPLING</div>
+              <div class="hud__v">GPU</div>
+            </div>
+            <div class="hud__cell">
+              <div class="hud__k">FILTER</div>
+              <div class="hud__v">640k TAP</div>
+            </div>
+            <div class="hud__cell">
+              <div class="hud__k">PHASE</div>
+              <div class="hud__v">MINIMUM</div>
+            </div>
+            <div class="hud__cell">
+              <div class="hud__k">CONTROL</div>
+              <div class="hud__v">FASTAPI</div>
+            </div>
+          </div>
+          <div class="hud__footer">REALTIME / HEADPHONE FIRST</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section">
+      <div class="section__header">
+        <h2 class="section__title" x-text="t('features.title')"></h2>
+        <p class="section__subtitle" x-text="t('features.subtitle')"></p>
+      </div>
+
+      <div class="cards">
+        <article class="card">
+          <div class="card__icon" aria-hidden="true">⚡</div>
+          <h3 class="card__title" x-text="t('features.f1.title')"></h3>
+          <p class="card__text" x-text="t('features.f1.text')"></p>
+        </article>
+        <article class="card">
+          <div class="card__icon" aria-hidden="true">⟂</div>
+          <h3 class="card__title" x-text="t('features.f2.title')"></h3>
+          <p class="card__text" x-text="t('features.f2.text')"></p>
+        </article>
+        <article class="card">
+          <div class="card__icon" aria-hidden="true">◎</div>
+          <h3 class="card__title" x-text="t('features.f3.title')"></h3>
+          <p class="card__text" x-text="t('features.f3.text')"></p>
+        </article>
+        <article class="card">
+          <div class="card__icon" aria-hidden="true">⌬</div>
+          <h3 class="card__title" x-text="t('features.f4.title')"></h3>
+          <p class="card__text" x-text="t('features.f4.text')"></p>
+        </article>
+        <article class="card">
+          <div class="card__icon" aria-hidden="true">⎈</div>
+          <h3 class="card__title" x-text="t('features.f5.title')"></h3>
+          <p class="card__text" x-text="t('features.f5.text')"></p>
+        </article>
+        <article class="card">
+          <div class="card__icon" aria-hidden="true">⟠</div>
+          <h3 class="card__title" x-text="t('features.f6.title')"></h3>
+          <p class="card__text" x-text="t('features.f6.text')"></p>
+        </article>
+      </div>
+    </section>
+
+    <section id="architecture" class="section">
+      <div class="section__header">
+        <h2 class="section__title" x-text="t('arch.title')"></h2>
+        <p class="section__subtitle" x-text="t('arch.subtitle')"></p>
+      </div>
+
+      <div class="split">
+        <div class="panel">
+          <div class="panel__title" x-text="t('arch.diagramTitle')"></div>
+          <pre class="diagram" aria-label="Architecture diagram" x-text="t('arch.diagram')"></pre>
+        </div>
+        <div class="panel">
+          <div class="panel__title" x-text="t('arch.roadmapTitle')"></div>
+          <ol class="steps">
+            <li class="steps__item">
+              <div class="steps__k" x-text="t('arch.steps.s1.k')"></div>
+              <div class="steps__v" x-text="t('arch.steps.s1.v')"></div>
+            </li>
+            <li class="steps__item">
+              <div class="steps__k" x-text="t('arch.steps.s2.k')"></div>
+              <div class="steps__v" x-text="t('arch.steps.s2.v')"></div>
+            </li>
+            <li class="steps__item">
+              <div class="steps__k" x-text="t('arch.steps.s3.k')"></div>
+              <div class="steps__v" x-text="t('arch.steps.s3.v')"></div>
+            </li>
+          </ol>
+          <div class="note" x-text="t('arch.note')"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="contact" class="section">
+      <div class="section__header">
+        <h2 class="section__title" x-text="t('contact.title')"></h2>
+        <p class="section__subtitle" x-text="t('contact.subtitle')"></p>
+      </div>
+
+      <div class="contact">
+        <div class="contact__card">
+          <div class="contact__headline" x-text="t('contact.cardTitle')"></div>
+          <p class="contact__text" x-text="t('contact.cardText')"></p>
+          <div class="contact__actions">
+            <a
+              class="btn btn--primary"
+              href="https://docs.google.com/forms/d/e/1FAIpQLSc164tZdiH9-2xHKnkegs8amf0CdZmB1vjiSA34ckSL6ZiGmw/viewform"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span class="btn__icon" aria-hidden="true">↗</span>
+              <span class="btn__label" x-text="t('contact.form')"></span>
+            </a>
+            <button class="btn btn--secondary" type="button" @click="copyContactLink()">
+              <span class="btn__icon" aria-hidden="true">⧉</span>
+              <span class="btn__label" x-text="t('contact.copy')"></span>
+            </button>
+          </div>
+          <p class="contact__hint" x-text="t('contact.hint')"></p>
+          <p class="toast" role="status" aria-live="polite" x-show="toastOpen" x-transition.opacity x-text="toastText"></p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footer__left">
+        <div class="footer__brand">Totton Audio</div>
+        <div class="footer__copy" x-text="t('footer.copy')"></div>
+      </div>
+      <div class="footer__right">
+        <a class="footer__link" href="#top" x-text="t('footer.backToTop')"></a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
