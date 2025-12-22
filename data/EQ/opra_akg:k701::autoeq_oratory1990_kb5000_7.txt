@@ -1,0 +1,19 @@
+# OPRA: akg:k701::autoeq_oratory1990
+# Author: AutoEQ
+# Details: Measured by oratory1990 + Modern Target (KB5000_7)
+# Modern Target: KB5000_7 correction applied
+# License: CC BY-SA 4.0
+# Source: https://github.com/opra-project/OPRA
+
+Preamp: -8.9 dB
+Filter 1: ON LS Fc 105.0 Hz Gain 7.5 dB Q 0.70
+Filter 2: ON PK Fc 131.0 Hz Gain -4.1 dB Q 0.21
+Filter 3: ON PK Fc 937.0 Hz Gain 3.7 dB Q 0.65
+Filter 4: ON PK Fc 2378.0 Hz Gain -3.3 dB Q 2.56
+Filter 5: ON PK Fc 3536.0 Hz Gain 3.6 dB Q 3.04
+Filter 6: ON HS Fc 10000.0 Hz Gain -0.6 dB Q 0.70
+Filter 7: ON PK Fc 5837.0 Hz Gain -2.9 dB Q 5.42
+Filter 8: ON PK Fc 55.0 Hz Gain -0.9 dB Q 1.90
+Filter 9: ON PK Fc 116.0 Hz Gain 1.2 dB Q 3.55
+Filter 10: ON PK Fc 27.0 Hz Gain 0.7 dB Q 3.27
+Filter 11: ON PK Fc 5366.0 Hz Gain 2.8 dB Q 1.50
