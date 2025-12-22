@@ -571,6 +571,7 @@ struct VulkanStreamingUpsampler::Impl {
     uint32_t complexCount = 0;
     uint64_t bufferBytes = 0;
     std::vector<float> overlapBuffer;
+    std::vector<float> originalFilterFreq;
 
     bool initialized = false;
 
@@ -581,6 +582,17 @@ struct VulkanStreamingUpsampler::Impl {
         destroyBuffer(ctx, filterBuf);
         destroyBuffer(ctx, inputBuf);
         destroyContext(ctx);
+        overlapBuffer.clear();
+        originalFilterFreq.clear();
+        upsampleRatio = 0;
+        inputRate = 0;
+        outputRate = 0;
+        fftSize = 0;
+        hopInput = 0;
+        hopOutput = 0;
+        overlap = 0;
+        complexCount = 0;
+        bufferBytes = 0;
         initialized = false;
     }
 };
@@ -674,6 +686,21 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
         return false;
     }
 
+    // Cache original filter spectrum (frequency domain) for EQ re-application
+    {
+        void* mapped = nullptr;
+        if (!checkVk(vkMapMemory(impl_->ctx.device, impl_->filterBuf.memory, 0, impl_->bufferBytes,
+                                 0, &mapped),
+                     "vkMapMemory filter (cache spectrum)")) {
+            impl_->cleanup();
+            return false;
+        }
+        impl_->originalFilterFreq.resize(static_cast<std::size_t>(complexElements));
+        std::memcpy(impl_->originalFilterFreq.data(), mapped,
+                    static_cast<std::size_t>(impl_->bufferBytes));
+        vkUnmapMemory(impl_->ctx.device, impl_->filterBuf.memory);
+    }
+
     if (!createMultiplyPipeline(impl_->ctx, impl_->inputBuf, impl_->filterBuf, impl_->pipeline)) {
         impl_->cleanup();
         return false;
@@ -744,7 +771,7 @@ bool VulkanStreamingUpsampler::switchPhaseType(PhaseType targetPhase) {
 }
 
 size_t VulkanStreamingUpsampler::getFilterFftSize() const {
-    return impl_ ? static_cast<size_t>(impl_->fftSize) : 0;
+    return impl_ ? static_cast<size_t>(impl_->complexCount) : 0;
 }
 
 size_t VulkanStreamingUpsampler::getFullFftSize() const {
@@ -752,9 +779,54 @@ size_t VulkanStreamingUpsampler::getFullFftSize() const {
 }
 
 bool VulkanStreamingUpsampler::applyEqMagnitude(const std::vector<double>& eqMagnitude) {
-    (void)eqMagnitude;
-    LOG_WARN("[Vulkan] applyEqMagnitude is not supported for streaming backend");
-    return false;
+    if (!impl_ || !impl_->initialized) {
+        LOG_ERROR("[Vulkan] EQ: Upsampler not initialized");
+        return false;
+    }
+    if (eqMagnitude.size() != impl_->complexCount) {
+        LOG_ERROR("[Vulkan] EQ: Magnitude size mismatch: expected {}, got {}", impl_->complexCount,
+                  eqMagnitude.size());
+        return false;
+    }
+    if (impl_->originalFilterFreq.size() != static_cast<std::size_t>(impl_->complexCount) * 2u) {
+        LOG_ERROR("[Vulkan] EQ: Original filter spectrum not cached");
+        return false;
+    }
+
+    // Auto-normalize EQ gain to avoid clipping
+    std::vector<double> normalizedMagnitude = eqMagnitude;
+    double maxMag = *std::max_element(eqMagnitude.begin(), eqMagnitude.end());
+    double normalizationFactor = 1.0;
+    if (maxMag > 1.0) {
+        normalizationFactor = 1.0 / maxMag;
+        for (double& v : normalizedMagnitude) {
+            v *= normalizationFactor;
+        }
+        double normDb = 20.0 * std::log10(std::max(normalizationFactor, 1e-30));
+        double maxDb = 20.0 * std::log10(std::max(maxMag, 1e-30));
+        LOG_INFO("[Vulkan] EQ: Auto-normalization applied: {} dB (max boost was +{} dB)", normDb,
+                 maxDb);
+    }
+
+    std::vector<float> newSpectrum(static_cast<std::size_t>(impl_->complexCount) * 2u);
+    for (uint32_t i = 0; i < impl_->complexCount; ++i) {
+        float scale = static_cast<float>(normalizedMagnitude[i]);
+        size_t base = static_cast<size_t>(i) * 2;
+        newSpectrum[base] = impl_->originalFilterFreq[base] * scale;
+        newSpectrum[base + 1] = impl_->originalFilterFreq[base + 1] * scale;
+    }
+
+    void* mapped = nullptr;
+    if (!checkVk(vkMapMemory(impl_->ctx.device, impl_->filterBuf.memory, 0, impl_->bufferBytes, 0,
+                             &mapped),
+                 "vkMapMemory filter (apply EQ)")) {
+        return false;
+    }
+    std::memcpy(mapped, newSpectrum.data(), static_cast<std::size_t>(impl_->bufferBytes));
+    vkUnmapMemory(impl_->ctx.device, impl_->filterBuf.memory);
+
+    LOG_INFO("[Vulkan] EQ magnitude applied ({} bins)", impl_->complexCount);
+    return true;
 }
 
 bool VulkanStreamingUpsampler::processStreamBlock(

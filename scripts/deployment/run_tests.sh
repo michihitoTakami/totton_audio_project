@@ -40,6 +40,7 @@ echo ""
 RUN_PYTHON=false
 RUN_CPP=false
 RUN_GPU=false
+RUN_VULKAN=false
 RUN_RPI=false
 RUN_JETSON_PCM=false
 
@@ -55,9 +56,13 @@ for file in $CHANGED_FILES; do
         src/*.cpp|src/*.cu|include/*.h|tests/cpp/*)
             RUN_CPP=true
             RUN_GPU=true
+            if [[ "$file" == tests/cpp/vulkan/* ]]; then
+                RUN_VULKAN=true
+            fi
             ;;
-        tests/gpu/*|data/coefficients/*)
+        tests/gpu/*|data/coefficients/*|src/vulkan/*|include/vulkan/*)
             RUN_GPU=true
+            RUN_VULKAN=true
             ;;
         raspberry_pi/*)
             RUN_RPI=true
@@ -71,6 +76,11 @@ for file in $CHANGED_FILES; do
             ;;
     esac
 done
+
+CMAKE_CONFIGURE_ARGS="-DCMAKE_BUILD_TYPE=Release"
+if $RUN_VULKAN; then
+    CMAKE_CONFIGURE_ARGS="$CMAKE_CONFIGURE_ARGS -DENABLE_VULKAN=ON"
+fi
 
 # Track overall success
 TESTS_PASSED=true
@@ -107,7 +117,7 @@ if $RUN_CPP; then
 
     if $NEEDS_BUILD; then
         echo "Building cpu_tests..."
-        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
+        "$CMAKE_BIN" -B build $CMAKE_CONFIGURE_ARGS 2>&1 | tail -5
         "$CMAKE_BIN" --build build --target cpu_tests -j8 2>&1 | tail -20
     fi
 
@@ -140,7 +150,7 @@ if $RUN_GPU; then
 
     if $NEEDS_BUILD; then
         echo "Building gpu_tests..."
-        "$CMAKE_BIN" -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
+        "$CMAKE_BIN" -B build $CMAKE_CONFIGURE_ARGS 2>&1 | tail -5
         "$CMAKE_BIN" --build build --target gpu_tests -j8 2>&1 | tail -20
     fi
 
@@ -148,6 +158,37 @@ if $RUN_GPU; then
         echo -e "${GREEN}GPU tests passed!${NC}"
     else
         echo -e "${RED}GPU tests failed!${NC}"
+        TESTS_PASSED=false
+    fi
+    echo ""
+fi
+
+# Run Vulkan tests
+if $RUN_VULKAN; then
+    echo -e "${YELLOW}=== Running Vulkan tests ===${NC}"
+
+    NEEDS_BUILD=false
+    if [ ! -f "build/vulkan_tests" ]; then
+        NEEDS_BUILD=true
+    else
+        for src in src/vulkan/*.cpp include/vulkan/*.h tests/cpp/vulkan/*.cpp; do
+            if [ -f "$src" ] && [ "$src" -nt "build/vulkan_tests" ]; then
+                NEEDS_BUILD=true
+                break
+            fi
+        done
+    fi
+
+    if $NEEDS_BUILD; then
+        echo "Building vulkan_tests..."
+        "$CMAKE_BIN" -B build $CMAKE_CONFIGURE_ARGS 2>&1 | tail -5
+        "$CMAKE_BIN" --build build --target vulkan_tests -j8 2>&1 | tail -20
+    fi
+
+    if ./build/vulkan_tests; then
+        echo -e "${GREEN}Vulkan tests passed!${NC}"
+    else
+        echo -e "${RED}Vulkan tests failed!${NC}"
         TESTS_PASSED=false
     fi
     echo ""
@@ -191,7 +232,7 @@ if $RUN_JETSON_PCM; then
 fi
 
 # Summary
-if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU && ! $RUN_RPI && ! $RUN_JETSON_PCM; then
+if ! $RUN_PYTHON && ! $RUN_CPP && ! $RUN_GPU && ! $RUN_VULKAN && ! $RUN_RPI && ! $RUN_JETSON_PCM; then
     echo -e "${GREEN}=== No tests required (docs/config only changes) ===${NC}"
     exit 0
 fi

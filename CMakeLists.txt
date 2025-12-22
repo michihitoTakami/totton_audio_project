@@ -374,6 +374,9 @@ if(ENABLE_VULKAN)
         SPIRV
         logging
     )
+    if(ENABLE_CUDA)
+        target_link_libraries(vulkan_streaming PUBLIC CUDA::cudart)
+    endif()
     target_compile_options(vulkan_streaming PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O2>
     )
@@ -667,6 +670,20 @@ if(ENABLE_CUDA)
         CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
     )
     gtest_discover_tests(gpu_tests)
+endif()
+
+if(ENABLE_VULKAN)
+    add_executable(vulkan_tests
+        tests/cpp/vulkan/test_vulkan_streaming_eq.cpp
+    )
+    target_link_libraries(vulkan_tests
+        GTest::gtest_main
+        vulkan_streaming
+    )
+    target_include_directories(vulkan_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    gtest_discover_tests(vulkan_tests)
 endif()
 
 # ZeroMQ communication tests (CPU-only)
