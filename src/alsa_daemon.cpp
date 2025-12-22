@@ -486,6 +486,9 @@ static void load_runtime_config() {
         g_state.rates.inputSampleRate = DEFAULT_INPUT_SAMPLE_RATE;
     }
 
+    // De-limiterは起動時に必ずOFFから始める（手動で明示ONするまで有効化しない）
+    g_state.config.delimiter.enabled = false;
+
     g_state.delimiter.enabled.store(g_state.config.delimiter.enabled, std::memory_order_relaxed);
     g_state.delimiter.warmup.store(g_state.config.delimiter.enabled, std::memory_order_relaxed);
     g_state.delimiter.backendAvailable.store(g_state.config.delimiter.enabled,
