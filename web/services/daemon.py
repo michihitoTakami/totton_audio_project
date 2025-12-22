@@ -277,8 +277,13 @@ def stop_daemon() -> tuple[bool, str]:
                 break
 
         if check_daemon_running():
-            logger.error("Daemon is still running after stop attempt")
-            return False, "Daemon did not stop"
+            logger.warning("Daemon is still running after SIGTERM, forcing stop")
+            _force_stop_daemon()
+            if check_daemon_running():
+                logger.error("Daemon is still running after SIGKILL fallback")
+                return False, "Daemon did not stop"
+            logger.info("Daemon stopped via SIGKILL fallback")
+            return True, "Daemon stopped (forced)"
 
         logger.info("Daemon stopped successfully")
         return True, "Daemon stopped"

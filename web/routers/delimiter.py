@@ -2,9 +2,10 @@
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from ..models import DelimiterActionResponse, DelimiterStatus
+from ..services.config import save_delimiter_enabled
 from ..services.daemon_client import get_daemon_client
 
 router = APIRouter(prefix="/delimiter", tags=["delimiter"])
@@ -50,6 +51,14 @@ def _parse_status(data: Any) -> DelimiterStatus:
     )
 
 
+def _persist_enabled(enabled: bool) -> None:
+    """Persist ON/OFF state so daemon restarts keep the toggle."""
+    if not save_delimiter_enabled(enabled):
+        raise HTTPException(
+            status_code=500, detail="Failed to persist De-limiter setting"
+        )
+
+
 def _fetch_status(client) -> DelimiterStatus:
     """Fetch status or propagate daemon errors."""
     result = client.delimiter_status()
@@ -80,6 +89,8 @@ async def enable_delimiter() -> DelimiterActionResponse:
         if not status.backend_available or not status.backend_valid:
             status = _fetch_status(client)
 
+        _persist_enabled(True)
+
         return DelimiterActionResponse(
             success=True, message="De-limiter enabled", status=status
         )
@@ -96,6 +107,8 @@ async def disable_delimiter() -> DelimiterActionResponse:
         status = _parse_status(result.data)
         if not status.backend_available or not status.backend_valid:
             status = _fetch_status(client)
+
+        _persist_enabled(False)
 
         return DelimiterActionResponse(
             success=True, message="De-limiter disabled", status=status
