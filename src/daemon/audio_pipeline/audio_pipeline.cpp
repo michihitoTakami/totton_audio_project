@@ -1401,8 +1401,13 @@ void AudioPipeline::workerLoop() {
                 }
 
                 if (deps_.buffer.playbackBuffer && deps_.running) {
-                    deps_.buffer.playbackBuffer->throttleProducerIfFull(*deps_.running,
-                                                                        deps_.currentOutputRate);
+                    int ratio = DaemonConstants::DEFAULT_UPSAMPLE_RATIO;
+                    if (deps_.config && deps_.config->upsampleRatio > 0) {
+                        ratio = deps_.config->upsampleRatio;
+                    }
+                    size_t incomingFramesHint = frames * static_cast<size_t>(ratio);
+                    deps_.buffer.playbackBuffer->throttleProducerIfFull(
+                        *deps_.running, deps_.currentOutputRate, incomingFramesHint);
                 }
 
                 (void)processDirect(downstreamInterleaved_.data(), static_cast<uint32_t>(frames));

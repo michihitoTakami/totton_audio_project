@@ -143,7 +143,8 @@ bool PlaybackBufferManager::readPlanar(float* dstLeft, float* dstRight, size_t f
 }
 
 void PlaybackBufferManager::throttleProducerIfFull(const std::atomic<bool>& running,
-                                                   const std::function<int()>& currentOutputRate) {
+                                                   const std::function<int()>& currentOutputRate,
+                                                   size_t incomingFramesHint) {
     size_t capacity = capacityProvider_ ? capacityProvider_() : 0;
     if (capacity == 0) {
         return;
@@ -152,6 +153,17 @@ void PlaybackBufferManager::throttleProducerIfFull(const std::atomic<bool>& runn
     // Hysteresis to avoid wake/sleep oscillation.
     size_t high = std::max<size_t>(1, (capacity * 9) / 10);
     size_t low = std::min(high, std::max<size_t>(1, (capacity * 7) / 10));
+
+    // Ensure enough headroom for large incoming blocks (e.g., delimiter hop size).
+    if (incomingFramesHint > 0) {
+        size_t requiredHeadroom = std::min(incomingFramesHint, capacity);
+        size_t targetMaxQueued = (capacity > requiredHeadroom) ? (capacity - requiredHeadroom) : 0;
+        high = std::max<size_t>(1, std::min(high, targetMaxQueued));
+        low = std::min(low, targetMaxQueued);
+        if (low > high) {
+            low = high;
+        }
+    }
 
     std::unique_lock<std::mutex> lock(bufferMutex_);
     while (running.load(std::memory_order_acquire)) {
@@ -168,10 +180,17 @@ void PlaybackBufferManager::throttleProducerIfFull(const std::atomic<bool>& runn
             }
             double queuedSec = static_cast<double>(queued) / static_cast<double>(outputRate);
             double capSec = static_cast<double>(capacity) / static_cast<double>(outputRate);
-            LOG_WARN(
-                "Throttling input: output queue near full (queued={} frames / {:.3f}s, "
-                "cap={} frames / {:.3f}s)",
-                queued, queuedSec, capacity, capSec);
+            if (incomingFramesHint > 0) {
+                LOG_WARN(
+                    "Throttling input: output queue near full (queued={} frames / {:.3f}s, "
+                    "cap={} frames / {:.3f}s, incoming_hint={} frames)",
+                    queued, queuedSec, capacity, capSec, incomingFramesHint);
+            } else {
+                LOG_WARN(
+                    "Throttling input: output queue near full (queued={} frames / {:.3f}s, "
+                    "cap={} frames / {:.3f}s)",
+                    queued, queuedSec, capacity, capSec);
+            }
             lastThrottleWarn_ = now;
         }
 
