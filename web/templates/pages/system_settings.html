@@ -2,6 +2,7 @@
 {% import "components/buttons.html" as buttons %}
 {% import "components/card_panel.html" as panels %}
 {% import "components/status_card.html" as status_card %}
+{% import "components/key_value_row.html" as kv %}
 
 {% block title %}{{ t.get('nav.system') }} - {{ t.get('app.title') }}{% endblock %}
 
@@ -47,20 +48,21 @@
 
     {% call panels.card_panel(t.get('system.daemon.title')) %}
         <div class="card-row wrap">
-            {{ buttons.btn_primary(t.get('system.daemon.restart'), icon='🔄', click='restartDaemon()', disabled='actionInProgress') }}
+            {% set button_label = t.get('dashboard.action.restart_daemon') %}
+            {% set button_icon = "🔄" %}
+            {% set alpine_click = "restartDaemon()" %}
+            {% set button_disabled = "actionInProgress" %}
+            {% include 'components/action_button.html' %}
         </div>
     {% endcall %}
 
     {% call panels.card_panel(t.get('system.dac.title')) %}
+        <div class="kv-grid">
+            {{ kv.kv_row(t.get('system.dac.current'), value_binding="dac.runtime?.active_device || messages.dacNone") }}
+            {{ kv.kv_row(t.get('system.dac.sample_rate'), value_binding="formatWithUnit(dac.runtime?.output_rate, 'Hz')") }}
+        </div>
+
         <div class="card-row wrap">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.dac.current') }}</div>
-                <div class="mono" x-text="dac.runtime?.active_device || '{{ t.get('system.dac.no_devices') }}'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.dac.sample_rate') }}</div>
-                <div class="mono" x-text="dac.runtime?.output_rate || 'N/A'"></div>
-            </div>
             {{ buttons.btn_primary(t.get('system.dac.rescan'), icon='🔍', click='rescanDac()', disabled='actionInProgress || dac.loading', extra_class='btn-secondary') }}
         </div>
 
@@ -92,30 +94,23 @@
             {% include 'components/toggle_switch.html' %}
         </div>
 
-        <div class="form-grid" x-show="partitioned.enabled">
-            {% set form_label = t.get('system.partitioned.fast_taps') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "partitioned.fast_partition_taps" %}
-            {% set form_input_attrs = 'min="4096" max="131072" step="4096"' %}
-            {% include 'components/form_group.html' %}
+        <div class="stack" x-show="partitioned.enabled">
+            <div class="muted">{{ t.get('system.partitioned.preset.subtitle') }}</div>
+            <div class="btn-group">
+                {{ buttons.btn_primary(t.get('system.partitioned.preset.low_latency'), icon='⚡', click="usePreset('low_latency')", extra_class='btn-group-item', attrs=':class="{ active: partitioned.preset === &quot;low_latency&quot; }"') }}
+                {{ buttons.btn_primary(t.get('system.partitioned.preset.balanced'), icon='🎧', click="usePreset('balanced')", extra_class='btn-group-item', attrs=':class="{ active: partitioned.preset === &quot;balanced&quot; }"') }}
+            </div>
+            <div class="info-text">
+                <span class="icon">ℹ️</span>
+                <span x-text="presetDescriptions[partitioned.preset] || presetDescriptions.custom"></span>
+            </div>
+        </div>
 
-            {% set form_label = t.get('system.partitioned.min_taps') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "partitioned.min_partition_taps" %}
-            {% set form_input_attrs = 'min="4096" max="131072" step="4096"' %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('system.partitioned.max_partitions') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "partitioned.max_partitions" %}
-            {% set form_input_attrs = 'min="1" max="16" step="1"' %}
-            {% include 'components/form_group.html' %}
-
-            {% set form_label = t.get('system.partitioned.tail_multiple') %}
-            {% set form_input_type = "number" %}
-            {% set form_input_model = "partitioned.tail_fft_multiple" %}
-            {% set form_input_attrs = 'min="2" max="16" step="1"' %}
-            {% include 'components/form_group.html' %}
+        <div class="kv-grid" x-show="partitioned.enabled">
+            {{ kv.kv_row(t.get('system.partitioned.fast_taps'), value_binding="formatNumber(partitioned.fast_partition_taps)") }}
+            {{ kv.kv_row(t.get('system.partitioned.min_taps'), value_binding="formatNumber(partitioned.min_partition_taps)") }}
+            {{ kv.kv_row(t.get('system.partitioned.max_partitions'), value_binding="formatNumber(partitioned.max_partitions)") }}
+            {{ kv.kv_row(t.get('system.partitioned.tail_multiple'), value_binding="formatNumber(partitioned.tail_fft_multiple)") }}
         </div>
 
         <div class="btn-row" x-show="partitioned.enabled">
@@ -125,64 +120,23 @@
     {% endcall %}
 
     {% call panels.card_panel(t.get('system.buffer.title')) %}
-        <div class="grid-2">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.buffer.size') }}</div>
-                <div class="mono" x-text="config.bufferSize ?? 'N/A'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.buffer.period') }}</div>
-                <div class="mono" x-text="config.periodSize ?? 'N/A'"></div>
-            </div>
-        </div>
-        <div class="grid-2">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.gain.gain') }}</div>
-                <div class="mono" x-text="config.gain ?? 'N/A'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.gain.headroom') }}</div>
-                <div class="mono" x-text="config.headroomTarget ?? 'N/A'"></div>
-            </div>
+        <div class="kv-grid">
+            {{ kv.kv_row(t.get('system.buffer.size'), value_binding="formatNumber(config.bufferSize)") }}
+            {{ kv.kv_row(t.get('system.buffer.period'), value_binding="formatNumber(config.periodSize)") }}
+            {{ kv.kv_row(t.get('system.gain.gain'), value_binding="formatWithUnit(config.gain, 'dB', 2)") }}
+            {{ kv.kv_row(t.get('system.gain.headroom'), value_binding="formatWithUnit(config.headroomTarget, 'dB', 2)") }}
         </div>
     {% endcall %}
 
     {% call panels.card_panel(t.get('system.debug.title')) %}
-        <div class="grid-2">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.debug.xrun_count') }}</div>
-                <div class="mono" x-text="debug.xrun_count ?? 0"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.debug.buffer_capacity') }}</div>
-                <div class="mono" x-text="debug.buffer_capacity_frames ?? 0"></div>
-            </div>
-        </div>
-        <div class="grid-2">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.debug.dropped_frames') }}</div>
-                <div class="mono" x-text="debug.dropped_frames ?? 0"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.debug.rendered_silence_blocks') }}</div>
-                <div class="mono" x-text="debug.rendered_silence_blocks ?? 0"></div>
-            </div>
-        </div>
-        <div class="grid-2">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.debug.rendered_silence_frames') }}</div>
-                <div class="mono" x-text="debug.rendered_silence_frames ?? 0"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.debug.alsa_buffer_size_config') }}</div>
-                <div class="mono" x-text="debug.alsa_buffer_size_config ?? 0"></div>
-            </div>
-        </div>
-        <div class="grid-2">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.debug.alsa_period_size_config') }}</div>
-                <div class="mono" x-text="debug.alsa_period_size_config ?? 0"></div>
-            </div>
+        <div class="kv-grid">
+            {{ kv.kv_row(t.get('system.debug.xrun_count'), value_binding="formatNumber(debug.xrun_count)") }}
+            {{ kv.kv_row(t.get('system.debug.buffer_capacity'), value_binding="formatNumber(debug.buffer_capacity_frames)") }}
+            {{ kv.kv_row(t.get('system.debug.dropped_frames'), value_binding="formatNumber(debug.dropped_frames)") }}
+            {{ kv.kv_row(t.get('system.debug.rendered_silence_blocks'), value_binding="formatNumber(debug.rendered_silence_blocks)") }}
+            {{ kv.kv_row(t.get('system.debug.rendered_silence_frames'), value_binding="formatNumber(debug.rendered_silence_frames)") }}
+            {{ kv.kv_row(t.get('system.debug.alsa_buffer_size_config'), value_binding="formatNumber(debug.alsa_buffer_size_config)") }}
+            {{ kv.kv_row(t.get('system.debug.alsa_period_size_config'), value_binding="formatNumber(debug.alsa_period_size_config)") }}
         </div>
     {% endcall %}
 </div>
@@ -194,14 +148,38 @@ function systemPage() {
     return {
         health: { daemon_running: false, input_rate: 0, output_rate: 0 },
         dac: { devices: [], runtime: null, loading: false, selected: '', userSelected: false },
+        messages: {
+            na: "{{ t.get('system.health.na') }}",
+            dacNone: "{{ t.get('system.dac.no_devices') }}",
+        },
+        partitionedPresets: {
+            low_latency: {
+                fast_partition_taps: 16384,
+                min_partition_taps: 8192,
+                max_partitions: 4,
+                tail_fft_multiple: 2,
+            },
+            balanced: {
+                fast_partition_taps: 49152,
+                min_partition_taps: 8192,
+                max_partitions: 6,
+                tail_fft_multiple: 4,
+            },
+        },
+        presetDescriptions: {
+            low_latency: "{{ t.get('system.partitioned.preset.low_latency_desc') }}",
+            balanced: "{{ t.get('system.partitioned.preset.balanced_desc') }}",
+            custom: "{{ t.get('system.partitioned.preset.custom_desc') }}",
+        },
         currentLang: "{{ lang }}",
         partitioned: {
             enabled: false,
-            fast_partition_taps: 32768,
-            min_partition_taps: 32768,
-            max_partitions: 4,
-            tail_fft_multiple: 2,
+            fast_partition_taps: 49152,
+            min_partition_taps: 8192,
+            max_partitions: 6,
+            tail_fft_multiple: 4,
             loading: false,
+            preset: "balanced",
         },
         config: { bufferSize: null, periodSize: null, gain: null, headroomTarget: null },
         debug: {
@@ -359,6 +337,7 @@ function systemPage() {
                 this.partitioned.min_partition_taps = data.min_partition_taps;
                 this.partitioned.max_partitions = data.max_partitions;
                 this.partitioned.tail_fft_multiple = data.tail_fft_multiple;
+                this.partitioned.preset = this.detectPartitionPreset(data);
             } catch (err) {
                 console.error('partitioned fetch failed', err);
             }
@@ -372,10 +351,11 @@ function systemPage() {
             this.partitioned.loading = true;
             this.actionInProgress = true;
             try {
+                const payload = this.buildPartitionedPayload();
                 const res = await fetch('/partitioned-convolution', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(this.partitioned),
+                    body: JSON.stringify(payload),
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.success === false) {
@@ -392,11 +372,69 @@ function systemPage() {
         },
 
         resetPartitioned() {
-            this.partitioned.fast_partition_taps = 32768;
-            this.partitioned.min_partition_taps = 32768;
-            this.partitioned.max_partitions = 4;
-            this.partitioned.tail_fft_multiple = 2;
+            this.usePreset('balanced');
             showToast('{{ t.get("system.partitioned.reset_defaults") }}', 'info');
+        },
+
+        usePreset(name) {
+            const preset = this.partitionedPresets[name];
+            if (!preset) {
+                this.partitioned.preset = 'custom';
+                return;
+            }
+            this.partitioned.preset = name;
+            this.partitioned.enabled = true;
+            this.partitioned.fast_partition_taps = preset.fast_partition_taps;
+            this.partitioned.min_partition_taps = preset.min_partition_taps;
+            this.partitioned.max_partitions = preset.max_partitions;
+            this.partitioned.tail_fft_multiple = preset.tail_fft_multiple;
+        },
+
+        buildPartitionedPayload() {
+            return {
+                enabled: this.partitioned.enabled,
+                fast_partition_taps: this.partitioned.fast_partition_taps,
+                min_partition_taps: this.partitioned.min_partition_taps,
+                max_partitions: this.partitioned.max_partitions,
+                tail_fft_multiple: this.partitioned.tail_fft_multiple,
+            };
+        },
+
+        detectPartitionPreset(settings) {
+            const target = {
+                fast_partition_taps: settings.fast_partition_taps,
+                min_partition_taps: settings.min_partition_taps,
+                max_partitions: settings.max_partitions,
+                tail_fft_multiple: settings.tail_fft_multiple,
+            };
+
+            for (const [name, preset] of Object.entries(this.partitionedPresets)) {
+                if (
+                    preset.fast_partition_taps === target.fast_partition_taps &&
+                    preset.min_partition_taps === target.min_partition_taps &&
+                    preset.max_partitions === target.max_partitions &&
+                    preset.tail_fft_multiple === target.tail_fft_multiple
+                ) {
+                    return name;
+                }
+            }
+            return 'custom';
+        },
+
+        formatNumber(value, fractionDigits = 0) {
+            if (value === null || value === undefined) return this.messages.na;
+            const num = Number(value);
+            if (!Number.isFinite(num)) return this.messages.na;
+            return num.toLocaleString(undefined, {
+                minimumFractionDigits: fractionDigits,
+                maximumFractionDigits: fractionDigits,
+            });
+        },
+
+        formatWithUnit(value, unit = '', fractionDigits = 0) {
+            const base = this.formatNumber(value, fractionDigits);
+            if (base === this.messages.na || !unit) return base;
+            return `${base} ${unit}`;
         },
 
         switchLanguage(target) {
