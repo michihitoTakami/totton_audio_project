@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -54,6 +55,70 @@ inline int pickInitialInputRate(const Dependencies& deps) {
         return static_cast<int>(deps.config->delimiter.expectedSampleRate);
     }
     return DaemonConstants::DEFAULT_INPUT_SAMPLE_RATE;
+}
+
+inline std::size_t scaledFrames(std::size_t frames, int fromRate, int toRate) {
+    if (fromRate <= 0 || toRate <= 0 || frames == 0) {
+        return 0;
+    }
+    double scale = static_cast<double>(toRate) / static_cast<double>(fromRate);
+    double result = static_cast<double>(frames) * scale;
+    auto rounded = static_cast<std::size_t>(std::llround(result));
+    return std::max<std::size_t>(1, rounded);
+}
+
+bool linearResample(const std::vector<float>& input, std::size_t targetFrames,
+                    std::vector<float>& output, std::string& error) {
+    output.clear();
+    if (targetFrames == 0) {
+        error = "targetFrames is zero";
+        return false;
+    }
+    if (input.empty()) {
+        error = "input is empty";
+        return false;
+    }
+    if (input.size() == 1) {
+        output.assign(targetFrames, input.front());
+        return true;
+    }
+
+    output.resize(targetFrames);
+    const double denom = static_cast<double>(targetFrames - 1);
+    const double maxIndex = static_cast<double>(input.size() - 1);
+    for (std::size_t i = 0; i < targetFrames; ++i) {
+        double pos = (targetFrames == 1) ? 0.0 : (static_cast<double>(i) * maxIndex / denom);
+        auto index = static_cast<std::size_t>(std::floor(pos));
+        auto next = std::min(index + 1, input.size() - 1);
+        double frac = pos - static_cast<double>(index);
+        float v0 = input[index];
+        float v1 = input[next];
+        output[i] = static_cast<float>(v0 + (v1 - v0) * frac);
+    }
+    return true;
+}
+
+bool resamplePlanarTo(const std::vector<float>& inLeft, const std::vector<float>& inRight,
+                      std::size_t targetFrames, int srcRate, int dstRate,
+                      std::vector<float>& outLeft, std::vector<float>& outRight,
+                      std::string& error) {
+    if (srcRate <= 0 || dstRate <= 0) {
+        error = "sample rate must be positive";
+        return false;
+    }
+    if (inLeft.size() != inRight.size()) {
+        error = "channel size mismatch";
+        return false;
+    }
+    if (!linearResample(inLeft, targetFrames, outLeft, error)) {
+        return false;
+    }
+    std::string rightError;
+    if (!linearResample(inRight, targetFrames, outRight, rightError)) {
+        error = rightError;
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -1044,24 +1109,21 @@ void AudioPipeline::workerLoop() {
 
             const bool backendEnabled =
                 (deps_.config && deps_.config->delimiter.enabled && delimiterBackend_);
-            const bool rateMatch =
-                (backendEnabled &&
-                 static_cast<int>(delimiterBackend_->expectedSampleRate()) == workerInputRate_);
-            backendValid = backendEnabled && rateMatch;
+            const int backendRate =
+                delimiterBackend_ ? static_cast<int>(delimiterBackend_->expectedSampleRate()) : 0;
+            backendValid = backendEnabled && backendRate > 0;
 
-            if (backendEnabled && !rateMatch) {
-                LOG_EVERY_N(WARN, 10,
-                            "[AudioPipeline] Delimiter sample rate mismatch (expected={}Hz, "
-                            "input={}Hz). Forcing bypass.",
-                            delimiterBackend_->expectedSampleRate(), workerInputRate_);
+            if (backendEnabled && !backendValid) {
                 if (delimiterSafety_) {
                     delimiter::InferenceResult res{delimiter::InferenceStatus::InvalidConfig,
-                                                   "delimiter sample rate mismatch"};
+                                                   "delimiter expectedSampleRate must be > 0"};
                     (void)delimiterSafety_->observeInferenceResult(res);
                     updateDelimiterStatus(delimiterSafety_->status());
                 }
                 bypassChunk = true;
-            } else if (!backendEnabled && deps_.config && deps_.config->delimiter.enabled) {
+            }
+
+            if (!backendEnabled && deps_.config && deps_.config->delimiter.enabled) {
                 LOG_EVERY_N(WARN, 10,
                             "[AudioPipeline] Delimiter backend unavailable. Forcing bypass.");
                 if (delimiterSafety_) {
@@ -1073,31 +1135,88 @@ void AudioPipeline::workerLoop() {
                 bypassChunk = true;
             }
 
+            std::vector<float> inferenceInputLeft;
+            std::vector<float> inferenceInputRight;
+            std::vector<float> inferenceOutputLeft;
+            std::vector<float> inferenceOutputRight;
+            std::string resampleError;
+
+            auto wallStart = std::chrono::steady_clock::now();
+
             if (!bypassChunk && backendValid) {
                 inferenceAttempted = true;
-                auto start = std::chrono::steady_clock::now();
-                auto res = delimiterBackend_->process(
-                    delimiter::StereoPlanarView{chunkInputLeft_.data(), chunkInputRight_.data(),
-                                                chunkFrames_},
-                    chunkOutputLeft_, chunkOutputRight_);
-                auto end = std::chrono::steady_clock::now();
-                double elapsed =
-                    std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count();
-                realtimeFactor = (chunkSec > 0.0f) ? (elapsed / chunkSec) : 0.0;
 
-                recordInferenceDurationMs(elapsed * 1000.0);
-                inferenceOk = (res.status == delimiter::InferenceStatus::Ok);
-                if (!inferenceOk) {
-                    LOG_EVERY_N(WARN, 10,
-                                "[AudioPipeline] Delimiter inference failed (status={}, msg='{}'), "
-                                "falling back to bypass for this chunk",
-                                static_cast<int>(res.status), res.message);
+                const bool needsResample = (backendRate > 0 && backendRate != workerInputRate_);
+                const std::size_t backendFrames =
+                    needsResample ? scaledFrames(chunkFrames_, workerInputRate_, backendRate)
+                                  : chunkFrames_;
+                const std::size_t outputFramesTarget = chunkFrames_;
+
+                const float* inputLeftPtr = nullptr;
+                const float* inputRightPtr = nullptr;
+                if (needsResample) {
+                    if (!resamplePlanarTo(chunkInputLeft_, chunkInputRight_, backendFrames,
+                                          workerInputRate_, backendRate, inferenceInputLeft,
+                                          inferenceInputRight, resampleError)) {
+                        delimiter::InferenceResult res{
+                            delimiter::InferenceStatus::InvalidConfig,
+                            "delimiter input resample failed: " + resampleError};
+                        if (delimiterSafety_) {
+                            (void)delimiterSafety_->observeInferenceResult(res);
+                            updateDelimiterStatus(delimiterSafety_->status());
+                        }
+                        bypassChunk = true;
+                    } else {
+                        inputLeftPtr = inferenceInputLeft.data();
+                        inputRightPtr = inferenceInputRight.data();
+                    }
+                } else {
+                    inputLeftPtr = chunkInputLeft_.data();
+                    inputRightPtr = chunkInputRight_.data();
                 }
 
-                if (delimiterSafety_) {
-                    (void)delimiterSafety_->observeInferenceResult(res);
+                if (!bypassChunk) {
+                    auto res = delimiterBackend_->process(
+                        delimiter::StereoPlanarView{inputLeftPtr, inputRightPtr, backendFrames},
+                        inferenceOutputLeft, inferenceOutputRight);
+
+                    inferenceOk = (res.status == delimiter::InferenceStatus::Ok);
+                    if (!inferenceOk) {
+                        LOG_EVERY_N(
+                            WARN, 10,
+                            "[AudioPipeline] Delimiter inference failed (status={}, msg='{}')"
+                            ", falling back to bypass for this chunk",
+                            static_cast<int>(res.status), res.message);
+                    }
+
+                    if (needsResample && inferenceOk) {
+                        if (!resamplePlanarTo(inferenceOutputLeft, inferenceOutputRight,
+                                              outputFramesTarget, backendRate, workerInputRate_,
+                                              chunkOutputLeft_, chunkOutputRight_, resampleError)) {
+                            inferenceOk = false;
+                            res.status = delimiter::InferenceStatus::Error;
+                            res.message = "delimiter output resample failed: " + resampleError;
+                            LOG_EVERY_N(WARN, 10,
+                                        "[AudioPipeline] Delimiter output resample failed: {}",
+                                        resampleError);
+                        }
+                    } else if (inferenceOk) {
+                        chunkOutputLeft_ = inferenceOutputLeft;
+                        chunkOutputRight_ = inferenceOutputRight;
+                    }
+
+                    if (delimiterSafety_) {
+                        (void)delimiterSafety_->observeInferenceResult(res);
+                    }
                 }
             }
+
+            auto wallEnd = std::chrono::steady_clock::now();
+            double elapsed =
+                std::chrono::duration_cast<std::chrono::duration<double>>(wallEnd - wallStart)
+                    .count();
+            realtimeFactor = (chunkSec > 0.0f) ? (elapsed / chunkSec) : 0.0;
+            recordInferenceDurationMs(elapsed * 1000.0);
 
             double queueSeconds = 0.0;
             std::size_t queueSamples = inputInterleaved_.availableToRead();
