@@ -26,6 +26,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(ENABLE_CUDA)
     find_package(CUDAToolkit REQUIRED)
 endif()
+if(ENABLE_VULKAN)
+    find_package(Vulkan REQUIRED)
+endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SNDFILE REQUIRED sndfile)
 pkg_check_modules(ALSA REQUIRED alsa)
@@ -130,6 +133,33 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(nlohmann_json googletest cppzmq spdlog)
+
+if(ENABLE_VULKAN)
+    set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+    set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+    set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        glslang
+        GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
+        GIT_TAG 12.3.1
+    )
+    FetchContent_MakeAvailable(glslang)
+
+    set(VKFFT_GIT_TAG "v1.3.4" CACHE STRING "VkFFT git tag/commit to fetch")
+    FetchContent_Declare(
+        vkfft
+        GIT_REPOSITORY https://github.com/DTolm/VkFFT.git
+        GIT_TAG ${VKFFT_GIT_TAG}
+    )
+    FetchContent_GetProperties(vkfft)
+    if(NOT vkfft_POPULATED)
+        FetchContent_Populate(vkfft)
+    endif()
+endif()
 
 # Include directories
 include_directories(
@@ -247,6 +277,10 @@ if(ENABLE_CUDA)
         ${ZMQ_LIBRARIES}
     )
 
+    if(ENABLE_VULKAN)
+        target_link_libraries(gpu_upsampler_alsa vulkan_streaming)
+    endif()
+
     # Conditionally link libsystemd for Type=notify support
     if(HAVE_SYSTEMD)
         target_link_libraries(gpu_upsampler_alsa ${SYSTEMD_LIBRARIES})
@@ -314,6 +348,31 @@ endif()
 # Ensure spdlog headers propagate to targets that include logger.h.
 if(ENABLE_CUDA)
     target_link_libraries(gpu_upsampler_core PUBLIC logging)
+endif()
+
+# Vulkan streaming backend (shared between daemon/tests)
+if(ENABLE_VULKAN)
+    add_library(vulkan_streaming STATIC
+        src/vulkan/vulkan_streaming_upsampler.cpp
+    )
+    target_include_directories(vulkan_streaming PRIVATE
+        ${vkfft_SOURCE_DIR}/vkFFT
+        ${glslang_SOURCE_DIR}/glslang/Include
+        ${glslang_SOURCE_DIR}
+    )
+    target_compile_definitions(vulkan_streaming PRIVATE VKFFT_BACKEND=0 VK_API_VERSION=11)
+    target_link_libraries(vulkan_streaming PUBLIC
+        Vulkan::Vulkan
+        glslang
+        OGLCompiler
+        OSDependent
+        glslang-default-resource-limits
+        SPIRV
+        logging
+    )
+    target_compile_options(vulkan_streaming PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O2>
+    )
 endif()
 
 # ZeroMQ Communication Library (CPU-only, no GPU required)

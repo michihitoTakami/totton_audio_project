@@ -21,6 +21,37 @@ namespace ConvolutionEngine {
 
 using StreamFloatVector = CudaPinnedVector<float>;
 
+// バックエンド差し替え用の最小インタフェース（CUDA/Vulkan 兼用）
+class IAudioUpsampler {
+   public:
+    virtual ~IAudioUpsampler() = default;
+
+    virtual void setPartitionedConvolutionConfig(
+        const AppConfig::PartitionedConvolutionConfig& config) = 0;
+
+    virtual bool initializeStreaming() = 0;
+    virtual void resetStreaming() = 0;
+
+    virtual size_t getStreamValidInputPerBlock() const = 0;
+    virtual int getUpsampleRatio() const = 0;
+    virtual int getOutputSampleRate() const = 0;
+    virtual int getInputSampleRate() const = 0;
+
+    virtual bool isMultiRateEnabled() const = 0;
+    virtual int getCurrentInputRate() const = 0;
+    virtual bool switchToInputRate(int inputSampleRate) = 0;
+    virtual PhaseType getPhaseType() const = 0;
+    virtual bool switchPhaseType(PhaseType targetPhase) = 0;
+    virtual size_t getFilterFftSize() const = 0;
+    virtual size_t getFullFftSize() const = 0;
+    virtual bool applyEqMagnitude(const std::vector<double>& eqMagnitude) = 0;
+
+    virtual bool processStreamBlock(const float* inputData, size_t inputFrames,
+                                    StreamFloatVector& outputData, cudaStream_t stream,
+                                    StreamFloatVector& streamInputBuffer,
+                                    size_t& streamInputAccumulated) = 0;
+};
+
 // Rate family enumeration for multi-rate support
 enum class RateFamily {
     RATE_44K = 0,  // 44.1kHz family (44100, 88200, 176400 Hz)
@@ -148,7 +179,7 @@ inline int getUpsampleRatioForInputRate(int inputSampleRate) {
     return (idx >= 0) ? MULTI_RATE_CONFIGS[idx].ratio : 0;
 }
 
-class GPUUpsampler {
+class GPUUpsampler : public IAudioUpsampler {
    public:
     GPUUpsampler();
     ~GPUUpsampler();

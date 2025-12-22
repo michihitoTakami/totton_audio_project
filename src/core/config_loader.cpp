@@ -50,6 +50,24 @@ const char* outputModeToString(OutputMode mode) {
     }
 }
 
+GpuBackend parseGpuBackend(const std::string& str) {
+    std::string lower = toLower(str);
+    if (lower == "vulkan") {
+        return GpuBackend::Vulkan;
+    }
+    return GpuBackend::Cuda;
+}
+
+const char* gpuBackendToString(GpuBackend backend) {
+    switch (backend) {
+    case GpuBackend::Vulkan:
+        return "vulkan";
+    case GpuBackend::Cuda:
+    default:
+        return "cuda";
+    }
+}
+
 // Validate headSize string, returns default "m" for invalid values
 static std::string validateHeadSize(const std::string& str) {
     if (str == "xs" || str == "s" || str == "m" || str == "l" || str == "xl") {
@@ -126,6 +144,9 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         }
         if (j.contains("filterPath")) {
             outConfig.filterPath = j["filterPath"].get<std::string>();
+        }
+        if (j.contains("gpuBackend") && j["gpuBackend"].is_string()) {
+            outConfig.gpuBackend = parseGpuBackend(j["gpuBackend"].get<std::string>());
         }
         if (j.contains("phaseType")) {
             outConfig.phaseType = parsePhaseType(j["phaseType"].get<std::string>());

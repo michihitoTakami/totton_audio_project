@@ -102,7 +102,7 @@ ConvolutionEngine::FourChannelFIR* crossfeedProcessor(const CrossfeedControls& c
     return *controls.processor;
 }
 
-ConvolutionEngine::GPUUpsampler* upsampler(ControlPlaneDependencies& deps) {
+ConvolutionEngine::IAudioUpsampler* upsampler(ControlPlaneDependencies& deps) {
     if (!deps.upsampler) {
         return nullptr;
     }

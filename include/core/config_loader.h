@@ -26,6 +26,8 @@ struct OutputConfig {
     OutputUsbOptions usb;
 };
 
+enum class GpuBackend { Cuda, Vulkan };
+
 struct AppConfig {
     std::string alsaDevice = "hw:USB";
     int bufferSize = 262144;
@@ -36,6 +38,7 @@ struct AppConfig {
     float headroomTarget = 0.92f;  // Peak target (linear 0-1) for headroom + limiter guard
     std::string filterPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
+    GpuBackend gpuBackend = GpuBackend::Cuda;  // Backend selection: CUDA (default) or Vulkan
 
     // Per-family/phase filter paths (quad-phase engine always uses all four)
     std::string filterPath44kMin = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
@@ -145,6 +148,10 @@ OutputMode parseOutputMode(const std::string& str);
 
 // Convert OutputMode to string value ("usb", ...)
 const char* outputModeToString(OutputMode mode);
+
+// Convert backend string to enum (defaults to Cuda on invalid)
+GpuBackend parseGpuBackend(const std::string& str);
+const char* gpuBackendToString(GpuBackend backend);
 
 bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig,
                    bool verbose = true);

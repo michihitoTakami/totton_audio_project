@@ -35,7 +35,7 @@ struct DaemonDependencies {
     std::atomic<int>* currentInputRate = nullptr;
     std::atomic<int>* currentOutputRate = nullptr;
     SoftMute::Controller** softMute = nullptr;
-    ConvolutionEngine::GPUUpsampler** upsampler = nullptr;
+    ConvolutionEngine::IAudioUpsampler** upsampler = nullptr;
     audio_pipeline::AudioPipeline** audioPipeline = nullptr;
     dac::DacManager** dacManager = nullptr;
     std::mutex* streamingMutex = nullptr;

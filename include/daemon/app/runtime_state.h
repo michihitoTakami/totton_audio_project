@@ -167,7 +167,7 @@ struct RuntimeState {
     ControlFlags flags;
     RateState rates;
 
-    ConvolutionEngine::GPUUpsampler* upsampler = nullptr;
+    ConvolutionEngine::IAudioUpsampler* upsampler = nullptr;
     std::mutex inputProcessMutex;
     std::unique_ptr<audio_pipeline::AudioPipeline> audioPipeline;
 
