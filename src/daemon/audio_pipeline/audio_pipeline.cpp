@@ -121,6 +121,31 @@ bool resamplePlanarTo(const std::vector<float>& inLeft, const std::vector<float>
     return true;
 }
 
+struct RtPauseGuard {
+    AudioPipeline* pipeline;
+    bool paused;
+    bool ok;
+
+    explicit RtPauseGuard(AudioPipeline* p) : pipeline(p), paused(false), ok(false) {
+        if (!pipeline) {
+            return;
+        }
+        pipeline->requestRtPause();
+        ok = pipeline->waitForRtQuiescent(std::chrono::milliseconds(500));
+        if (ok) {
+            paused = true;
+        } else {
+            pipeline->resumeRtPause();
+        }
+    }
+
+    ~RtPauseGuard() {
+        if (pipeline && paused) {
+            pipeline->resumeRtPause();
+        }
+    }
+};
+
 }  // namespace
 
 AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
@@ -743,10 +768,101 @@ bool AudioPipeline::startDelimiterBackend() {
     return backendAvailable;
 }
 
+bool AudioPipeline::stopDelimiterBackend(const char* reason, bool clearOutputBuffer) {
+    highLatencyEnabled_ = false;
+    throttleOutput_.store(false, std::memory_order_relaxed);
+    delimiterCommand_.store(static_cast<int>(DelimiterCommand::None), std::memory_order_release);
+    workerStop_.store(true, std::memory_order_release);
+    inputCv_.notify_all();
+    if (workerThread_.joinable()) {
+        workerThread_.join();
+    }
+    workerStop_.store(false, std::memory_order_relaxed);
+    delimiterBackend_.reset();
+    delimiterSafety_.reset();
+    workerFailed_.store(false, std::memory_order_relaxed);
+    inputDropDetected_.store(false, std::memory_order_relaxed);
+
+    {
+        std::lock_guard<std::mutex> lock(inputCvMutex_);
+        inputInterleaved_.clear();
+        resetHighLatencyStateLocked(reason);
+    }
+
+    if (clearOutputBuffer && deps_.buffer.playbackBuffer) {
+        deps_.buffer.playbackBuffer->reset();
+        deps_.buffer.playbackBuffer->cv().notify_all();
+    }
+
+    if (deps_.delimiterEnabled) {
+        deps_.delimiterEnabled->store(false, std::memory_order_relaxed);
+    }
+    delimiterWarmup_.store(false, std::memory_order_relaxed);
+    if (deps_.delimiterWarmup) {
+        deps_.delimiterWarmup->store(false, std::memory_order_relaxed);
+    }
+    delimiterQueueSamples_.store(0, std::memory_order_relaxed);
+    if (deps_.delimiterQueueSamples) {
+        deps_.delimiterQueueSamples->store(0, std::memory_order_relaxed);
+    }
+    delimiterQueueSeconds_.store(0.0, std::memory_order_relaxed);
+    if (deps_.delimiterQueueSeconds) {
+        deps_.delimiterQueueSeconds->store(0.0, std::memory_order_relaxed);
+    }
+    delimiterLastInferenceMs_.store(0.0, std::memory_order_relaxed);
+    if (deps_.delimiterLastInferenceMs) {
+        deps_.delimiterLastInferenceMs->store(0.0, std::memory_order_relaxed);
+    }
+
+    delimiterBackendAvailable_.store(false, std::memory_order_relaxed);
+    delimiterBackendValid_.store(false, std::memory_order_relaxed);
+    if (deps_.delimiterBackendAvailable) {
+        deps_.delimiterBackendAvailable->store(false, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBackendValid) {
+        deps_.delimiterBackendValid->store(false, std::memory_order_relaxed);
+    }
+
+    delimiterTargetMode_.store(static_cast<int>(delimiter::ProcessingMode::Bypass),
+                               std::memory_order_relaxed);
+    if (deps_.delimiterTargetMode) {
+        deps_.delimiterTargetMode->store(static_cast<int>(delimiter::ProcessingMode::Bypass),
+                                         std::memory_order_relaxed);
+    }
+    if (deps_.delimiterMode) {
+        deps_.delimiterMode->store(static_cast<int>(delimiter::ProcessingMode::Bypass),
+                                   std::memory_order_relaxed);
+    }
+    if (deps_.delimiterFallbackReason) {
+        deps_.delimiterFallbackReason->store(static_cast<int>(delimiter::FallbackReason::Manual),
+                                             std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBypassLocked) {
+        deps_.delimiterBypassLocked->store(false, std::memory_order_relaxed);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(delimiterDetailMutex_);
+        delimiterDetail_.assign(reason ? reason : "");
+    }
+
+    return true;
+}
+
 bool AudioPipeline::requestDelimiterEnable() {
+    std::lock_guard<std::mutex> guard(delimiterControlMutex_);
+    RtPauseGuard pauseGuard(this);
+    if (!pauseGuard.ok) {
+        return false;
+    }
+
     if (!highLatencyEnabled_) {
         if (!startDelimiterBackend()) {
             return false;
+        }
+        if (deps_.buffer.playbackBuffer) {
+            deps_.buffer.playbackBuffer->reset();
+            deps_.buffer.playbackBuffer->cv().notify_all();
         }
     }
     if (!delimiterBackend_) {
@@ -764,17 +880,17 @@ bool AudioPipeline::requestDelimiterEnable() {
 }
 
 bool AudioPipeline::requestDelimiterDisable() {
+    std::lock_guard<std::mutex> guard(delimiterControlMutex_);
+    RtPauseGuard pauseGuard(this);
+    if (!pauseGuard.ok) {
+        return false;
+    }
     if (!highLatencyEnabled_) {
-        if (deps_.delimiterEnabled) {
-            deps_.delimiterEnabled->store(false, std::memory_order_relaxed);
-        }
-        if (deps_.delimiterWarmup) {
-            deps_.delimiterWarmup->store(false, std::memory_order_relaxed);
-        }
-        return true;
+        return stopDelimiterBackend("user disabled via ZMQ", true);
     }
     delimiterCommand_.store(static_cast<int>(DelimiterCommand::Disable), std::memory_order_release);
-    return true;
+    // Force immediate clear of pending high-latency buffers to avoid lingering latency.
+    return stopDelimiterBackend("user disabled via ZMQ", true);
 }
 
 DelimiterStatusSnapshot AudioPipeline::delimiterStatus() const {

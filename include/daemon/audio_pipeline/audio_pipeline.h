@@ -160,6 +160,7 @@ class AudioPipeline {
     float computeStereoPeak(const float* left, const float* right, size_t frames) const;
     float applyOutputLimiter(float* interleaved, size_t frames);
     bool startDelimiterBackend();
+    bool stopDelimiterBackend(const char* reason, bool clearOutputBuffer);
 
     template <typename Container>
     size_t enqueueOutputFramesLocked(const Container& left, const Container& right);
@@ -188,6 +189,7 @@ class AudioPipeline {
     std::chrono::steady_clock::time_point lastInputDropWarn_{std::chrono::steady_clock::now() -
                                                              std::chrono::seconds(6)};
 
+    std::mutex delimiterControlMutex_;
     std::mutex inputCvMutex_;
     std::condition_variable inputCv_;
     AudioRingBuffer inputInterleaved_;
