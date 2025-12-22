@@ -159,6 +159,7 @@ class AudioPipeline {
     void trimInternal(size_t minFramesToRemove);
     float computeStereoPeak(const float* left, const float* right, size_t frames) const;
     float applyOutputLimiter(float* interleaved, size_t frames);
+    bool startDelimiterBackend();
 
     template <typename Container>
     size_t enqueueOutputFramesLocked(const Container& left, const Container& right);

@@ -755,15 +755,14 @@ std::string ControlPlane::handleDelimiterEnable(const daemon_ipc::ZmqRequest& re
         return buildErrorResponse(request, "DELIMITER_UNAVAILABLE",
                                   "Delimiter control unavailable");
     }
-    auto status = deps_.delimiterStatus();
-    if (!status.backendAvailable) {
-        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE", "Delimiter backend not ready");
-    }
     if (!deps_.delimiterEnable()) {
         return buildErrorResponse(request, "DELIMITER_ENABLE_FAILED",
                                   "Failed to enable De-limiter");
     }
     auto updated = deps_.delimiterStatus();
+    if (!updated.backendAvailable) {
+        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE", "Delimiter backend not ready");
+    }
     return buildOkResponse(request, "Delimiter enabled", buildDelimiterStatusJson(updated));
 }
 
@@ -771,10 +770,6 @@ std::string ControlPlane::handleDelimiterDisable(const daemon_ipc::ZmqRequest& r
     if (!deps_.delimiterDisable || !deps_.delimiterStatus) {
         return buildErrorResponse(request, "DELIMITER_UNAVAILABLE",
                                   "Delimiter control unavailable");
-    }
-    auto status = deps_.delimiterStatus();
-    if (!status.backendAvailable) {
-        return buildErrorResponse(request, "DELIMITER_UNAVAILABLE", "Delimiter backend not ready");
     }
     if (!deps_.delimiterDisable()) {
         return buildErrorResponse(request, "DELIMITER_DISABLE_FAILED",
