@@ -19,6 +19,7 @@
 - **Multi-Rate対応**: 44.1kHz系/48kHz系を自動判定し、適切な係数に切り替え
 - **Crossfeed (HRTF)**: オプションでヘッドホンのステレオ感を自然な音場に補正
 - **Soft Mute**: レート切り替え時のフェード制御でポップノイズを防止
+- **AIラウドネスケア (De-Limiter)**: 高遅延 chunk/overlap 推論でピーク抑制を行う（推論SR=44.1k固定）。セットアップ手順: `docs/setup/delimiter.md`
 
 ---
 

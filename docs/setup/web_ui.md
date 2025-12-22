@@ -16,6 +16,9 @@ Web UI は FastAPI ベースで、以下のページを提供:
 | Dashboard | `/` | 稼働状況のサマリー |
 | EQ Settings | `/eq` | EQ管理、OPRA検索、インポート |
 | System Settings | `/system` | デバイス・出力モード設定 |
+| De-Limiter (AI Loudness Care) | `/delimiter` | De-limiter の ON/OFF と状態確認 |
+
+- De-Limiter のセットアップ手順は [delimiter.md](delimiter.md) を参照。
 
 ※ 旧 `/legacy` と `/admin` ページは廃止済みです。
 

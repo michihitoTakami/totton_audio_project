@@ -84,6 +84,7 @@ cmake --build build -j$(nproc)
 | テストの詳細 | [test.md](test.md) |
 | 実機で音を出す | [pc_development.md](pc_development.md) |
 | Web UIを使う | [web_ui.md](web_ui.md) |
+| De-Limiterを有効化する | [delimiter.md](delimiter.md) |
 
 ## トラブルシューティング
 
