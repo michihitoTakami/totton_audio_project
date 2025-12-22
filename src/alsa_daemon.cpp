@@ -639,8 +639,14 @@ int main(int argc, char* argv[]) {
             audio_pipeline::Dependencies pipelineDeps{};
             pipelineDeps.config = &g_state.config;
             pipelineDeps.upsampler.available = true;
-            pipelineDeps.upsampler.streamLeft = g_state.upsampler->streamLeft_;
-            pipelineDeps.upsampler.streamRight = g_state.upsampler->streamRight_;
+            if (auto* cudaUpsampler =
+                    dynamic_cast<ConvolutionEngine::GPUUpsampler*>(g_state.upsampler)) {
+                pipelineDeps.upsampler.streamLeft = cudaUpsampler->streamLeft_;
+                pipelineDeps.upsampler.streamRight = cudaUpsampler->streamRight_;
+            } else {
+                pipelineDeps.upsampler.streamLeft = nullptr;
+                pipelineDeps.upsampler.streamRight = nullptr;
+            }
             pipelineDeps.output.outputGain = &g_state.gains.output;
             pipelineDeps.output.limiterGain = &g_state.gains.limiter;
             pipelineDeps.output.effectiveGain = &g_state.gains.effective;
