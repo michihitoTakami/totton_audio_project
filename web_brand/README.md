@@ -10,6 +10,12 @@
   - `?lang=ja|en` で上書き可能
   - 手動切替は `localStorage (totton.lang)` に保存
 - お問い合わせリンクは Google Forms を使用
+### GitHub Actions による同期
+
+- `main` への push で `web_brand/**` に変更がある場合のみ、`michihitoTakami/totton-audio` リポジトリへ同期します。
+- 秘密変数 `TOTTON_AUDIO_TOKEN`（`repo` 権限のPAT）が必要です。リポジトリ設定 → **Secrets and variables** → **Actions** で設定してください。
+- 手動実行は GitHub の Actions ページから **Sync web_brand to totton-audio** を選び、`Run workflow` を押すだけです。
+- 同期は `rsync --delete` 相当で不要ファイルを削除します。ターゲットリポジトリの独自ファイルは残らないため注意してください。
 
 ### ローカルでの確認方法
 
