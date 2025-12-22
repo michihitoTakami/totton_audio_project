@@ -222,15 +222,17 @@ void destroyBuffer(VulkanContext& ctx, BufferResource& buf) {
     }
 }
 
-VkFFTResult createFftApp(VulkanContext& ctx, VkBuffer buffer, uint64_t bufferSize, uint32_t fftSize,
+VkFFTResult createFftApp(VulkanContext& ctx, BufferResource& resource, uint32_t fftSize,
                          VkFFTApplication& outApp) {
     VkFFTConfiguration conf{};
     conf.FFTdim = 1;
     conf.size[0] = fftSize;
+    conf.size[1] = 1;
+    conf.size[2] = 1;
     conf.performR2C = 1;
     conf.normalize = 1;
-    conf.buffer = &buffer;
-    conf.bufferSize = &bufferSize;
+    conf.buffer = &resource.buffer;
+    conf.bufferSize = reinterpret_cast<uint64_t*>(&resource.size);
     conf.device = &ctx.device;
     conf.queue = &ctx.queue;
     conf.commandPool = &ctx.commandPool;
@@ -624,8 +626,8 @@ bool processOverlapSaveBuffer(const std::vector<float>& inputMono,
         return false;
     }
 
-    if (createFftApp(ctx, inputBuf.buffer, bufferBytes, fftSize, inputApp) != VKFFT_SUCCESS ||
-        createFftApp(ctx, filterBuf.buffer, bufferBytes, fftSize, filterApp) != VKFFT_SUCCESS) {
+    if (createFftApp(ctx, inputBuf, fftSize, inputApp) != VKFFT_SUCCESS ||
+        createFftApp(ctx, filterBuf, fftSize, filterApp) != VKFFT_SUCCESS) {
         LOG_ERROR("Failed to initialize VkFFT");
         cleanup();
         return false;
