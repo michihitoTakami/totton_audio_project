@@ -170,6 +170,7 @@ class AudioPipeline {
     std::atomic<int> pauseRequestCount_{0};
     std::atomic<bool> rtPaused_{false};
     std::atomic<bool> rtInProcess_{false};
+    std::atomic<bool> throttleOutput_{false};
     bool lastCrossfeedEnabledApplied_ = false;
 
     // RT パスで毎回 std::vector を生成しないためのワークバッファ (Issue #894)
@@ -235,6 +236,12 @@ size_t AudioPipeline::enqueueOutputFramesLocked(const Container& left, const Con
     size_t framesAvailable = std::min(left.size(), right.size());
     if (framesAvailable == 0) {
         return 0;
+    }
+
+    if (throttleOutput_.load(std::memory_order_acquire) && deps_.running &&
+        deps_.buffer.playbackBuffer) {
+        deps_.buffer.playbackBuffer->throttleProducerIfFull(*deps_.running, deps_.currentOutputRate,
+                                                            framesAvailable);
     }
 
     int outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;

@@ -212,6 +212,7 @@ AudioPipeline::~AudioPipeline() {
     if (workerThread_.joinable()) {
         workerThread_.join();
     }
+    throttleOutput_.store(false, std::memory_order_relaxed);
 }
 
 bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
@@ -637,6 +638,7 @@ bool AudioPipeline::startDelimiterBackend() {
     highLatencyEnabled_ = true;
 
     delimiterWarmup_.store(true, std::memory_order_relaxed);
+    throttleOutput_.store(true, std::memory_order_relaxed);
     delimiterQueueSamples_.store(0, std::memory_order_relaxed);
     delimiterQueueSeconds_.store(0.0, std::memory_order_relaxed);
     delimiterLastInferenceMs_.store(0.0, std::memory_order_relaxed);
@@ -697,6 +699,7 @@ bool AudioPipeline::startDelimiterBackend() {
     if (!backendValid) {
         // Revert state when backend creation fails or reports invalid config
         highLatencyEnabled_ = false;
+        throttleOutput_.store(false, std::memory_order_relaxed);
         delimiterWarmup_.store(false, std::memory_order_relaxed);
         delimiterBackendAvailable_.store(false, std::memory_order_relaxed);
         delimiterBackendValid_.store(false, std::memory_order_relaxed);
