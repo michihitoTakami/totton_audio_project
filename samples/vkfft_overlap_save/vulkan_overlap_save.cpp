@@ -723,6 +723,40 @@ bool processOverlapSaveBuffer(const std::vector<float>& inputMono,
     return true;
 }
 
+bool processOverlapSaveStereoBuffer(const std::vector<float>& inputInterleaved,
+                                    const std::vector<float>& filterTaps, uint32_t upsampleRatio,
+                                    uint32_t fftSize, uint32_t chunkFrames,
+                                    std::vector<float>& outputInterleaved) {
+    if (inputInterleaved.size() % 2 != 0) {
+        LOG_ERROR("Stereo input must have an even number of samples (interleaved LR)");
+        return false;
+    }
+    const std::size_t frames = inputInterleaved.size() / 2;
+    std::vector<float> left(frames);
+    std::vector<float> right(frames);
+    AudioIO::Utils::interleavedToSeparate(inputInterleaved.data(), left.data(), right.data(),
+                                          frames);
+
+    std::vector<float> leftOut;
+    std::vector<float> rightOut;
+    if (!processOverlapSaveBuffer(left, filterTaps, upsampleRatio, fftSize, chunkFrames, leftOut) ||
+        !processOverlapSaveBuffer(right, filterTaps, upsampleRatio, fftSize, chunkFrames,
+                                  rightOut)) {
+        return false;
+    }
+
+    if (leftOut.size() != rightOut.size()) {
+        LOG_ERROR("Stereo processing produced mismatched output sizes (L={} R={})", leftOut.size(),
+                  rightOut.size());
+        return false;
+    }
+
+    outputInterleaved.resize(leftOut.size() * 2);
+    AudioIO::Utils::separateToInterleaved(leftOut.data(), rightOut.data(), outputInterleaved.data(),
+                                          leftOut.size());
+    return true;
+}
+
 int runVulkanOverlapSave(const VulkanOverlapSaveOptions& opts) {
     FilterMetadata meta{};
     if (!loadFilterMetadata(opts.filterMetadataPath, meta)) {
@@ -748,11 +782,9 @@ int runVulkanOverlapSave(const VulkanOverlapSaveOptions& opts) {
     }
     reader.close();
 
-    std::vector<float> mono(inputFile.frames);
-    if (inputFile.channels == 1) {
-        mono = std::move(inputFile.data);
-    } else {
-        AudioIO::Utils::stereoToMono(inputFile.data.data(), mono.data(), inputFile.frames);
+    if (inputFile.channels != 1 && inputFile.channels != 2) {
+        LOG_ERROR("Unsupported channel count: {}", inputFile.channels);
+        return 1;
     }
 
     if (meta.inputRate != 0 && static_cast<uint32_t>(inputRate) != meta.inputRate) {
@@ -764,19 +796,28 @@ int runVulkanOverlapSave(const VulkanOverlapSaveOptions& opts) {
 
     uint32_t fftSize = opts.fftSizeOverride;
     if (fftSize == 0) {
-        const auto desired = static_cast<std::size_t>(meta.upsampleRatio) *
-                                 static_cast<std::size_t>(opts.chunkFrames) +
-                             meta.taps - 1;
-        fftSize = nextPow2(static_cast<uint32_t>(desired));
+        const uint32_t desired =
+            static_cast<uint32_t>(meta.upsampleRatio * opts.chunkFrames + meta.taps - 1);
+        fftSize = nextPow2(desired);
     }
 
     std::cout << "[vulkan_overlap_save] fftSize=" << fftSize << " overlap=" << (meta.taps - 1)
               << " chunkFrames=" << opts.chunkFrames << "\n";
 
     std::vector<float> output;
-    if (!processOverlapSaveBuffer(mono, filterTaps, meta.upsampleRatio, fftSize, opts.chunkFrames,
-                                  output)) {
-        return 1;
+    const uint32_t outputChannels = static_cast<uint32_t>(inputFile.channels);
+    if (outputChannels == 1) {
+        std::vector<float> mono = std::move(inputFile.data);
+        mono.resize(static_cast<std::size_t>(inputFile.frames));
+        if (!processOverlapSaveBuffer(mono, filterTaps, meta.upsampleRatio, fftSize,
+                                      opts.chunkFrames, output)) {
+            return 1;
+        }
+    } else {
+        if (!processOverlapSaveStereoBuffer(inputFile.data, filterTaps, meta.upsampleRatio, fftSize,
+                                            opts.chunkFrames, output)) {
+            return 1;
+        }
     }
 
     const uint32_t outputRate = (meta.outputRate != 0)
@@ -784,13 +825,19 @@ int runVulkanOverlapSave(const VulkanOverlapSaveOptions& opts) {
                                     : static_cast<uint32_t>(inputRate) * meta.upsampleRatio;
 
     WavWriter writer;
-    if (!writer.open(opts.outputPath, static_cast<int>(outputRate), 1)) {
+    if (outputChannels == 0 || output.size() % outputChannels != 0) {
+        LOG_ERROR("Invalid output size {} for {} channels", output.size(), outputChannels);
+        return 1;
+    }
+
+    if (!writer.open(opts.outputPath, static_cast<int>(outputRate),
+                     static_cast<int>(outputChannels))) {
         return 1;
     }
     AudioFile outFile;
-    outFile.channels = 1;
+    outFile.channels = static_cast<int>(outputChannels);
     outFile.sampleRate = static_cast<int>(outputRate);
-    outFile.frames = static_cast<int>(output.size());
+    outFile.frames = static_cast<int>(output.size() / outputChannels);
     outFile.data = std::move(output);
     if (!writer.writeAll(outFile)) {
         writer.close();
