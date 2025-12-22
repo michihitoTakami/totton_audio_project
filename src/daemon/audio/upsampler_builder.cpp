@@ -3,6 +3,7 @@
 #include "audio/eq_parser.h"
 #include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
+#include "vulkan/vulkan_streaming_upsampler.h"
 
 #include <algorithm>
 #include <cctype>
@@ -70,6 +71,34 @@ UpsamplerBuildResult buildUpsampler(AppConfig& config, int inputSampleRate,
     UpsamplerBuildResult result{};
 
     resolve_filter_path(config, inputSampleRate);
+
+    if (config.gpuBackend == GpuBackend::Vulkan) {
+        std::cout << "Initializing Vulkan upsampler..." << '\n';
+        vulkan_backend::VulkanStreamingUpsampler::InitParams params{};
+        params.filterPath = config.filterPath;
+        params.upsampleRatio = static_cast<uint32_t>(config.upsampleRatio);
+        params.blockSize = static_cast<uint32_t>(config.blockSize);
+        params.inputRate = static_cast<uint32_t>(inputSampleRate);
+
+        auto upsampler = std::make_unique<vulkan_backend::VulkanStreamingUpsampler>();
+        if (!upsampler->initialize(params)) {
+            std::cerr << "Failed to initialize Vulkan upsampler" << '\n';
+            return result;
+        }
+
+        if (!runningFlag.load(std::memory_order_acquire)) {
+            std::cout << "Startup interrupted by signal" << '\n';
+            result.status = UpsamplerBuildStatus::Interrupted;
+            return result;
+        }
+
+        result.status = UpsamplerBuildStatus::Success;
+        result.currentInputRate = inputSampleRate;
+        result.currentOutputRate = static_cast<int>(params.upsampleRatio) * inputSampleRate;
+        result.initialRateFamily = ConvolutionEngine::detectRateFamily(inputSampleRate);
+        result.upsampler = std::move(upsampler);
+        return result;
+    }
 
     std::cout << "Initializing GPU upsampler..." << '\n';
     auto upsampler = std::make_unique<ConvolutionEngine::GPUUpsampler>();

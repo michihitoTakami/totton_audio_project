@@ -15,6 +15,7 @@
 #include <thread>
 
 namespace ConvolutionEngine {
+class IAudioUpsampler;
 class GPUUpsampler;
 class FourChannelFIR;
 }  // namespace ConvolutionEngine
@@ -59,7 +60,7 @@ struct ControlPlaneDependencies {
     std::function<audio_pipeline::DelimiterStatusSnapshot()> delimiterStatus;
 
     dac::DacManager* dacManager = nullptr;
-    ConvolutionEngine::GPUUpsampler** upsampler = nullptr;
+    ConvolutionEngine::IAudioUpsampler** upsampler = nullptr;
     CrossfeedControls crossfeed;
 
     std::string statsFilePath;

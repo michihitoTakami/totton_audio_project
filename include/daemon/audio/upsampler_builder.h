@@ -13,7 +13,7 @@ enum class UpsamplerBuildStatus { Success, Failure, Interrupted };
 
 struct UpsamplerBuildResult {
     UpsamplerBuildStatus status = UpsamplerBuildStatus::Failure;
-    std::unique_ptr<ConvolutionEngine::GPUUpsampler> upsampler;
+    std::unique_ptr<ConvolutionEngine::IAudioUpsampler> upsampler;
     ConvolutionEngine::RateFamily initialRateFamily = ConvolutionEngine::RateFamily::RATE_44K;
     int currentInputRate = 0;
     int currentOutputRate = 0;

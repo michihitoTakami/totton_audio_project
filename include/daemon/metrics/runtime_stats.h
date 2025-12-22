@@ -11,7 +11,7 @@
 #include <string>
 
 namespace ConvolutionEngine {
-class GPUUpsampler;
+class IAudioUpsampler;
 }
 
 namespace daemon_output {
@@ -22,7 +22,7 @@ namespace runtime_stats {
 
 struct Dependencies {
     const AppConfig* config = nullptr;
-    const ConvolutionEngine::GPUUpsampler* upsampler = nullptr;
+    const ConvolutionEngine::IAudioUpsampler* upsampler = nullptr;
     const FilterHeadroomCache* headroomCache = nullptr;
     dac::DacManager* dacManager = nullptr;
     const FallbackManager::Manager* fallbackManager = nullptr;
