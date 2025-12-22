@@ -117,8 +117,9 @@ w(t) = 0.5 - 0.5\cos(\pi t),\quad t \in [0,1]
 - 計測スクリプト: `scripts/delimiter/benchmark_streaming.py`
   - 例:
     `uv sync --extra onnxruntime --extra benchmark`
-    `uv run python scripts/delimiter/benchmark_streaming.py --input test_data/example.wav --model /path/to/delimiter.onnx --provider cpu --chunk-sec 6.0 --overlap-sec 0.25 --measure-resources --report reports/delimiter_bench.json`
+    `uv run python scripts/delimiter/benchmark_streaming.py --input test_data/example.wav --model /path/to/delimiter.onnx --provider cpu --chunk-sec 6.0 --overlap-sec 0.25 --target-sr 44100 --measure-resources --report reports/delimiter_bench.json`
   - 出力: chunkごとの推論時間、平均/95パーセンタイル、throughput_x（速いほど良い）、推定初期遅延（chunkSec）、hop秒（chunkSec - overlapSec）、CPU/GPU使用率（psutil/nvidia-ml-py3がある場合）。
+  - `--fallback-on-error` を付けると推論例外発生時に該当chunkのみバイパスして継続し、`error_rate` と `failed_chunks` をレポートに残す。失敗系回帰の確認に利用する。
 - デフォルト運用: throughput_x が 1 未満になった場合は
   - chunkSec を短くする（初期遅延は増えるが計算量が減る）
   - overlapSec を縮める（境界品質とトレードオフ）

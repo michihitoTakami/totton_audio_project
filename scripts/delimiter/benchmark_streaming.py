@@ -104,12 +104,18 @@ class BenchmarkReport:
     hop_sec: float
     resources: Optional[dict[str, Any]]
     meta: dict[str, Any]
+    failed_chunks: list[int]
+    failure_messages: list[str]
+    fallback_on_error: bool
 
     def to_dict(self) -> dict[str, Any]:
         chunk_ms = [c.infer_ms for c in self.chunk_timings]
+        chunk_count = len(self.chunk_timings)
+        error_count = len(self.failed_chunks)
+        error_rate = float(error_count) / float(chunk_count) if chunk_count else 0.0
         return {
             "metrics": {
-                "chunk_count": len(self.chunk_timings),
+                "chunk_count": chunk_count,
                 "mean_ms_per_chunk": float(np.mean(chunk_ms)) if chunk_ms else 0.0,
                 "p95_ms_per_chunk": _percentile(chunk_ms, 95.0),
                 "max_ms_per_chunk": max(chunk_ms) if chunk_ms else 0.0,
@@ -119,6 +125,8 @@ class BenchmarkReport:
                 "steady_state_hop_sec": self.hop_sec,
                 "total_elapsed_sec": self.total_elapsed_sec,
                 "drop_rate": 0.0,  # offline benchmark, no playback buffer underrun
+                "error_rate": error_rate,
+                "error_chunks": self.failed_chunks,
             },
             "resources": self.resources or {},
             "meta": self.meta,
@@ -225,6 +233,7 @@ def run_streaming_benchmark(
     target_sr: int = 44100,
     measure_resources: bool = False,
     resource_interval: float = 0.25,
+    fallback_on_error: bool = False,
 ) -> tuple[np.ndarray, BenchmarkReport]:
     audio = np.asarray(audio, dtype=np.float32)
     audio = _as_stereo(audio)
@@ -248,7 +257,17 @@ def run_streaming_benchmark(
             estimated_latency_sec=chunk_sec,
             hop_sec=float(hop) / float(target_sr),
             resources=None,
-            meta={},
+            meta={
+                "input_sample_rate": int(sample_rate),
+                "target_sample_rate": int(target_sr),
+                "output_sample_rate": int(target_sr),
+                "fallback_on_error": bool(fallback_on_error),
+                "failed_chunks": [],
+                "failure_messages": [],
+            },
+            failed_chunks=[],
+            failure_messages=[],
+            fallback_on_error=fallback_on_error,
         )
 
     if total_len <= chunk_len:
@@ -265,13 +284,27 @@ def run_streaming_benchmark(
 
     chunk_timings: list[ChunkTiming] = []
     chunks_out: list[np.ndarray] = []
-    meta: dict[str, Any] = {}
+    last_meta: dict[str, Any] = {}
+    failed_chunks: list[int] = []
+    failure_messages: list[str] = []
 
     t_total_start = time.perf_counter()
     for idx, start in enumerate(range(0, padded.shape[0] - chunk_len + 1, hop)):
         chunk = padded[start : start + chunk_len]
         t0 = time.perf_counter()
-        out_chunk, meta = infer_fn(chunk)
+        try:
+            out_chunk, last_meta = infer_fn(chunk)
+        except Exception as e:
+            if not fallback_on_error:
+                raise
+            failed_chunks.append(idx)
+            failure_messages.append(str(e))
+            # Fallback: bypass the chunk to keep continuity for analysis.
+            out_chunk = chunk
+            last_meta = {
+                "error": str(e),
+                "backend": "fallback-bypass",
+            }
         infer_ms = (time.perf_counter() - t0) * 1000.0
         chunks_out.append(out_chunk)
         chunk_timings.append(
@@ -297,6 +330,16 @@ def run_streaming_benchmark(
     rtf = (total_elapsed / duration) if duration > 0 else None
     throughput = (duration / total_elapsed) if total_elapsed > 0 else None
 
+    meta_full = {
+        **last_meta,
+        "input_sample_rate": int(sample_rate),
+        "target_sample_rate": int(target_sr),
+        "output_sample_rate": int(target_sr),
+        "fallback_on_error": bool(fallback_on_error),
+        "failed_chunks": failed_chunks,
+        "failure_messages": failure_messages,
+    }
+
     report = BenchmarkReport(
         chunk_timings=chunk_timings,
         total_elapsed_sec=total_elapsed,
@@ -305,10 +348,47 @@ def run_streaming_benchmark(
         estimated_latency_sec=chunk_sec,
         hop_sec=float(hop) / float(target_sr),
         resources=resources,
-        meta=meta,
+        meta=meta_full,
+        failed_chunks=failed_chunks,
+        failure_messages=failure_messages,
+        fallback_on_error=fallback_on_error,
     )
 
     return out, report
+
+
+def run_streaming_benchmark_roundtrip(
+    audio: np.ndarray,
+    sample_rate: int,
+    infer_fn: InferFn,
+    *,
+    chunk_sec: float,
+    overlap_sec: float,
+    target_sr: int = 44100,
+    measure_resources: bool = False,
+    resource_interval: float = 0.25,
+    fallback_on_error: bool = False,
+) -> tuple[np.ndarray, BenchmarkReport]:
+    """Convenience wrapper that resamples back to input sample rate.
+
+    This mirrors the real-time path: input SR -> target SR (inference) -> input SR.
+    """
+    out_target, report = run_streaming_benchmark(
+        audio,
+        sample_rate=sample_rate,
+        infer_fn=infer_fn,
+        chunk_sec=chunk_sec,
+        overlap_sec=overlap_sec,
+        target_sr=target_sr,
+        measure_resources=measure_resources,
+        resource_interval=resource_interval,
+        fallback_on_error=fallback_on_error,
+    )
+    out_audio = _resample(out_target, sr_in=int(target_sr), sr_out=int(sample_rate))
+    meta = dict(report.meta)
+    meta["output_sample_rate"] = int(sample_rate)
+    report.meta = meta
+    return out_audio, report
 
 
 def _providers_for(ep: ExecutionProvider) -> list[str]:
@@ -381,6 +461,12 @@ def parse_args() -> argparse.Namespace:
         "--intra-op-threads", type=int, default=0, help="ORT intra-op threads"
     )
     p.add_argument(
+        "--target-sr",
+        type=int,
+        default=44100,
+        help="Sample rate expected by the model (default: 44100)",
+    )
+    p.add_argument(
         "--measure-resources", action="store_true", help="Sample CPU/GPU utilization"
     )
     p.add_argument(
@@ -388,6 +474,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.25,
         help="Sampling interval for CPU/GPU utilization (seconds)",
+    )
+    p.add_argument(
+        "--fallback-on-error",
+        action="store_true",
+        help="Bypass chunk and continue when inference raises (for failure campaigns)",
     )
     p.add_argument("--report", type=Path, help="Write benchmark JSON report")
     p.add_argument(
@@ -415,18 +506,17 @@ def main() -> None:
         intra_op_threads=int(args.intra_op_threads),
     )
 
-    out_44100, report = run_streaming_benchmark(
+    out, report = run_streaming_benchmark_roundtrip(
         audio,
         sample_rate=int(sr),
         infer_fn=infer_fn,
         chunk_sec=float(args.chunk_sec),
         overlap_sec=float(args.overlap_sec),
-        target_sr=44100,
+        target_sr=int(args.target_sr),
         measure_resources=bool(args.measure_resources),
         resource_interval=float(args.resource_interval),
+        fallback_on_error=bool(args.fallback_on_error),
     )
-
-    out_audio = _resample(out_44100, sr_in=44100, sr_out=int(sr))
 
     metrics = report.to_dict()["metrics"]
     throughput_str = (
@@ -442,6 +532,12 @@ def main() -> None:
         f"throughput_x={throughput_str} "
         f"rtf={rtf_str}"
     )
+    if metrics.get("error_rate", 0.0) > 0.0:
+        print(
+            f"[warn] fallback_on_error={args.fallback_on_error} "
+            f"errors={len(report.failed_chunks)} "
+            f"indices={report.failed_chunks}"
+        )
     if report.resources:
         cpu = report.resources.get("cpu_percent", {})
         gpu = report.resources.get("gpu_percent", {})
@@ -454,7 +550,7 @@ def main() -> None:
 
     if args.save_output:
         args.save_output.parent.mkdir(parents=True, exist_ok=True)
-        sf.write(args.save_output, out_audio, int(sr))
+        sf.write(args.save_output, out, int(sr))
         print(f"[output] wrote {args.save_output}")
 
     if args.report:
@@ -469,6 +565,8 @@ def main() -> None:
                 "overlap_sec": float(args.overlap_sec),
                 "provider": args.provider,
                 "intra_op_threads": int(args.intra_op_threads),
+                "target_sr": int(args.target_sr),
+                "fallback_on_error": bool(args.fallback_on_error),
             },
             "report": report.to_dict(),
         }
