@@ -26,6 +26,7 @@ delimiter = [
     "torch>=2.5.0",
     "torchaudio>=2.5.0",
     "librosa>=0.10.2.post1",
+    "onnx>=1.16.0",
     "pyloudnorm>=0.1.1",
     "asteroid>=0.7.0",
     "asteroid-filterbanks>=0.4.0",
