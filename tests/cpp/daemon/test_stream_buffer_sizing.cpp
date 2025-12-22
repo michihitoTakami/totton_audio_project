@@ -26,7 +26,8 @@ TEST(StreamBufferSizingTest, UsesMaxOfRelevantSizesAndAppliesSafetyMargin) {
             frames = std::max(frames, static_cast<size_t>(state.config.loopback.periodFrames));
         }
         frames = std::max(frames, streamValidInputPerBlock);
-        return frames * 2;
+        // 3x margin to tolerate overlap of RT path and high-latency worker (Fix #1138)
+        return frames * 3;
     };
 
     size_t cap =
