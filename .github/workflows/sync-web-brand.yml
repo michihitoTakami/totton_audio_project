@@ -1,0 +1,83 @@
+name: Sync web_brand to totton-audio
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "web_brand/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-web-brand
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_REPO: michihitoTakami/totton-audio
+      TARGET_BRANCH: main
+      SOURCE_DIR: web_brand
+      DEPLOY_DIR: /tmp/web_brand_export
+      CLONE_DIR: /tmp/totton_audio_repo
+
+    steps:
+      - name: Checkout gpu_os
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate secret
+        env:
+          TOKEN: ${{ secrets.TOTTON_AUDIO_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "Error: secrets.TOTTON_AUDIO_TOKEN is not configured." >&2
+            exit 1
+          fi
+
+      - name: Prepare web_brand payload
+        run: |
+          set -euo pipefail
+          rsync -a --delete "${SOURCE_DIR}/" "${DEPLOY_DIR}/"
+
+      - name: Clone target repository (init if empty)
+        env:
+          TOKEN: ${{ secrets.TOTTON_AUDIO_TOKEN }}
+        run: |
+          set -euo pipefail
+          clone_url="https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git"
+
+          # 既存リポジトリがあれば shallow clone、空リポジトリなら後続で初期化
+          git clone --depth=1 "${clone_url}" "${CLONE_DIR}" || true
+
+          if [ ! -d "${CLONE_DIR}/.git" ]; then
+            mkdir -p "${CLONE_DIR}"
+            cd "${CLONE_DIR}"
+            git init
+            git remote add origin "${clone_url}"
+          fi
+
+      - name: Sync files and push
+        env:
+          TOKEN: ${{ secrets.TOTTON_AUDIO_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "${CLONE_DIR}"
+
+          rsync -a --delete "${DEPLOY_DIR}/" .
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "web_brand に差分なし。"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "Sync web_brand from gpu_os@${GITHUB_SHA}"
+          git branch -M "${TARGET_BRANCH}"
+          git push origin "${TARGET_BRANCH}"
