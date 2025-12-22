@@ -37,7 +37,8 @@ class PlaybackBufferManager {
     void reset();
 
     void throttleProducerIfFull(const std::atomic<bool>& running,
-                                const std::function<int()>& currentOutputRate);
+                                const std::function<int()>& currentOutputRate,
+                                size_t incomingFramesHint = 0);
 
    private:
     void ensureCapacityLocked();
