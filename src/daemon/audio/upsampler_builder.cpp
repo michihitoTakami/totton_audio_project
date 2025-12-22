@@ -3,7 +3,9 @@
 #include "audio/eq_parser.h"
 #include "audio/eq_to_fir.h"
 #include "convolution_engine.h"
+#if defined(HAVE_VULKAN_BACKEND)
 #include "vulkan/vulkan_streaming_upsampler.h"
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -73,6 +75,7 @@ UpsamplerBuildResult buildUpsampler(AppConfig& config, int inputSampleRate,
     resolve_filter_path(config, inputSampleRate);
 
     if (config.gpuBackend == GpuBackend::Vulkan) {
+#if defined(HAVE_VULKAN_BACKEND)
         std::cout << "Initializing Vulkan upsampler..." << '\n';
         vulkan_backend::VulkanStreamingUpsampler::InitParams params{};
         params.filterPath = config.filterPath;
@@ -98,6 +101,12 @@ UpsamplerBuildResult buildUpsampler(AppConfig& config, int inputSampleRate,
         result.initialRateFamily = ConvolutionEngine::detectRateFamily(inputSampleRate);
         result.upsampler = std::move(upsampler);
         return result;
+#else
+        std::cerr << "Vulkan backend requested but binary was built without ENABLE_VULKAN=ON"
+                  << '\n';
+        result.status = UpsamplerBuildStatus::Failure;
+        return result;
+#endif
     }
 
     std::cout << "Initializing GPU upsampler..." << '\n';

@@ -8,6 +8,10 @@ if(NOT ENABLE_CUDA AND NOT ENABLE_VULKAN)
     message(FATAL_ERROR "At least one backend must be enabled: ENABLE_CUDA or ENABLE_VULKAN")
 endif()
 
+if(ENABLE_VULKAN)
+    add_compile_definitions(HAVE_VULKAN_BACKEND)
+endif()
+
 # Standard install directories (bin, lib, etc.)
 include(GNUInstallDirs)
 
