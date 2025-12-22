@@ -241,8 +241,10 @@ cmake --build build -j$(nproc)
   ```bash
   cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=OFF -DENABLE_VULKAN=ON
   cmake --build build -j$(nproc) vkfft_minimal  # VkFFT最小サンプル
+  cmake --build build -j$(nproc) vulkan_overlap_save_tool  # Overlap-Saveオフライン検証
   ```
   - `ENABLE_VULKAN=ON` で `GPU_UPSAMPLER_BUILD_VKFFT_SAMPLE` が自動有効化され、VkFFT最小サンプル `vkfft_minimal` でVulkan toolchainを確認できます。
+  - Overlap-Save サンプルの詳細は `docs/jetson/vulkan_overlap_save_offline.md` を参照。
 - CUDAとVulkanを併用する場合
   ```bash
   cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_CUDA=ON -DENABLE_VULKAN=ON
