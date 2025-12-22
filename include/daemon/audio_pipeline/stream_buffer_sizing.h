@@ -25,8 +25,8 @@ inline size_t computeStreamBufferCapacity(const daemon_app::RuntimeState& state,
         frames = std::max(frames, static_cast<size_t>(state.config.loopback.periodFrames));
     }
     frames = std::max(frames, streamValidInputPerBlock);
-    // 2x safety margin for bursty upstream (no reallocation in RT path)
-    return frames * 2;
+    // 3x safety margin for bursty upstream (RT path + high-latency worker overlap, Fix #1138)
+    return frames * 3;
 }
 
 }  // namespace audio_pipeline
