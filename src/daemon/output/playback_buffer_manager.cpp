@@ -137,6 +137,8 @@ bool PlaybackBufferManager::readPlanar(float* dstLeft, float* dstRight, size_t f
     if (!outputLeft_.read(dstLeft, frames) || !outputRight_.read(dstRight, frames)) {
         return false;
     }
+    // Notify waiting producers that space became available.
+    bufferCv_.notify_all();
     return true;
 }
 
@@ -152,29 +154,35 @@ void PlaybackBufferManager::throttleProducerIfFull(const std::atomic<bool>& runn
     size_t low = std::min(high, std::max<size_t>(1, (capacity * 7) / 10));
 
     std::unique_lock<std::mutex> lock(bufferMutex_);
-    size_t queued = queuedFramesLocked();
-    if (queued < high) {
-        return;
-    }
-
-    auto now = std::chrono::steady_clock::now();
-    if (now - lastThrottleWarn_ > std::chrono::seconds(5)) {
-        int outputRate = currentOutputRate ? currentOutputRate() : 0;
-        if (outputRate <= 0) {
-            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
+    while (running.load(std::memory_order_acquire)) {
+        size_t queued = queuedFramesLocked();
+        if (queued < high) {
+            break;
         }
-        double queuedSec = static_cast<double>(queued) / static_cast<double>(outputRate);
-        double capSec = static_cast<double>(capacity) / static_cast<double>(outputRate);
-        LOG_WARN(
-            "Throttling input: output queue near full (queued={} frames / {:.3f}s, cap={} frames / "
-            "{:.3f}s)",
-            queued, queuedSec, capacity, capSec);
-        lastThrottleWarn_ = now;
-    }
 
-    bufferCv_.wait_for(lock, std::chrono::milliseconds(200), [&]() {
-        return !running.load(std::memory_order_acquire) || queuedFramesLocked() <= low;
-    });
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastThrottleWarn_ > std::chrono::seconds(5)) {
+            int outputRate = currentOutputRate ? currentOutputRate() : 0;
+            if (outputRate <= 0) {
+                outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
+            }
+            double queuedSec = static_cast<double>(queued) / static_cast<double>(outputRate);
+            double capSec = static_cast<double>(capacity) / static_cast<double>(outputRate);
+            LOG_WARN(
+                "Throttling input: output queue near full (queued={} frames / {:.3f}s, "
+                "cap={} frames / {:.3f}s)",
+                queued, queuedSec, capacity, capSec);
+            lastThrottleWarn_ = now;
+        }
+
+        bufferCv_.wait_for(lock, std::chrono::milliseconds(200), [&]() {
+            return !running.load(std::memory_order_acquire) || queuedFramesLocked() <= low;
+        });
+
+        if (queuedFramesLocked() <= low) {
+            break;
+        }
+    }
 }
 
 }  // namespace daemon_output

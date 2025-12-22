@@ -543,6 +543,7 @@ if(ENABLE_CUDA)
         tests/cpp/daemon/test_loopback_helpers.cpp
         tests/cpp/daemon/test_pid_lock.cpp
         tests/cpp/daemon/test_runtime_stats.cpp
+        tests/cpp/daemon/test_playback_buffer_manager.cpp
         tests/cpp/daemon/test_stream_buffer_sizing.cpp
         tests/cpp/daemon/test_playback_buffer_access.cpp
         tests/cpp/daemon/test_switch_actions.cpp
