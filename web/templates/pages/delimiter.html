@@ -19,7 +19,7 @@
             {% set toggle_desc = t.get('system.delimiter.desc') %}
             {% set alpine_model = "delimiter.enabled" %}
             {% set alpine_click = "toggleDelimiter()" %}
-            {% set alpine_disabled = "delimiter.loading || actionInProgress || !health.daemon_running || !delimiter.backendAvailable" %}
+            {% set alpine_disabled = "delimiter.loading || actionInProgress || !health.daemon_running" %}
             {% include 'components/toggle_switch.html' %}
             {{ buttons.btn_primary(t.get('system.delimiter.refresh'), icon='🔄', click='fetchDelimiter()', disabled='delimiter.loading', extra_class='btn-secondary') }}
         </div>

@@ -154,8 +154,9 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     workLeft_.resize(initialFrames);
     workRight_.resize(initialFrames);
 
-    highLatencyEnabled_ = (deps_.config && deps_.config->delimiter.enabled);
-    delimiterWarmup_.store(highLatencyEnabled_, std::memory_order_relaxed);
+    // Initialize telemetry defaults (backend will be lazily started on first enable)
+    highLatencyEnabled_ = false;
+    delimiterWarmup_.store(false, std::memory_order_relaxed);
     delimiterQueueSamples_.store(0, std::memory_order_relaxed);
     delimiterQueueSeconds_.store(0.0, std::memory_order_relaxed);
     delimiterLastInferenceMs_.store(0.0, std::memory_order_relaxed);
@@ -164,10 +165,10 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     delimiterTargetMode_.store(static_cast<int>(delimiter::ProcessingMode::Active),
                                std::memory_order_relaxed);
     if (deps_.delimiterEnabled) {
-        deps_.delimiterEnabled->store(highLatencyEnabled_, std::memory_order_relaxed);
+        deps_.delimiterEnabled->store(false, std::memory_order_relaxed);
     }
     if (deps_.delimiterWarmup) {
-        deps_.delimiterWarmup->store(highLatencyEnabled_, std::memory_order_relaxed);
+        deps_.delimiterWarmup->store(false, std::memory_order_relaxed);
     }
     if (deps_.delimiterQueueSamples) {
         deps_.delimiterQueueSamples->store(0, std::memory_order_relaxed);
@@ -188,44 +189,20 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
         deps_.delimiterTargetMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
                                          std::memory_order_relaxed);
     }
-    if (highLatencyEnabled_) {
-        if (deps_.delimiterMode) {
-            deps_.delimiterMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
-                                       std::memory_order_relaxed);
-        }
-        if (deps_.delimiterFallbackReason) {
-            deps_.delimiterFallbackReason->store(static_cast<int>(delimiter::FallbackReason::None),
-                                                 std::memory_order_relaxed);
-        }
-        if (deps_.delimiterBypassLocked) {
-            deps_.delimiterBypassLocked->store(false, std::memory_order_relaxed);
-        }
+    if (deps_.delimiterMode) {
+        deps_.delimiterMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                   std::memory_order_relaxed);
     }
-    if (highLatencyEnabled_) {
-        if (deps_.delimiterBackendFactory) {
-            delimiterBackend_ = deps_.delimiterBackendFactory(deps_.config->delimiter);
-        } else {
-            delimiterBackend_ = delimiter::createDelimiterInferenceBackend(deps_.config->delimiter);
-        }
-        bool backendAvailable = (delimiterBackend_ != nullptr);
-        delimiterBackendAvailable_.store(backendAvailable, std::memory_order_relaxed);
-        if (deps_.delimiterBackendAvailable) {
-            deps_.delimiterBackendAvailable->store(backendAvailable, std::memory_order_relaxed);
-        }
+    if (deps_.delimiterFallbackReason) {
+        deps_.delimiterFallbackReason->store(static_cast<int>(delimiter::FallbackReason::None),
+                                             std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBypassLocked) {
+        deps_.delimiterBypassLocked->store(false, std::memory_order_relaxed);
+    }
 
-        int initRate = pickInitialInputRate(deps_);
-        int rateForCapacity = std::clamp(initRate, 1, kMaxHighLatencyInitRate);
-        size_t capacityFrames =
-            safeRoundFrames(static_cast<double>(kHighLatencyInputBufferSeconds), rateForCapacity);
-        capacityFrames = std::max<size_t>(capacityFrames, 1);
-        inputInterleaved_.init(capacityFrames * 2);
-
-        workerStop_.store(false, std::memory_order_release);
-        workerFailed_.store(false, std::memory_order_release);
-        workerThread_ = std::thread([this]() { workerLoop(); });
-
-        LOG_INFO("[AudioPipeline] High-latency worker enabled (delimiter backend: {})",
-                 delimiterBackend_ ? delimiterBackend_->name() : "null");
+    if (deps_.config && deps_.config->delimiter.enabled) {
+        (void)startDelimiterBackend();
     }
 }
 
@@ -649,9 +626,135 @@ bool AudioPipeline::waitForRtQuiescent(std::chrono::milliseconds timeout) const 
            !rtInProcess_.load(std::memory_order_acquire);
 }
 
-bool AudioPipeline::requestDelimiterEnable() {
-    if (!highLatencyEnabled_ || !delimiterBackend_) {
+bool AudioPipeline::startDelimiterBackend() {
+    if (highLatencyEnabled_) {
+        return delimiterBackend_ != nullptr;
+    }
+    if (!deps_.config) {
         return false;
+    }
+
+    highLatencyEnabled_ = true;
+
+    delimiterWarmup_.store(true, std::memory_order_relaxed);
+    delimiterQueueSamples_.store(0, std::memory_order_relaxed);
+    delimiterQueueSeconds_.store(0.0, std::memory_order_relaxed);
+    delimiterLastInferenceMs_.store(0.0, std::memory_order_relaxed);
+    delimiterBackendAvailable_.store(false, std::memory_order_relaxed);
+    delimiterBackendValid_.store(false, std::memory_order_relaxed);
+    delimiterTargetMode_.store(static_cast<int>(delimiter::ProcessingMode::Active),
+                               std::memory_order_relaxed);
+    delimiterCommand_.store(static_cast<int>(DelimiterCommand::None), std::memory_order_release);
+
+    if (deps_.delimiterEnabled) {
+        deps_.delimiterEnabled->store(true, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterWarmup) {
+        deps_.delimiterWarmup->store(true, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterQueueSamples) {
+        deps_.delimiterQueueSamples->store(0, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterQueueSeconds) {
+        deps_.delimiterQueueSeconds->store(0.0, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterLastInferenceMs) {
+        deps_.delimiterLastInferenceMs->store(0.0, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBackendAvailable) {
+        deps_.delimiterBackendAvailable->store(false, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBackendValid) {
+        deps_.delimiterBackendValid->store(false, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterTargetMode) {
+        deps_.delimiterTargetMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                         std::memory_order_relaxed);
+    }
+    if (deps_.delimiterMode) {
+        deps_.delimiterMode->store(static_cast<int>(delimiter::ProcessingMode::Active),
+                                   std::memory_order_relaxed);
+    }
+    if (deps_.delimiterFallbackReason) {
+        deps_.delimiterFallbackReason->store(static_cast<int>(delimiter::FallbackReason::None),
+                                             std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBypassLocked) {
+        deps_.delimiterBypassLocked->store(false, std::memory_order_relaxed);
+    }
+
+    if (deps_.delimiterBackendFactory) {
+        delimiterBackend_ = deps_.delimiterBackendFactory(deps_.config->delimiter);
+    } else {
+        delimiterBackend_ = delimiter::createDelimiterInferenceBackend(deps_.config->delimiter);
+    }
+
+    const bool backendAvailable = (delimiterBackend_ != nullptr);
+    const int backendRate =
+        delimiterBackend_ ? static_cast<int>(delimiterBackend_->expectedSampleRate()) : 0;
+    const bool backendValid = backendAvailable && backendRate > 0;
+
+    if (!backendValid) {
+        // Revert state when backend creation fails or reports invalid config
+        highLatencyEnabled_ = false;
+        delimiterWarmup_.store(false, std::memory_order_relaxed);
+        delimiterBackendAvailable_.store(false, std::memory_order_relaxed);
+        delimiterBackendValid_.store(false, std::memory_order_relaxed);
+        if (deps_.delimiterEnabled) {
+            deps_.delimiterEnabled->store(false, std::memory_order_relaxed);
+        }
+        if (deps_.delimiterWarmup) {
+            deps_.delimiterWarmup->store(false, std::memory_order_relaxed);
+        }
+        if (deps_.delimiterBackendAvailable) {
+            deps_.delimiterBackendAvailable->store(false, std::memory_order_relaxed);
+        }
+        if (deps_.delimiterBackendValid) {
+            deps_.delimiterBackendValid->store(false, std::memory_order_relaxed);
+        }
+        return false;
+    }
+
+    delimiterBackendAvailable_.store(backendAvailable, std::memory_order_relaxed);
+    delimiterBackendValid_.store(backendValid, std::memory_order_relaxed);
+    if (deps_.delimiterBackendAvailable) {
+        deps_.delimiterBackendAvailable->store(backendAvailable, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterBackendValid) {
+        deps_.delimiterBackendValid->store(backendValid, std::memory_order_relaxed);
+    }
+
+    int initRate = pickInitialInputRate(deps_);
+    int rateForCapacity = std::clamp(initRate, 1, kMaxHighLatencyInitRate);
+    size_t capacityFrames =
+        safeRoundFrames(static_cast<double>(kHighLatencyInputBufferSeconds), rateForCapacity);
+    capacityFrames = std::max<size_t>(capacityFrames, 1);
+    inputInterleaved_.init(capacityFrames * 2);
+
+    workerStop_.store(false, std::memory_order_release);
+    workerFailed_.store(false, std::memory_order_release);
+    workerThread_ = std::thread([this]() { workerLoop(); });
+
+    LOG_INFO("[AudioPipeline] High-latency worker enabled (delimiter backend: {})",
+             delimiterBackend_ ? delimiterBackend_->name() : "null");
+    return backendAvailable;
+}
+
+bool AudioPipeline::requestDelimiterEnable() {
+    if (!highLatencyEnabled_) {
+        if (!startDelimiterBackend()) {
+            return false;
+        }
+    }
+    if (!delimiterBackend_) {
+        return false;
+    }
+    delimiterWarmup_.store(true, std::memory_order_relaxed);
+    if (deps_.delimiterWarmup) {
+        deps_.delimiterWarmup->store(true, std::memory_order_relaxed);
+    }
+    if (deps_.delimiterEnabled) {
+        deps_.delimiterEnabled->store(true, std::memory_order_relaxed);
     }
     delimiterCommand_.store(static_cast<int>(DelimiterCommand::Enable), std::memory_order_release);
     return true;
@@ -659,7 +762,13 @@ bool AudioPipeline::requestDelimiterEnable() {
 
 bool AudioPipeline::requestDelimiterDisable() {
     if (!highLatencyEnabled_) {
-        return false;
+        if (deps_.delimiterEnabled) {
+            deps_.delimiterEnabled->store(false, std::memory_order_relaxed);
+        }
+        if (deps_.delimiterWarmup) {
+            deps_.delimiterWarmup->store(false, std::memory_order_relaxed);
+        }
+        return true;
     }
     delimiterCommand_.store(static_cast<int>(DelimiterCommand::Disable), std::memory_order_release);
     return true;
@@ -1107,8 +1216,7 @@ void AudioPipeline::workerLoop() {
                     (status.mode == delimiter::ProcessingMode::Bypass) || status.bypassLocked;
             }
 
-            const bool backendEnabled =
-                (deps_.config && deps_.config->delimiter.enabled && delimiterBackend_);
+            const bool backendEnabled = (highLatencyEnabled_ && delimiterBackend_);
             const int backendRate =
                 delimiterBackend_ ? static_cast<int>(delimiterBackend_->expectedSampleRate()) : 0;
             backendValid = backendEnabled && backendRate > 0;
