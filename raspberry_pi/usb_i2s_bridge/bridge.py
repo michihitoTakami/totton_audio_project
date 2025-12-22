@@ -57,7 +57,12 @@ def _load_config_overrides() -> dict[str, str]:
         if "=" not in raw:
             continue
         key, value = raw.split("=", 1)
-        overrides[key.strip()] = value.strip()
+        key = key.strip()
+        value = value.strip()
+        if key == "USB_I2S_STATUS_REPORT_URL" and value == "":
+            # Allow docker/default env to enable status reporting by default (#1079)
+            continue
+        overrides[key] = value
     return overrides
 
 
