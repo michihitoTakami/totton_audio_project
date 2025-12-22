@@ -30,5 +30,11 @@ bool processOverlapSaveBuffer(const std::vector<float>& inputMono,
                               const std::vector<float>& filterTaps, uint32_t upsampleRatio,
                               uint32_t fftSize, uint32_t chunkFrames, std::vector<float>& output);
 
+// ステレオ入力（インターリーブ）をVulkan Overlap-Saveで処理する
+bool processOverlapSaveStereoBuffer(const std::vector<float>& inputInterleaved,
+                                    const std::vector<float>& filterTaps, uint32_t upsampleRatio,
+                                    uint32_t fftSize, uint32_t chunkFrames,
+                                    std::vector<float>& outputInterleaved);
+
 // WAV入出力付きの高レベルCLI処理
 int runVulkanOverlapSave(const VulkanOverlapSaveOptions& opts);
