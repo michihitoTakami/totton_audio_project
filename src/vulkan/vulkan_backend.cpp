@@ -630,7 +630,6 @@ class VulkanBackend final : public IGpuBackend {
         data->conf.bufferSize = &outBuf->size;
         data->conf.inputBuffer = &inBuf->buffer;
         data->conf.inputBufferSize = &inBuf->size;
-        data->app.configuration = &data->conf;
 
         VkCommandBuffer cmd = allocateCmd(ctx_);
         if (cmd == VK_NULL_HANDLE) {
