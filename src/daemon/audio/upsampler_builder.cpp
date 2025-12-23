@@ -109,6 +109,11 @@ UpsamplerBuildResult buildUpsampler(AppConfig& config, int inputSampleRate,
                       << " (phase switching to linear may fail)\n";
         }
 
+        // Provide both families so Vulkan can pre-cache FFTs and allow runtime switching.
+        params.filterPathMinimum44k = config.filterPath44kMin;
+        params.filterPathMinimum48k = config.filterPath48kMin;
+        params.filterPathLinear44k = config.filterPath44kLinear;
+        params.filterPathLinear48k = config.filterPath48kLinear;
         params.filterPathMinimum = minPath;
         params.filterPathLinear = linearPath;
         params.initialPhase = config.phaseType;

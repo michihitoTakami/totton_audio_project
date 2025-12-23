@@ -5,6 +5,7 @@
 
 #include <SPIRV/GlslangToSpv.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -15,6 +16,10 @@
 #include <stdexcept>
 #include <vector>
 #include <vulkan/vulkan.h>
+
+using ConvolutionEngine::detectRateFamily;
+using ConvolutionEngine::getBaseSampleRate;
+using ConvolutionEngine::RateFamily;
 
 namespace {
 
@@ -572,6 +577,14 @@ std::string derivePhasePath(const std::string& basePath, bool wantLinear) {
     return basePath;
 }
 
+inline std::size_t familyToIndex(RateFamily family) {
+    return family == RateFamily::RATE_48K ? 1u : 0u;
+}
+
+inline RateFamily indexToFamily(std::size_t idx) {
+    return idx == 1u ? RateFamily::RATE_48K : RateFamily::RATE_44K;
+}
+
 bool uploadTimeDomainAndFft(VulkanContext& ctx, BufferResource& filterBuf,
                             VkFFTApplication& filterApp, uint64_t bufferBytes,
                             const std::vector<float>& taps) {
@@ -633,6 +646,19 @@ struct VulkanStreamingUpsampler::Impl {
     VkFFTApplication filterApp{};
     MultiplyPipeline pipeline{};
 
+    struct PhaseSpectrum {
+        std::vector<float> data;
+        std::string path;
+        bool available = false;
+    };
+
+    struct FamilyCache {
+        PhaseSpectrum minimum;
+        PhaseSpectrum linear;
+        RateFamily family = RateFamily::RATE_UNKNOWN;
+        uint32_t inputRate = 0;
+    };
+
     uint32_t upsampleRatio = 0;
     uint32_t inputRate = 0;
     uint32_t outputRate = 0;
@@ -644,12 +670,11 @@ struct VulkanStreamingUpsampler::Impl {
     uint64_t bufferBytes = 0;
     std::vector<float> overlapBuffer;
     std::vector<float> originalFilterFreq;
-    std::vector<float> baseFilterFreqMinimum;
-    std::vector<float> baseFilterFreqLinear;
-    std::string filterPathMinimum;
-    std::string filterPathLinear;
+    std::array<FamilyCache, 2> families{};
+    RateFamily activeFamily = RateFamily::RATE_UNKNOWN;
     PhaseType phaseType = PhaseType::Minimum;
-    bool hasLinear = false;
+    bool multiRateEnabled = false;
+    bool eqApplied = false;
 
     bool initialized = false;
     std::mutex mutex;
@@ -663,10 +688,16 @@ struct VulkanStreamingUpsampler::Impl {
         destroyContext(ctx);
         overlapBuffer.clear();
         originalFilterFreq.clear();
-        baseFilterFreqMinimum.clear();
-        baseFilterFreqLinear.clear();
-        filterPathMinimum.clear();
-        filterPathLinear.clear();
+        for (auto& family : families) {
+            family.minimum.data.clear();
+            family.minimum.path.clear();
+            family.minimum.available = false;
+            family.linear.data.clear();
+            family.linear.path.clear();
+            family.linear.available = false;
+            family.family = RateFamily::RATE_UNKNOWN;
+            family.inputRate = 0;
+        }
         upsampleRatio = 0;
         inputRate = 0;
         outputRate = 0;
@@ -676,8 +707,10 @@ struct VulkanStreamingUpsampler::Impl {
         overlap = 0;
         complexCount = 0;
         bufferBytes = 0;
+        activeFamily = RateFamily::RATE_UNKNOWN;
         phaseType = PhaseType::Minimum;
-        hasLinear = false;
+        multiRateEnabled = false;
+        eqApplied = false;
         initialized = false;
     }
 };
@@ -696,64 +729,102 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
     }
     impl_->cleanup();
 
-    std::string minPath =
+    if (params.upsampleRatio == 0 || params.blockSize == 0 || params.inputRate == 0) {
+        LOG_ERROR("Vulkan upsampler: invalid params (zero ratio/block/input)");
+        return false;
+    }
+
+    // Fallback paths (legacy single-rate)
+    std::string fallbackMinimum =
         !params.filterPathMinimum.empty() ? params.filterPathMinimum : params.filterPath;
-    std::string linearPath = params.filterPathLinear;
-    if (linearPath.empty() && !minPath.empty()) {
-        linearPath = derivePhasePath(minPath, true);
+    std::string fallbackLinear = params.filterPathLinear;
+    if (fallbackLinear.empty() && !fallbackMinimum.empty()) {
+        fallbackLinear = derivePhasePath(fallbackMinimum, true);
     }
 
-    if (minPath.empty() || params.upsampleRatio == 0 || params.blockSize == 0 ||
-        params.inputRate == 0) {
-        LOG_ERROR("Vulkan upsampler: invalid params (filterPath empty or zero ratio/block/input)");
+    struct FamilyPaths {
+        std::string min;
+        std::string linear;
+    };
+
+    RateFamily initialFamily = detectRateFamily(static_cast<int>(params.inputRate));
+    if (initialFamily == RateFamily::RATE_UNKNOWN) {
+        initialFamily = RateFamily::RATE_44K;
+    }
+    const std::size_t initialIdx = familyToIndex(initialFamily);
+
+    std::array<FamilyPaths, 2> familyPaths{};
+    familyPaths[familyToIndex(RateFamily::RATE_44K)].min =
+        !params.filterPathMinimum44k.empty() ? params.filterPathMinimum44k : fallbackMinimum;
+    familyPaths[familyToIndex(RateFamily::RATE_44K)].linear =
+        !params.filterPathLinear44k.empty() ? params.filterPathLinear44k : fallbackLinear;
+
+    familyPaths[familyToIndex(RateFamily::RATE_48K)].min =
+        !params.filterPathMinimum48k.empty()
+            ? params.filterPathMinimum48k
+            : (initialFamily == RateFamily::RATE_48K ? fallbackMinimum : std::string());
+    familyPaths[familyToIndex(RateFamily::RATE_48K)].linear =
+        !params.filterPathLinear48k.empty()
+            ? params.filterPathLinear48k
+            : (initialFamily == RateFamily::RATE_48K ? fallbackLinear : std::string());
+
+    struct FamilyTaps {
+        std::vector<float> min;
+        std::vector<float> linear;
+        bool hasMin = false;
+        bool hasLinear = false;
+    };
+
+    std::array<FamilyTaps, 2> taps{};
+    std::size_t globalMaxTaps = 0;
+
+    for (std::size_t idx = 0; idx < familyPaths.size(); ++idx) {
+        if (!familyPaths[idx].min.empty()) {
+            const std::size_t count = readFilterTaps(familyPaths[idx].min, taps[idx].min);
+            taps[idx].hasMin = (count > 0);
+            globalMaxTaps = std::max(globalMaxTaps, count);
+        }
+        if (!familyPaths[idx].linear.empty()) {
+            const std::size_t count = readFilterTaps(familyPaths[idx].linear, taps[idx].linear);
+            taps[idx].hasLinear = (count > 0);
+            globalMaxTaps = std::max(globalMaxTaps, count);
+        }
+    }
+
+    if (!taps[initialIdx].hasMin) {
+        LOG_ERROR("[Vulkan] Initial family filter missing (family={}, path='{}')",
+                  initialFamily == RateFamily::RATE_48K ? "48k" : "44k",
+                  familyPaths[initialIdx].min);
+        return false;
+    }
+    if (globalMaxTaps == 0) {
+        LOG_ERROR("[Vulkan] No filter taps loaded (min path(s) empty?)");
         return false;
     }
 
-    std::vector<float> minTaps;
-    const std::size_t minTapCount = readFilterTaps(minPath, minTaps);
-    if (minTapCount == 0) {
-        return false;
-    }
-
-    std::vector<float> linearTaps;
-    const std::size_t linearTapCount = readFilterTaps(linearPath, linearTaps);
-    const bool hasLinear = (linearTapCount > 0);
-    if (!hasLinear) {
-        LOG_WARN(
-            "[Vulkan] Linear phase filter not available; phase switching to 'linear' will fail "
-            "(min='{}', linear='{}')",
-            minPath, linearPath);
-    }
-
-    // Align tap lengths between phases by padding the shorter one with trailing zeros.
-    // This keeps streaming hop sizes stable across phase switches.
-    const std::size_t maxTaps =
-        std::max(minTaps.size(), hasLinear ? linearTaps.size() : minTaps.size());
-    if (maxTaps == 0) {
-        LOG_ERROR("Vulkan upsampler: empty filter taps");
-        return false;
-    }
-    if (minTaps.size() < maxTaps) {
-        minTaps.resize(maxTaps, 0.0f);
-    }
-    if (hasLinear && linearTaps.size() < maxTaps) {
-        linearTaps.resize(maxTaps, 0.0f);
+    // Pad all filters to the same length so hop/overlap remain stable across switches.
+    for (std::size_t idx = 0; idx < taps.size(); ++idx) {
+        if (taps[idx].hasMin && taps[idx].min.size() < globalMaxTaps) {
+            taps[idx].min.resize(globalMaxTaps, 0.0f);
+        }
+        if (taps[idx].hasLinear && taps[idx].linear.size() < globalMaxTaps) {
+            taps[idx].linear.resize(globalMaxTaps, 0.0f);
+        }
     }
 
     impl_->upsampleRatio = params.upsampleRatio;
     impl_->inputRate = params.inputRate;
     impl_->outputRate = params.inputRate * params.upsampleRatio;
-    impl_->overlap = static_cast<uint32_t>(maxTaps - 1);
-    impl_->filterPathMinimum = minPath;
-    impl_->filterPathLinear = linearPath;
-    impl_->hasLinear = hasLinear;
+    impl_->overlap = static_cast<uint32_t>(globalMaxTaps - 1);
     impl_->phaseType = params.initialPhase;
+    impl_->multiRateEnabled = taps[0].hasMin && taps[1].hasMin;
+    impl_->activeFamily = initialFamily;
 
     uint32_t fftSize = params.fftSizeOverride;
     if (fftSize == 0) {
         const auto desired = static_cast<std::size_t>(params.upsampleRatio) *
                                  static_cast<std::size_t>(params.blockSize) +
-                             maxTaps - 1;
+                             globalMaxTaps - 1;
         fftSize = nextPow2(static_cast<uint32_t>(desired));
     }
     if (fftSize <= impl_->overlap) {
@@ -765,6 +836,16 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
     impl_->complexCount = fftSize / 2 + 1;
     const uint64_t complexElements = 2ull * impl_->complexCount;
     impl_->bufferBytes = sizeof(float) * complexElements;
+
+    for (std::size_t idx = 0; idx < impl_->families.size(); ++idx) {
+        impl_->families[idx].family = indexToFamily(idx);
+        impl_->families[idx].inputRate =
+            static_cast<uint32_t>(getBaseSampleRate(indexToFamily(idx)));
+        impl_->families[idx].minimum.path = familyPaths[idx].min;
+        impl_->families[idx].linear.path = familyPaths[idx].linear;
+        impl_->families[idx].minimum.available = taps[idx].hasMin;
+        impl_->families[idx].linear.available = taps[idx].hasLinear;
+    }
 
     if (!initContext(impl_->ctx)) {
         impl_->cleanup();
@@ -788,43 +869,54 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
         return false;
     }
 
-    // Pre-compute filter spectra for Minimum / Linear and cache them on the host.
-    // Note: filterBuf is bound to the multiply pipeline, so switching phase only requires
-    // copying cached frequency-domain data back into filterBuf.
-    if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp, impl_->bufferBytes,
-                                minTaps) ||
-        !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
-                            impl_->baseFilterFreqMinimum)) {
-        impl_->cleanup();
-        return false;
-    }
-
-    if (impl_->hasLinear) {
-        if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp,
-                                    impl_->bufferBytes, linearTaps) ||
-            !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes,
-                                impl_->complexCount, impl_->baseFilterFreqLinear)) {
-            impl_->cleanup();
-            return false;
+    // Pre-compute frequency spectra for every available family/phase.
+    for (std::size_t idx = 0; idx < taps.size(); ++idx) {
+        if (taps[idx].hasMin) {
+            if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp,
+                                        impl_->bufferBytes, taps[idx].min) ||
+                !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes,
+                                    impl_->complexCount, impl_->families[idx].minimum.data)) {
+                impl_->cleanup();
+                return false;
+            }
+        }
+        if (taps[idx].hasLinear) {
+            if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp,
+                                        impl_->bufferBytes, taps[idx].linear) ||
+                !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes,
+                                    impl_->complexCount, impl_->families[idx].linear.data)) {
+                impl_->cleanup();
+                return false;
+            }
         }
     }
 
-    if (impl_->phaseType == PhaseType::Linear && !impl_->hasLinear) {
+    if (impl_->phaseType == PhaseType::Linear && !impl_->families[initialIdx].linear.available) {
         LOG_WARN(
             "[Vulkan] Requested initial phase 'linear' but linear filter is unavailable; "
             "falling back to 'minimum'");
         impl_->phaseType = PhaseType::Minimum;
     }
 
-    const std::vector<float>& activeBase =
-        (impl_->phaseType == PhaseType::Linear && impl_->hasLinear) ? impl_->baseFilterFreqLinear
-                                                                    : impl_->baseFilterFreqMinimum;
-    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
-                             activeBase)) {
+    const auto& activeFamilyCache = impl_->families[initialIdx];
+    const bool useLinear = (impl_->phaseType == PhaseType::Linear);
+    const std::vector<float>* activeBase = (useLinear && activeFamilyCache.linear.available)
+                                               ? &activeFamilyCache.linear.data
+                                               : &activeFamilyCache.minimum.data;
+
+    if (!activeBase || activeBase->empty()) {
+        LOG_ERROR("[Vulkan] Active filter spectrum is missing for initial family");
         impl_->cleanup();
         return false;
     }
-    impl_->originalFilterFreq = activeBase;
+
+    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
+                             *activeBase)) {
+        impl_->cleanup();
+        return false;
+    }
+    impl_->originalFilterFreq = *activeBase;
+    impl_->eqApplied = false;
 
     if (!createMultiplyPipeline(impl_->ctx, impl_->inputBuf, impl_->filterBuf, impl_->pipeline)) {
         impl_->cleanup();
@@ -846,11 +938,12 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
     impl_->overlapBuffer.assign(impl_->overlap, 0.0f);
     impl_->initialized = true;
     LOG_INFO(
-        "[Vulkan] upsampler ready (ratio={}x, block={} frames, fftSize={}, phase={}, min='{}', "
-        "linear='{}')",
+        "[Vulkan] upsampler ready (ratio={}x, block={} frames, fftSize={}, phase={}, families "
+        "loaded: {}44k / {}48k)",
         impl_->upsampleRatio, params.blockSize, impl_->fftSize,
-        (impl_->phaseType == PhaseType::Minimum ? "minimum" : "linear"), impl_->filterPathMinimum,
-        impl_->filterPathLinear);
+        (impl_->phaseType == PhaseType::Minimum ? "minimum" : "linear"),
+        taps[familyToIndex(RateFamily::RATE_44K)].hasMin ? "✓" : "×",
+        taps[familyToIndex(RateFamily::RATE_48K)].hasMin ? "✓" : "×");
     return true;
 }
 
@@ -884,15 +977,75 @@ int VulkanStreamingUpsampler::getInputSampleRate() const {
     return impl_ ? static_cast<int>(impl_->inputRate) : 0;
 }
 
+bool VulkanStreamingUpsampler::isMultiRateEnabled() const {
+    return impl_ && impl_->multiRateEnabled;
+}
+
 int VulkanStreamingUpsampler::getCurrentInputRate() const {
     return getInputSampleRate();
 }
 
 bool VulkanStreamingUpsampler::switchToInputRate(int inputSampleRate) {
-    if (!impl_) {
+    if (!impl_ || !impl_->initialized) {
+        LOG_ERROR("[Vulkan] Rate switch requested but upsampler not initialized");
         return false;
     }
-    return inputSampleRate == static_cast<int>(impl_->inputRate);
+
+    RateFamily targetFamily = detectRateFamily(inputSampleRate);
+    if (targetFamily == RateFamily::RATE_UNKNOWN) {
+        LOG_ERROR("[Vulkan] Unsupported input sample rate for Vulkan backend: {}", inputSampleRate);
+        return false;
+    }
+
+    const std::size_t targetIdx = familyToIndex(targetFamily);
+    const auto& targetFamilyCache = impl_->families[targetIdx];
+    if (!targetFamilyCache.minimum.available) {
+        LOG_ERROR("[Vulkan] No filter loaded for target family {}",
+                  targetFamily == RateFamily::RATE_48K ? "48k" : "44k");
+        return false;
+    }
+
+    if (targetFamily == impl_->activeFamily &&
+        inputSampleRate == static_cast<int>(impl_->inputRate)) {
+        return true;
+    }
+
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (targetFamily == impl_->activeFamily &&
+        inputSampleRate == static_cast<int>(impl_->inputRate)) {
+        return true;
+    }
+
+    const bool wantLinear = (impl_->phaseType == PhaseType::Linear);
+    if (wantLinear && !targetFamilyCache.linear.available) {
+        LOG_WARN("[Vulkan] Linear phase requested but linear filter not loaded for target family");
+        return false;
+    }
+
+    const std::vector<float>* spectrum = (wantLinear && targetFamilyCache.linear.available)
+                                             ? &targetFamilyCache.linear.data
+                                             : &targetFamilyCache.minimum.data;
+    if (!spectrum || spectrum->empty()) {
+        LOG_ERROR("[Vulkan] Target filter spectrum missing for rate switch");
+        return false;
+    }
+
+    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
+                             *spectrum)) {
+        return false;
+    }
+
+    impl_->originalFilterFreq = *spectrum;
+    impl_->activeFamily = targetFamily;
+    impl_->inputRate = static_cast<uint32_t>(inputSampleRate);
+    impl_->outputRate = impl_->inputRate * impl_->upsampleRatio;
+    impl_->eqApplied = false;  // Control plane should re-apply EQ after a family switch
+    std::fill(impl_->overlapBuffer.begin(), impl_->overlapBuffer.end(), 0.0f);
+
+    LOG_INFO("[Vulkan] Switched input rate to {} Hz (family={}, phase={}) — please re-apply EQ",
+             inputSampleRate, impl_->activeFamily == RateFamily::RATE_48K ? "48k" : "44k",
+             (impl_->phaseType == PhaseType::Minimum ? "minimum" : "linear"));
+    return true;
 }
 
 PhaseType VulkanStreamingUpsampler::getPhaseType() const {
@@ -912,21 +1065,36 @@ bool VulkanStreamingUpsampler::switchPhaseType(PhaseType targetPhase) {
     if (targetPhase == impl_->phaseType) {
         return true;
     }
-    if (targetPhase == PhaseType::Linear && !impl_->hasLinear) {
-        LOG_WARN("[Vulkan] Phase switch to 'linear' requested but linear filter is unavailable");
+
+    RateFamily active = impl_->activeFamily;
+    if (active == RateFamily::RATE_UNKNOWN) {
+        active = detectRateFamily(static_cast<int>(impl_->inputRate));
+    }
+    const std::size_t idx = familyToIndex(active);
+    const auto& cache = impl_->families[idx];
+
+    if (targetPhase == PhaseType::Linear && !cache.linear.available) {
+        LOG_WARN(
+            "[Vulkan] Phase switch to 'linear' requested but linear filter is unavailable for "
+            "active family");
         return false;
     }
 
-    const std::vector<float>& activeBase = (targetPhase == PhaseType::Linear)
-                                               ? impl_->baseFilterFreqLinear
-                                               : impl_->baseFilterFreqMinimum;
+    const std::vector<float>* activeBase =
+        (targetPhase == PhaseType::Linear) ? &cache.linear.data : &cache.minimum.data;
+    if (!activeBase || activeBase->empty()) {
+        LOG_ERROR("[Vulkan] Active family spectrum missing for phase switch");
+        return false;
+    }
     if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
-                             activeBase)) {
+                             *activeBase)) {
         return false;
     }
     impl_->originalFilterFreq =
-        activeBase;  // Reset EQ base; ControlPlane will re-apply EQ if enabled.
+        *activeBase;  // Reset EQ base; ControlPlane will re-apply EQ if enabled.
     impl_->phaseType = targetPhase;
+    impl_->eqApplied = false;
+    std::fill(impl_->overlapBuffer.begin(), impl_->overlapBuffer.end(), 0.0f);
 
     LOG_INFO("[Vulkan] Phase type switched to {} (EQ should be re-applied)",
              (impl_->phaseType == PhaseType::Minimum ? "minimum" : "linear"));
@@ -990,6 +1158,7 @@ bool VulkanStreamingUpsampler::applyEqMagnitude(const std::vector<double>& eqMag
     vkUnmapMemory(impl_->ctx.device, impl_->filterBuf.memory);
 
     LOG_INFO("[Vulkan] EQ magnitude applied ({} bins)", impl_->complexCount);
+    impl_->eqApplied = true;
     return true;
 }
 

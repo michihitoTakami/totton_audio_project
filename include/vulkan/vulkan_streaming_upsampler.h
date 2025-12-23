@@ -18,6 +18,11 @@ class VulkanStreamingUpsampler : public ConvolutionEngine::IAudioUpsampler {
         // 新実装: phase 切替のため Minimum/Linear を両方指定できる
         std::string filterPathMinimum;
         std::string filterPathLinear;
+        // レートファミリ別のフィルタパス（指定されている場合は multi-rate を有効化）
+        std::string filterPathMinimum44k;
+        std::string filterPathMinimum48k;
+        std::string filterPathLinear44k;
+        std::string filterPathLinear48k;
         PhaseType initialPhase = PhaseType::Minimum;
         uint32_t upsampleRatio = 0;
         uint32_t blockSize = 0;
@@ -41,9 +46,7 @@ class VulkanStreamingUpsampler : public ConvolutionEngine::IAudioUpsampler {
     int getOutputSampleRate() const override;
     int getInputSampleRate() const override;
 
-    bool isMultiRateEnabled() const override {
-        return false;
-    }
+    bool isMultiRateEnabled() const override;
     int getCurrentInputRate() const override;
     bool switchToInputRate(int inputSampleRate) override;
     PhaseType getPhaseType() const override;
