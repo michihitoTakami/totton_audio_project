@@ -215,6 +215,22 @@ def save_phase_type(phase_type: str) -> bool:
         return False
 
 
+def save_delimiter_enabled(enabled: bool) -> bool:
+    """Persist the De-limiter enabled flag in config.json."""
+    try:
+        existing = load_raw_config()
+        delimiter_section = existing.get("delimiter", {})
+        if not isinstance(delimiter_section, dict):
+            delimiter_section = {}
+        delimiter_section["enabled"] = bool(enabled)
+        existing["delimiter"] = delimiter_section
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
 def save_config(settings: Settings) -> bool:
     """Save configuration to JSON file, preserving existing fields.
 

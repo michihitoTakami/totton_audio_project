@@ -42,6 +42,7 @@ class _FakeDelimiterClient:
             return self._error_response()
         enabled = dict(self.status)
         enabled["enabled"] = True
+        self.status = enabled
         return DaemonResponse(success=True, data=enabled)
 
     def delimiter_disable(self) -> DaemonResponse:
@@ -49,6 +50,7 @@ class _FakeDelimiterClient:
             return self._error_response()
         disabled = dict(self.status)
         disabled["enabled"] = False
+        self.status = disabled
         return DaemonResponse(success=True, data=disabled)
 
 
@@ -86,6 +88,9 @@ def test_delimiter_status_success(monkeypatch):
 def test_delimiter_enable(monkeypatch):
     fake_client = _FakeDelimiterClient()
     monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "save_delimiter_enabled", lambda enabled: True
+    )
 
     app = create_app()
     client = TestClient(app)
@@ -95,6 +100,23 @@ def test_delimiter_enable(monkeypatch):
     body = resp.json()
     assert body["success"] is True
     assert body["status"]["enabled"] is True
+
+
+def test_delimiter_disable(monkeypatch):
+    fake_client = _FakeDelimiterClient(status={"enabled": True})
+    monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "save_delimiter_enabled", lambda enabled: True
+    )
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post("/delimiter/disable")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["status"]["enabled"] is False
 
 
 def test_delimiter_daemon_down(monkeypatch):
@@ -113,3 +135,19 @@ def test_delimiter_daemon_down(monkeypatch):
     assert resp.status_code == 503
     body = resp.json()
     assert body["error_code"] == "IPC_DAEMON_NOT_RUNNING"
+
+
+def test_delimiter_persist_failure(monkeypatch):
+    fake_client = _FakeDelimiterClient()
+    monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "save_delimiter_enabled", lambda enabled: False
+    )
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post("/delimiter/enable")
+    assert resp.status_code == 500
+    body = resp.json()
+    assert "persist" in body["detail"].lower()
