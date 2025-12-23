@@ -20,7 +20,7 @@ class VulkanBackendStub final : public IGpuBackend {
     AudioEngine::ErrorCode allocateDeviceBuffer(DeviceBuffer& /*out*/, size_t /*bytes*/,
                                                 const char* context) override {
         LOG_ERROR("[Vulkan backend] {}: not implemented yet", context);
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     AudioEngine::ErrorCode freeDeviceBuffer(DeviceBuffer& /*buffer*/,
                                             const char* /*context*/) override {
@@ -29,7 +29,7 @@ class VulkanBackendStub final : public IGpuBackend {
 
     AudioEngine::ErrorCode createStream(Stream& /*out*/, const char* context) override {
         LOG_ERROR("[Vulkan backend] {}: not implemented yet", context);
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     AudioEngine::ErrorCode destroyStream(Stream& /*stream*/, const char* /*context*/) override {
         return AudioEngine::ErrorCode::OK;
@@ -37,20 +37,20 @@ class VulkanBackendStub final : public IGpuBackend {
     AudioEngine::ErrorCode streamSynchronize(const Stream* /*stream*/,
                                              const char* context) override {
         LOG_ERROR("[Vulkan backend] {}: not implemented yet", context);
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
 
     AudioEngine::ErrorCode copy(void* /*dst*/, const void* /*src*/, size_t /*bytes*/,
                                 CopyKind /*kind*/, const Stream* /*stream*/,
                                 const char* context) override {
         LOG_ERROR("[Vulkan backend] {}: not implemented yet", context);
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
 
     AudioEngine::ErrorCode createFftPlan1d(FftPlan& /*out*/, int /*fftSize*/, int /*batch*/,
                                            FftDomain /*domain*/, const char* context) override {
         LOG_ERROR("[Vulkan backend] {}: not implemented yet", context);
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     AudioEngine::ErrorCode destroyFftPlan(FftPlan& /*plan*/, const char* /*context*/) override {
         return AudioEngine::ErrorCode::OK;
@@ -59,7 +59,7 @@ class VulkanBackendStub final : public IGpuBackend {
                                       DeviceBuffer& /*out*/, FftDirection /*direction*/,
                                       const Stream* /*stream*/, const char* context) override {
         LOG_ERROR("[Vulkan backend] {}: not implemented yet", context);
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
 
     AudioEngine::ErrorCode complexPointwiseMulScale(DeviceBuffer& /*out*/,
@@ -69,7 +69,7 @@ class VulkanBackendStub final : public IGpuBackend {
                                                     const Stream* /*stream*/,
                                                     const char* context) override {
         LOG_ERROR("[Vulkan backend] {}: not implemented yet", context);
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
 };
 

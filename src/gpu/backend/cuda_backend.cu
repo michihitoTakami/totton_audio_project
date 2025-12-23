@@ -191,7 +191,7 @@ struct CudaBackend final : public IGpuBackend {
                 return errI;
             }
         } else {
-            return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+            return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
         }
 
         plan->domain = domain;
@@ -255,7 +255,7 @@ struct CudaBackend final : public IGpuBackend {
                 context);
         }
 
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
 
     AudioEngine::ErrorCode complexPointwiseMulScale(DeviceBuffer& out, const DeviceBuffer& a,

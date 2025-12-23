@@ -124,26 +124,26 @@ class IGpuBackend {
     virtual AudioEngine::ErrorCode createEvent(Event& out, const char* context) {
         (void)out;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     virtual AudioEngine::ErrorCode destroyEvent(Event& event, const char* context) {
         (void)event;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     virtual AudioEngine::ErrorCode recordEvent(Event& event, const Stream* stream,
                                                const char* context) {
         (void)event;
         (void)stream;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     virtual AudioEngine::ErrorCode queryEvent(const Event& event, bool& outReady,
                                               const char* context) {
         (void)event;
         (void)outReady;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
 };
 
