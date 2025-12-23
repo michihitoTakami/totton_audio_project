@@ -12,7 +12,7 @@ TEST(CudaBackendTest, R2CAndBackRoundTrip) {
 
     const int fftSize = 32;
     const int complexCount = fftSize / 2 + 1;
-    const float scale = 1.0f / static_cast<float>(fftSize);
+    const float invN = 1.0f / static_cast<float>(fftSize);
 
     DeviceBuffer dInput{}, dFreq{}, dOutput{};
     ASSERT_EQ(backend->allocateDeviceBuffer(dInput, sizeof(float) * fftSize, "alloc input"),
@@ -40,10 +40,6 @@ TEST(CudaBackendTest, R2CAndBackRoundTrip) {
     ASSERT_EQ(backend->executeFft(plan, dInput, dFreq, FftDirection::Forward, &stream, "forward"),
               AudioEngine::ErrorCode::OK);
 
-    ASSERT_EQ(
-        backend->complexPointwiseMulScale(dFreq, dFreq, dFreq, complexCount, scale, &stream, "mul"),
-        AudioEngine::ErrorCode::OK);
-
     ASSERT_EQ(backend->executeFft(plan, dFreq, dOutput, FftDirection::Inverse, &stream, "inverse"),
               AudioEngine::ErrorCode::OK);
 
@@ -53,7 +49,9 @@ TEST(CudaBackendTest, R2CAndBackRoundTrip) {
               AudioEngine::ErrorCode::OK);
     ASSERT_EQ(backend->streamSynchronize(&stream, "sync"), AudioEngine::ErrorCode::OK);
 
+    // cuFFT は逆変換で正規化しないので、1/N を掛けてから検証する
     for (int i = 0; i < fftSize; ++i) {
+        output[i] *= invN;
         EXPECT_NEAR(output[i], input[i], 1e-3f) << "Mismatch at index " << i;
     }
 

@@ -34,6 +34,8 @@ struct FftPlanData {
     FftDomain domain = FftDomain::RealToComplex;
     int fftSize = 0;
     int batch = 1;
+    bool initialized = false;
+    VulkanBuffer workBuf{};
 };
 
 struct MultiplyPipeline {
@@ -574,18 +576,19 @@ class VulkanBackend final : public IGpuBackend {
         plan->batch = batch;
         plan->conf.FFTdim = 1;
         plan->conf.size[0] = static_cast<uint64_t>(fftSize);
-        plan->conf.performR2C = (domain == FftDomain::RealToComplex) ? 1 : 0;
+        // 実数⇔複素の往復を許容するため、ComplexToReal でも performR2C を有効化する
+        plan->conf.performR2C = (domain != FftDomain::ComplexToComplex) ? 1 : 0;
         plan->conf.normalize = 1;
         plan->conf.device = &ctx_.device;
         plan->conf.queue = &ctx_.queue;
         plan->conf.commandPool = &ctx_.commandPool;
         plan->conf.fence = &ctx_.fence;
         plan->conf.physicalDevice = &ctx_.physicalDevice;
-        VkFFTResult res = initializeVkFFT(&plan->app, plan->conf);
-        if (res != VKFFT_SUCCESS) {
-            LOG_ERROR("[Vulkan backend] Failed to initialize VkFFT: {}", static_cast<int>(res));
-            return AudioEngine::ErrorCode::GPU_INIT_FAILED;
-        }
+        plan->conf.inverseReturnToInputBuffer = 1;
+        plan->conf.isCompilerInitialized = 0;
+        plan->conf.saveApplicationToString = 0;
+        plan->initialized = false;
+        plan->workBuf = {};
         out.handle.ptr = plan.release();
         out.fftSize = fftSize;
         out.batch = batch;
@@ -599,6 +602,9 @@ class VulkanBackend final : public IGpuBackend {
         }
         auto* data = static_cast<FftPlanData*>(plan.handle.ptr);
         deleteVkFFT(&data->app);
+        if (data->workBuf.buffer) {
+            destroyBuffer(ctx_, data->workBuf);
+        }
         delete data;
         plan.handle.ptr = nullptr;
         return AudioEngine::ErrorCode::OK;
@@ -614,22 +620,101 @@ class VulkanBackend final : public IGpuBackend {
         auto* inBuf = static_cast<VulkanBuffer*>(in.handle.ptr);
         auto* outBuf = static_cast<VulkanBuffer*>(out.handle.ptr);
 
-        if (plan.domain == FftDomain::RealToComplex) {
-            const size_t expectedOut =
-                static_cast<size_t>(plan.fftSize / 2 + 1) * 2 * sizeof(float);
-            if (outBuf->size < expectedOut) {
-                return AudioEngine::ErrorCode::VALIDATION_INVALID_CONFIG;
+        const size_t realBytes = static_cast<size_t>(plan.fftSize) * sizeof(float);
+        const size_t complexBytes = static_cast<size_t>(plan.fftSize / 2 + 1) * 2 * sizeof(float);
+        const size_t complexFullBytes = static_cast<size_t>(plan.fftSize) * 2 * sizeof(float);
+
+        size_t expectedInBytes = 0;
+        size_t expectedOutBytes = 0;
+        switch (plan.domain) {
+        case FftDomain::RealToComplex:
+            if (direction == FftDirection::Forward) {
+                expectedInBytes = realBytes;
+                expectedOutBytes = complexBytes;
+            } else {
+                expectedInBytes = complexBytes;
+                expectedOutBytes = realBytes;
             }
-        } else if (plan.domain == FftDomain::ComplexToReal) {
-            if (inBuf->size < static_cast<size_t>(plan.fftSize / 2 + 1) * 2 * sizeof(float)) {
-                return AudioEngine::ErrorCode::VALIDATION_INVALID_CONFIG;
+            break;
+        case FftDomain::ComplexToReal:
+            if (direction == FftDirection::Forward) {
+                expectedInBytes = complexBytes;
+                expectedOutBytes = realBytes;
+            } else {
+                expectedInBytes = realBytes;
+                expectedOutBytes = complexBytes;
             }
+            break;
+        case FftDomain::ComplexToComplex:
+            expectedInBytes = complexFullBytes;
+            expectedOutBytes = complexFullBytes;
+            break;
         }
 
-        data->conf.buffer = &outBuf->buffer;
-        data->conf.bufferSize = &outBuf->size;
-        data->conf.inputBuffer = &inBuf->buffer;
-        data->conf.inputBufferSize = &inBuf->size;
+        if (inBuf->size < expectedInBytes || outBuf->size < expectedOutBytes) {
+            LOG_ERROR(
+                "[Vulkan backend] FFT buffer size mismatch domain={} dir={} in={}/{} out={}/{}",
+                static_cast<int>(plan.domain), static_cast<int>(direction), inBuf->size,
+                expectedInBytes, outBuf->size, expectedOutBytes);
+            return AudioEngine::ErrorCode::VALIDATION_INVALID_CONFIG;
+        }
+
+        size_t workBytes = std::max(expectedInBytes, expectedOutBytes);
+        if (!data->workBuf.buffer || data->workBuf.size < workBytes) {
+            if (data->workBuf.buffer) {
+                destroyBuffer(ctx_, data->workBuf);
+            }
+            if (!createBuffer(
+                    ctx_, static_cast<VkDeviceSize>(workBytes),
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    data->workBuf)) {
+                return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+            }
+            data->initialized = false;
+        }
+
+        size_t copyInBytes = expectedInBytes;
+        VkCommandBuffer cmdCopy = allocateCmd(ctx_);
+        if (cmdCopy == VK_NULL_HANDLE) {
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+        }
+        if (!beginCmd(cmdCopy)) {
+            vkFreeCommandBuffers(ctx_.device, ctx_.commandPool, 1, &cmdCopy);
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+        }
+        VkBufferCopy regionIn{};
+        regionIn.size = static_cast<VkDeviceSize>(copyInBytes);
+        vkCmdCopyBuffer(cmdCopy, inBuf->buffer, data->workBuf.buffer, 1, &regionIn);
+        if (!checkVk(vkEndCommandBuffer(cmdCopy), "vkEndCommandBuffer fft prep copy")) {
+            vkFreeCommandBuffers(ctx_.device, ctx_.commandPool, 1, &cmdCopy);
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+        }
+        bool okCopy = submitAndWait(ctx_, cmdCopy);
+        vkFreeCommandBuffers(ctx_.device, ctx_.commandPool, 1, &cmdCopy);
+        if (!okCopy) {
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+        }
+
+        data->conf.buffer = &data->workBuf.buffer;
+        data->conf.bufferSize = &data->workBuf.size;
+        data->conf.outputBuffer = &data->workBuf.buffer;
+        data->conf.outputBufferSize = &data->workBuf.size;
+        data->conf.inputBuffer = &data->workBuf.buffer;
+        data->conf.inputBufferSize = &data->workBuf.size;
+
+        if (!data->initialized) {
+            deleteVkFFT(&data->app);
+            data->app = {};
+            VkFFTResult initRes = initializeVkFFT(&data->app, data->conf);
+            if (initRes != VKFFT_SUCCESS) {
+                LOG_ERROR("[Vulkan backend] Failed to initialize VkFFT: {}",
+                          static_cast<int>(initRes));
+                return AudioEngine::ErrorCode::GPU_INIT_FAILED;
+            }
+            data->initialized = true;
+        }
 
         VkCommandBuffer cmd = allocateCmd(ctx_);
         if (cmd == VK_NULL_HANDLE) {
@@ -654,7 +739,29 @@ class VulkanBackend final : public IGpuBackend {
         }
         bool ok = submitAndWait(ctx_, cmd);
         vkFreeCommandBuffers(ctx_.device, ctx_.commandPool, 1, &cmd);
-        return ok ? AudioEngine::ErrorCode::OK : AudioEngine::ErrorCode::GPU_CUFFT_ERROR;
+        if (!ok) {
+            return AudioEngine::ErrorCode::GPU_CUFFT_ERROR;
+        }
+
+        size_t copyOutBytes = expectedOutBytes;
+        VkCommandBuffer cmdOut = allocateCmd(ctx_);
+        if (cmdOut == VK_NULL_HANDLE) {
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+        }
+        if (!beginCmd(cmdOut)) {
+            vkFreeCommandBuffers(ctx_.device, ctx_.commandPool, 1, &cmdOut);
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+        }
+        VkBufferCopy regionOut{};
+        regionOut.size = static_cast<VkDeviceSize>(copyOutBytes);
+        vkCmdCopyBuffer(cmdOut, data->workBuf.buffer, outBuf->buffer, 1, &regionOut);
+        if (!checkVk(vkEndCommandBuffer(cmdOut), "vkEndCommandBuffer fft copy out")) {
+            vkFreeCommandBuffers(ctx_.device, ctx_.commandPool, 1, &cmdOut);
+            return AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
+        }
+        bool okOut = submitAndWait(ctx_, cmdOut);
+        vkFreeCommandBuffers(ctx_.device, ctx_.commandPool, 1, &cmdOut);
+        return okOut ? AudioEngine::ErrorCode::OK : AudioEngine::ErrorCode::GPU_MEMORY_ERROR;
     }
 
     AudioEngine::ErrorCode complexPointwiseMulScale(DeviceBuffer& out, const DeviceBuffer& a,
