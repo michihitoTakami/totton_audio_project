@@ -17,6 +17,10 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+using ConvolutionEngine::detectRateFamily;
+using ConvolutionEngine::getBaseSampleRate;
+using ConvolutionEngine::RateFamily;
+
 namespace {
 
 uint32_t nextPow2(uint32_t v) {
