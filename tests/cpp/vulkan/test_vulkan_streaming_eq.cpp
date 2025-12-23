@@ -70,7 +70,9 @@ TEST(VulkanStreamingEqTest, ApplyEqMagnitudeUpdatesSpectrum) {
 
     VulkanStreamingUpsampler upsampler;
     VulkanStreamingUpsampler::InitParams params{};
-    params.filterPath = coeffPath;
+    params.filterPathMinimum = coeffPath;
+    params.filterPathLinear = coeffPath;  // test uses the same impulse for both phases
+    params.initialPhase = PhaseType::Minimum;
     params.upsampleRatio = 2;
     params.blockSize = 64;
     params.inputRate = 48000;
@@ -83,5 +85,40 @@ TEST(VulkanStreamingEqTest, ApplyEqMagnitudeUpdatesSpectrum) {
     ASSERT_GT(fftBins, 0u);
 
     std::vector<double> eqMag(fftBins, 0.5);  // -6 dB across band
+    EXPECT_TRUE(upsampler.applyEqMagnitude(eqMag));
+}
+
+TEST(VulkanStreamingEqTest, SwitchPhaseTypeWorksAndEqReapplySucceeds) {
+    if (!hasVulkanDevice()) {
+        GTEST_SKIP() << "No Vulkan device available";
+    }
+
+    const std::string coeffPath = writeImpulseFile(256);
+    ASSERT_FALSE(coeffPath.empty());
+
+    VulkanStreamingUpsampler upsampler;
+    VulkanStreamingUpsampler::InitParams params{};
+    params.filterPathMinimum = coeffPath;
+    params.filterPathLinear = coeffPath;
+    params.initialPhase = PhaseType::Minimum;
+    params.upsampleRatio = 2;
+    params.blockSize = 64;
+    params.inputRate = 48000;
+    params.fftSizeOverride = 0;
+
+    ASSERT_TRUE(upsampler.initialize(params));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Linear));
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Linear);
+
+    const size_t fftBins = upsampler.getFilterFftSize();
+    ASSERT_GT(fftBins, 0u);
+    std::vector<double> eqMag(fftBins, 1.0);
+    EXPECT_TRUE(upsampler.applyEqMagnitude(eqMag));
+
+    EXPECT_TRUE(upsampler.switchPhaseType(PhaseType::Minimum));
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
     EXPECT_TRUE(upsampler.applyEqMagnitude(eqMag));
 }

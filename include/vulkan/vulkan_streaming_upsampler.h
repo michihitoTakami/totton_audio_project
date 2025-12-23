@@ -13,7 +13,12 @@ namespace vulkan_backend {
 class VulkanStreamingUpsampler : public ConvolutionEngine::IAudioUpsampler {
    public:
     struct InitParams {
+        // Legacy: 旧実装との互換のため残す（Minimum 用として扱う）
         std::string filterPath;
+        // 新実装: phase 切替のため Minimum/Linear を両方指定できる
+        std::string filterPathMinimum;
+        std::string filterPathLinear;
+        PhaseType initialPhase = PhaseType::Minimum;
         uint32_t upsampleRatio = 0;
         uint32_t blockSize = 0;
         uint32_t inputRate = 0;
@@ -41,9 +46,7 @@ class VulkanStreamingUpsampler : public ConvolutionEngine::IAudioUpsampler {
     }
     int getCurrentInputRate() const override;
     bool switchToInputRate(int inputSampleRate) override;
-    PhaseType getPhaseType() const override {
-        return PhaseType::Minimum;
-    }
+    PhaseType getPhaseType() const override;
     bool switchPhaseType(PhaseType targetPhase) override;
     size_t getFilterFftSize() const override;
     size_t getFullFftSize() const override;

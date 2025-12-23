@@ -78,7 +78,40 @@ UpsamplerBuildResult buildUpsampler(AppConfig& config, int inputSampleRate,
 #if defined(HAVE_VULKAN_BACKEND)
         std::cout << "Initializing Vulkan upsampler..." << '\n';
         vulkan_backend::VulkanStreamingUpsampler::InitParams params{};
-        params.filterPath = config.filterPath;
+        // Select per-family filter paths (minimum + linear) so phase switching works under Vulkan.
+        ConvolutionEngine::RateFamily family = ConvolutionEngine::detectRateFamily(inputSampleRate);
+        if (family == ConvolutionEngine::RateFamily::RATE_UNKNOWN) {
+            family = ConvolutionEngine::RateFamily::RATE_44K;
+        }
+
+        std::string minPath = (family == ConvolutionEngine::RateFamily::RATE_48K)
+                                  ? config.filterPath48kMin
+                                  : config.filterPath44kMin;
+        std::string linearPath = (family == ConvolutionEngine::RateFamily::RATE_48K)
+                                     ? config.filterPath48kLinear
+                                     : config.filterPath44kLinear;
+
+        // Backward compatibility: if quad-phase paths are not configured, fall back to filterPath
+        // and derive the counterpart by filename convention.
+        if (minPath.empty()) {
+            minPath = config.filterPath;
+        }
+        if (linearPath.empty()) {
+            linearPath = config.filterPath;
+        }
+
+        if (!std::filesystem::exists(minPath)) {
+            std::cerr << "Config error: Vulkan minimum-phase filter not found: " << minPath << '\n';
+            return result;
+        }
+        if (!std::filesystem::exists(linearPath)) {
+            std::cerr << "Config warning: Vulkan linear-phase filter not found: " << linearPath
+                      << " (phase switching to linear may fail)\n";
+        }
+
+        params.filterPathMinimum = minPath;
+        params.filterPathLinear = linearPath;
+        params.initialPhase = config.phaseType;
         params.upsampleRatio = static_cast<uint32_t>(config.upsampleRatio);
         params.blockSize = static_cast<uint32_t>(config.blockSize);
         params.inputRate = static_cast<uint32_t>(inputSampleRate);
