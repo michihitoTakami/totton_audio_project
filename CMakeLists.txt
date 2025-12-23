@@ -385,6 +385,7 @@ if(ENABLE_VULKAN)
         glslang-default-resource-limits
         SPIRV
     )
+    target_compile_definitions(gpu_backend PRIVATE VKFFT_BACKEND=0 VK_API_VERSION=11)
     target_compile_options(gpu_backend PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O2>
     )
@@ -738,6 +739,18 @@ if(ENABLE_VULKAN)
         ${CMAKE_SOURCE_DIR}/include
     )
     gtest_discover_tests(vulkan_tests)
+
+    add_executable(gpu_backend_vulkan_tests
+        tests/cpp/vulkan/test_vulkan_backend.cpp
+    )
+    target_link_libraries(gpu_backend_vulkan_tests
+        GTest::gtest_main
+        gpu_backend
+    )
+    target_include_directories(gpu_backend_vulkan_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    gtest_discover_tests(gpu_backend_vulkan_tests)
 endif()
 
 # ZeroMQ communication tests (CPU-only)

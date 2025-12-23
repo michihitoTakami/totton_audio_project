@@ -67,3 +67,8 @@ EPIC #921 の「まず動く」段階では不要、また Issue #926 の任意�
 ### 次の一手（EPIC #921 への接続）
 - FFTはまず VkFFT を採用（Issue #923）。
 - その後、`VulkanBackend` の最小実装（alloc/copy/fft/mul+scale/sync）を作り、**オフライン 1ch overlap-save** で動作確認へ進める。
+
+### 実装状況（#1169）
+- `gpu_backend` に Vulkan 実装を追加（VkFFT + compute シェーダで複素乗算/スケール）。
+- 1D R2C/C2R の往復と複素乗算スケールをカバーする単体テストを追加。
+- メモリは初期版としてホスト可視メモリ＋同期実行で実装（性能最適化と非同期化は後続課題）。
