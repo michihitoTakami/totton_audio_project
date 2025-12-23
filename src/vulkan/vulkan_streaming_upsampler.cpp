@@ -11,6 +11,7 @@
 #include <fstream>
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -549,6 +550,77 @@ std::size_t readFilterTaps(const std::string& path, std::vector<float>& out) {
     return taps;
 }
 
+std::string derivePhasePath(const std::string& basePath, bool wantLinear) {
+    // Best-effort path derivation:
+    // - "..._min_phase.bin" <-> "..._linear_phase.bin"
+    std::string p = basePath;
+    const std::string kMin = "_min_phase";
+    const std::string kLinear = "_linear_phase";
+    if (wantLinear) {
+        auto pos = p.find(kMin);
+        if (pos != std::string::npos) {
+            p.replace(pos, kMin.size(), kLinear);
+            return p;
+        }
+        return basePath;
+    }
+    auto pos = p.find(kLinear);
+    if (pos != std::string::npos) {
+        p.replace(pos, kLinear.size(), kMin);
+        return p;
+    }
+    return basePath;
+}
+
+bool uploadTimeDomainAndFft(VulkanContext& ctx, BufferResource& filterBuf,
+                            VkFFTApplication& filterApp, uint64_t bufferBytes,
+                            const std::vector<float>& taps) {
+    void* mapped = nullptr;
+    if (!checkVk(vkMapMemory(ctx.device, filterBuf.memory, 0, bufferBytes, 0, &mapped),
+                 "vkMapMemory filter")) {
+        return false;
+    }
+    std::memset(mapped, 0, static_cast<std::size_t>(bufferBytes));
+    std::memcpy(mapped, taps.data(), taps.size() * sizeof(float));
+    vkUnmapMemory(ctx.device, filterBuf.memory);
+
+    if (!runFftOnBuffer(ctx, filterApp, -1)) {
+        return false;
+    }
+    return true;
+}
+
+bool readFilterSpectrum(VulkanContext& ctx, BufferResource& filterBuf, uint64_t bufferBytes,
+                        uint32_t complexCount, std::vector<float>& outSpectrum) {
+    const uint64_t complexElements = 2ull * complexCount;
+    void* mapped = nullptr;
+    if (!checkVk(vkMapMemory(ctx.device, filterBuf.memory, 0, bufferBytes, 0, &mapped),
+                 "vkMapMemory filter (read spectrum)")) {
+        return false;
+    }
+    outSpectrum.resize(static_cast<std::size_t>(complexElements));
+    std::memcpy(outSpectrum.data(), mapped, static_cast<std::size_t>(bufferBytes));
+    vkUnmapMemory(ctx.device, filterBuf.memory);
+    return true;
+}
+
+bool writeFilterSpectrum(VulkanContext& ctx, BufferResource& filterBuf, uint64_t bufferBytes,
+                         uint32_t complexCount, const std::vector<float>& spectrum) {
+    if (spectrum.size() != static_cast<std::size_t>(2ull * complexCount)) {
+        LOG_ERROR("[Vulkan] Invalid spectrum size: expected {}, got {}",
+                  static_cast<std::size_t>(2ull * complexCount), spectrum.size());
+        return false;
+    }
+    void* mapped = nullptr;
+    if (!checkVk(vkMapMemory(ctx.device, filterBuf.memory, 0, bufferBytes, 0, &mapped),
+                 "vkMapMemory filter (write spectrum)")) {
+        return false;
+    }
+    std::memcpy(mapped, spectrum.data(), static_cast<std::size_t>(bufferBytes));
+    vkUnmapMemory(ctx.device, filterBuf.memory);
+    return true;
+}
+
 }  // namespace
 
 namespace vulkan_backend {
@@ -572,8 +644,15 @@ struct VulkanStreamingUpsampler::Impl {
     uint64_t bufferBytes = 0;
     std::vector<float> overlapBuffer;
     std::vector<float> originalFilterFreq;
+    std::vector<float> baseFilterFreqMinimum;
+    std::vector<float> baseFilterFreqLinear;
+    std::string filterPathMinimum;
+    std::string filterPathLinear;
+    PhaseType phaseType = PhaseType::Minimum;
+    bool hasLinear = false;
 
     bool initialized = false;
+    std::mutex mutex;
 
     void cleanup() {
         destroyPipeline(ctx, pipeline);
@@ -584,6 +663,10 @@ struct VulkanStreamingUpsampler::Impl {
         destroyContext(ctx);
         overlapBuffer.clear();
         originalFilterFreq.clear();
+        baseFilterFreqMinimum.clear();
+        baseFilterFreqLinear.clear();
+        filterPathMinimum.clear();
+        filterPathLinear.clear();
         upsampleRatio = 0;
         inputRate = 0;
         outputRate = 0;
@@ -593,6 +676,8 @@ struct VulkanStreamingUpsampler::Impl {
         overlap = 0;
         complexCount = 0;
         bufferBytes = 0;
+        phaseType = PhaseType::Minimum;
+        hasLinear = false;
         initialized = false;
     }
 };
@@ -611,28 +696,64 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
     }
     impl_->cleanup();
 
-    if (params.filterPath.empty() || params.upsampleRatio == 0 || params.blockSize == 0 ||
+    std::string minPath =
+        !params.filterPathMinimum.empty() ? params.filterPathMinimum : params.filterPath;
+    std::string linearPath = params.filterPathLinear;
+    if (linearPath.empty() && !minPath.empty()) {
+        linearPath = derivePhasePath(minPath, true);
+    }
+
+    if (minPath.empty() || params.upsampleRatio == 0 || params.blockSize == 0 ||
         params.inputRate == 0) {
         LOG_ERROR("Vulkan upsampler: invalid params (filterPath empty or zero ratio/block/input)");
         return false;
     }
 
-    std::vector<float> filterTaps;
-    const std::size_t taps = readFilterTaps(params.filterPath, filterTaps);
-    if (taps == 0) {
+    std::vector<float> minTaps;
+    const std::size_t minTapCount = readFilterTaps(minPath, minTaps);
+    if (minTapCount == 0) {
         return false;
+    }
+
+    std::vector<float> linearTaps;
+    const std::size_t linearTapCount = readFilterTaps(linearPath, linearTaps);
+    const bool hasLinear = (linearTapCount > 0);
+    if (!hasLinear) {
+        LOG_WARN(
+            "[Vulkan] Linear phase filter not available; phase switching to 'linear' will fail "
+            "(min='{}', linear='{}')",
+            minPath, linearPath);
+    }
+
+    // Align tap lengths between phases by padding the shorter one with trailing zeros.
+    // This keeps streaming hop sizes stable across phase switches.
+    const std::size_t maxTaps =
+        std::max(minTaps.size(), hasLinear ? linearTaps.size() : minTaps.size());
+    if (maxTaps == 0) {
+        LOG_ERROR("Vulkan upsampler: empty filter taps");
+        return false;
+    }
+    if (minTaps.size() < maxTaps) {
+        minTaps.resize(maxTaps, 0.0f);
+    }
+    if (hasLinear && linearTaps.size() < maxTaps) {
+        linearTaps.resize(maxTaps, 0.0f);
     }
 
     impl_->upsampleRatio = params.upsampleRatio;
     impl_->inputRate = params.inputRate;
     impl_->outputRate = params.inputRate * params.upsampleRatio;
-    impl_->overlap = static_cast<uint32_t>(taps - 1);
+    impl_->overlap = static_cast<uint32_t>(maxTaps - 1);
+    impl_->filterPathMinimum = minPath;
+    impl_->filterPathLinear = linearPath;
+    impl_->hasLinear = hasLinear;
+    impl_->phaseType = params.initialPhase;
 
     uint32_t fftSize = params.fftSizeOverride;
     if (fftSize == 0) {
         const auto desired = static_cast<std::size_t>(params.upsampleRatio) *
                                  static_cast<std::size_t>(params.blockSize) +
-                             taps - 1;
+                             maxTaps - 1;
         fftSize = nextPow2(static_cast<uint32_t>(desired));
     }
     if (fftSize <= impl_->overlap) {
@@ -667,39 +788,43 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
         return false;
     }
 
-    // Upload filter taps (time domain) and run forward FFT
-    {
-        void* mapped = nullptr;
-        if (!checkVk(vkMapMemory(impl_->ctx.device, impl_->filterBuf.memory, 0, impl_->bufferBytes,
-                                 0, &mapped),
-                     "vkMapMemory filter")) {
-            impl_->cleanup();
-            return false;
-        }
-        std::memset(mapped, 0, static_cast<std::size_t>(impl_->bufferBytes));
-        std::memcpy(mapped, filterTaps.data(), filterTaps.size() * sizeof(float));
-        vkUnmapMemory(impl_->ctx.device, impl_->filterBuf.memory);
-    }
-
-    if (!runFftOnBuffer(impl_->ctx, impl_->filterApp, -1)) {
+    // Pre-compute filter spectra for Minimum / Linear and cache them on the host.
+    // Note: filterBuf is bound to the multiply pipeline, so switching phase only requires
+    // copying cached frequency-domain data back into filterBuf.
+    if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp, impl_->bufferBytes,
+                                minTaps) ||
+        !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
+                            impl_->baseFilterFreqMinimum)) {
         impl_->cleanup();
         return false;
     }
 
-    // Cache original filter spectrum (frequency domain) for EQ re-application
-    {
-        void* mapped = nullptr;
-        if (!checkVk(vkMapMemory(impl_->ctx.device, impl_->filterBuf.memory, 0, impl_->bufferBytes,
-                                 0, &mapped),
-                     "vkMapMemory filter (cache spectrum)")) {
+    if (impl_->hasLinear) {
+        if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp,
+                                    impl_->bufferBytes, linearTaps) ||
+            !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes,
+                                impl_->complexCount, impl_->baseFilterFreqLinear)) {
             impl_->cleanup();
             return false;
         }
-        impl_->originalFilterFreq.resize(static_cast<std::size_t>(complexElements));
-        std::memcpy(impl_->originalFilterFreq.data(), mapped,
-                    static_cast<std::size_t>(impl_->bufferBytes));
-        vkUnmapMemory(impl_->ctx.device, impl_->filterBuf.memory);
     }
+
+    if (impl_->phaseType == PhaseType::Linear && !impl_->hasLinear) {
+        LOG_WARN(
+            "[Vulkan] Requested initial phase 'linear' but linear filter is unavailable; "
+            "falling back to 'minimum'");
+        impl_->phaseType = PhaseType::Minimum;
+    }
+
+    const std::vector<float>& activeBase =
+        (impl_->phaseType == PhaseType::Linear && impl_->hasLinear) ? impl_->baseFilterFreqLinear
+                                                                    : impl_->baseFilterFreqMinimum;
+    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
+                             activeBase)) {
+        impl_->cleanup();
+        return false;
+    }
+    impl_->originalFilterFreq = activeBase;
 
     if (!createMultiplyPipeline(impl_->ctx, impl_->inputBuf, impl_->filterBuf, impl_->pipeline)) {
         impl_->cleanup();
@@ -720,8 +845,12 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
 
     impl_->overlapBuffer.assign(impl_->overlap, 0.0f);
     impl_->initialized = true;
-    LOG_INFO("[Vulkan] upsampler ready (ratio={}x, block={} frames, fftSize={})",
-             impl_->upsampleRatio, params.blockSize, impl_->fftSize);
+    LOG_INFO(
+        "[Vulkan] upsampler ready (ratio={}x, block={} frames, fftSize={}, phase={}, min='{}', "
+        "linear='{}')",
+        impl_->upsampleRatio, params.blockSize, impl_->fftSize,
+        (impl_->phaseType == PhaseType::Minimum ? "minimum" : "linear"), impl_->filterPathMinimum,
+        impl_->filterPathLinear);
     return true;
 }
 
@@ -766,8 +895,42 @@ bool VulkanStreamingUpsampler::switchToInputRate(int inputSampleRate) {
     return inputSampleRate == static_cast<int>(impl_->inputRate);
 }
 
+PhaseType VulkanStreamingUpsampler::getPhaseType() const {
+    if (!impl_) {
+        return PhaseType::Minimum;
+    }
+    return impl_->phaseType;
+}
+
 bool VulkanStreamingUpsampler::switchPhaseType(PhaseType targetPhase) {
-    return targetPhase == PhaseType::Minimum;
+    if (!impl_ || !impl_->initialized) {
+        LOG_ERROR("[Vulkan] Phase switch requested but upsampler not initialized");
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+
+    if (targetPhase == impl_->phaseType) {
+        return true;
+    }
+    if (targetPhase == PhaseType::Linear && !impl_->hasLinear) {
+        LOG_WARN("[Vulkan] Phase switch to 'linear' requested but linear filter is unavailable");
+        return false;
+    }
+
+    const std::vector<float>& activeBase = (targetPhase == PhaseType::Linear)
+                                               ? impl_->baseFilterFreqLinear
+                                               : impl_->baseFilterFreqMinimum;
+    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
+                             activeBase)) {
+        return false;
+    }
+    impl_->originalFilterFreq =
+        activeBase;  // Reset EQ base; ControlPlane will re-apply EQ if enabled.
+    impl_->phaseType = targetPhase;
+
+    LOG_INFO("[Vulkan] Phase type switched to {} (EQ should be re-applied)",
+             (impl_->phaseType == PhaseType::Minimum ? "minimum" : "linear"));
+    return true;
 }
 
 size_t VulkanStreamingUpsampler::getFilterFftSize() const {
@@ -783,6 +946,7 @@ bool VulkanStreamingUpsampler::applyEqMagnitude(const std::vector<double>& eqMag
         LOG_ERROR("[Vulkan] EQ: Upsampler not initialized");
         return false;
     }
+    std::lock_guard<std::mutex> lock(impl_->mutex);
     if (eqMagnitude.size() != impl_->complexCount) {
         LOG_ERROR("[Vulkan] EQ: Magnitude size mismatch: expected {}, got {}", impl_->complexCount,
                   eqMagnitude.size());
@@ -836,6 +1000,7 @@ bool VulkanStreamingUpsampler::processStreamBlock(
     if (!impl_ || !impl_->initialized) {
         return false;
     }
+    std::lock_guard<std::mutex> lock(impl_->mutex);
     if (!inputData || inputFrames == 0) {
         return false;
     }
