@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 namespace ConvolutionEngine {
 namespace GpuBackend {
@@ -123,28 +124,33 @@ class IGpuBackend {
     virtual AudioEngine::ErrorCode createEvent(Event& out, const char* context) {
         (void)out;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     virtual AudioEngine::ErrorCode destroyEvent(Event& event, const char* context) {
         (void)event;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     virtual AudioEngine::ErrorCode recordEvent(Event& event, const Stream* stream,
                                                const char* context) {
         (void)event;
         (void)stream;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
     virtual AudioEngine::ErrorCode queryEvent(const Event& event, bool& outReady,
                                               const char* context) {
         (void)event;
         (void)outReady;
         (void)context;
-        return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
+        return AudioEngine::ErrorCode::INTERNAL_UNKNOWN;
     }
 };
+
+// Factories (availability depends on build options ENABLE_CUDA / ENABLE_VULKAN)
+// 実装が無効な場合や初期化に失敗した場合は nullptr を返す。
+std::unique_ptr<IGpuBackend> createCudaBackend();
+std::unique_ptr<IGpuBackend> createVulkanBackend();
 
 }  // namespace GpuBackend
 }  // namespace ConvolutionEngine
