@@ -354,6 +354,47 @@ if(ENABLE_CUDA)
     target_link_libraries(gpu_upsampler_core PUBLIC logging)
 endif()
 
+# Generic GPU backend abstraction (CUDA / Vulkan)
+add_library(gpu_backend STATIC)
+target_include_directories(gpu_backend PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_link_libraries(gpu_backend PUBLIC logging)
+if(ENABLE_CUDA)
+    target_sources(gpu_backend PRIVATE
+        src/gpu/backend/cuda_backend.cu
+    )
+    target_link_libraries(gpu_backend PUBLIC
+        CUDA::cudart
+        CUDA::cufft
+    )
+    target_compile_options(gpu_backend PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O2>
+        $<$<COMPILE_LANGUAGE:CUDA>:-O2 --use_fast_math>
+    )
+endif()
+if(ENABLE_VULKAN)
+    target_sources(gpu_backend PRIVATE
+        src/vulkan/vulkan_backend.cpp
+    )
+    target_link_libraries(gpu_backend PUBLIC
+        Vulkan::Vulkan
+        glslang
+        OGLCompiler
+        OSDependent
+        glslang-default-resource-limits
+        SPIRV
+    )
+    target_compile_options(gpu_backend PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O2>
+    )
+    target_include_directories(gpu_backend PRIVATE
+        ${vkfft_SOURCE_DIR}/vkFFT
+        ${glslang_SOURCE_DIR}/glslang/Include
+        ${glslang_SOURCE_DIR}
+    )
+endif()
+
 # Vulkan streaming backend (shared between daemon/tests)
 if(ENABLE_VULKAN)
     add_library(vulkan_streaming STATIC
@@ -670,6 +711,19 @@ if(ENABLE_CUDA)
         CUDA_ARCHITECTURES "${GPU_CUDA_ARCH}"
     )
     gtest_discover_tests(gpu_tests)
+
+    # Generic backend tests (CUDA)
+    add_executable(gpu_backend_cuda_tests
+        tests/cpp/gpu/backend/test_cuda_backend.cpp
+    )
+    target_link_libraries(gpu_backend_cuda_tests
+        GTest::gtest_main
+        gpu_backend
+    )
+    target_include_directories(gpu_backend_cuda_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    gtest_discover_tests(gpu_backend_cuda_tests)
 endif()
 
 if(ENABLE_VULKAN)

@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 namespace ConvolutionEngine {
 namespace GpuBackend {
@@ -145,6 +146,11 @@ class IGpuBackend {
         return AudioEngine::ErrorCode::NOT_IMPLEMENTED;
     }
 };
+
+// Factories (availability depends on build options ENABLE_CUDA / ENABLE_VULKAN)
+// 実装が無効な場合や初期化に失敗した場合は nullptr を返す。
+std::unique_ptr<IGpuBackend> createCudaBackend();
+std::unique_ptr<IGpuBackend> createVulkanBackend();
 
 }  // namespace GpuBackend
 }  // namespace ConvolutionEngine
