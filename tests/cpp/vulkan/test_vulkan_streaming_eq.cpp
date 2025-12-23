@@ -163,3 +163,86 @@ TEST(VulkanStreamingEqTest, MultiRateAndPhaseSwitchWorks) {
     EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
     EXPECT_EQ(upsampler.getCurrentInputRate(), 44100);
 }
+
+TEST(VulkanStreamingEqTest, SwitchPhaseTypeFailsWhenLinearUnavailable) {
+    if (!hasVulkanDevice()) {
+        GTEST_SKIP() << "No Vulkan device available";
+    }
+
+    const std::string coeff44 = writeImpulseFile(256);
+    ASSERT_FALSE(coeff44.empty());
+
+    VulkanStreamingUpsampler upsampler;
+    VulkanStreamingUpsampler::InitParams params{};
+    params.filterPathMinimum44k = coeff44;
+    // 指定した線形パスが存在しない場合、linear は未ロードになる
+    params.filterPathLinear44k = "/tmp/vk_linear_missing.bin";
+    params.initialPhase = PhaseType::Minimum;
+    params.upsampleRatio = 2;
+    params.blockSize = 64;
+    params.inputRate = 44100;
+
+    ASSERT_TRUE(upsampler.initialize(params));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    EXPECT_FALSE(upsampler.switchPhaseType(PhaseType::Linear));
+    EXPECT_EQ(upsampler.getPhaseType(), PhaseType::Minimum);
+}
+
+TEST(VulkanStreamingEqTest, SwitchToMissingFamilyFails) {
+    if (!hasVulkanDevice()) {
+        GTEST_SKIP() << "No Vulkan device available";
+    }
+
+    const std::string coeff44 = writeImpulseFile(256);
+    ASSERT_FALSE(coeff44.empty());
+
+    VulkanStreamingUpsampler upsampler;
+    VulkanStreamingUpsampler::InitParams params{};
+    // 44k family のみ用意（48k は未指定）
+    params.filterPathMinimum44k = coeff44;
+    params.filterPathLinear44k = coeff44;
+    params.initialPhase = PhaseType::Minimum;
+    params.upsampleRatio = 2;
+    params.blockSize = 64;
+    params.inputRate = 44100;
+
+    ASSERT_TRUE(upsampler.initialize(params));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    EXPECT_FALSE(upsampler.switchToInputRate(48000));
+    EXPECT_EQ(upsampler.getCurrentInputRate(), 44100);
+}
+
+TEST(VulkanStreamingEqTest, EqCanBeReappliedAfterRateSwitch) {
+    if (!hasVulkanDevice()) {
+        GTEST_SKIP() << "No Vulkan device available";
+    }
+
+    const std::string coeff44 = writeImpulseFile(256);
+    const std::string coeff48 = writeImpulseFile(256);
+    ASSERT_FALSE(coeff44.empty());
+    ASSERT_FALSE(coeff48.empty());
+
+    VulkanStreamingUpsampler upsampler;
+    VulkanStreamingUpsampler::InitParams params{};
+    params.filterPathMinimum44k = coeff44;
+    params.filterPathMinimum48k = coeff48;
+    params.filterPathLinear44k = coeff44;
+    params.filterPathLinear48k = coeff48;
+    params.initialPhase = PhaseType::Minimum;
+    params.upsampleRatio = 2;
+    params.blockSize = 64;
+    params.inputRate = 44100;
+
+    ASSERT_TRUE(upsampler.initialize(params));
+    ASSERT_TRUE(upsampler.initializeStreaming());
+
+    const size_t fftBins = upsampler.getFilterFftSize();
+    ASSERT_GT(fftBins, 0u);
+    std::vector<double> eqMag(fftBins, 0.5);
+
+    EXPECT_TRUE(upsampler.applyEqMagnitude(eqMag));   // 初回適用
+    EXPECT_TRUE(upsampler.switchToInputRate(48000));  // family 切替
+    EXPECT_TRUE(upsampler.applyEqMagnitude(eqMag));   // 切替後も再適用できること
+}
