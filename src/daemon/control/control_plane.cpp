@@ -95,7 +95,7 @@ const char* delimiterReasonToString(delimiter::FallbackReason reason) {
     return "unknown";
 }
 
-ConvolutionEngine::FourChannelFIR* crossfeedProcessor(const CrossfeedControls& controls) {
+ConvolutionEngine::IFourChannelFIR* crossfeedProcessor(const CrossfeedControls& controls) {
     if (!controls.processor) {
         return nullptr;
     }
