@@ -1164,8 +1164,8 @@ bool VulkanStreamingUpsampler::applyEqMagnitude(const std::vector<double>& eqMag
 
 bool VulkanStreamingUpsampler::processStreamBlock(
     const float* inputData, size_t inputFrames, ConvolutionEngine::StreamFloatVector& outputData,
-    cudaStream_t /*stream*/, ConvolutionEngine::StreamFloatVector& streamInputBuffer,
-    size_t& streamInputAccumulated) {
+    ConvolutionEngine::DeviceStream /*stream*/,
+    ConvolutionEngine::StreamFloatVector& streamInputBuffer, size_t& streamInputAccumulated) {
     if (!impl_ || !impl_->initialized) {
         return false;
     }

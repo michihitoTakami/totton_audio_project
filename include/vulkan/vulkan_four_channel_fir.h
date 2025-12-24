@@ -28,7 +28,8 @@ class VulkanFourChannelFIR : public ConvolutionEngine::IFourChannelFIR {
 
     bool processStreamBlock(const float* inputL, const float* inputR, size_t inputFrames,
                             ConvolutionEngine::StreamFloatVector& outputL,
-                            ConvolutionEngine::StreamFloatVector& outputR, cudaStream_t stream,
+                            ConvolutionEngine::StreamFloatVector& outputR,
+                            ConvolutionEngine::DeviceStream stream,
                             ConvolutionEngine::StreamFloatVector& streamInputBufferL,
                             ConvolutionEngine::StreamFloatVector& streamInputBufferR,
                             size_t& streamInputAccumulatedL,

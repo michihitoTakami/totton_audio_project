@@ -85,16 +85,20 @@ TEST(VulkanFourChannelFirTest, MatchesCudaOutputForBasicBlock) {
     writeHrtfFiles(tmpDir, headSizeToString(HeadSize::M), "44k", taps, 0.25f);
     writeHrtfFiles(tmpDir, headSizeToString(HeadSize::M), "48k", taps, 0.5f);
 
-    ConvolutionEngine::FourChannelFIR cudaFir;
-    ASSERT_TRUE(cudaFir.initialize(tmpDir.string(), blockSize, HeadSize::M, RateFamily::RATE_44K));
-    ASSERT_TRUE(cudaFir.initializeStreaming());
-
     VulkanFourChannelFIR vkFir;
     ASSERT_TRUE(vkFir.initialize(tmpDir.string(), blockSize, HeadSize::M, RateFamily::RATE_44K));
     ASSERT_TRUE(vkFir.initializeStreaming());
 
+#if defined(HAVE_CUDA_BACKEND)
+    ConvolutionEngine::FourChannelFIR cudaFir;
+    ASSERT_TRUE(cudaFir.initialize(tmpDir.string(), blockSize, HeadSize::M, RateFamily::RATE_44K));
+    ASSERT_TRUE(cudaFir.initializeStreaming());
     const size_t streamBlock = cudaFir.getStreamValidInputPerBlock();
     ASSERT_EQ(streamBlock, vkFir.getStreamValidInputPerBlock());
+#else
+    const size_t streamBlock = vkFir.getStreamValidInputPerBlock();
+    ASSERT_GT(streamBlock, 0u);
+#endif
 
     std::vector<float> inputL(streamBlock, 0.0f);
     std::vector<float> inputR(streamBlock, 0.0f);
@@ -103,50 +107,72 @@ TEST(VulkanFourChannelFirTest, MatchesCudaOutputForBasicBlock) {
         inputR[i] = 0.02f * static_cast<float>(i % 17);
     }
 
+#if defined(HAVE_CUDA_BACKEND)
     StreamFloatVector cudaStreamL(streamBlock * 2, 0.0f);
     StreamFloatVector cudaStreamR(streamBlock * 2, 0.0f);
-    StreamFloatVector vkStreamL(streamBlock * 2, 0.0f);
-    StreamFloatVector vkStreamR(streamBlock * 2, 0.0f);
     StreamFloatVector cudaOutL;
     StreamFloatVector cudaOutR;
-    StreamFloatVector vkOutL;
-    StreamFloatVector vkOutR;
     size_t cudaAccumL = 0;
     size_t cudaAccumR = 0;
+#endif
+    StreamFloatVector vkStreamL(streamBlock * 2, 0.0f);
+    StreamFloatVector vkStreamR(streamBlock * 2, 0.0f);
+    StreamFloatVector vkOutL;
+    StreamFloatVector vkOutR;
     size_t vkAccumL = 0;
     size_t vkAccumR = 0;
 
+#if defined(HAVE_CUDA_BACKEND)
     ASSERT_TRUE(cudaFir.processStreamBlock(inputL.data(), inputR.data(), streamBlock, cudaOutL,
                                            cudaOutR, nullptr, cudaStreamL, cudaStreamR, cudaAccumL,
                                            cudaAccumR));
+#endif
     ASSERT_TRUE(vkFir.processStreamBlock(inputL.data(), inputR.data(), streamBlock, vkOutL, vkOutR,
                                          nullptr, vkStreamL, vkStreamR, vkAccumL, vkAccumR));
 
+#if defined(HAVE_CUDA_BACKEND)
     ASSERT_EQ(cudaOutL.size(), vkOutL.size());
     ASSERT_EQ(cudaOutR.size(), vkOutR.size());
     for (size_t i = 0; i < cudaOutL.size(); ++i) {
         EXPECT_NEAR(cudaOutL[i], vkOutL[i], 1e-3f) << "Mismatch at sample " << i << " (L)";
         EXPECT_NEAR(cudaOutR[i], vkOutR[i], 1e-3f) << "Mismatch at sample " << i << " (R)";
     }
+#endif
 
+#if defined(HAVE_CUDA_BACKEND)
     ASSERT_TRUE(cudaFir.switchRateFamily(RateFamily::RATE_48K));
+#endif
     ASSERT_TRUE(vkFir.switchRateFamily(RateFamily::RATE_48K));
-    cudaFir.resetStreaming();
     vkFir.resetStreaming();
-    cudaAccumL = cudaAccumR = vkAccumL = vkAccumR = 0;
+    vkAccumL = vkAccumR = 0;
+#if defined(HAVE_CUDA_BACKEND)
+    cudaFir.resetStreaming();
+    cudaAccumL = cudaAccumR = 0;
+#endif
 
+#if defined(HAVE_CUDA_BACKEND)
     ASSERT_TRUE(cudaFir.processStreamBlock(inputL.data(), inputR.data(), streamBlock, cudaOutL,
                                            cudaOutR, nullptr, cudaStreamL, cudaStreamR, cudaAccumL,
                                            cudaAccumR));
+#endif
     ASSERT_TRUE(vkFir.processStreamBlock(inputL.data(), inputR.data(), streamBlock, vkOutL, vkOutR,
                                          nullptr, vkStreamL, vkStreamR, vkAccumL, vkAccumR));
 
+#if defined(HAVE_CUDA_BACKEND)
     ASSERT_EQ(cudaOutL.size(), vkOutL.size());
     ASSERT_EQ(cudaOutR.size(), vkOutR.size());
     for (size_t i = 0; i < cudaOutL.size(); ++i) {
         EXPECT_NEAR(cudaOutL[i], vkOutL[i], 1e-3f) << "Mismatch at sample " << i << " (L,48k)";
         EXPECT_NEAR(cudaOutR[i], vkOutR[i], 1e-3f) << "Mismatch at sample " << i << " (R,48k)";
     }
+#else
+    ASSERT_FALSE(vkOutL.empty());
+    ASSERT_FALSE(vkOutR.empty());
+    EXPECT_EQ(vkOutL.size(), vkFir.getValidOutputPerBlock());
+    EXPECT_EQ(vkOutR.size(), vkFir.getValidOutputPerBlock());
+    EXPECT_TRUE(std::any_of(vkOutL.begin(), vkOutL.end(), [](float v) { return v != 0.0f; }));
+    EXPECT_TRUE(std::any_of(vkOutR.begin(), vkOutR.end(), [](float v) { return v != 0.0f; }));
+#endif
 
     std::filesystem::remove_all(tmpDir);
 }

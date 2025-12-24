@@ -390,7 +390,8 @@ bool VulkanFourChannelFIR::switchRateFamily(ConvolutionEngine::RateFamily target
 bool VulkanFourChannelFIR::processStreamBlock(
     const float* inputL, const float* inputR, size_t inputFrames,
     ConvolutionEngine::StreamFloatVector& outputL, ConvolutionEngine::StreamFloatVector& outputR,
-    cudaStream_t /*stream*/, ConvolutionEngine::StreamFloatVector& streamInputBufferL,
+    ConvolutionEngine::DeviceStream /*stream*/,
+    ConvolutionEngine::StreamFloatVector& streamInputBufferL,
     ConvolutionEngine::StreamFloatVector& streamInputBufferR, size_t& streamInputAccumulatedL,
     size_t& streamInputAccumulatedR) {
     if (!initialized_ || !streamInitialized_) {

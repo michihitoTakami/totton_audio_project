@@ -11,8 +11,6 @@
 #include "io/audio_ring_buffer.h"
 #include "logging/logger.h"
 
-#include <cuda_runtime_api.h>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -40,12 +38,12 @@ struct BufferResources {
 struct Upsampler {
     using ProcessFn = std::function<bool(
         const float* inputData, size_t inputFrames,
-        ConvolutionEngine::StreamFloatVector& outputData, cudaStream_t stream,
+        ConvolutionEngine::StreamFloatVector& outputData, ConvolutionEngine::DeviceStream stream,
         ConvolutionEngine::StreamFloatVector& streamInputBuffer, size_t& streamInputAccumulated)>;
 
     ProcessFn process;
-    cudaStream_t streamLeft = nullptr;
-    cudaStream_t streamRight = nullptr;
+    ConvolutionEngine::DeviceStream streamLeft = nullptr;
+    ConvolutionEngine::DeviceStream streamRight = nullptr;
     bool available = false;
 };
 
