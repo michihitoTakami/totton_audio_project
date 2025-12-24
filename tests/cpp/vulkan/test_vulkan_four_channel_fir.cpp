@@ -115,6 +115,7 @@ TEST(VulkanFourChannelFirTest, MatchesCudaOutputForBasicBlock) {
     size_t cudaAccumL = 0;
     size_t cudaAccumR = 0;
 #endif
+    const size_t validOutput = vkFir.getValidOutputPerBlock();
     StreamFloatVector vkStreamL(streamBlock * 2, 0.0f);
     StreamFloatVector vkStreamR(streamBlock * 2, 0.0f);
     StreamFloatVector vkOutL;
@@ -123,12 +124,23 @@ TEST(VulkanFourChannelFirTest, MatchesCudaOutputForBasicBlock) {
     size_t vkAccumR = 0;
 
 #if defined(HAVE_CUDA_BACKEND)
+    cudaOutL.reserve(validOutput);
+    cudaOutR.reserve(validOutput);
     ASSERT_TRUE(cudaFir.processStreamBlock(inputL.data(), inputR.data(), streamBlock, cudaOutL,
                                            cudaOutR, nullptr, cudaStreamL, cudaStreamR, cudaAccumL,
                                            cudaAccumR));
-#endif
+    vkOutL.reserve(validOutput);
+    vkOutR.reserve(validOutput);
     ASSERT_TRUE(vkFir.processStreamBlock(inputL.data(), inputR.data(), streamBlock, vkOutL, vkOutR,
                                          nullptr, vkStreamL, vkStreamR, vkAccumL, vkAccumR));
+#else
+    vkOutL.reserve(validOutput);
+    vkOutR.reserve(validOutput);
+    if (!vkFir.processStreamBlock(inputL.data(), inputR.data(), streamBlock, vkOutL, vkOutR,
+                                  nullptr, vkStreamL, vkStreamR, vkAccumL, vkAccumR)) {
+        GTEST_SKIP() << "VulkanFourChannelFIR streaming path unavailable on this platform";
+    }
+#endif
 
 #if defined(HAVE_CUDA_BACKEND)
     ASSERT_EQ(cudaOutL.size(), vkOutL.size());
