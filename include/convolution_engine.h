@@ -5,10 +5,13 @@
 #include "core/config_loader.h"  // PhaseType enum
 #include "gpu/partition_plan.h"
 #include "gpu/pinned_allocator.h"
+
+#ifdef HAVE_CUDA_BACKEND
 #include "gpu/precision_traits.h"
 
 #include <cuda_runtime.h>
 #include <cufft.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -19,7 +22,13 @@
 
 namespace ConvolutionEngine {
 
+#ifdef HAVE_CUDA_BACKEND
+using DeviceStream = cudaStream_t;
 using StreamFloatVector = CudaPinnedVector<float>;
+#else
+using DeviceStream = void*;
+using StreamFloatVector = std::vector<float>;
+#endif
 
 // バックエンド差し替え用の最小インタフェース（CUDA/Vulkan 兼用）
 class IAudioUpsampler {
@@ -47,7 +56,7 @@ class IAudioUpsampler {
     virtual bool applyEqMagnitude(const std::vector<double>& eqMagnitude) = 0;
 
     virtual bool processStreamBlock(const float* inputData, size_t inputFrames,
-                                    StreamFloatVector& outputData, cudaStream_t stream,
+                                    StreamFloatVector& outputData, DeviceStream stream,
                                     StreamFloatVector& streamInputBuffer,
                                     size_t& streamInputAccumulated) = 0;
 };
@@ -179,6 +188,7 @@ inline int getUpsampleRatioForInputRate(int inputSampleRate) {
     return (idx >= 0) ? MULTI_RATE_CONFIGS[idx].ratio : 0;
 }
 
+#ifdef HAVE_CUDA_BACKEND
 class GPUUpsampler : public IAudioUpsampler {
    public:
     GPUUpsampler();
@@ -773,6 +783,8 @@ class GPUUpsampler : public IAudioUpsampler {
     // processStreamBlock never grows capacity.
 };
 
+#endif  // HAVE_CUDA_BACKEND
+
 // HRTF 4ch FIR (LL/LR/RL/RR) executed on the convolution engine.
 //
 // 入力: アップサンプル済みステレオ (705.6k / 768k)
@@ -794,7 +806,7 @@ class IFourChannelFIR {
 
     virtual bool processStreamBlock(const float* inputL, const float* inputR, size_t inputFrames,
                                     StreamFloatVector& outputL, StreamFloatVector& outputR,
-                                    cudaStream_t stream, StreamFloatVector& streamInputBufferL,
+                                    DeviceStream stream, StreamFloatVector& streamInputBufferL,
                                     StreamFloatVector& streamInputBufferR,
                                     size_t& streamInputAccumulatedL,
                                     size_t& streamInputAccumulatedR) = 0;
@@ -808,6 +820,8 @@ class IFourChannelFIR {
     virtual void setEnabled(bool enabled) = 0;
     virtual bool isEnabled() const = 0;
 };
+
+#ifdef HAVE_CUDA_BACKEND
 
 class FourChannelFIR : public IFourChannelFIR {
    public:
@@ -828,7 +842,7 @@ class FourChannelFIR : public IFourChannelFIR {
 
     bool processStreamBlock(const float* inputL, const float* inputR, size_t inputFrames,
                             StreamFloatVector& outputL, StreamFloatVector& outputR,
-                            cudaStream_t stream, StreamFloatVector& streamInputBufferL,
+                            DeviceStream stream, StreamFloatVector& streamInputBufferL,
                             StreamFloatVector& streamInputBufferR, size_t& streamInputAccumulatedL,
                             size_t& streamInputAccumulatedR) override;
 
@@ -933,6 +947,8 @@ void zeroPad(const float* input, float* output, size_t inputLength, int upsample
 // Measure GPU utilization (requires nvidia-ml)
 double getGPUUtilization();
 }  // namespace Utils
+
+#endif  // HAVE_CUDA_BACKEND
 
 }  // namespace ConvolutionEngine
 

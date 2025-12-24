@@ -8,6 +8,10 @@ if(NOT ENABLE_CUDA AND NOT ENABLE_VULKAN)
     message(FATAL_ERROR "At least one backend must be enabled: ENABLE_CUDA or ENABLE_VULKAN")
 endif()
 
+if(ENABLE_CUDA)
+    add_compile_definitions(HAVE_CUDA_BACKEND)
+endif()
+
 if(ENABLE_VULKAN)
     add_compile_definitions(HAVE_VULKAN_BACKEND)
 endif()
@@ -758,15 +762,17 @@ if(ENABLE_VULKAN)
     gtest_discover_tests(gpu_backend_vulkan_tests)
 endif()
 
-if(ENABLE_VULKAN AND ENABLE_CUDA)
+if(ENABLE_VULKAN)
     add_executable(vulkan_four_channel_tests
         tests/cpp/vulkan/test_vulkan_four_channel_fir.cpp
     )
     target_link_libraries(vulkan_four_channel_tests
         GTest::gtest_main
         vulkan_streaming
-        gpu_upsampler_core
     )
+    if(ENABLE_CUDA)
+        target_link_libraries(vulkan_four_channel_tests gpu_upsampler_core)
+    endif()
     target_include_directories(vulkan_four_channel_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )

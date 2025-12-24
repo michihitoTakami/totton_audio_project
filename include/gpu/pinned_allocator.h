@@ -1,18 +1,22 @@
 #ifndef GPU_PINNED_ALLOCATOR_H
 #define GPU_PINNED_ALLOCATOR_H
 
-#include <cuda_runtime_api.h>
-
 #include <atomic>
 #include <cstddef>
 #include <cstdio>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <unordered_set>
 #include <vector>
 
+#ifdef HAVE_CUDA_BACKEND
+#include <cuda_runtime_api.h>
+#endif
+
 namespace ConvolutionEngine {
 
+#ifdef HAVE_CUDA_BACKEND
 namespace PinnedAllocationRegistry {
 std::atomic<bool>& pinnedEnabled();
 void registerPinned(void* ptr);
@@ -67,9 +71,10 @@ class CudaPinnedAllocator {
             // Disable future attempts after first failure (likely unsupported environment)
             PinnedAllocationRegistry::pinnedEnabled().store(false, std::memory_order_release);
             if (!PinnedAllocationRegistry::hasLoggedFailure()) {
-                std::fprintf(stderr,
-                             "Warning: cudaHostAlloc failed (%s); falling back to pageable memory.\n",
-                             cudaGetErrorString(err));
+                std::fprintf(
+                    stderr,
+                    "Warning: cudaHostAlloc failed (%s); falling back to pageable memory.\n",
+                    cudaGetErrorString(err));
                 PinnedAllocationRegistry::setLoggedFailure();
             }
         }
@@ -147,7 +152,31 @@ inline void setLoggedFailure() {
 }
 }  // namespace PinnedAllocationRegistry
 
+#else  // HAVE_CUDA_BACKEND
+
+template <typename T>
+using CudaPinnedAllocator = std::allocator<T>;
+
+template <typename T>
+using CudaPinnedVector = std::vector<T, CudaPinnedAllocator<T>>;
+
+namespace PinnedAllocationRegistry {
+inline std::atomic<bool>& pinnedEnabled() {
+    static std::atomic<bool> enabled{false};
+    return enabled;
+}
+inline void registerPinned(void*) {}
+inline bool unregisterPinned(void*) {
+    return false;
+}
+inline bool hasLoggedFailure() {
+    return false;
+}
+inline void setLoggedFailure() {}
+}  // namespace PinnedAllocationRegistry
+
+#endif  // HAVE_CUDA_BACKEND
+
 }  // namespace ConvolutionEngine
 
 #endif  // GPU_PINNED_ALLOCATOR_H
-

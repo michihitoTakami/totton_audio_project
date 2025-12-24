@@ -56,7 +56,8 @@ class VulkanStreamingUpsampler : public ConvolutionEngine::IAudioUpsampler {
     bool applyEqMagnitude(const std::vector<double>& eqMagnitude) override;
 
     bool processStreamBlock(const float* inputData, size_t inputFrames,
-                            ConvolutionEngine::StreamFloatVector& outputData, cudaStream_t stream,
+                            ConvolutionEngine::StreamFloatVector& outputData,
+                            ConvolutionEngine::DeviceStream stream,
                             ConvolutionEngine::StreamFloatVector& streamInputBuffer,
                             size_t& streamInputAccumulated) override;
 
