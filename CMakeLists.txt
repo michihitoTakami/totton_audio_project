@@ -400,6 +400,7 @@ endif()
 if(ENABLE_VULKAN)
     add_library(vulkan_streaming STATIC
         src/vulkan/vulkan_streaming_upsampler.cpp
+        src/vulkan/vulkan_four_channel_fir.cpp
     )
     target_include_directories(vulkan_streaming PRIVATE
         ${vkfft_SOURCE_DIR}/vkFFT
@@ -415,6 +416,7 @@ if(ENABLE_VULKAN)
         glslang-default-resource-limits
         SPIRV
         logging
+        gpu_backend
     )
     if(ENABLE_CUDA)
         target_link_libraries(vulkan_streaming PUBLIC CUDA::cudart)
@@ -689,6 +691,9 @@ if(ENABLE_CUDA)
         dac_capability
         ${ALSA_LIBRARIES}
     )
+    if(ENABLE_VULKAN)
+        target_link_libraries(cpu_tests vulkan_streaming)
+    endif()
     target_include_directories(cpu_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src
@@ -751,6 +756,21 @@ if(ENABLE_VULKAN)
         ${CMAKE_SOURCE_DIR}/include
     )
     gtest_discover_tests(gpu_backend_vulkan_tests)
+endif()
+
+if(ENABLE_VULKAN AND ENABLE_CUDA)
+    add_executable(vulkan_four_channel_tests
+        tests/cpp/vulkan/test_vulkan_four_channel_fir.cpp
+    )
+    target_link_libraries(vulkan_four_channel_tests
+        GTest::gtest_main
+        vulkan_streaming
+        gpu_upsampler_core
+    )
+    target_include_directories(vulkan_four_channel_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    gtest_discover_tests(vulkan_four_channel_tests)
 endif()
 
 # ZeroMQ communication tests (CPU-only)

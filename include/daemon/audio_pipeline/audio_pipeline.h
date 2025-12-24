@@ -64,7 +64,7 @@ struct Dependencies {
     std::atomic<bool>* outputReady = nullptr;
     std::atomic<bool>* crossfeedEnabled = nullptr;
     std::atomic<bool>* crossfeedResetRequested = nullptr;
-    ConvolutionEngine::FourChannelFIR* crossfeedProcessor = nullptr;
+    ConvolutionEngine::IFourChannelFIR* crossfeedProcessor = nullptr;
     ConvolutionEngine::StreamFloatVector* cfStreamInputLeft = nullptr;
     ConvolutionEngine::StreamFloatVector* cfStreamInputRight = nullptr;
     size_t* cfStreamAccumulatedLeft = nullptr;
@@ -189,7 +189,6 @@ class AudioPipeline {
     std::chrono::steady_clock::time_point lastInputDropWarn_{std::chrono::steady_clock::now() -
                                                              std::chrono::seconds(6)};
 
-    std::mutex delimiterControlMutex_;
     std::mutex inputCvMutex_;
     std::condition_variable inputCv_;
     AudioRingBuffer inputInterleaved_;
@@ -225,6 +224,7 @@ class AudioPipeline {
     std::atomic<bool> delimiterBackendAvailable_{false};
     std::atomic<bool> delimiterBackendValid_{false};
     std::atomic<int> delimiterTargetMode_{static_cast<int>(delimiter::ProcessingMode::Active)};
+    std::mutex delimiterControlMutex_;
     mutable std::mutex delimiterDetailMutex_;
     std::string delimiterDetail_;
 };

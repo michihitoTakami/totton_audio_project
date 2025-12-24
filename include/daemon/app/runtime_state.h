@@ -99,7 +99,7 @@ struct StreamingState {
 };
 
 struct CrossfeedState {
-    ConvolutionEngine::FourChannelFIR* processor = nullptr;
+    ConvolutionEngine::IFourChannelFIR* processor = nullptr;
     std::atomic<bool> enabled{false};
     // RT thread applies resets to avoid control-plane mutex contention (Issue #901)
     std::atomic<bool> resetRequested{false};

@@ -779,7 +779,37 @@ class GPUUpsampler : public IAudioUpsampler {
 // 出力: L = L*LL + R*RL, R = L*LR + R*RR
 // 特徴: 最小限のストリーミング経路（イベント非依存のブロッキング実行）を提供し、RTパスでの
 //       cudaHostRegister 再実行を避けるため CudaPinnedVector を前提とする。
-class FourChannelFIR {
+class IFourChannelFIR {
+   public:
+    virtual ~IFourChannelFIR() = default;
+
+    virtual bool initialize(const std::string& hrtfDir, int blockSize = 8192,
+                            HeadSize initialSize = HeadSize::M,
+                            RateFamily initialFamily = RateFamily::RATE_44K) = 0;
+    virtual bool initializeStreaming() = 0;
+    virtual void resetStreaming() = 0;
+
+    virtual bool switchHeadSize(HeadSize targetSize) = 0;
+    virtual bool switchRateFamily(RateFamily targetFamily) = 0;
+
+    virtual bool processStreamBlock(const float* inputL, const float* inputR, size_t inputFrames,
+                                    StreamFloatVector& outputL, StreamFloatVector& outputR,
+                                    cudaStream_t stream, StreamFloatVector& streamInputBufferL,
+                                    StreamFloatVector& streamInputBufferR,
+                                    size_t& streamInputAccumulatedL,
+                                    size_t& streamInputAccumulatedR) = 0;
+
+    virtual size_t getStreamValidInputPerBlock() const = 0;
+    virtual size_t getValidOutputPerBlock() const = 0;
+    virtual int getFilterTaps() const = 0;
+    virtual HeadSize getCurrentHeadSize() const = 0;
+    virtual RateFamily getCurrentRateFamily() const = 0;
+    virtual bool isInitialized() const = 0;
+    virtual void setEnabled(bool enabled) = 0;
+    virtual bool isEnabled() const = 0;
+};
+
+class FourChannelFIR : public IFourChannelFIR {
    public:
     FourChannelFIR();
     ~FourChannelFIR();
@@ -789,41 +819,41 @@ class FourChannelFIR {
 
     bool initialize(const std::string& hrtfDir, int blockSize = 8192,
                     HeadSize initialSize = HeadSize::M,
-                    RateFamily initialFamily = RateFamily::RATE_44K);
-    bool initializeStreaming();
-    void resetStreaming();
+                    RateFamily initialFamily = RateFamily::RATE_44K) override;
+    bool initializeStreaming() override;
+    void resetStreaming() override;
 
-    bool switchHeadSize(HeadSize targetSize);
-    bool switchRateFamily(RateFamily targetFamily);
+    bool switchHeadSize(HeadSize targetSize) override;
+    bool switchRateFamily(RateFamily targetFamily) override;
 
     bool processStreamBlock(const float* inputL, const float* inputR, size_t inputFrames,
                             StreamFloatVector& outputL, StreamFloatVector& outputR,
                             cudaStream_t stream, StreamFloatVector& streamInputBufferL,
                             StreamFloatVector& streamInputBufferR, size_t& streamInputAccumulatedL,
-                            size_t& streamInputAccumulatedR);
+                            size_t& streamInputAccumulatedR) override;
 
-    size_t getStreamValidInputPerBlock() const {
+    size_t getStreamValidInputPerBlock() const override {
         return streamValidInputPerBlock_;
     }
-    size_t getValidOutputPerBlock() const {
+    size_t getValidOutputPerBlock() const override {
         return static_cast<size_t>(validOutputPerBlock_);
     }
-    int getFilterTaps() const {
+    int getFilterTaps() const override {
         return filterTaps_;
     }
-    HeadSize getCurrentHeadSize() const {
+    HeadSize getCurrentHeadSize() const override {
         return currentHeadSize_;
     }
-    RateFamily getCurrentRateFamily() const {
+    RateFamily getCurrentRateFamily() const override {
         return currentRateFamily_;
     }
-    bool isInitialized() const {
+    bool isInitialized() const override {
         return initialized_;
     }
-    void setEnabled(bool enabled) {
+    void setEnabled(bool enabled) override {
         enabled_ = enabled;
     }
-    bool isEnabled() const {
+    bool isEnabled() const override {
         return enabled_;
     }
 

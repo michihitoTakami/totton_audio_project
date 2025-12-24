@@ -1,6 +1,9 @@
 #include "daemon/audio/crossfeed_manager.h"
 
 #include "core/daemon_constants.h"
+#if defined(HAVE_VULKAN_BACKEND)
+#include "vulkan/vulkan_four_channel_fir.h"
+#endif
 
 #include <algorithm>
 #include <filesystem>
@@ -77,7 +80,20 @@ CrossfeedInitResult initializeCrossfeed(daemon_app::RuntimeState& state,
     }
 
     std::cout << "Initializing HRTF processor for crossfeed..." << '\n';
+#if defined(HAVE_VULKAN_BACKEND)
+    const bool useVulkanBackend = (state.config.gpuBackend == GpuBackend::Vulkan);
+    if (useVulkanBackend) {
+        state.crossfeed.processor = new vulkan_backend::VulkanFourChannelFIR();
+    } else {
+        state.crossfeed.processor = new ConvolutionEngine::FourChannelFIR();
+    }
+#else
+    if (state.config.gpuBackend == GpuBackend::Vulkan) {
+        std::cout << "  Warning: Vulkan backend requested but binary lacks Vulkan support. "
+                  << "Falling back to CUDA implementation." << '\n';
+    }
     state.crossfeed.processor = new ConvolutionEngine::FourChannelFIR();
+#endif
 
     ConvolutionEngine::RateFamily rateFamily = resolveRateFamily(state.rates.inputSampleRate);
     ConvolutionEngine::HeadSize initialHeadSize =

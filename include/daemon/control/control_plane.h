@@ -17,7 +17,7 @@
 namespace ConvolutionEngine {
 class IAudioUpsampler;
 class GPUUpsampler;
-class FourChannelFIR;
+class IFourChannelFIR;
 }  // namespace ConvolutionEngine
 
 namespace audio_pipeline {
@@ -27,7 +27,7 @@ struct DelimiterStatusSnapshot;
 namespace daemon_control {
 
 struct CrossfeedControls {
-    ConvolutionEngine::FourChannelFIR** processor = nullptr;
+    ConvolutionEngine::IFourChannelFIR** processor = nullptr;
     std::atomic<bool>* enabledFlag = nullptr;
     std::mutex* mutex = nullptr;
     std::function<void()> resetStreamingState;
