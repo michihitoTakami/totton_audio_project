@@ -28,9 +28,9 @@ ENV TZ=Asia/Tokyo
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# CUDA runtime paths
+# CUDA runtime paths (include ONNX Runtime for De-limiter)
 ENV PATH=/usr/local/cuda/bin:/opt/magicbox/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/magicbox/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/magicbox/lib:/opt/onnxruntime/lib:${LD_LIBRARY_PATH}
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \

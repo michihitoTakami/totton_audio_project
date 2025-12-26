@@ -116,10 +116,9 @@ class OrtInferenceBackend final : public InferenceBackend {
             memoryInfo_, inputBuffer_.data(), inputBuffer_.size(), shape.data(), shape.size());
 
         const char* inputNames[] = {inputName_.c_str()};
-        const Ort::Value* inputValues[] = {&inputTensor};
 
         try {
-            auto outputs = session_->Run(Ort::RunOptions{nullptr}, inputNames, inputValues, 1,
+            auto outputs = session_->Run(Ort::RunOptions{nullptr}, inputNames, &inputTensor, 1,
                                          outputNamePtrs_.data(), outputNamePtrs_.size());
             if (outputs.empty()) {
                 return {InferenceStatus::Error, "onnxruntime returned no outputs"};
@@ -236,7 +235,7 @@ class OrtInferenceBackend final : public InferenceBackend {
             return true;
         }
 
-        status = Ort::GetApi().SessionOptionsAppendExecutionProvider_Tensorrt(options, 0);
+        status = Ort::GetApi().SessionOptionsAppendExecutionProvider_TensorRT(options, 0);
         if (status) {
             initError_ = statusMessage(status, "TensorRT provider init failed: ");
             return false;
@@ -381,15 +380,15 @@ class OrtInferenceBackend final : public InferenceBackend {
 std::unique_ptr<InferenceBackend> createDelimiterInferenceBackend(
     const AppConfig::DelimiterConfig& config) {
     std::string backend = toLower(config.backend);
-    if (!config.enabled) {
-        return std::make_unique<BypassInferenceBackend>(config.expectedSampleRate);
-    }
+    // Note: config.enabled check removed - caller controls when to create backend.
+    // Startup checks config->delimiter.enabled before calling startDelimiterBackend().
+    // API-triggered enable always wants to create the configured backend.
 
     if (backend == "bypass") {
         return std::make_unique<BypassInferenceBackend>(config.expectedSampleRate);
     }
 
-    if (backend == "ort") {
+    if (backend == "ort" || backend == "onnx" || backend == "onnxruntime") {
         return std::make_unique<OrtInferenceBackend>(config);
     }
 
