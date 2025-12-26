@@ -8,6 +8,8 @@ from ..models import DelimiterActionResponse, DelimiterStatus
 from ..services.config import save_delimiter_enabled
 from ..services.daemon_client import get_daemon_client
 
+DELIMITER_DAEMON_TIMEOUT_MS = 30000
+
 router = APIRouter(prefix="/delimiter", tags=["delimiter"])
 
 
@@ -70,7 +72,7 @@ def _fetch_status(client) -> DelimiterStatus:
 @router.get("/status", response_model=DelimiterStatus)
 async def get_delimiter_status() -> DelimiterStatus:
     """Get current De-limiter status."""
-    with get_daemon_client() as client:
+    with get_daemon_client(timeout_ms=DELIMITER_DAEMON_TIMEOUT_MS) as client:
         result = client.delimiter_status()
         if not result.success:
             raise result.error
@@ -80,7 +82,7 @@ async def get_delimiter_status() -> DelimiterStatus:
 @router.post("/enable", response_model=DelimiterActionResponse)
 async def enable_delimiter() -> DelimiterActionResponse:
     """Enable De-limiter processing."""
-    with get_daemon_client() as client:
+    with get_daemon_client(timeout_ms=DELIMITER_DAEMON_TIMEOUT_MS) as client:
         result = client.delimiter_enable()
         if not result.success:
             raise result.error
@@ -99,7 +101,7 @@ async def enable_delimiter() -> DelimiterActionResponse:
 @router.post("/disable", response_model=DelimiterActionResponse)
 async def disable_delimiter() -> DelimiterActionResponse:
     """Disable De-limiter processing."""
-    with get_daemon_client() as client:
+    with get_daemon_client(timeout_ms=DELIMITER_DAEMON_TIMEOUT_MS) as client:
         result = client.delimiter_disable()
         if not result.success:
             raise result.error

@@ -70,7 +70,9 @@ def test_delimiter_status_success(monkeypatch):
         "detail": "ok",
     }
     fake_client = _FakeDelimiterClient(status=sample_status)
-    monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "get_daemon_client", lambda *args, **kwargs: fake_client
+    )
 
     app = create_app()
     client = TestClient(app)
@@ -87,7 +89,9 @@ def test_delimiter_status_success(monkeypatch):
 
 def test_delimiter_enable(monkeypatch):
     fake_client = _FakeDelimiterClient()
-    monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "get_daemon_client", lambda *args, **kwargs: fake_client
+    )
     monkeypatch.setattr(
         delimiter_router, "save_delimiter_enabled", lambda enabled: True
     )
@@ -104,7 +108,9 @@ def test_delimiter_enable(monkeypatch):
 
 def test_delimiter_disable(monkeypatch):
     fake_client = _FakeDelimiterClient(status={"enabled": True})
-    monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "get_daemon_client", lambda *args, **kwargs: fake_client
+    )
     monkeypatch.setattr(
         delimiter_router, "save_delimiter_enabled", lambda enabled: True
     )
@@ -126,7 +132,9 @@ def test_delimiter_daemon_down(monkeypatch):
         inner_error={"zmq_errno": 61},
     )
     fake_client = _FakeDelimiterClient(error=error)
-    monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "get_daemon_client", lambda *args, **kwargs: fake_client
+    )
 
     app = create_app()
     client = TestClient(app)
@@ -139,7 +147,9 @@ def test_delimiter_daemon_down(monkeypatch):
 
 def test_delimiter_persist_failure(monkeypatch):
     fake_client = _FakeDelimiterClient()
-    monkeypatch.setattr(delimiter_router, "get_daemon_client", lambda: fake_client)
+    monkeypatch.setattr(
+        delimiter_router, "get_daemon_client", lambda *args, **kwargs: fake_client
+    )
     monkeypatch.setattr(
         delimiter_router, "save_delimiter_enabled", lambda enabled: False
     )
@@ -151,3 +161,24 @@ def test_delimiter_persist_failure(monkeypatch):
     assert resp.status_code == 500
     body = resp.json()
     assert "persist" in body["detail"].lower()
+
+
+def test_delimiter_enable_uses_extended_timeout(monkeypatch):
+    captured: dict[str, int] = {}
+    fake_client = _FakeDelimiterClient()
+
+    def _factory(timeout_ms: int | None = None):
+        captured["timeout_ms"] = timeout_ms
+        return fake_client
+
+    monkeypatch.setattr(delimiter_router, "get_daemon_client", _factory)
+    monkeypatch.setattr(
+        delimiter_router, "save_delimiter_enabled", lambda enabled: True
+    )
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post("/delimiter/enable")
+    assert resp.status_code == 200
+    assert captured.get("timeout_ms") == delimiter_router.DELIMITER_DAEMON_TIMEOUT_MS
