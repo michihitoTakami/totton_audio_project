@@ -1,0 +1,45 @@
+name: Vulkan Compile
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libasound2-dev \
+            libsndfile1-dev \
+            libzmq3-dev \
+            libsystemd-dev \
+            libvulkan-dev \
+            vulkan-tools
+
+      - name: Configure (Vulkan only)
+        run: |
+          cmake -G Ninja -S . -B build-vulkan \
+            -DENABLE_VULKAN=ON \
+            -DENABLE_CUDA=OFF \
+            -DDELIMITER_ENABLE_ORT=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-vulkan --parallel
+
+      - name: Test
+        run: ctest --test-dir build-vulkan --output-on-failure --parallel 2
