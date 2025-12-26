@@ -94,11 +94,58 @@ endif()
 # Optional: ONNX Runtime backend for De-limiter
 option(DELIMITER_ENABLE_ORT "Enable ONNX Runtime backend for De-limiter" OFF)
 if(DELIMITER_ENABLE_ORT)
+    # Try find_package first (for system-installed or vcpkg)
     find_package(onnxruntime CONFIG QUIET)
     if(NOT onnxruntime_FOUND)
-        message(FATAL_ERROR
-            "DELIMITER_ENABLE_ORT=ON but onnxruntime was not found. "
-            "Install onnxruntime C++ package or set ONNXRUNTIME_ROOT.")
+        # Fallback: manual detection via ONNXRUNTIME_ROOT
+        if(DEFINED ONNXRUNTIME_ROOT)
+            # ONNXRUNTIME_ROOT can point to root or lib directory
+            if(EXISTS "${ONNXRUNTIME_ROOT}/include/onnxruntime_c_api.h")
+                set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include")
+                set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
+            elseif(EXISTS "${ONNXRUNTIME_ROOT}/../include/onnxruntime_c_api.h")
+                # User specified lib directory directly
+                get_filename_component(ONNXRUNTIME_PARENT "${ONNXRUNTIME_ROOT}" DIRECTORY)
+                set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_PARENT}/include")
+                set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}")
+            endif()
+        endif()
+
+        # Search for library file
+        find_library(ONNXRUNTIME_LIBRARY
+            NAMES onnxruntime
+            HINTS ${ONNXRUNTIME_LIB_DIR} ${ONNXRUNTIME_ROOT}
+            PATH_SUFFIXES lib lib64
+        )
+
+        if(ONNXRUNTIME_LIBRARY AND ONNXRUNTIME_INCLUDE_DIR)
+            message(STATUS "ONNX Runtime found (manual): ${ONNXRUNTIME_LIBRARY}")
+            message(STATUS "ONNX Runtime include: ${ONNXRUNTIME_INCLUDE_DIR}")
+            # Create imported target for compatibility
+            add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+            # Some ONNX Runtime builds have headers in subdirectories
+            # Add both root and core/session for onnxruntime_cxx_api.h
+            set(ONNXRUNTIME_INCLUDE_DIRS "${ONNXRUNTIME_INCLUDE_DIR}")
+            if(EXISTS "${ONNXRUNTIME_INCLUDE_DIR}/core/session/onnxruntime_cxx_api.h")
+                list(APPEND ONNXRUNTIME_INCLUDE_DIRS "${ONNXRUNTIME_INCLUDE_DIR}/core/session")
+                message(STATUS "ONNX Runtime C++ API: ${ONNXRUNTIME_INCLUDE_DIR}/core/session")
+            endif()
+            set_target_properties(onnxruntime::onnxruntime PROPERTIES
+                IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIRS}"
+            )
+            set(onnxruntime_FOUND TRUE)
+        else()
+            message(FATAL_ERROR
+                "DELIMITER_ENABLE_ORT=ON but onnxruntime was not found.\n"
+                "Install onnxruntime C++ package or set ONNXRUNTIME_ROOT to the install prefix.\n"
+                "Expected structure:\n"
+                "  ONNXRUNTIME_ROOT/include/onnxruntime_c_api.h\n"
+                "  ONNXRUNTIME_ROOT/lib/libonnxruntime.so\n"
+                "Current ONNXRUNTIME_ROOT: ${ONNXRUNTIME_ROOT}")
+        endif()
+    else()
+        message(STATUS "ONNX Runtime found via find_package")
     endif()
 endif()
 

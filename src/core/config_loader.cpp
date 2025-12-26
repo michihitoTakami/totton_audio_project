@@ -78,8 +78,12 @@ static std::string validateHeadSize(const std::string& str) {
 
 static std::string validateDelimiterBackend(const std::string& str) {
     std::string lower = toLower(str);
-    if (lower == "bypass" || lower == "ort") {
+    if (lower == "bypass") {
         return lower;
+    }
+    // Accept various ONNX Runtime aliases, normalize to "ort"
+    if (lower == "ort" || lower == "onnx" || lower == "onnxruntime") {
+        return "ort";
     }
     return "bypass";
 }

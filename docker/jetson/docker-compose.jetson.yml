@@ -56,6 +56,8 @@ services:
       - magicbox-config:/opt/magicbox/config
       # Persist OPRA sync cache outside the image
       - magicbox-opra-cache:/data/opra
+      # ONNX Runtime for De-limiter inference
+      - /opt/onnxruntime:/opt/onnxruntime:ro
 
     # Environment (NVIDIA)
     environment:
