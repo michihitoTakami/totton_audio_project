@@ -36,14 +36,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Prepare UI/UX export (templates/static)
+      - name: Prepare Web export (FastAPI + templates/static)
         if: env.TOKEN != ''
         run: |
           set -euo pipefail
           rm -rf "${EXPORT_DIR}"
-          mkdir -p "${EXPORT_DIR}/web/templates" "${EXPORT_DIR}/web/static"
-          rsync -a --delete "web/templates/" "${EXPORT_DIR}/web/templates/"
-          rsync -a --delete "web/static/" "${EXPORT_DIR}/web/static/"
+          mkdir -p "${EXPORT_DIR}/web"
+          rsync -a --delete "web/" "${EXPORT_DIR}/web/"
 
           # Delimiter page is not published yet (Issue #1057)
           rm -f "${EXPORT_DIR}/web/templates/pages/delimiter.html"
@@ -79,9 +78,8 @@ jobs:
           cd "${CLONE_DIR}"
           git switch -c "sync/uiux-${GITHUB_REF_NAME:-manual}-${GITHUB_SHA:0:7}"
 
-          mkdir -p web/templates web/static
-          rsync -a --delete --exclude ".git" "${EXPORT_DIR}/web/templates/" "web/templates/"
-          rsync -a --delete --exclude ".git" "${EXPORT_DIR}/web/static/" "web/static/"
+          mkdir -p web
+          rsync -a --delete --exclude ".git" "${EXPORT_DIR}/web/" "web/"
 
           git add -A
           if git diff --cached --quiet; then

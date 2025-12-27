@@ -23,14 +23,16 @@
     >
         <span style="margin-right: 8px;">🎚️</span> {{ t.get('nav.eq') }}
     </a>
-    <a
-        href="/delimiter{{ lang_query }}"
-        class="nav-item {% if current_page == 'delimiter' %}active{% endif %}"
-        aria-current="{% if current_page == 'delimiter' %}page{% else %}false{% endif %}"
-        @click="closeMenu()"
-    >
-        <span style="margin-right: 8px;">🧊</span> {{ t.get('nav.delimiter') }}
-    </a>
+    {% if enable_delimiter_ui | default(true) %}
+        <a
+            href="/delimiter{{ lang_query }}"
+            class="nav-item {% if current_page == 'delimiter' %}active{% endif %}"
+            aria-current="{% if current_page == 'delimiter' %}page{% else %}false{% endif %}"
+            @click="closeMenu()"
+        >
+            <span style="margin-right: 8px;">🧊</span> {{ t.get('nav.delimiter') }}
+        </a>
+    {% endif %}
     <a
         href="/system{{ lang_query }}"
         class="nav-item {% if current_page == 'system' %}active{% endif %}"
