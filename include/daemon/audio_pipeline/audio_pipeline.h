@@ -157,8 +157,7 @@ class AudioPipeline {
     void trimInternal(size_t minFramesToRemove);
     float computeStereoPeak(const float* left, const float* right, size_t frames) const;
     float applyOutputLimiter(float* interleaved, size_t frames);
-    bool startDelimiterBackend();
-    bool stopDelimiterBackend(const char* reason, bool clearOutputBuffer);
+    bool startDelimiterBackend(bool forceEnable = false);
 
     template <typename Container>
     size_t enqueueOutputFramesLocked(const Container& left, const Container& right);
@@ -222,7 +221,6 @@ class AudioPipeline {
     std::atomic<bool> delimiterBackendAvailable_{false};
     std::atomic<bool> delimiterBackendValid_{false};
     std::atomic<int> delimiterTargetMode_{static_cast<int>(delimiter::ProcessingMode::Active)};
-    std::mutex delimiterControlMutex_;
     mutable std::mutex delimiterDetailMutex_;
     std::string delimiterDetail_;
 };

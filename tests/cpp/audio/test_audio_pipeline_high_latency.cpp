@@ -376,6 +376,44 @@ TEST(AudioPipelineHighLatency, RunsInferenceWithSampleRateResample) {
     running.store(false, std::memory_order_release);
 }
 
+TEST(AudioPipelineHighLatency, EnableOverridesDisabledConfigFlag) {
+    AppConfig config;
+    config.upsampleRatio = 1;
+    config.delimiter.enabled = false;  // persisted config is OFF
+    config.delimiter.backend = "ort";
+    config.delimiter.expectedSampleRate = 48000;
+    config.delimiter.chunkSec = 0.010f;
+    config.delimiter.overlapSec = 0.002f;
+
+    std::atomic<bool> running{true};
+    std::atomic<bool> delimiterEnabled{false};
+
+    bool backendCreated = false;
+    bool enabledFlagSeen = false;
+
+    audio_pipeline::Dependencies deps{};
+    deps.config = &config;
+    deps.running = &running;
+    deps.delimiterEnabled = &delimiterEnabled;
+    deps.currentInputRate = []() { return 48000; };
+    deps.maxOutputBufferFrames = []() { return static_cast<std::size_t>(1); };
+    deps.delimiterBackendFactory = [&](const AppConfig::DelimiterConfig& cfg) {
+        backendCreated = true;
+        enabledFlagSeen = cfg.enabled;
+        return std::make_unique<ConstantGainBackend>(cfg.expectedSampleRate, 1.0f);
+    };
+
+    audio_pipeline::AudioPipeline pipeline(std::move(deps));
+
+    EXPECT_FALSE(config.delimiter.enabled);
+    EXPECT_TRUE(pipeline.requestDelimiterEnable());
+    EXPECT_TRUE(backendCreated);
+    EXPECT_TRUE(enabledFlagSeen);
+    EXPECT_TRUE(delimiterEnabled.load(std::memory_order_relaxed));
+
+    running.store(false, std::memory_order_release);
+}
+
 TEST(AudioPipelineHighLatency, FallbackTriggersBypassLockOnRepeatedFailures) {
     AppConfig config;
     config.upsampleRatio = 1;
@@ -476,20 +514,17 @@ TEST(AudioPipelineHighLatency, FallbackTriggersBypassLockOnRepeatedFailures) {
 
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     while (std::chrono::steady_clock::now() < deadline) {
-        auto mode =
-            static_cast<delimiter::ProcessingMode>(delimiterMode.load(std::memory_order_relaxed));
-        bool locked = delimiterLocked.load(std::memory_order_relaxed);
-        if (locked && mode == delimiter::ProcessingMode::Bypass) {
+        if (delimiterLocked.load(std::memory_order_relaxed)) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     EXPECT_TRUE(delimiterLocked.load());
-    EXPECT_EQ(static_cast<delimiter::ProcessingMode>(delimiterMode.load()),
-              delimiter::ProcessingMode::Bypass);
     EXPECT_EQ(static_cast<delimiter::FallbackReason>(delimiterReason.load()),
               delimiter::FallbackReason::InferenceFailure);
+    EXPECT_EQ(static_cast<delimiter::ProcessingMode>(delimiterMode.load()),
+              delimiter::ProcessingMode::Bypass);
 
     running.store(false, std::memory_order_release);
 }
