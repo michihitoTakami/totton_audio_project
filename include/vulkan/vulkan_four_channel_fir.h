@@ -10,6 +10,7 @@ class VulkanFourChannelFIR : public ConvolutionEngine::GpuBackend::BackendFourCh
     VulkanFourChannelFIR()
         : BackendFourChannelFIR(ConvolutionEngine::GpuBackend::createVulkanBackend,
                                 "VulkanFourChannelFIR") {}
+    ~VulkanFourChannelFIR() override;
 };
 
 }  // namespace vulkan_backend
