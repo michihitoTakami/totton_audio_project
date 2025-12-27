@@ -394,6 +394,7 @@ class OrtInferenceBackend final : public InferenceBackend {
 
 std::unique_ptr<InferenceBackend> createDelimiterInferenceBackend(
     const AppConfig::DelimiterConfig& config) {
+    // Disabled == bypass regardless of configured backend.
     if (!config.enabled) {
         return std::make_unique<BypassInferenceBackend>(config.expectedSampleRate);
     }

@@ -113,6 +113,57 @@ repos:
         pass_filenames: false
         exclude: ^third_party/
         always_run: true
+      - id: vulkan-build-and-tests
+        name: Vulkan build & ctest (ENABLE_VULKAN=ON, CUDA=OFF)
+        entry: |
+          bash -c '
+            set -euo pipefail
+            DEPS_SRC="${DEPS_SRC:-$(pwd)/build/_deps/nlohmann_json-src}"
+            if [ ! -d "${DEPS_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${DEPS_SRC}")"
+              git clone --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git "${DEPS_SRC}"
+            fi
+            GTEST_SRC="${GTEST_SRC:-$(pwd)/build/_deps/googletest-src}"
+            if [ ! -d "${GTEST_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${GTEST_SRC}")"
+              git clone --depth 1 --branch v1.14.0 https://github.com/google/googletest.git "${GTEST_SRC}"
+            fi
+            CPPZMQ_SRC="${CPPZMQ_SRC:-$(pwd)/build/_deps/cppzmq-src}"
+            if [ ! -d "${CPPZMQ_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${CPPZMQ_SRC}")"
+              git clone --depth 1 --branch v4.10.0 https://github.com/zeromq/cppzmq.git "${CPPZMQ_SRC}"
+            fi
+            SPDLOG_SRC="${SPDLOG_SRC:-$(pwd)/build/_deps/spdlog-src}"
+            if [ ! -d "${SPDLOG_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${SPDLOG_SRC}")"
+              git clone --depth 1 --branch v1.14.1 https://github.com/gabime/spdlog.git "${SPDLOG_SRC}"
+            fi
+            GLSLANG_SRC="${GLSLANG_SRC:-$(pwd)/build/_deps/glslang-src}"
+            if [ ! -d "${GLSLANG_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${GLSLANG_SRC}")"
+              git clone --depth 1 --branch 12.3.1 https://github.com/KhronosGroup/glslang.git "${GLSLANG_SRC}"
+            fi
+            VKFFT_SRC="${VKFFT_SRC:-$(pwd)/build/_deps/vkfft-src}"
+            if [ ! -d "${VKFFT_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${VKFFT_SRC}")"
+              git clone --depth 1 --branch v1.3.4 https://github.com/DTolm/VkFFT.git "${VKFFT_SRC}"
+            fi
+            "${CMAKE_BIN:-/usr/bin/cmake}" -S . -B build-vulkan \
+              -DENABLE_VULKAN=ON -DENABLE_CUDA=OFF -DDELIMITER_ENABLE_ORT=OFF \
+              -DFETCHCONTENT_SOURCE_DIR_VKFFT="${VKFFT_SRC}" \
+              -DFETCHCONTENT_SOURCE_DIR_GLSLANG="${GLSLANG_SRC}" \
+              -DFETCHCONTENT_SOURCE_DIR_SPDLOG="${SPDLOG_SRC}" \
+              -DFETCHCONTENT_SOURCE_DIR_CPPZMQ="${CPPZMQ_SRC}" \
+              -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="${GTEST_SRC}" \
+              -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON="${DEPS_SRC}" \
+              -DCMAKE_BUILD_TYPE=Release
+            "${CMAKE_BIN:-/usr/bin/cmake}" --build build-vulkan --parallel
+            /usr/bin/ctest --test-dir build-vulkan --output-on-failure --parallel 2
+          '
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        exclude: ^third_party/
       - id: clang-tidy-jetson-pcm
         name: clang-tidy (jetson_pcm_receiver)
         entry: clang-tidy

@@ -410,7 +410,10 @@ add_library(gpu_backend STATIC)
 target_include_directories(gpu_backend PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
-target_link_libraries(gpu_backend PUBLIC logging)
+target_link_libraries(gpu_backend PUBLIC logging nlohmann_json::nlohmann_json)
+target_sources(gpu_backend PRIVATE
+    src/gpu/backend/four_channel_fir_backend.cpp
+)
 if(ENABLE_CUDA)
     target_sources(gpu_backend PRIVATE
         src/gpu/backend/cuda_backend.cu
