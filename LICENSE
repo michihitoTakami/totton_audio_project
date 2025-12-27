@@ -21,7 +21,10 @@ This license does not restrict any rights granted by those third-party licenses.
 - "Software": programs, configurations, scripts, and documents included in this repository (or distributed artifacts) for which the Author holds copyright, excluding third-party components.
 - "Distributed Artifacts": binary distributions, Docker images, installers, archives, etc. that include the Software.
 - "Personal Use": use by an individual for their own purposes (including family/household use).
-- "Commercial Use": any use intended for commercial advantage or monetary compensation, whether direct or indirect, including (but not limited to) selling, subscription fees, advertising revenue, providing services, paid support, contracting/consulting deliverables, internal business use, SaaS/hosted services, or embedding into a product or service.
+- "Organization": a legal entity (including a company, corporation, or other organization) and its employees/contractors acting on its behalf.
+- "Evaluation Use": an Organization’s internal use solely to evaluate the Software or Distributed Artifacts (including internal testing and proof-of-concept) under Section 2-A.
+- "Production Use": use for operating a production system, providing services to customers/end-users, or running the Software as part of a business process beyond evaluation.
+- "Commercial Use": any use intended for commercial advantage or monetary compensation, whether direct or indirect, including (but not limited to) selling, subscription fees, advertising revenue, providing services, paid support, contracting/consulting deliverables, internal business use, SaaS/hosted services, or embedding into a product or service; excluding permitted Evaluation Use that complies with Section 2-A.
 
 ## 2. Grant (Non-Exclusive)
 Subject to compliance with this license, the Author grants you a non-exclusive, non-transferable, non-sublicensable permission to:
@@ -30,11 +33,24 @@ Subject to compliance with this license, the Author grants you a non-exclusive, 
 - modify configuration files and operational scripts for Personal Use;
 - redistribute the Distributed Artifacts free of charge for non-commercial purposes, provided you satisfy Section 5.
 
+## 2-A. Organization Evaluation Use (Limited, Time-Bound)
+In addition to Section 2, the Author permits an Organization to use the Software and/or Distributed Artifacts for Evaluation Use, subject to all of the following:
+- **Purpose**: internal evaluation and proof-of-concept only.
+- **Duration**: up to **30 days** from the first use by the Organization.
+- **Scope**: use is limited to the Organization’s internal personnel and internal environments.
+- **No Production Use**: you must not use it for Production Use.
+- **No External Offering**: you must not provide the Software or Distributed Artifacts to customers/end-users, or operate it as a hosted service.
+- **No Monetization**: you must not receive any fee or other compensation in connection with the Evaluation Use.
+- **No Redistribution**: you must not redistribute the Software or Distributed Artifacts outside the Organization.
+
+If you need a longer evaluation period or broader rights, contact the Author to negotiate a separate license (see Section 10).
+
 ## 3. Prohibitions
 You must not:
 - use the Software or Distributed Artifacts for Commercial Use;
 - sell, rent, license for a fee, or otherwise commercialize any part of the Software or Distributed Artifacts;
 - provide the Software or Distributed Artifacts as part of a commercial service or hosted offering;
+- use the Software or Distributed Artifacts for Production Use (including after the Evaluation Use period ends);
 - reverse engineer, decompile, or disassemble the Software, except to the extent permitted by mandatory law;
 - remove or alter copyright notices, this license text, or NOTICE files.
 

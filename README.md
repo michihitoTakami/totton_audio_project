@@ -489,7 +489,13 @@ gpu_os/
 
 ## ライセンス
 
-TBD
+本プロジェクト（作者が著作権を保有する部分）の配布物（バイナリ/Docker等）には **MB-NCL v1.0（非商用 + 組織評価/PoC許可）** が適用されます。
+
+- 詳細（英語）: `LICENSE`
+- 詳細（日本語）: `LICENSE.ja.md`
+- 第三者ライセンス一覧: `THIRD_PARTY_LICENSES.md` / `NOTICE.md`
+
+重要: OPRA（CC BY-SA 4.0）や HUTUBS（CC BY 4.0）などの第三者データ/ソフトウェアは各ライセンスが優先します。
 
 ### 使用ライブラリ
 
