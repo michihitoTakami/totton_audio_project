@@ -138,8 +138,14 @@ repos:
               mkdir -p "$(dirname "${SPDLOG_SRC}")"
               git clone --depth 1 --branch v1.14.1 https://github.com/gabime/spdlog.git "${SPDLOG_SRC}"
             fi
+            GLSLANG_SRC="${GLSLANG_SRC:-$(pwd)/build/_deps/glslang-src}"
+            if [ ! -d "${GLSLANG_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${GLSLANG_SRC}")"
+              git clone --depth 1 --branch 12.3.1 https://github.com/KhronosGroup/glslang.git "${GLSLANG_SRC}"
+            fi
             "${CMAKE_BIN:-/usr/bin/cmake}" -S . -B build-vulkan \
               -DENABLE_VULKAN=ON -DENABLE_CUDA=OFF -DDELIMITER_ENABLE_ORT=OFF \
+              -DFETCHCONTENT_SOURCE_DIR_GLSLANG="${GLSLANG_SRC}" \
               -DFETCHCONTENT_SOURCE_DIR_SPDLOG="${SPDLOG_SRC}" \
               -DFETCHCONTENT_SOURCE_DIR_CPPZMQ="${CPPZMQ_SRC}" \
               -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="${GTEST_SRC}" \
