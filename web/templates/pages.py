@@ -12,6 +12,8 @@ from ..i18n import get_translations, normalize_lang
 
 # Initialize Jinja2 environment
 template_dir = Path(__file__).parent
+_delimiter_template_path = template_dir / "pages" / "delimiter.html"
+_delimiter_ui_available = _delimiter_template_path.exists()
 env = Environment(
     loader=FileSystemLoader(str(template_dir)),
     autoescape=select_autoescape(["html", "xml"]),
@@ -37,6 +39,7 @@ def render_dashboard(lang: str = "en", current_page: str = "dashboard") -> str:
         t=get_translations(normalized_lang),
         current_page=current_page,
         lang=normalized_lang,
+        enable_delimiter_ui=_delimiter_ui_available,
     )
 
 
@@ -57,6 +60,7 @@ def render_eq_settings(lang: str = "en", current_page: str = "eq") -> str:
         t=get_translations(normalized_lang),
         current_page=current_page,
         lang=normalized_lang,
+        enable_delimiter_ui=_delimiter_ui_available,
     )
 
 
@@ -77,7 +81,13 @@ def render_system(lang: str = "en", current_page: str = "system") -> str:
         t=get_translations(normalized_lang),
         current_page=current_page,
         lang=normalized_lang,
+        enable_delimiter_ui=_delimiter_ui_available,
     )
+
+
+def is_delimiter_ui_available() -> bool:
+    """delimiter UIテンプレが利用可能か（public exportで削除される場合がある）."""
+    return _delimiter_ui_available
 
 
 def render_delimiter(lang: str = "en", current_page: str = "delimiter") -> str:
@@ -91,12 +101,15 @@ def render_delimiter(lang: str = "en", current_page: str = "delimiter") -> str:
     Returns:
         Rendered HTML string
     """
+    if not _delimiter_ui_available:
+        raise FileNotFoundError("delimiter.html is not available")
     normalized_lang = normalize_lang(lang)
     template = env.get_template("pages/delimiter.html")
     return template.render(
         t=get_translations(normalized_lang),
         current_page=current_page,
         lang=normalized_lang,
+        enable_delimiter_ui=_delimiter_ui_available,
     )
 
 
@@ -117,4 +130,5 @@ def render_pi_settings(lang: str = "en", current_page: str = "pi") -> str:
         t=get_translations(normalized_lang),
         current_page=current_page,
         lang=normalized_lang,
+        enable_delimiter_ui=_delimiter_ui_available,
     )

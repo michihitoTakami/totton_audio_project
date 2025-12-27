@@ -33,6 +33,7 @@ from .templates.pages import (
     render_dashboard,
     render_eq_settings,
     render_delimiter,
+    is_delimiter_ui_available,
     render_pi_settings,
     render_system,
 )
@@ -254,13 +255,15 @@ async def system_page(request: Request, lang: str | None = None):
     )
 
 
-@app.get("/delimiter", response_class=HTMLResponse)
-async def delimiter_page(request: Request, lang: str | None = None):
-    """Serve the De-limiter page."""
-    resolved_lang = _resolve_lang(request, lang)
-    return _render_with_lang(
-        content=render_delimiter(lang=resolved_lang), lang=resolved_lang
-    )
+if is_delimiter_ui_available():
+
+    @app.get("/delimiter", response_class=HTMLResponse)
+    async def delimiter_page(request: Request, lang: str | None = None):
+        """Serve the De-limiter page."""
+        resolved_lang = _resolve_lang(request, lang)
+        return _render_with_lang(
+            content=render_delimiter(lang=resolved_lang), lang=resolved_lang
+        )
 
 
 @app.get("/pi", response_class=HTMLResponse)
