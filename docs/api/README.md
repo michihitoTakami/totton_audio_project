@@ -127,6 +127,15 @@ DAC Capability検出とサンプリングレートフィルタリング
 - **[openapi.json](./openapi.json)** - Jetson Web API (OpenAPI 3.1)
 - **[raspi_openapi.json](./raspi_openapi.json)** - Pi Control API (OpenAPI 3.1)
 
+### Releaseでの配布（CI添付）
+
+`v*` タグ（Release）では、CIがOpenAPIを生成し、**Release assets** として添付します（SHA256も同梱）。
+
+- `openapi.json` / `openapi.json.sha256`
+- `raspi_openapi.json` / `raspi_openapi.json.sha256`
+
+> 運用上は `docs/releases/artifact_contract.md` の通り、**Release assets の OpenAPI を正**として参照してください（リポジトリ内の `docs/api/*.json` は追従用の生成物）。
+
 ### OpenAPIファイルの更新
 
 `web/` 配下のPythonファイルを変更すると、pre-commitフックにより自動的に `openapi.json` が更新されます。

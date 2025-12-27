@@ -41,6 +41,14 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=35000']  # 35MB - HRTF filters are ~32MB each
 
+  # GitHub Actions workflow syntax check
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.9
+    hooks:
+      - id: actionlint
+        files: ^\.github/workflows/.*\.ya?ml$
+        stages: [pre-commit]
+
   # Python formatting (for web API and scripts)
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
