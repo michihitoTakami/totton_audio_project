@@ -1,0 +1,112 @@
+name: Sync UI/UX (templates/static) to public repo (optional)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uiux-sync-public
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_REPO: michihitoTakami/totton-audio-system-full
+      TARGET_BRANCH: main
+      EXPORT_DIR: /tmp/uiux_export
+      CLONE_DIR: /tmp/public_repo
+      TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+    steps:
+      - name: Validate secret (skip if missing)
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            echo "secrets.PUBLIC_REPO_TOKEN is not configured. Skipping."
+            exit 0
+          fi
+
+      - name: Checkout private repo
+        if: env.TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare UI/UX export (templates/static)
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+          rm -rf "${EXPORT_DIR}"
+          mkdir -p "${EXPORT_DIR}/web/templates" "${EXPORT_DIR}/web/static"
+          rsync -a --delete "web/templates/" "${EXPORT_DIR}/web/templates/"
+          rsync -a --delete "web/static/" "${EXPORT_DIR}/web/static/"
+
+          # Delimiter page is not published yet (Issue #1057)
+          rm -f "${EXPORT_DIR}/web/templates/pages/delimiter.html"
+
+      - name: Guardrails (no secrets/internal tokens in exported assets)
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+          # Fail on obvious secrets (best-effort).
+          deny_regex='(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|x-access-token|PUBLIC_REPO_TOKEN|TOTTON_AUDIO_TOKEN|AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82})'
+          if rg -n "${deny_regex}" "${EXPORT_DIR}"; then
+            echo "Found disallowed secret-like pattern in export." >&2
+            exit 1
+          fi
+
+      - name: Clone public repo
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+          clone_url="https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git"
+          git clone --depth=1 "${clone_url}" "${CLONE_DIR}"
+
+      - name: Create branch and sync files
+        if: env.TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.TOKEN }}
+        run: |
+          set -euo pipefail
+
+          target_owner="$(echo "${TARGET_REPO}" | cut -d/ -f1)"
+          target_name="$(echo "${TARGET_REPO}" | cut -d/ -f2)"
+
+          cd "${CLONE_DIR}"
+          git switch -c "sync/uiux-${GITHUB_REF_NAME:-manual}-${GITHUB_SHA:0:7}"
+
+          mkdir -p web/templates web/static
+          rsync -a --delete --exclude ".git" "${EXPORT_DIR}/web/templates/" "web/templates/"
+          rsync -a --delete --exclude ".git" "${EXPORT_DIR}/web/static/" "web/static/"
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "UI/UX assets に差分なし。"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "Sync UI/UX assets from michy_os@${GITHUB_SHA}"
+          git push -u origin HEAD
+
+          head_ref="${target_owner}:$(git branch --show-current)"
+          existing_pr_count="$(
+            gh api \
+              "repos/${target_owner}/${target_name}/pulls?state=open&base=${TARGET_BRANCH}&head=${head_ref}" \
+              | jq 'length'
+          )"
+          if [ "${existing_pr_count}" != "0" ]; then
+            echo "既存のOpenなPRがあるため作成をスキップ: head=${head_ref}"
+            exit 0
+          fi
+
+          gh api -X POST "repos/${target_owner}/${target_name}/pulls" \
+            -f title="Sync UI/UX assets from michy_os@${GITHUB_SHA:0:7}" \
+            -f head="${head_ref}" \
+            -f base="${TARGET_BRANCH}" \
+            -f body="Automated sync from private repo.\n\nIncluded:\n- web/templates (excluding delimiter page)\n- web/static\n\nSource: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}\nTrigger: ${GITHUB_EVENT_NAME}"
