@@ -486,22 +486,18 @@ bool runFftOnBuffer(VulkanContext& ctx, VkFFTApplication& app, int direction) {
     return true;
 }
 
-bool runBlock(VulkanContext& ctx, VkFFTApplication& fftApp, const MultiplyPipeline& pipe,
-              uint32_t complexCount) {
-    VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    allocInfo.commandPool = ctx.commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    if (!checkVk(vkAllocateCommandBuffers(ctx.device, &allocInfo, &cmd),
-                 "vkAllocateCommandBuffers block")) {
+bool recordBlock(VulkanContext& ctx, VkFFTApplication& fftApp, const MultiplyPipeline& pipe,
+                 uint32_t complexCount, VkCommandBuffer cmd) {
+    if (cmd == VK_NULL_HANDLE) {
+        return false;
+    }
+    if (!checkVk(vkResetCommandBuffer(cmd, 0), "vkResetCommandBuffer block")) {
         return false;
     }
 
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (!checkVk(vkBeginCommandBuffer(cmd, &begin), "vkBeginCommandBuffer block")) {
-        vkFreeCommandBuffers(ctx.device, ctx.commandPool, 1, &cmd);
         return false;
     }
 
@@ -510,7 +506,6 @@ bool runBlock(VulkanContext& ctx, VkFFTApplication& fftApp, const MultiplyPipeli
     VkFFTResult res = VkFFTAppend(&fftApp, -1, &launch);
     if (res != VKFFT_SUCCESS) {
         LOG_ERROR("VkFFT forward failed: {}", static_cast<int>(res));
-        vkFreeCommandBuffers(ctx.device, ctx.commandPool, 1, &cmd);
         return false;
     }
 
@@ -532,17 +527,31 @@ bool runBlock(VulkanContext& ctx, VkFFTApplication& fftApp, const MultiplyPipeli
     res = VkFFTAppend(&fftApp, 1, &launch);
     if (res != VKFFT_SUCCESS) {
         LOG_ERROR("VkFFT inverse failed: {}", static_cast<int>(res));
-        vkFreeCommandBuffers(ctx.device, ctx.commandPool, 1, &cmd);
         return false;
     }
 
     if (!checkVk(vkEndCommandBuffer(cmd), "vkEndCommandBuffer block")) {
-        vkFreeCommandBuffers(ctx.device, ctx.commandPool, 1, &cmd);
         return false;
     }
-    bool ok = checkVk(submitAndWait(ctx, cmd), "vkQueueSubmit block");
-    vkFreeCommandBuffers(ctx.device, ctx.commandPool, 1, &cmd);
-    return ok;
+    return true;
+}
+
+bool submitWithFence(VulkanContext& ctx, VkCommandBuffer cmd, VkFence fence,
+                     const char* contextLabel) {
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    VkResult vr = vkQueueSubmit(ctx.queue, 1, &submit, fence);
+    if (vr != VK_SUCCESS) {
+        LOG_ERROR("[Vulkan] {} submit failed: {}", contextLabel, static_cast<int>(vr));
+        return false;
+    }
+    vr = vkWaitForFences(ctx.device, 1, &fence, VK_TRUE, UINT64_MAX);
+    if (vr != VK_SUCCESS) {
+        LOG_ERROR("[Vulkan] {} fence wait failed: {}", contextLabel, static_cast<int>(vr));
+        return false;
+    }
+    return true;
 }
 
 std::size_t readFilterTaps(const std::string& path, std::vector<float>& out) {
