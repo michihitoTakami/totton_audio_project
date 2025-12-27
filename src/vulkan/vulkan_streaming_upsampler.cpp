@@ -585,17 +585,14 @@ inline RateFamily indexToFamily(std::size_t idx) {
     return idx == 1u ? RateFamily::RATE_48K : RateFamily::RATE_44K;
 }
 
-bool uploadTimeDomainAndFft(VulkanContext& ctx, BufferResource& filterBuf,
+bool uploadTimeDomainAndFft(VulkanContext& ctx, float* mappedFilter, BufferResource& filterBuf,
                             VkFFTApplication& filterApp, uint64_t bufferBytes,
                             const std::vector<float>& taps) {
-    void* mapped = nullptr;
-    if (!checkVk(vkMapMemory(ctx.device, filterBuf.memory, 0, bufferBytes, 0, &mapped),
-                 "vkMapMemory filter")) {
+    if (!mappedFilter) {
         return false;
     }
-    std::memset(mapped, 0, static_cast<std::size_t>(bufferBytes));
-    std::memcpy(mapped, taps.data(), taps.size() * sizeof(float));
-    vkUnmapMemory(ctx.device, filterBuf.memory);
+    std::memset(mappedFilter, 0, static_cast<std::size_t>(bufferBytes));
+    std::memcpy(mappedFilter, taps.data(), taps.size() * sizeof(float));
 
     if (!runFftOnBuffer(ctx, filterApp, -1)) {
         return false;
@@ -603,34 +600,28 @@ bool uploadTimeDomainAndFft(VulkanContext& ctx, BufferResource& filterBuf,
     return true;
 }
 
-bool readFilterSpectrum(VulkanContext& ctx, BufferResource& filterBuf, uint64_t bufferBytes,
-                        uint32_t complexCount, std::vector<float>& outSpectrum) {
+bool readFilterSpectrum(const float* mappedFilter, uint64_t bufferBytes, uint32_t complexCount,
+                        std::vector<float>& outSpectrum) {
     const uint64_t complexElements = 2ull * complexCount;
-    void* mapped = nullptr;
-    if (!checkVk(vkMapMemory(ctx.device, filterBuf.memory, 0, bufferBytes, 0, &mapped),
-                 "vkMapMemory filter (read spectrum)")) {
+    if (!mappedFilter) {
         return false;
     }
     outSpectrum.resize(static_cast<std::size_t>(complexElements));
-    std::memcpy(outSpectrum.data(), mapped, static_cast<std::size_t>(bufferBytes));
-    vkUnmapMemory(ctx.device, filterBuf.memory);
+    std::memcpy(outSpectrum.data(), mappedFilter, static_cast<std::size_t>(bufferBytes));
     return true;
 }
 
-bool writeFilterSpectrum(VulkanContext& ctx, BufferResource& filterBuf, uint64_t bufferBytes,
-                         uint32_t complexCount, const std::vector<float>& spectrum) {
+bool writeFilterSpectrum(float* mappedFilter, uint64_t bufferBytes, uint32_t complexCount,
+                         const std::vector<float>& spectrum) {
     if (spectrum.size() != static_cast<std::size_t>(2ull * complexCount)) {
         LOG_ERROR("[Vulkan] Invalid spectrum size: expected {}, got {}",
                   static_cast<std::size_t>(2ull * complexCount), spectrum.size());
         return false;
     }
-    void* mapped = nullptr;
-    if (!checkVk(vkMapMemory(ctx.device, filterBuf.memory, 0, bufferBytes, 0, &mapped),
-                 "vkMapMemory filter (write spectrum)")) {
+    if (!mappedFilter) {
         return false;
     }
-    std::memcpy(mapped, spectrum.data(), static_cast<std::size_t>(bufferBytes));
-    vkUnmapMemory(ctx.device, filterBuf.memory);
+    std::memcpy(mappedFilter, spectrum.data(), static_cast<std::size_t>(bufferBytes));
     return true;
 }
 
@@ -642,9 +633,13 @@ struct VulkanStreamingUpsampler::Impl {
     VulkanContext ctx{};
     BufferResource inputBuf{};
     BufferResource filterBuf{};
+    BufferResource overlapBuf{};
     VkFFTApplication inputApp{};
     VkFFTApplication filterApp{};
     MultiplyPipeline pipeline{};
+    void* mappedInput = nullptr;
+    void* mappedFilter = nullptr;
+    void* mappedOverlap = nullptr;
 
     struct PhaseSpectrum {
         std::vector<float> data;
@@ -668,25 +663,44 @@ struct VulkanStreamingUpsampler::Impl {
     uint32_t overlap = 0;
     uint32_t complexCount = 0;
     uint64_t bufferBytes = 0;
-    std::vector<float> overlapBuffer;
+    uint32_t bufferFloatCount = 0;
+    uint32_t inFlightCursor = 0;
     std::vector<float> originalFilterFreq;
     std::array<FamilyCache, 2> families{};
     RateFamily activeFamily = RateFamily::RATE_UNKNOWN;
     PhaseType phaseType = PhaseType::Minimum;
     bool multiRateEnabled = false;
     bool eqApplied = false;
+    std::vector<VkCommandBuffer> commandBuffers;
+    std::vector<VkFence> inFlightFences;
+    static constexpr uint32_t kMaxInFlight = 3;
 
     bool initialized = false;
     std::mutex mutex;
 
     void cleanup() {
+        if (!commandBuffers.empty()) {
+            vkFreeCommandBuffers(ctx.device, ctx.commandPool,
+                                 static_cast<uint32_t>(commandBuffers.size()),
+                                 commandBuffers.data());
+            commandBuffers.clear();
+        }
+        for (VkFence fence : inFlightFences) {
+            if (fence != VK_NULL_HANDLE) {
+                vkDestroyFence(ctx.device, fence, nullptr);
+            }
+        }
+        inFlightFences.clear();
+        unmapBuffer(ctx, filterBuf, mappedFilter);
+        unmapBuffer(ctx, inputBuf, mappedInput);
+        unmapBuffer(ctx, overlapBuf, mappedOverlap);
         destroyPipeline(ctx, pipeline);
         deleteVkFFT(&filterApp);
         deleteVkFFT(&inputApp);
+        destroyBuffer(ctx, overlapBuf);
         destroyBuffer(ctx, filterBuf);
         destroyBuffer(ctx, inputBuf);
         destroyContext(ctx);
-        overlapBuffer.clear();
         originalFilterFreq.clear();
         for (auto& family : families) {
             family.minimum.data.clear();
@@ -707,6 +721,11 @@ struct VulkanStreamingUpsampler::Impl {
         overlap = 0;
         complexCount = 0;
         bufferBytes = 0;
+        bufferFloatCount = 0;
+        inFlightCursor = 0;
+        mappedInput = nullptr;
+        mappedFilter = nullptr;
+        mappedOverlap = nullptr;
         activeFamily = RateFamily::RATE_UNKNOWN;
         phaseType = PhaseType::Minimum;
         multiRateEnabled = false;
@@ -860,6 +879,26 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
         return false;
     }
 
+    impl_->bufferFloatCount = static_cast<uint32_t>(impl_->bufferBytes / sizeof(float));
+    if (!mapBuffer(impl_->ctx, impl_->inputBuf, &impl_->mappedInput) ||
+        !mapBuffer(impl_->ctx, impl_->filterBuf, &impl_->mappedFilter)) {
+        impl_->cleanup();
+        return false;
+    }
+
+    const VkDeviceSize overlapBytes = static_cast<VkDeviceSize>(impl_->overlap) * sizeof(float);
+    if (overlapBytes > 0) {
+        if (!createHostBuffer(impl_->ctx, overlapBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                              impl_->overlapBuf) ||
+            !mapBuffer(impl_->ctx, impl_->overlapBuf, &impl_->mappedOverlap)) {
+            impl_->cleanup();
+            return false;
+        }
+        std::memset(impl_->mappedOverlap, 0, static_cast<std::size_t>(overlapBytes));
+    }
+    std::memset(impl_->mappedInput, 0, static_cast<std::size_t>(impl_->bufferBytes));
+    std::memset(impl_->mappedFilter, 0, static_cast<std::size_t>(impl_->bufferBytes));
+
     if (createFftApp(impl_->ctx, impl_->inputBuf.buffer, impl_->bufferBytes, impl_->fftSize,
                      impl_->inputApp) != VKFFT_SUCCESS ||
         createFftApp(impl_->ctx, impl_->filterBuf.buffer, impl_->bufferBytes, impl_->fftSize,
@@ -869,22 +908,50 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
         return false;
     }
 
+    impl_->commandBuffers.resize(Impl::kMaxInFlight);
+    VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmdAlloc.commandPool = impl_->ctx.commandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = Impl::kMaxInFlight;
+    if (!checkVk(
+            vkAllocateCommandBuffers(impl_->ctx.device, &cmdAlloc, impl_->commandBuffers.data()),
+            "vkAllocateCommandBuffers (streaming)")) {
+        impl_->cleanup();
+        return false;
+    }
+
+    impl_->inFlightFences.resize(Impl::kMaxInFlight, VK_NULL_HANDLE);
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    for (uint32_t i = 0; i < Impl::kMaxInFlight; ++i) {
+        if (!checkVk(
+                vkCreateFence(impl_->ctx.device, &fenceInfo, nullptr, &impl_->inFlightFences[i]),
+                "vkCreateFence (streaming)")) {
+            impl_->cleanup();
+            return false;
+        }
+    }
+
     // Pre-compute frequency spectra for every available family/phase.
     for (std::size_t idx = 0; idx < taps.size(); ++idx) {
         if (taps[idx].hasMin) {
-            if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp,
-                                        impl_->bufferBytes, taps[idx].min) ||
-                !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes,
-                                    impl_->complexCount, impl_->families[idx].minimum.data)) {
+            if (!uploadTimeDomainAndFft(impl_->ctx, static_cast<float*>(impl_->mappedFilter),
+                                        impl_->filterBuf, impl_->filterApp, impl_->bufferBytes,
+                                        taps[idx].min) ||
+                !readFilterSpectrum(static_cast<const float*>(impl_->mappedFilter),
+                                    impl_->bufferBytes, impl_->complexCount,
+                                    impl_->families[idx].minimum.data)) {
                 impl_->cleanup();
                 return false;
             }
         }
         if (taps[idx].hasLinear) {
-            if (!uploadTimeDomainAndFft(impl_->ctx, impl_->filterBuf, impl_->filterApp,
-                                        impl_->bufferBytes, taps[idx].linear) ||
-                !readFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes,
-                                    impl_->complexCount, impl_->families[idx].linear.data)) {
+            if (!uploadTimeDomainAndFft(impl_->ctx, static_cast<float*>(impl_->mappedFilter),
+                                        impl_->filterBuf, impl_->filterApp, impl_->bufferBytes,
+                                        taps[idx].linear) ||
+                !readFilterSpectrum(static_cast<const float*>(impl_->mappedFilter),
+                                    impl_->bufferBytes, impl_->complexCount,
+                                    impl_->families[idx].linear.data)) {
                 impl_->cleanup();
                 return false;
             }
@@ -910,8 +977,8 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
         return false;
     }
 
-    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
-                             *activeBase)) {
+    if (!writeFilterSpectrum(static_cast<float*>(impl_->mappedFilter), impl_->bufferBytes,
+                             impl_->complexCount, *activeBase)) {
         impl_->cleanup();
         return false;
     }
@@ -935,7 +1002,7 @@ bool VulkanStreamingUpsampler::initialize(const InitParams& params) {
         return false;
     }
 
-    impl_->overlapBuffer.assign(impl_->overlap, 0.0f);
+    impl_->inFlightCursor = 0;
     impl_->initialized = true;
     LOG_INFO(
         "[Vulkan] upsampler ready (ratio={}x, block={} frames, fftSize={}, phase={}, families "
@@ -955,7 +1022,10 @@ void VulkanStreamingUpsampler::resetStreaming() {
     if (!impl_ || !impl_->initialized) {
         return;
     }
-    std::fill(impl_->overlapBuffer.begin(), impl_->overlapBuffer.end(), 0.0f);
+    if (impl_->mappedOverlap && impl_->overlap > 0) {
+        std::memset(impl_->mappedOverlap, 0,
+                    static_cast<std::size_t>(impl_->overlap) * sizeof(float));
+    }
 }
 
 size_t VulkanStreamingUpsampler::getStreamValidInputPerBlock() const {
@@ -1030,8 +1100,8 @@ bool VulkanStreamingUpsampler::switchToInputRate(int inputSampleRate) {
         return false;
     }
 
-    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
-                             *spectrum)) {
+    if (!writeFilterSpectrum(static_cast<float*>(impl_->mappedFilter), impl_->bufferBytes,
+                             impl_->complexCount, *spectrum)) {
         return false;
     }
 
@@ -1040,7 +1110,10 @@ bool VulkanStreamingUpsampler::switchToInputRate(int inputSampleRate) {
     impl_->inputRate = static_cast<uint32_t>(inputSampleRate);
     impl_->outputRate = impl_->inputRate * impl_->upsampleRatio;
     impl_->eqApplied = false;  // Control plane should re-apply EQ after a family switch
-    std::fill(impl_->overlapBuffer.begin(), impl_->overlapBuffer.end(), 0.0f);
+    if (impl_->mappedOverlap && impl_->overlap > 0) {
+        std::memset(impl_->mappedOverlap, 0,
+                    static_cast<std::size_t>(impl_->overlap) * sizeof(float));
+    }
 
     LOG_INFO("[Vulkan] Switched input rate to {} Hz (family={}, phase={}) — please re-apply EQ",
              inputSampleRate, impl_->activeFamily == RateFamily::RATE_48K ? "48k" : "44k",
@@ -1086,15 +1159,18 @@ bool VulkanStreamingUpsampler::switchPhaseType(PhaseType targetPhase) {
         LOG_ERROR("[Vulkan] Active family spectrum missing for phase switch");
         return false;
     }
-    if (!writeFilterSpectrum(impl_->ctx, impl_->filterBuf, impl_->bufferBytes, impl_->complexCount,
-                             *activeBase)) {
+    if (!writeFilterSpectrum(static_cast<float*>(impl_->mappedFilter), impl_->bufferBytes,
+                             impl_->complexCount, *activeBase)) {
         return false;
     }
     impl_->originalFilterFreq =
         *activeBase;  // Reset EQ base; ControlPlane will re-apply EQ if enabled.
     impl_->phaseType = targetPhase;
     impl_->eqApplied = false;
-    std::fill(impl_->overlapBuffer.begin(), impl_->overlapBuffer.end(), 0.0f);
+    if (impl_->mappedOverlap && impl_->overlap > 0) {
+        std::memset(impl_->mappedOverlap, 0,
+                    static_cast<std::size_t>(impl_->overlap) * sizeof(float));
+    }
 
     LOG_INFO("[Vulkan] Phase type switched to {} (EQ should be re-applied)",
              (impl_->phaseType == PhaseType::Minimum ? "minimum" : "linear"));
@@ -1148,14 +1224,8 @@ bool VulkanStreamingUpsampler::applyEqMagnitude(const std::vector<double>& eqMag
         newSpectrum[base + 1] = impl_->originalFilterFreq[base + 1] * scale;
     }
 
-    void* mapped = nullptr;
-    if (!checkVk(vkMapMemory(impl_->ctx.device, impl_->filterBuf.memory, 0, impl_->bufferBytes, 0,
-                             &mapped),
-                 "vkMapMemory filter (apply EQ)")) {
-        return false;
-    }
-    std::memcpy(mapped, newSpectrum.data(), static_cast<std::size_t>(impl_->bufferBytes));
-    vkUnmapMemory(impl_->ctx.device, impl_->filterBuf.memory);
+    std::memcpy(impl_->mappedFilter, newSpectrum.data(),
+                static_cast<std::size_t>(impl_->bufferBytes));
 
     LOG_INFO("[Vulkan] EQ magnitude applied ({} bins)", impl_->complexCount);
     impl_->eqApplied = true;
@@ -1190,51 +1260,60 @@ bool VulkanStreamingUpsampler::processStreamBlock(
     bool produced = false;
 
     while (streamInputAccumulated >= impl_->hopInput) {
-        std::vector<float> padded(complexElements, 0.0f);
-        std::copy(impl_->overlapBuffer.begin(), impl_->overlapBuffer.end(), padded.begin());
+        const uint32_t slot = impl_->inFlightCursor % Impl::kMaxInFlight;
+        VkFence fence = impl_->inFlightFences[slot];
+        VkCommandBuffer cmd = impl_->commandBuffers[slot];
+
+        if (fence != VK_NULL_HANDLE) {
+            VkResult waitRes = vkWaitForFences(impl_->ctx.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            if (waitRes != VK_SUCCESS) {
+                LOG_ERROR("[Vulkan] fence wait (acquire) failed: {}", static_cast<int>(waitRes));
+                return false;
+            }
+            if (!checkVk(vkResetFences(impl_->ctx.device, 1, &fence), "vkResetFences (acquire)")) {
+                return false;
+            }
+        }
+
+        auto* inputPtr = static_cast<float*>(impl_->mappedInput);
+        auto* overlapPtr = static_cast<float*>(impl_->mappedOverlap);
+        const uint32_t bufferFloats = impl_->bufferFloatCount;
+        if (impl_->overlap > 0 && overlapPtr) {
+            std::memcpy(inputPtr, overlapPtr,
+                        static_cast<std::size_t>(impl_->overlap) * sizeof(float));
+        }
+        std::fill(inputPtr + impl_->overlap, inputPtr + bufferFloats, 0.0f);
         for (uint32_t i = 0; i < impl_->hopInput; ++i) {
-            padded[impl_->overlap + static_cast<std::size_t>(i) * impl_->upsampleRatio] =
+            inputPtr[impl_->overlap + static_cast<std::size_t>(i) * impl_->upsampleRatio] =
                 streamInputBuffer[i];
         }
+        if (impl_->overlap > 0) {
+            std::memcpy(overlapPtr, inputPtr + (bufferFloats - impl_->overlap),
+                        static_cast<std::size_t>(impl_->overlap) * sizeof(float));
+        }
 
-        void* mapped = nullptr;
-        if (!checkVk(vkMapMemory(impl_->ctx.device, impl_->inputBuf.memory, 0, impl_->bufferBytes,
-                                 0, &mapped),
-                     "vkMapMemory input")) {
+        if (!recordBlock(impl_->ctx, impl_->inputApp, impl_->pipeline, impl_->complexCount, cmd)) {
             return false;
         }
-        std::memcpy(mapped, padded.data(), static_cast<std::size_t>(impl_->bufferBytes));
-        vkUnmapMemory(impl_->ctx.device, impl_->inputBuf.memory);
-
-        if (!runBlock(impl_->ctx, impl_->inputApp, impl_->pipeline, impl_->complexCount)) {
+        if (!submitWithFence(impl_->ctx, cmd, fence, "vkQueueSubmit block")) {
             return false;
         }
 
-        mapped = nullptr;
-        if (!checkVk(vkMapMemory(impl_->ctx.device, impl_->inputBuf.memory, 0, impl_->bufferBytes,
-                                 0, &mapped),
-                     "vkMapMemory output")) {
-            return false;
-        }
-        const auto* data = static_cast<const float*>(mapped);
+        const auto* data = static_cast<const float*>(impl_->mappedInput);
         const uint32_t validOutput = impl_->hopInput * impl_->upsampleRatio;
         const uint32_t copyCount = std::min(impl_->hopOutput, validOutput);
         size_t current = outputData.size();
         outputData.resize(current + copyCount);
         std::memcpy(outputData.data() + static_cast<std::ptrdiff_t>(current), data + impl_->overlap,
                     copyCount * sizeof(float));
-        vkUnmapMemory(impl_->ctx.device, impl_->inputBuf.memory);
 
-        // Update overlap
-        std::copy(padded.end() - impl_->overlap, padded.end(), impl_->overlapBuffer.begin());
-
-        // Shift remaining input samples to the start
         if (streamInputAccumulated > impl_->hopInput) {
             std::memmove(streamInputBuffer.data(),
                          streamInputBuffer.data() + static_cast<std::ptrdiff_t>(impl_->hopInput),
                          (streamInputAccumulated - impl_->hopInput) * sizeof(float));
         }
         streamInputAccumulated -= impl_->hopInput;
+        impl_->inFlightCursor++;
         produced = true;
     }
 
