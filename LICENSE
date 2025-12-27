@@ -9,6 +9,12 @@ This license governs the use of Magic Box Project “Distributed Artifacts” (b
 Important: Third-party software and data included in the Distributed Artifacts (e.g., OPRA, HUTUBS) are governed by their respective licenses.
 This license does not restrict any rights granted by those third-party licenses. See NOTICE.md / THIRD_PARTY_LICENSES.md.
 
+## Third-Party Components (License Priority)
+- This license applies only to the Software defined below.
+- Third-party software and data included in the Distributed Artifacts remain under their own licenses (e.g., OPRA data: CC BY-SA 4.0; HUTUBS HRTF: CC BY 4.0; De-limiter model: MIT).
+- The non-commercial restrictions and prohibitions in Sections 2–3 do **not** apply to those third-party components when their licenses allow broader rights (including commercial use), as long as you comply with the third-party terms (e.g., attribution, share-alike).
+- If this license conflicts with a third-party license for a third-party component, the third-party license controls for that component.
+
 ---
 
 ## 1. Definitions
