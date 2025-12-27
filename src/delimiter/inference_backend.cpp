@@ -227,7 +227,15 @@ class OrtInferenceBackend final : public InferenceBackend {
 
         OrtStatus* status = nullptr;
         if (provider.type == ProviderType::Cuda) {
+            // ORT 1.17+ requires provider option struct instead of device id
+#if ORT_API_VERSION >= 17
+            OrtCUDAProviderOptions cudaOptions{};
+            cudaOptions.device_id = 0;
+            status =
+                Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA(options, &cudaOptions);
+#else
             status = Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA(options, 0);
+#endif
             if (status) {
                 initError_ = statusMessage(status, "CUDA provider init failed: ");
                 return false;
@@ -235,7 +243,14 @@ class OrtInferenceBackend final : public InferenceBackend {
             return true;
         }
 
+// ORT 1.17+ requires provider option struct instead of device id
+#if ORT_API_VERSION >= 17
+        OrtTensorRTProviderOptions trtOptions{};
+        trtOptions.device_id = 0;
+        status = Ort::GetApi().SessionOptionsAppendExecutionProvider_TensorRT(options, &trtOptions);
+#else
         status = Ort::GetApi().SessionOptionsAppendExecutionProvider_TensorRT(options, 0);
+#endif
         if (status) {
             initError_ = statusMessage(status, "TensorRT provider init failed: ");
             return false;
@@ -379,10 +394,11 @@ class OrtInferenceBackend final : public InferenceBackend {
 
 std::unique_ptr<InferenceBackend> createDelimiterInferenceBackend(
     const AppConfig::DelimiterConfig& config) {
+    if (!config.enabled) {
+        return std::make_unique<BypassInferenceBackend>(config.expectedSampleRate);
+    }
+
     std::string backend = toLower(config.backend);
-    // Note: config.enabled check removed - caller controls when to create backend.
-    // Startup checks config->delimiter.enabled before calling startDelimiterBackend().
-    // API-triggered enable always wants to create the configured backend.
 
     if (backend == "bypass") {
         return std::make_unique<BypassInferenceBackend>(config.expectedSampleRate);
