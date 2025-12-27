@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           # Fail on obvious secrets (best-effort).
           deny_regex='(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|x-access-token|PUBLIC_REPO_TOKEN|TOTTON_AUDIO_TOKEN|AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82})'
-          if rg -n "${deny_regex}" "${EXPORT_DIR}"; then
+          if grep -RInE "${deny_regex}" "${EXPORT_DIR}"; then
             echo "Found disallowed secret-like pattern in export." >&2
             exit 1
           fi

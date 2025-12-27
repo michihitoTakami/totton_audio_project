@@ -218,7 +218,7 @@
             <div class="form-grid">
                 {% set form_label = t.get('pi.config.status_report_url') %}
                 {% set form_input_model = "config.status_report_url" %}
-                {% set form_input_placeholder = "http://192.168.55.1/i2s/peer-status" %}
+                {% set form_input_placeholder = "http://<pi-ip>/i2s/peer-status" %}
                 {% include 'components/form_group.html' %}
 
                 {% set form_label = t.get('pi.config.status_report_timeout_ms') %}
