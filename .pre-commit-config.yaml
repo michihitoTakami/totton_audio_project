@@ -113,6 +113,13 @@ repos:
         pass_filenames: false
         exclude: ^third_party/
         always_run: true
+      - id: vulkan-build-and-tests
+        name: Vulkan build & ctest (ENABLE_VULKAN=ON, CUDA=OFF)
+        entry: bash -c '"${CMAKE_BIN:-/usr/bin/cmake}" -S . -B build-vulkan -DENABLE_VULKAN=ON -DENABLE_CUDA=OFF -DDELIMITER_ENABLE_ORT=OFF -DCMAKE_BUILD_TYPE=Release && "${CMAKE_BIN:-/usr/bin/cmake}" --build build-vulkan --parallel && ctest --test-dir build-vulkan --output-on-failure --parallel 2'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        exclude: ^third_party/
       - id: clang-tidy-jetson-pcm
         name: clang-tidy (jetson_pcm_receiver)
         entry: clang-tidy
