@@ -133,8 +133,14 @@ repos:
               mkdir -p "$(dirname "${CPPZMQ_SRC}")"
               git clone --depth 1 --branch v4.10.0 https://github.com/zeromq/cppzmq.git "${CPPZMQ_SRC}"
             fi
+            SPDLOG_SRC="${SPDLOG_SRC:-$(pwd)/build/_deps/spdlog-src}"
+            if [ ! -d "${SPDLOG_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${SPDLOG_SRC}")"
+              git clone --depth 1 --branch v1.14.1 https://github.com/gabime/spdlog.git "${SPDLOG_SRC}"
+            fi
             "${CMAKE_BIN:-/usr/bin/cmake}" -S . -B build-vulkan \
               -DENABLE_VULKAN=ON -DENABLE_CUDA=OFF -DDELIMITER_ENABLE_ORT=OFF \
+              -DFETCHCONTENT_SOURCE_DIR_SPDLOG="${SPDLOG_SRC}" \
               -DFETCHCONTENT_SOURCE_DIR_CPPZMQ="${CPPZMQ_SRC}" \
               -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST="${GTEST_SRC}" \
               -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON="${DEPS_SRC}" \
