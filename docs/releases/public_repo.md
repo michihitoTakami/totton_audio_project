@@ -42,6 +42,8 @@ Public Repo では **生成物（json）を正** とし、生成スクリプト�
 - `web/static/**`（CSS/JS）
 - `web/main.py` と `web/routers/**`（APIルーティング/仕様のソース）
 
+> Note: delimiter の UI ページ（`web/templates/pages/delimiter.html`）は現時点では公開不要のため、public 同期では除外する（Issue #1057）。
+
 ### 4) 配布定義（compose / Docker / ランタイム設定）
 
 - `docker/**`（Jetson 等の Compose / Dockerfile / README）
