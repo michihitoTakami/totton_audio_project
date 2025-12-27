@@ -7,9 +7,7 @@ namespace vulkan_backend {
 // Vulkan backend implementation of FourChannelFIR using the generic GPU backend abstraction.
 class VulkanFourChannelFIR : public ConvolutionEngine::GpuBackend::BackendFourChannelFIR {
    public:
-    VulkanFourChannelFIR()
-        : BackendFourChannelFIR(ConvolutionEngine::GpuBackend::createVulkanBackend,
-                                "VulkanFourChannelFIR") {}
+    VulkanFourChannelFIR();
     ~VulkanFourChannelFIR() override;
 };
 
