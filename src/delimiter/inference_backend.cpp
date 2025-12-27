@@ -379,10 +379,12 @@ class OrtInferenceBackend final : public InferenceBackend {
 
 std::unique_ptr<InferenceBackend> createDelimiterInferenceBackend(
     const AppConfig::DelimiterConfig& config) {
+    // Disabled == bypass regardless of configured backend.
+    if (!config.enabled) {
+        return std::make_unique<BypassInferenceBackend>(config.expectedSampleRate);
+    }
+
     std::string backend = toLower(config.backend);
-    // Note: config.enabled check removed - caller controls when to create backend.
-    // Startup checks config->delimiter.enabled before calling startDelimiterBackend().
-    // API-triggered enable always wants to create the configured backend.
 
     if (backend == "bypass") {
         return std::make_unique<BypassInferenceBackend>(config.expectedSampleRate);
