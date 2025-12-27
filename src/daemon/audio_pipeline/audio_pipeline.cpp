@@ -652,7 +652,7 @@ bool AudioPipeline::waitForRtQuiescent(std::chrono::milliseconds timeout) const 
            !rtInProcess_.load(std::memory_order_acquire);
 }
 
-bool AudioPipeline::startDelimiterBackend() {
+bool AudioPipeline::startDelimiterBackend(bool forceEnable) {
     if (highLatencyEnabled_) {
         return delimiterBackend_ != nullptr;
     }
@@ -710,10 +710,15 @@ bool AudioPipeline::startDelimiterBackend() {
         deps_.delimiterBypassLocked->store(false, std::memory_order_relaxed);
     }
 
+    AppConfig::DelimiterConfig backendConfig = deps_.config->delimiter;
+    if (forceEnable) {
+        backendConfig.enabled = true;
+    }
+
     if (deps_.delimiterBackendFactory) {
-        delimiterBackend_ = deps_.delimiterBackendFactory(deps_.config->delimiter);
+        delimiterBackend_ = deps_.delimiterBackendFactory(backendConfig);
     } else {
-        delimiterBackend_ = delimiter::createDelimiterInferenceBackend(deps_.config->delimiter);
+        delimiterBackend_ = delimiter::createDelimiterInferenceBackend(backendConfig);
     }
 
     const bool backendAvailable = (delimiterBackend_ != nullptr);
@@ -857,7 +862,7 @@ bool AudioPipeline::requestDelimiterEnable() {
     }
 
     if (!highLatencyEnabled_) {
-        if (!startDelimiterBackend()) {
+        if (!startDelimiterBackend(true)) {
             return false;
         }
         if (deps_.buffer.playbackBuffer) {
