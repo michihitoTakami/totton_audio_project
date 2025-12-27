@@ -209,6 +209,20 @@ bool createHostBuffer(VulkanContext& ctx, VkDeviceSize size, VkBufferUsageFlags 
     return true;
 }
 
+bool mapBuffer(VulkanContext& ctx, BufferResource& buf, void** mapped) {
+    if (!mapped) {
+        return false;
+    }
+    return checkVk(vkMapMemory(ctx.device, buf.memory, 0, buf.size, 0, mapped), "vkMapMemory");
+}
+
+void unmapBuffer(VulkanContext& ctx, BufferResource& buf, void*& mapped) {
+    if (mapped && buf.memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(ctx.device, buf.memory);
+        mapped = nullptr;
+    }
+}
+
 void destroyBuffer(VulkanContext& ctx, BufferResource& buf) {
     if (buf.buffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(ctx.device, buf.buffer, nullptr);
