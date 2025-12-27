@@ -115,7 +115,21 @@ repos:
         always_run: true
       - id: vulkan-build-and-tests
         name: Vulkan build & ctest (ENABLE_VULKAN=ON, CUDA=OFF)
-        entry: bash -c '"${CMAKE_BIN:-/usr/bin/cmake}" -S . -B build-vulkan -DENABLE_VULKAN=ON -DENABLE_CUDA=OFF -DDELIMITER_ENABLE_ORT=OFF -DCMAKE_BUILD_TYPE=Release && "${CMAKE_BIN:-/usr/bin/cmake}" --build build-vulkan --parallel && ctest --test-dir build-vulkan --output-on-failure --parallel 2'
+        entry: |
+          bash -c '
+            set -euo pipefail
+            DEPS_SRC="${DEPS_SRC:-$(pwd)/build/_deps/nlohmann_json-src}"
+            if [ ! -d "${DEPS_SRC}/.git" ]; then
+              mkdir -p "$(dirname "${DEPS_SRC}")"
+              git clone --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git "${DEPS_SRC}"
+            fi
+            "${CMAKE_BIN:-/usr/bin/cmake}" -S . -B build-vulkan \
+              -DENABLE_VULKAN=ON -DENABLE_CUDA=OFF -DDELIMITER_ENABLE_ORT=OFF \
+              -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON="${DEPS_SRC}" \
+              -DCMAKE_BUILD_TYPE=Release
+            "${CMAKE_BIN:-/usr/bin/cmake}" --build build-vulkan --parallel
+            ctest --test-dir build-vulkan --output-on-failure --parallel 2
+          '
         language: system
         pass_filenames: false
         stages: [pre-push]
