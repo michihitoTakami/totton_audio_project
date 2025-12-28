@@ -1,9 +1,6 @@
-name: Release OpenAPI assets
+name: Release OpenAPI assets (deprecated)
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -17,6 +14,9 @@ jobs:
   build-and-upload:
     runs-on: ubuntu-latest
     steps:
+      - name: Notice
+        run: |
+          echo "This workflow is deprecated. OpenAPI is released as part of the private release workflow (Issue #1059)."
       - name: Checkout
         uses: actions/checkout@v4
         with:

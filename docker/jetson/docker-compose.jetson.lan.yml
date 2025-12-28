@@ -1,0 +1,19 @@
+# LAN override for Jetson Magic Box
+#
+# Usage:
+#   cd docker
+#   docker compose -f jetson/docker-compose.jetson.yml -f jetson/docker-compose.jetson.lan.yml up -d
+#
+# NOTE:
+# - This file intentionally widens network exposure (bind 0.0.0.0).
+# - Keep the base compose secure by default (localhost bind).
+#
+
+services:
+  magicbox:
+    ports:
+      - "80:80"
+      # RTP fallback (Issue #827)
+      - "46000:46000/udp"
+      - "46001:46001/udp"
+      - "46002:46002/udp"
