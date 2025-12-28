@@ -1,0 +1,73 @@
+# Docker Compose for Raspberry Pi (runtime-only / image-based)
+#
+# Issue: #1061 / Epic: #1051
+#
+# 目的:
+# - 評価者がソースコード不要で `image:` 参照だけで起動できる構成。
+# - 既存の `raspberry_pi/docker-compose.yml`（ローカルビルド前提）を壊さない。
+#
+# Usage:
+#   docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml up -d
+#
+services:
+  usb-i2s-bridge:
+    # Runtime-only distribution (GHCR)
+    # NOTE: GHCR の "package" を増やさず、既存の `totton-audio-system` をタグで分岐する想定。
+    # 実際のタグは Release Notes / 配布物に合わせて上書きしてください。
+    image: ${USB_I2S_BRIDGE_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:raspi-usb-i2s-bridge-latest}
+    container_name: rpi-usb-i2s-bridge
+    network_mode: "host"
+    cap_add:
+      - "SYS_NICE"
+    ulimits:
+      rtprio: 95
+      memlock: -1
+    devices:
+      - "/dev/snd:/dev/snd"
+    group_add:
+      - "audio"
+    environment:
+      # 設定は /var/lib/usb-i2s-bridge/config.env に集約
+      USB_I2S_CONFIG_PATH: /var/lib/usb-i2s-bridge/config.env
+      # Pi → Jetson の状態送信（必要なら無効化/上書き）
+      USB_I2S_STATUS_REPORT_URL: ${USB_I2S_STATUS_REPORT_URL:-http://192.168.55.1/i2s/peer-status}
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - usb-i2s-bridge-run:/var/run/usb-i2s-bridge
+      - usb-i2s-bridge-config:/var/lib/usb-i2s-bridge
+
+  raspi-control-api:
+    image: ${RASPI_CONTROL_API_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:raspi-control-api-latest}
+    container_name: rpi-control-api
+    network_mode: "host"
+    depends_on:
+      - usb-i2s-bridge
+    environment:
+      RPI_CONTROL_BIND_INTERFACE: ${RPI_CONTROL_BIND_INTERFACE:-usb0}
+      RPI_CONTROL_BIND_HOST: ${RPI_CONTROL_BIND_HOST:-}
+      RPI_CONTROL_BIND_SUBNET: ${RPI_CONTROL_BIND_SUBNET:-192.168.55.0/24}
+      RPI_CONTROL_PORT: ${RPI_CONTROL_PORT:-8081}
+      USB_I2S_STATUS_REPORT_URL: ${USB_I2S_STATUS_REPORT_URL:-http://192.168.55.1/i2s/peer-status}
+      RPI_CONTROL_CONFIG_PATH: /var/lib/usb-i2s-bridge/config.env
+      RPI_CONTROL_STATUS_PATH: /var/run/usb-i2s-bridge/status.json
+      RPI_CONTROL_RESTART_MODE: docker
+      RPI_CONTROL_DOCKER_CONTAINER: rpi-usb-i2s-bridge
+    volumes:
+      - usb-i2s-bridge-run:/var/run/usb-i2s-bridge:ro
+      - usb-i2s-bridge-config:/var/lib/usb-i2s-bridge
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  usb-i2s-bridge-run:
+  usb-i2s-bridge-config:

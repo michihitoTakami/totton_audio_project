@@ -152,6 +152,10 @@ def _hw_params_path(device: str) -> Path | None:
 
 
 def _parse_hw_params_rate(text: str) -> int | None:
+    # /proc/asound/.../hw_params can contain "closed" when the device is not opened.
+    # In that case the "rate:" line is not meaningful, so we must treat it as unknown.
+    if "closed" in text:
+        return None
     for line in text.splitlines():
         if line.startswith("rate:"):
             for token in line.split():
