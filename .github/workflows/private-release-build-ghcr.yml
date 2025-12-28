@@ -1,4 +1,4 @@
-name: Private Release (tarball/SBOM/OpenAPI + GHCR)
+name: Private Release (tarball/SBOM + GHCR)
 
 on:
   push:
@@ -181,58 +181,9 @@ jobs:
           docker push "${image}:${VERSION}"
           docker push "${image}:latest"
 
-  build-openapi:
-    name: Export OpenAPI JSONs
-    runs-on: ubuntu-latest
-    env:
-      VERSION_RAW: ${{ github.ref_name }}
-    steps:
-      - name: Resolve version strings
-        id: vars
-        run: |
-          set -euo pipefail
-          version_raw="${VERSION_RAW}"
-          version="${version_raw#v}"
-          echo "version_raw=${version_raw}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          python-version-file: ".python-version"
-          enable-cache: true
-
-      - name: Install Python deps
-        run: |
-          set -euo pipefail
-          uv sync --frozen
-
-      - name: Export OpenAPI JSONs
-        run: |
-          set -euo pipefail
-          out_dir="dist/openapi"
-          rm -rf "${out_dir}"
-          mkdir -p "${out_dir}"
-          uv run python scripts/integration/export_openapi.py --output "${out_dir}/openapi.json"
-          uv run python scripts/integration/export_raspi_openapi.py --output "${out_dir}/raspi_openapi.json"
-
-      - name: Upload OpenAPI artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: openapi-${{ steps.vars.outputs.version_raw }}
-          path: |
-            dist/openapi/openapi.json
-            dist/openapi/raspi_openapi.json
-          if-no-files-found: error
-
   publish-release-assets:
     name: Publish Release assets (.sha256 / SHA256SUMS / SBOM)
-    needs: [build-jetson-arm64, build-openapi]
+    needs: [build-jetson-arm64]
     runs-on: ubuntu-latest
     env:
       PLATFORM: jetson-arm64
@@ -252,12 +203,6 @@ jobs:
         with:
           name: magicbox-update-${{ steps.vars.outputs.version_raw }}-${{ env.PLATFORM }}
           path: dist
-
-      - name: Download OpenAPI artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: openapi-${{ steps.vars.outputs.version_raw }}
-          path: dist/openapi
 
       - name: Generate SBOM (CycloneDX JSON) from tarball content
         run: |
@@ -283,19 +228,13 @@ jobs:
 
           tarball="magicbox-update-${VERSION}-${PLATFORM}.tar.gz"
           sbom="sbom-${VERSION}-${PLATFORM}.cdx.json"
-          openapi="openapi/openapi.json"
-          raspi="openapi/raspi_openapi.json"
 
           sha256sum "${tarball}" > "${tarball}.sha256"
           sha256sum "${sbom}" > "${sbom}.sha256"
-          sha256sum "${openapi}" > "openapi.json.sha256"
-          sha256sum "${raspi}" > "raspi_openapi.json.sha256"
 
           cat > SHA256SUMS <<EOF
           $(cat "${tarball}.sha256")
           $(cat "${sbom}.sha256")
-          $(cat "openapi.json.sha256")
-          $(cat "raspi_openapi.json.sha256")
           EOF
           cp -f SHA256SUMS checksums.sha256
 
@@ -309,9 +248,5 @@ jobs:
             dist/magicbox-update-${{ steps.vars.outputs.version }}-${{ env.PLATFORM }}.tar.gz.sha256
             dist/sbom-${{ steps.vars.outputs.version }}-${{ env.PLATFORM }}.cdx.json
             dist/sbom-${{ steps.vars.outputs.version }}-${{ env.PLATFORM }}.cdx.json.sha256
-            dist/openapi/openapi.json
-            dist/openapi.json.sha256
-            dist/openapi/raspi_openapi.json
-            dist/raspi_openapi.json.sha256
             dist/SHA256SUMS
             dist/checksums.sha256
