@@ -1,0 +1,65 @@
+# Docker Compose for Magic Box - Jetson (runtime-only / image-based)
+#
+# Issue: #1058
+#
+# 目的:
+# - 評価者がソースコード不要で `image:` 参照だけで起動できる構成。
+# - 既存の `docker-compose.jetson.yml`（ローカルビルド前提）を壊さない。
+#
+# Usage:
+#   cd docker
+#   docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+#
+
+services:
+  magicbox:
+    # Runtime-only distribution (GHCR)
+    image: ${MAGICBOX_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:latest}
+    container_name: magicbox
+    command: all
+    restart: always
+
+    runtime: nvidia
+
+    devices:
+      - /dev/snd:/dev/snd
+
+    # 既存 compose と同等の挙動（互換）: 80 + RTP/RTCP UDP を公開
+    ports:
+      - "80:80"
+      - "46000:46000/udp"
+      - "46001:46001/udp"
+      - "46002:46002/udp"
+
+    shm_size: '256m'
+
+    # 永続化（評価者の再起動/更新でも維持したいもの）
+    volumes:
+      - magicbox-config:/opt/magicbox/config
+      - magicbox-opra-cache:/data/opra
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - MAGICBOX_PROFILE=jetson
+      - GPU_OS_DATA_DIR=/data
+      - MAGICBOX_ENABLE_RTP=false
+      - MAGICBOX_RTP_AUTOSTART=false
+      - MAGICBOX_RTP_SENDER_HOST=192.168.55.100
+      - RTP_BRIDGE_ENDPOINT=tcp://192.168.55.100:60000
+      - MAGICBOX_PI_API_BASE=${MAGICBOX_PI_API_BASE:-http://192.168.55.100:8081}
+      - MAGICBOX_WAIT_AUDIO_SECS=8
+      - MAGICBOX_WAIT_LOOPBACK=true
+
+    cap_add:
+      - SYS_NICE
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  magicbox-config:
+  magicbox-opra-cache:

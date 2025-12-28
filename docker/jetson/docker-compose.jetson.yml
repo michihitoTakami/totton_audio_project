@@ -4,11 +4,7 @@
 #
 # Usage:
 #   cd docker
-#   # Runtime-only (no build). Pull from GHCR and run.
-#   docker compose -f jetson/docker-compose.jetson.yml up -d
-#
-#   # LAN公開が必要な場合（明示）:
-#   docker compose -f jetson/docker-compose.jetson.yml -f jetson/docker-compose.jetson.lan.yml up -d
+#   docker compose -f jetson/docker-compose.jetson.yml up -d --build
 #
 # Logs:
 #   docker compose -f jetson/docker-compose.jetson.yml logs -f
@@ -22,10 +18,10 @@ services:
   # Magic Box (Audio Daemon + Web UI in single container)
   # ==========================================================================
   magicbox:
-    # Runtime-only distribution (Issue #1058):
-    # - 評価者はソース不要で `docker pull` して起動できること。
-    # - 既定は GHCR の image を参照（必要なら MAGICBOX_IMAGE で差し替え）。
-    image: ${MAGICBOX_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:latest}
+    image: magicbox:latest
+    build:
+      context: ../..
+      dockerfile: docker/jetson/Dockerfile.jetson
     container_name: magicbox
     command: all
     restart: always
@@ -38,25 +34,30 @@ services:
       - /dev/snd:/dev/snd
 
     # Web UI
-    # セキュアデフォルト:
-    # - LAN前提の運用でも、公開が不要な環境（USB直結/単体運用）を想定し、
-    #   既定は localhost バインドにする（Issue #1058 / Epic #1051）。
-    # - LAN公開が必要な場合は `jetson/docker-compose.jetson.lan.yml` を重ねる。
+    # RTP はデフォルト無効（I2Sメイン運用）。
+    # フォールバックでいつでも使えるよう、UDPポートは常に公開しておく（有効化は env で制御）。
     ports:
-      - "${MAGICBOX_BIND_ADDR:-127.0.0.1}:80:80"
+      - "80:80"
+      # RTP fallback (Issue #827)
+      - "46000:46000/udp"
+      - "46001:46001/udp"
+      - "46002:46002/udp"
 
     # Shared memory for audio buffers
     shm_size: '256m'
 
-    # 永続化方針（Issue #1058）:
-    # - 設定: named volume (`magicbox-config`) を /opt/magicbox/config へ
-    # - OPRAキャッシュ: named volume (`magicbox-opra-cache`) を /data/opra へ
-    # - 係数/デフォルトEQ: image 同梱（ホストマウントしない）
+    # Mount data directory (EQ profiles, coefficients, OPRA database)
+    # Static data (coefficients, OPRA database) is read-only for protection
+    # EQ profiles directory is writable for dynamic profile generation
     volumes:
+      - ../../data:/opt/magicbox/data:ro
+      - ../../data/EQ:/opt/magicbox/data/EQ:rw
       # Persist runtime config outside the image (survives rebuilds)
       - magicbox-config:/opt/magicbox/config
       # Persist OPRA sync cache outside the image
       - magicbox-opra-cache:/data/opra
+      # ONNX Runtime for De-limiter inference
+      - /opt/onnxruntime:/opt/onnxruntime:ro
 
     # Environment (NVIDIA)
     environment:

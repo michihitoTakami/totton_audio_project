@@ -20,23 +20,27 @@ RTP/RTCP のデフォルトポートは以下です:
 
 ```bash
 cd docker
-# Runtime-only（Issue #1058）: build せず GHCR image を pull して起動
-docker compose -f jetson/docker-compose.jetson.yml up -d
+docker compose -f jetson/docker-compose.jetson.yml up -d --build
 docker compose -f jetson/docker-compose.jetson.yml logs -f
 # 停止
 docker compose -f jetson/docker-compose.jetson.yml down
 ```
 
-### LAN公開（明示）
-既定の `docker-compose.jetson.yml` は **localhost バインド**（`127.0.0.1:80:80`）です。
-LAN内から管理画面へアクセスしたい場合は、以下のオーバーレイ compose を **明示的に重ねて**起動してください:
+## Jetson Compose（runtime-only / image-based）
+ソースコード無しで起動したい場合（Issue #1058）は、GHCR の `image:` 参照のみで起動できる compose を使います。
 
 ```bash
 cd docker
-docker compose \
-  -f jetson/docker-compose.jetson.yml \
-  -f jetson/docker-compose.jetson.lan.yml \
-  up -d
+docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+docker compose -f jetson/docker-compose.jetson.runtime.yml logs -f
+```
+
+利用するimageは `MAGICBOX_IMAGE` で差し替え可能です:
+
+```bash
+cd docker
+MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system:latest \
+  docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 ```
 
 ポイント:
@@ -53,12 +57,16 @@ docker compose \
 - Jetson Compose は `magicbox-opra-cache` ボリュームを `/data/opra` にマウントし、OPRA同期結果がコンテナの再ビルド/再起動後も保持されるようにしています。
 - データルートは `GPU_OS_DATA_DIR` で上書き可能（デフォルト `/data`）。エントリポイントがロック/versionsディレクトリを作成し、`magicbox` ユーザー所有に揃えます。
 
-## 配布物（runtime-only）の前提
-- `docker/jetson/docker-compose.jetson.yml` は **`build:` を使いません**（評価者がソース無しで動かすため）。
-- 係数（`/opt/magicbox/data/coefficients`）やデフォルトEQは **imageに同梱**されます。
-- 永続化するのは以下です（named volume）:
-  - `magicbox-config` → `/opt/magicbox/config`（設定）
-  - `magicbox-opra-cache` → `/data/opra`（OPRAキャッシュ）
+## Magic Box コンテナの事前ビルド（Jetson 本体で実行）
+`docker/jetson/Dockerfile.jetson` はホストでビルド済みのバイナリをコピーする前提です。コンテナを立ち上げる前に Jetson 上で以下を実行し、`build/gpu_upsampler_alsa` を用意してください。
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=87
+cmake --build build -j$(nproc)
+ls -l build/gpu_upsampler_alsa
+```
+
+ビルド手順の詳細は `../docs/setup/build.md` を参照してください。
 
 ## 設定の永続化と初期化（Jetson magicbox）
 - `magicbox-config` ボリューム(`/opt/magicbox/config`)に `config.json` を保存し、コンテナ再ビルドでも設定が維持されます。
