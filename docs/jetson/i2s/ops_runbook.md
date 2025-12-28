@@ -42,7 +42,7 @@ I2S移行を運用に載せるため、以下を「手順書だけで第三者�
 ## 起動手順（I2S運用）
 
 ### Jetson（Docker Compose）
-事前にJetson上でビルド済みであること（詳細は `docs/setup/build.md` / `docker/README.md`）。
+事前に Jetson 側の環境が用意できていること（Docker評価版 / runtime compose を想定。詳細は `docker/README.md`）。
 
 ```bash
 cd docker

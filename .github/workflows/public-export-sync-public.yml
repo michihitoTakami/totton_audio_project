@@ -1,0 +1,174 @@
+name: Public export (docs/UI/OpenAPI/compose/licenses) to public repo (optional)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-export-sync-public
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_REPO: michihitoTakami/totton-audio-system-full
+      TARGET_BRANCH: main
+      EXPORT_DIR: /tmp/public_export
+      CLONE_DIR: /tmp/public_repo
+      TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+    steps:
+      - name: Validate secret (skip if missing)
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            echo "secrets.PUBLIC_REPO_TOKEN is not configured. Skipping."
+            exit 0
+          fi
+
+      - name: Checkout private repo
+        if: env.TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup uv
+        if: env.TOKEN != ''
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version-file: ".python-version"
+          enable-cache: true
+
+      - name: Install Python deps
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+          uv sync --frozen
+
+      - name: Prepare export (allowlist)
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+          rm -rf "${EXPORT_DIR}"
+          mkdir -p "${EXPORT_DIR}"
+
+          # Root README for public repo
+          cp -f "docs/releases/public_repo_root_README.md" "${EXPORT_DIR}/README.md"
+
+          # Licenses / notices
+          cp -f "LICENSE" "${EXPORT_DIR}/LICENSE"
+          cp -f "LICENSE.ja.md" "${EXPORT_DIR}/LICENSE.ja.md"
+          cp -f "NOTICE.md" "${EXPORT_DIR}/NOTICE.md"
+          cp -f "THIRD_PARTY_LICENSES.md" "${EXPORT_DIR}/THIRD_PARTY_LICENSES.md"
+
+          # Docs (allowlist)
+          mkdir -p "${EXPORT_DIR}/docs"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "docs/api/" "${EXPORT_DIR}/docs/api/"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "docs/jetson/" "${EXPORT_DIR}/docs/jetson/"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "docs/releases/" "${EXPORT_DIR}/docs/releases/"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "docs/architecture/" "${EXPORT_DIR}/docs/architecture/"
+          cp -f "docs/roadmap.md" "${EXPORT_DIR}/docs/roadmap.md"
+          mkdir -p "${EXPORT_DIR}/docs/specifications"
+          cp -f "docs/specifications/opra-sync.md" "${EXPORT_DIR}/docs/specifications/opra-sync.md"
+
+          # UI / Web (allowlist)
+          mkdir -p "${EXPORT_DIR}/web/templates" "${EXPORT_DIR}/web/static" "${EXPORT_DIR}/web/routers"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "web/templates/" "${EXPORT_DIR}/web/templates/"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "web/static/" "${EXPORT_DIR}/web/static/"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "web/routers/" "${EXPORT_DIR}/web/routers/"
+          cp -f "web/main.py" "${EXPORT_DIR}/web/main.py"
+
+          # Delimiter page is not published yet (Issue #1057)
+          rm -f "${EXPORT_DIR}/web/templates/pages/delimiter.html"
+
+          # Compose / distribution definitions (allowlist)
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "docker/" "${EXPORT_DIR}/docker/"
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "raspberry_pi/" "${EXPORT_DIR}/raspberry_pi/"
+
+      - name: Export OpenAPI JSONs (ensure up to date)
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+          mkdir -p "${EXPORT_DIR}/docs/api"
+          uv run python scripts/integration/export_openapi.py --output "${EXPORT_DIR}/docs/api/openapi.json"
+          uv run python scripts/integration/export_raspi_openapi.py --output "${EXPORT_DIR}/docs/api/raspi_openapi.json"
+
+      - name: Guardrails (denylist / secrets / private dirs)
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+
+          # Hard deny: core/private dirs
+          if [ -e "${EXPORT_DIR}/src" ] || [ -e "${EXPORT_DIR}/scripts" ] || [ -e "${EXPORT_DIR}/include" ]; then
+            echo "Export unexpectedly contains private directories (src/scripts/include)." >&2
+            find "${EXPORT_DIR}" -maxdepth 2 -type d -print >&2 || true
+            exit 1
+          fi
+
+          # Hard deny: obvious secret files
+          if find "${EXPORT_DIR}" -type f \( -name "*.key" -o -name "*.pem" -o -name "*.p12" -o -name "*.crt" -o -name ".env" -o -name ".env.*" \) | grep -q .; then
+            echo "Export contains disallowed secret-like files (*.key/*.pem/*.env*...)." >&2
+            find "${EXPORT_DIR}" -type f \( -name "*.key" -o -name "*.pem" -o -name "*.p12" -o -name "*.crt" -o -name ".env" -o -name ".env.*" \) -print >&2 || true
+            exit 1
+          fi
+
+          # Best-effort content scan
+          deny_regex='(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|x-access-token|PUBLIC_REPO_TOKEN|TOTTON_AUDIO_TOKEN|AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82})'
+          if grep -RInE "${deny_regex}" "${EXPORT_DIR}"; then
+            echo "Found disallowed secret-like pattern in export." >&2
+            exit 1
+          fi
+
+      - name: Clone public repo
+        if: env.TOKEN != ''
+        run: |
+          set -euo pipefail
+          clone_url="https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git"
+          git clone --depth=1 "${clone_url}" "${CLONE_DIR}"
+
+      - name: Create branch and sync files
+        if: env.TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.TOKEN }}
+        run: |
+          set -euo pipefail
+
+          target_owner="$(echo "${TARGET_REPO}" | cut -d/ -f1)"
+          target_name="$(echo "${TARGET_REPO}" | cut -d/ -f2)"
+
+          cd "${CLONE_DIR}"
+          git switch -c "sync/public-export-${GITHUB_REF_NAME:-manual}-${GITHUB_SHA:0:7}"
+
+          rsync -a --delete --exclude ".git" "${EXPORT_DIR}/" "${CLONE_DIR}/"
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Public export に差分なし。"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "Public export from michy_os@${GITHUB_SHA}"
+          git push -u origin HEAD
+
+          head_ref="${target_owner}:$(git branch --show-current)"
+          existing_pr_count="$(
+            gh api \
+              "repos/${target_owner}/${target_name}/pulls?state=open&base=${TARGET_BRANCH}&head=${head_ref}" \
+              | jq 'length'
+          )"
+          if [ "${existing_pr_count}" != "0" ]; then
+            echo "既存のOpenなPRがあるため作成をスキップ: head=${head_ref}"
+            exit 0
+          fi
+
+          gh api -X POST "repos/${target_owner}/${target_name}/pulls" \
+            -f title="Public export from michy_os@${GITHUB_SHA:0:7}" \
+            -f head="${head_ref}" \
+            -f base="${TARGET_BRANCH}" \
+            -f body="Automated allowlist export from private repo.\n\nSource: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}\nTrigger: ${GITHUB_EVENT_NAME}"

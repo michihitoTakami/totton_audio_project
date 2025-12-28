@@ -26,6 +26,7 @@ Public Repo は **Control Plane / UI / 配布定義 / ドキュメント** を�
 - `docs/releases/**`（リリースノート）
 - `docs/roadmap.md`
 - `docs/architecture/**`（アーキテクチャ説明）
+- `docs/specifications/opra-sync.md`（OPRA 初回取得/キャッシュ方針。運用/仕様の範囲として公開OK）
 
 > 補足: `docs/setup/**` や `docs/dev/**` は、Private側の実装/ビルドに深く依存するものが多いため **Public Repo には含めない**（後述）。
 
