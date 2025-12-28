@@ -6,4 +6,4 @@
   - [Jetson 評価者向け導入ガイド（ソース不要 / Docker）](./evaluator_guide_docker.md)
 
 Docker 側の入口:
-- `docker/README.evaluator.md`
+- [Docker（評価者向け / ソース不要）](../../docker/README.evaluator.md)

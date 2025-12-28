@@ -2,7 +2,7 @@
 
 このREADMEは **開発者向け**です。ソースコードを用いてローカル（Jetson上）でビルドして起動します。
 
-> 評価者（ソース不要）で起動したい場合は `README.evaluator.md` を参照してください。
+> 評価者（ソース不要）で起動したい場合は [README.evaluator.md](./README.evaluator.md) を参照してください。
 
 ---
 

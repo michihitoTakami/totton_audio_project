@@ -11,9 +11,9 @@
 用途ごとに README を分けています。
 
 - **評価者（ソース不要 / 最短起動）**:
-  - `docker/README.evaluator.md`
+  - [Docker（評価者向け / ソース不要）](./README.evaluator.md)
 - **開発者（ローカルビルド）**:
-  - `docker/README.local_build.md`
+  - [Docker（ローカルビルド / 開発者向け）](./README.local_build.md)
 
 ## 補足: ディレクトリ説明
 
