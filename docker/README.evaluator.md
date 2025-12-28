@@ -9,6 +9,8 @@
 詳細な前提・ログ取得・既知トラブル・ロールバックは、まずこちら:
 
 - [Jetson 評価者向け導入ガイド（ソース不要 / Docker）](../docs/jetson/evaluator_guide_docker.md)
+- 評価者オンボーディング（QuickStart / チェックリスト / 報告テンプレ）:
+  - [評価者向け QuickStart（オンボーディング）](../docs/jetson/evaluator_quickstart.md)
 
 最短コマンドだけ再掲:
 
@@ -58,4 +60,3 @@ docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml down
 設定/デバイス確認/トラブルシュート:
 
 - `raspberry_pi/README.md`
-- `docs/setup/pi_bridge.md`
