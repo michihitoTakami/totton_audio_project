@@ -20,7 +20,8 @@ RTP/RTCP のデフォルトポートは以下です:
 
 ```bash
 cd docker
-docker compose -f jetson/docker-compose.jetson.yml up -d --build
+# 既定: secure-by-default（localhost bind）
+docker compose -f jetson/docker-compose.jetson.yml up -d
 docker compose -f jetson/docker-compose.jetson.yml logs -f
 # 停止
 docker compose -f jetson/docker-compose.jetson.yml down
@@ -34,6 +35,9 @@ cd docker
 docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 docker compose -f jetson/docker-compose.jetson.runtime.yml logs -f
 ```
+
+評価者向けの導入手順（前提 / ログ / 既知トラブル / ロールバック）は以下:
+- [Jetson 評価者向け導入ガイド（ソース不要 / Docker）](../docs/jetson/evaluator_guide_docker.md)
 
 利用するimageは `MAGICBOX_IMAGE` で差し替え可能です:
 
@@ -49,8 +53,8 @@ MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system:latest \
 - RTP 受信は Magic Box コンテナ内の `rtp_input` サービスが担当します（`MAGICBOX_ENABLE_RTP=true` のときのみ API/自動起動対象）。
 - `MAGICBOX_RTP_AUTOSTART=true` の場合、Web起動時にRTP受信を自動起動します（無効化は `MAGICBOX_RTP_AUTOSTART=false`）。
 - 受信設定（ポート/レート/デバイス/品質）は環境変数で上書き可能です（例: `MAGICBOX_RTP_PORT`, `MAGICBOX_RTP_SAMPLE_RATE`, `MAGICBOX_RTP_DEVICE`, `MAGICBOX_RTP_QUALITY`）。詳細は Web API `/api/rtp-input/config` のスキーマに準拠します。
-- RTP を有効化した場合、起動後に gst-launch が立ち上がっているかを確認するには `docker compose -f jetson/docker-compose.jetson.yml exec magicbox pgrep -f rtpbin` を利用してください。RTPプロセスが異常終了した場合も自動でリトライします（ALSAデバイス未接続時はリトライし続けるのでデバイスのマウントを確認してください）。連続失敗時のログは一定間隔(デフォルト30s)で抑制されます。
-- サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.yml up -d --build magicbox` のようにサービス名を指定
+- RTP を有効化した場合、起動後に gst-launch が立ち上がっているかを確認するには `docker compose -f jetson/docker-compose.jetson.runtime.yml exec magicbox pgrep -f rtpbin` を利用してください。RTPプロセスが異常終了した場合も自動でリトライします（ALSAデバイス未接続時はリトライし続けるのでデバイスのマウントを確認してください）。連続失敗時のログは一定間隔(デフォルト30s)で抑制されます。
+- サービスを個別に起動したい場合: `docker compose -f jetson/docker-compose.jetson.runtime.yml up -d magicbox` のようにサービス名を指定
 - `restart: always` を指定済み。systemd で単体起動する場合も `Restart=always` を付け、片側クラッシュ時に自動復帰させてください。
 
 ## OPRAキャッシュの永続化
