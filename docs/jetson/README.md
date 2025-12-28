@@ -70,7 +70,7 @@ Magic Boxは、2,000,000タップの最小位相FIRフィルタによる究極�
 ### 評価者向け（ソース不要 / Docker）
 
 - **Jetson評価版を最短で起動**したい場合は、まずこちらを参照してください:
-  - [Jetson 評価者向け導入ガイド（ソース不要 / Docker）](./evaluator_guide_docker.md)
+  - [Jetson（評価者向け / ソース不要）](./README.evaluator.md)
 
 ### 1. 接続
 
