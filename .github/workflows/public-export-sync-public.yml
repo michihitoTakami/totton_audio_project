@@ -87,7 +87,8 @@ jobs:
 
           # Compose / distribution definitions (allowlist)
           rsync -a --delete --exclude ".git" --exclude "__pycache__/" "docker/" "${EXPORT_DIR}/docker/"
-          rsync -a --delete --exclude ".git" --exclude "__pycache__/" "raspberry_pi/" "${EXPORT_DIR}/raspberry_pi/"
+          # Do not export .env* (may contain secrets / local-only overrides)
+          rsync -a --delete --exclude ".git" --exclude "__pycache__/" --exclude ".env" --exclude ".env.*" "raspberry_pi/" "${EXPORT_DIR}/raspberry_pi/"
 
       - name: Export OpenAPI JSONs (ensure up to date)
         if: env.TOKEN != ''
