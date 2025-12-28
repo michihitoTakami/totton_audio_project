@@ -17,6 +17,10 @@ Raspberry Pi 側の評価者導入を一本道化するためのガイドです�
 Pi では GHCR image を pull して起動します（**ソースコード不要**）。
 
 ```bash
+#
+# NOTE: 配布された Release Notes の指定がある場合は、image を環境変数で固定してください。
+#   USB_I2S_BRIDGE_IMAGE=ghcr.io/...:<tag> RASPI_CONTROL_API_IMAGE=ghcr.io/...:<tag> \
+#
 docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml up -d
 docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs -f
 ```
