@@ -10,7 +10,7 @@ Issue: #1063（Epic: #1051）
 
 - Jetson: [Jetson 評価者向け導入ガイド（ソース不要 / Docker）](./evaluator_guide_docker.md)
 - Docker: [Docker（評価者向け / ソース不要）](../../docker/README.evaluator.md)
-- Raspberry Pi（RTP sender / ZeroMQ bridge / 既知注意点）: [Raspberry Pi RTP Sender README](../../raspberry_pi/README.md)
+- Raspberry Pi（RTP sender / usb-i2s-bridge / 既知注意点）: [Raspberry Pi README](../../raspberry_pi/README.md)
 
 ---
 
@@ -59,7 +59,7 @@ aplay -l
 cat /proc/asound/cards
 ```
 
-> 詳細は [Raspberry Pi RTP Sender README](../../raspberry_pi/README.md) と `raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env` を参照してください。
+> 詳細は [Raspberry Pi README](../../raspberry_pi/README.md) と `raspberry_pi/usb_i2s_bridge/usb-i2s-bridge.env` を参照してください。
 
 ### B-2) Pi: ALSAキャプチャ → RTP/RTCP（rtp_sender）
 
@@ -95,6 +95,18 @@ Jetson 側（RTP受信を有効化）:
 ```bash
 cd docker
 MAGICBOX_ENABLE_RTP=true MAGICBOX_RTP_AUTOSTART=true \
+  docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+```
+
+注意（RTPが届かないとき）:
+
+- `docker/jetson/docker-compose.jetson.runtime.yml` は **RTP/RTCP の待受 bind 先も** `MAGICBOX_PUBLISH_IP` に従います
+  - デフォルト: `192.168.55.1`（USB gadget）
+  - Pi が USB gadget のサブネット外（LAN側）から送る場合は、明示的に変更してください:
+
+```bash
+cd docker
+MAGICBOX_PUBLISH_IP=0.0.0.0 MAGICBOX_ENABLE_RTP=true MAGICBOX_RTP_AUTOSTART=true \
   docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 ```
 

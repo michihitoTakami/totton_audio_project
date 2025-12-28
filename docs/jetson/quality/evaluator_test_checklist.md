@@ -17,7 +17,7 @@ Issue: #1063（Epic: #1051）
 
 ## 1. 起動確認（Jetson）
 
-- [ ] `docker compose -f docker/jetson/docker-compose.jetson.runtime.yml ps` で `magicbox` が Up
+- [ ] `cd docker && docker compose -f jetson/docker-compose.jetson.runtime.yml ps` で `magicbox` が Up
 - [ ] Web UI が開ける（デフォルト: `http://192.168.55.1/`）
 - [ ] コンテナログに致命的エラーが出ていない
 
@@ -60,8 +60,8 @@ Issue: #1063（Epic: #1051）
 
 ### Jetson
 
-- [ ] `docker compose -f docker/jetson/docker-compose.jetson.runtime.yml logs --since 1h --no-color > magicbox.log`
-- [ ] `docker compose -f docker/jetson/docker-compose.jetson.runtime.yml ps` の結果
+- [ ] `cd docker && docker compose -f jetson/docker-compose.jetson.runtime.yml logs --since 1h --no-color > magicbox.log`
+- [ ] `cd docker && docker compose -f jetson/docker-compose.jetson.runtime.yml ps` の結果
 - [ ] `cat /etc/nv_tegra_release` の結果
 
 ### Raspberry Pi（使用時）

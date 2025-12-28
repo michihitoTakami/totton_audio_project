@@ -28,7 +28,7 @@ Issue: #1063（Epic: #1051）
   - 入力:（USB gadget / RTP）
   - 出力:（DAC 型番）
 - 起動コマンド/compose:
-  - `docker compose -f docker/jetson/docker-compose.jetson.runtime.yml up -d`
+  - `cd docker && docker compose -f jetson/docker-compose.jetson.runtime.yml up -d`
   - RTP 利用時の上書き（あれば）: `MAGICBOX_ENABLE_RTP=... MAGICBOX_RTP_AUTOSTART=...`
 
 ### Raspberry Pi 側（使用している場合）
