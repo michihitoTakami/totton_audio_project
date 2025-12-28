@@ -206,8 +206,8 @@ Group=magicbox
 # 実行設定
 WorkingDirectory=/opt/magicbox
 ExecStart=/opt/magicbox/venv/bin/uvicorn web.main:app \
-    --host 0.0.0.0 \
-    --port 80 \
+    --host ${MAGICBOX_WEB_HOST} \
+    --port ${MAGICBOX_WEB_PORT} \
     --workers 1
 
 # 再起動ポリシー
@@ -266,7 +266,7 @@ t=10s   gpu-upsampler.service 開始
 t=25s   gpu-upsampler.service Ready
         │
 t=26s   magicbox-web.service 開始
-        │   └─ uvicorn :80 起動
+        │   └─ uvicorn ${MAGICBOX_WEB_HOST}:${MAGICBOX_WEB_PORT} 起動
         │
 t=28s   Ready (Web UI アクセス可能)
 ```

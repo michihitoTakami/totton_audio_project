@@ -26,10 +26,15 @@ services:
 
     # 既存 compose と同等の挙動（互換）: 80 + RTP/RTCP UDP を公開
     ports:
-      - "80:80"
-      - "46000:46000/udp"
-      - "46001:46001/udp"
-      - "46002:46002/udp"
+      # デフォルトは USB gadget のみ（Jetson: 192.168.55.1）に公開して、
+      # Wi-Fi/有線LAN等への意図しない露出を避ける。
+      # LANで公開したい場合は明示的に変更する（インターネット公開は禁止/非推奨）。
+      # 例（LANで公開）:
+      #   MAGICBOX_PUBLISH_IP=0.0.0.0 docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:80:80"
+      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:46000:46000/udp"
+      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:46001:46001/udp"
+      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:46002:46002/udp"
 
     shm_size: '256m'
 

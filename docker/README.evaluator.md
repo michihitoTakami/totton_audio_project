@@ -18,6 +18,16 @@ docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 docker compose -f jetson/docker-compose.jetson.runtime.yml logs -f
 ```
 
+Web UI の公開先について（重要）:
+
+- runtime compose のデフォルトは **USB gadget (`192.168.55.1`) のみ**に bind します（意図しないWi-Fi/LAN露出を避けるため）。
+- USB gadget を使わず LAN で公開したい場合は、明示的に上書きしてください（インターネット公開は禁止/非推奨）。
+
+```bash
+cd docker
+MAGICBOX_PUBLISH_IP=0.0.0.0 docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+```
+
 停止:
 
 ```bash
