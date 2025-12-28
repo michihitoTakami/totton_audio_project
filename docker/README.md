@@ -26,6 +26,23 @@ docker compose -f jetson/docker-compose.jetson.yml logs -f
 docker compose -f jetson/docker-compose.jetson.yml down
 ```
 
+## Jetson Compose（runtime-only / image-based）
+ソースコード無しで起動したい場合（Issue #1058）は、GHCR の `image:` 参照のみで起動できる compose を使います。
+
+```bash
+cd docker
+docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+docker compose -f jetson/docker-compose.jetson.runtime.yml logs -f
+```
+
+利用するimageは `MAGICBOX_IMAGE` で差し替え可能です:
+
+```bash
+cd docker
+MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system:latest \
+  docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+```
+
 ポイント:
 - JetPack 6.1 以降 + NVIDIA Container Runtime 必須
 - `--device /dev/snd` を必ず付与（Loopback/実デバイスをコンテナへ渡す）
