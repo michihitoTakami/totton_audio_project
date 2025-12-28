@@ -39,7 +39,22 @@ Pi 側の「UAC2 の受け口」は **ALSA の入力デバイス**として扱�
 
 ## 起動（Docker / Compose）
 
-Pi 上で以下を起動します（デフォルトは I2S ブリッジ構成）：
+Pi 上で以下を起動します（デフォルトは I2S ブリッジ構成）。
+
+### 評価者向け（ソース不要 / runtime-only）
+
+```bash
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml up -d
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs -f
+```
+
+停止:
+
+```bash
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml down
+```
+
+### 開発者向け（ローカルビルド）
 
 ```bash
 docker compose -f raspberry_pi/docker-compose.yml up -d --build

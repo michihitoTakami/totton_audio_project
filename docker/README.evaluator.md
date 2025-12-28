@@ -24,3 +24,28 @@ docker compose -f jetson/docker-compose.jetson.runtime.yml logs -f
 cd docker
 docker compose -f jetson/docker-compose.jetson.runtime.yml down
 ```
+
+---
+
+## Raspberry Pi: runtime-only（image-based）
+
+Raspberry Pi 側は **USB/UAC2入力 → I2S出力（usb-i2s-bridge）**がデフォルトです。
+
+最短コマンド:
+
+```bash
+cd /path/to/magicbox-root
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml up -d
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs -f
+```
+
+停止:
+
+```bash
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml down
+```
+
+設定/デバイス確認/トラブルシュート:
+
+- `raspberry_pi/README.md`
+- `docs/setup/pi_bridge.md`

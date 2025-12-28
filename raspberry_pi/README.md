@@ -1,12 +1,53 @@
-# Raspberry Pi RTP Sender (GStreamer)
+# Raspberry Pi 評価者向け導入ガイド（I2Sメイン / RTPフォールバック）
 
-Raspberry Pi 上で ALSA キャプチャを GStreamer RTP (+RTCP) で Jetson へ送出するための最小構成です。TCP ベースの C++ 実装は廃止し、RTCP 同期付きの GStreamer パイプラインを正式ルートとしました。
+Issue: #1061（Epic: #1051）
 
-- 送信側: `raspberry_pi/rtp_sender.py`（gst-launch ラッパー、**デフォルトは BE (S24_3BE)**）
-- 連携: `raspberry_pi/rtp_receiver`（ZeroMQ ブリッジで統計/レイテンシ共有、任意）
-- 受信側: Jetson の `rtp_input` サービス（`web/services/rtp_input.py`）
+Raspberry Pi 側の評価者導入を一本道化するためのガイドです。
+**現在の主流運用は I2S（USB/UAC2入力 → I2S出力）**で、RTP は緊急フォールバックとして残しています。
 
-> I2S移行（Pi→Jetson I2S）を含む運用手順は `docs/jetson/i2s/ops_runbook.md`（Issue #827）を参照してください。
+関連:
+
+- 運用手順（I2S/RTP切替・トラブルシュート）: `docs/jetson/i2s/ops_runbook.md`
+- UAC2受け口の考え方/設定: `docs/setup/pi_bridge.md`
+
+---
+
+## 起動（評価者向け / ソース不要: runtime-only）
+
+Pi では GHCR image を pull して起動します（**ソースコード不要**）。
+
+```bash
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml up -d
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs -f
+```
+
+停止:
+
+```bash
+docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml down
+```
+
+---
+
+## 起動（開発者向け / ローカルビルド）
+
+```bash
+# デフォルト: I2S (USB/UAC2 -> I2S) ブリッジを起動
+docker compose -f raspberry_pi/docker-compose.yml up -d --build
+
+# RTP を起動したい場合（レアケース）: profile を明示
+docker compose -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rtp-sender rtp-bridge jetson-proxy
+```
+
+---
+
+## 接続（迷わないための固定値）
+
+- **Jetson Web**: `http://192.168.55.1/`
+- **Pi Control API**（Jetson → Pi）: `http://192.168.55.100:8081`（USB直結の典型値）
+- **Pi → Jetson ステータス送信**: `http://192.168.55.1/i2s/peer-status`
+
+> IP がズレる場合は Jetson 側は `MAGICBOX_PI_API_BASE`、Pi 側は `USB_I2S_STATUS_REPORT_URL` を上書きしてください。
 
 ## 必要パッケージ (Raspberry Pi OS / Debian 系)
 
@@ -22,7 +63,11 @@ sudo apt-get install -y \
 pip3 install --user pyzmq
 ```
 
-## 使い方 (Python CLI)
+> NOTE: 評価者は基本的に Docker で起動してください（推奨）。以降の CLI セクションはデバッグ/フォールバック向けです。
+
+---
+
+## RTP送出: 使い方 (Python CLI)
 
 ```bash
 python3 -m raspberry_pi.rtp_sender \
@@ -62,19 +107,13 @@ python3 -m raspberry_pi.rtp_sender \
 | `RTP_SENDER_DRY_RUN` | `false` | true でパイプライン出力のみ |
 | `RTP_BRIDGE_STATS_PATH` | `/tmp/rtp_receiver_stats.json` | ZeroMQ STATUS 用に検出レート等を書き出すパス |
 
-## Docker / Compose (Raspberry Pi 上)
+---
 
-```bash
-# デフォルト: I2S (USB/UAC2 -> I2S) ブリッジを起動
-docker compose -f raspberry_pi/docker-compose.yml up -d --build
-
-# RTP を起動したい場合（レアケース）: profile を明示
-docker compose -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rtp-sender rtp-bridge jetson-proxy
-```
+## Docker / Compose 補足（RTPフォールバック）
 
 - `raspberry_pi/docker-compose.yml` は **デフォルトで I2S ブリッジ**を起動します。RTP 系は `profiles: ["rtp"]` のため、明示しない限り起動しません。
 - RTP を使う場合は RTCP 付き RTP 送出 (`rtp-sender`) と ZeroMQ ブリッジ (`rtp-bridge`) を分離しています。`rtp-bridge` は `tcp://0.0.0.0:60000` で待ち受け、Jetson から到達できます（ポート 60000 を開ける）。
-- `RTP_SENDER_*` を `.env` で上書きすると配信先・フォーマットを切り替えられます。デフォルトは BE (`S24_3BE`)。サンプルレートは自動検出が有効で、`RTP_BRIDGE_STATS_PATH` に検出値を書き出します。
+- `RTP_SENDER_*` を `.env` で上書きすると配信先・フォーマットを切り替えられます。デフォルトは BE (`S24_3BE`)。
 
 ## ZeroMQ ブリッジ (任意)
 
