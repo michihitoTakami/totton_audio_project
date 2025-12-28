@@ -85,6 +85,7 @@ cmake --build build -j$(nproc)
 | 実機で音を出す | [pc_development.md](pc_development.md) |
 | Web UIを使う | [web_ui.md](web_ui.md) |
 | De-Limiterを有効化する | [delimiter.md](delimiter.md) |
+| セキュリティ最低ライン（LAN前提） | [security_baseline.md](security_baseline.md) |
 
 ## トラブルシューティング
 

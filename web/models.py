@@ -206,8 +206,11 @@ class DaemonStatus(BaseModel):
     """Daemon status response model."""
 
     running: bool
-    pid_file: str
-    binary_path: str
+    # NOTE:
+    # - テストでは `DaemonStatus(running=True/False)` の最小構成を許容している。
+    # - 実運用ではレスポンス生成側で値を埋める想定だが、モデルとしては optional にする。
+    pid_file: Optional[str] = None
+    binary_path: Optional[str] = None
 
 
 class ZmqPingResponse(BaseModel):

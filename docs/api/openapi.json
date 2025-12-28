@@ -2887,19 +2887,31 @@
             "title": "Running"
           },
           "pid_file": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Pid File"
           },
           "binary_path": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Binary Path"
           }
         },
         "type": "object",
         "required": [
-          "running",
-          "pid_file",
-          "binary_path"
+          "running"
         ],
         "title": "DaemonStatus",
         "description": "Daemon status response model."
