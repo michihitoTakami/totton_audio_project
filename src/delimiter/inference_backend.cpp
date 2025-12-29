@@ -107,10 +107,10 @@ class OrtInferenceBackend final : public InferenceBackend {
         }
 
         inputBuffer_.resize(input.frames * 2);
-        for (std::size_t i = 0; i < input.frames; ++i) {
-            inputBuffer_[i * 2] = input.left[i];
-            inputBuffer_[i * 2 + 1] = input.right[i];
-        }
+        // ORT model expects channel-first layout: [1, 2, frames]
+        // i.e. [L0..L(N-1), R0..R(N-1)].
+        std::copy(input.left, input.left + input.frames, inputBuffer_.begin());
+        std::copy(input.right, input.right + input.frames, inputBuffer_.begin() + input.frames);
 
         std::array<int64_t, 3> shape{1, 2, static_cast<int64_t>(input.frames)};
         Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
