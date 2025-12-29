@@ -1,0 +1,26 @@
+{
+  "before": {
+    "path": "data/delimiter/test/nori.wav",
+    "sample_rate": 44100,
+    "duration_sec": 289.1280045351474,
+    "peak_dbfs": -0.19270903692278793,
+    "true_peak_dbtp": -0.04096417678633602,
+    "lufs": -9.455243720928145,
+    "rms_dbfs": -14.077757767469198,
+    "plr": 9.41427954414181,
+    "crest_factor_db": 13.88504873054641,
+    "clip_count": 0
+  },
+  "after": {
+    "path": "data/delimiter/test/nori_delimited.wav",
+    "sample_rate": 44100,
+    "duration_sec": 289.1280045351474,
+    "peak_dbfs": -5.336996267024644,
+    "true_peak_dbtp": -4.736818291201319,
+    "lufs": -15.428004432852362,
+    "rms_dbfs": -20.04032075430107,
+    "plr": 10.691186141651043,
+    "crest_factor_db": 14.703324487276426,
+    "clip_count": 0
+  }
+}

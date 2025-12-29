@@ -90,3 +90,7 @@ data/delimiter/weights/**
 !data/delimiter/weights/**/*.onnx
 !data/delimiter/weights/**/*.pth
 !data/delimiter/weights/**/*.json
+
+# Test audio files (large)
+data/delimiter/test/*.mp3
+data/delimiter/test/*.wav

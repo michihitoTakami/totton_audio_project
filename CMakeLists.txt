@@ -603,6 +603,26 @@ target_compile_options(delimiter_inference PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
 )
 
+# Delimiter WAV-to-WAV CLI tool (for validation and comparison)
+if(DELIMITER_ENABLE_ORT)
+    add_executable(delimiter_wav_to_wav
+        src/delimiter_wav_to_wav.cpp
+    )
+    target_link_libraries(delimiter_wav_to_wav
+        delimiter_inference
+        eq_support
+        logging
+        ${SNDFILE_LIBRARIES}
+    )
+    target_include_directories(delimiter_wav_to_wav PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${SNDFILE_INCLUDE_DIRS}
+    )
+    target_compile_options(delimiter_wav_to_wav PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -O3>
+    )
+endif()
+
 # EQ Support Library (CPU-only, Issue #107)
 # Consolidates EQ parsing, FIR generation, and config loading
 # No GPU dependencies - can be used independently of gpu_upsampler_core
