@@ -586,6 +586,7 @@ target_compile_options(fallback_manager PRIVATE
 # De-limiter inference backend abstraction (CPU-only, Issue #1017)
 add_library(delimiter_inference STATIC
     src/delimiter/inference_backend.cpp
+    src/delimiter/ort_output_selector.cpp
     src/delimiter/safety_controller.cpp
 )
 target_link_libraries(delimiter_inference PUBLIC
@@ -699,6 +700,7 @@ if(ENABLE_CUDA)
         tests/cpp/audio/test_overlap_add.cpp
         tests/cpp/core/test_config_loader.cpp
         tests/cpp/delimiter/test_inference_backend.cpp
+        tests/cpp/delimiter/test_ort_output_selector.cpp
         tests/cpp/delimiter/test_safety_controller.cpp
         tests/cpp/e2e/test_partition_plan.cpp
         tests/cpp/audio/test_phase_alignment.cpp

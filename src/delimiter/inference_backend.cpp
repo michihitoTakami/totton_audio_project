@@ -1,5 +1,6 @@
 #include "delimiter/inference_backend.h"
 
+#include "delimiter/ort_output_selector.h"
 #include "logging/logger.h"
 
 #include <algorithm>
@@ -123,7 +124,43 @@ class OrtInferenceBackend final : public InferenceBackend {
             if (outputs.empty()) {
                 return {InferenceStatus::Error, "onnxruntime returned no outputs"};
             }
-            return extractOutputs(outputs.back(), outLeft, outRight);
+
+            std::vector<std::vector<int64_t>> shapes;
+            shapes.reserve(outputs.size());
+            for (const auto& output : outputs) {
+                if (!output.IsTensor()) {
+                    shapes.emplace_back();
+                    continue;
+                }
+                try {
+                    shapes.push_back(output.GetTensorTypeAndShapeInfo().GetShape());
+                } catch (...) {
+                    shapes.emplace_back();
+                }
+            }
+
+            std::optional<std::size_t> stereoIndex = pickStereoOutputIndex(outputNames_, shapes);
+            if (!stereoIndex || *stereoIndex >= outputs.size()) {
+                std::string message = "ORT model returned no stereo output. outputs=[";
+                for (std::size_t i = 0; i < outputNames_.size() && i < shapes.size(); ++i) {
+                    if (i > 0) {
+                        message += ", ";
+                    }
+                    message += outputNames_[i];
+                    message += ":";
+                    message += std::to_string(shapes[i].size());
+                    message += "d";
+                }
+                message += "]";
+                return {InferenceStatus::Error, message};
+            }
+
+            InferenceResult extracted = extractOutputs(outputs[*stereoIndex], outLeft, outRight);
+            if (extracted.status != InferenceStatus::Ok) {
+                extracted.message =
+                    "ORT output '" + outputNames_[*stereoIndex] + "' failed: " + extracted.message;
+            }
+            return extracted;
         } catch (const Ort::Exception& e) {
             return {InferenceStatus::Error, e.what()};
         } catch (const std::exception& e) {
