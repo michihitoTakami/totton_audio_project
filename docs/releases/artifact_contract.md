@@ -186,7 +186,7 @@ magicbox-update-${VERSION}-<platform>.tar.gz
 ### 関連
 
 - Pi 側ブリッジ/制御 API: `raspberry_pi/docker-compose.yml`（`raspi_openapi.json`）
-- 運用/セットアップ（Pi 側 UAC2 受け口の説明）: `docs/setup/pi_bridge.md`
+- 運用（Pi 側 UAC2 受け口の説明）: `docs/jetson/pi_bridge.md`
 
 ---
 
@@ -238,6 +238,6 @@ magicbox-update-${VERSION}-<platform>.tar.gz
 
 - `docs/jetson/deployment/ota-update.md`（パッケージ形式・OTA検証）
 - `docs/api/README.md`（OpenAPI 配布と更新）
-- `docs/setup/pi_bridge.md`（Raspberry Pi ブリッジ / UAC2 受け口）
+- `docs/jetson/pi_bridge.md`（Raspberry Pi ブリッジ / UAC2 受け口）
 - `docs/specifications/opra-sync.md`（OPRA 初回取得/キャッシュ方針）
 - `docs/releases/public_repo.md`（公開範囲/配布物に含めるものの前提）

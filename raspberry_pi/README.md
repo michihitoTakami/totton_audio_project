@@ -8,7 +8,7 @@ Raspberry Pi 側の評価者導入を一本道化するためのガイドです�
 関連:
 
 - 運用手順（I2S/RTP切替・トラブルシュート）: `docs/jetson/i2s/ops_runbook.md`
-- UAC2受け口の考え方/設定: `docs/setup/pi_bridge.md`
+- UAC2受け口の考え方/設定: `docs/jetson/pi_bridge.md`
 
 ---
 
