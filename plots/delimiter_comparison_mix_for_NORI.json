@@ -1,0 +1,26 @@
+{
+  "before": {
+    "path": "data/delimiter/test/mix_for_NORI.wav",
+    "sample_rate": 44100,
+    "duration_sec": 33.91360544217687,
+    "peak_dbfs": -6.924329673172414,
+    "true_peak_dbtp": -6.846578225198084,
+    "lufs": -21.85148863365565,
+    "rms_dbfs": -24.968646394366417,
+    "plr": 15.004910408457565,
+    "crest_factor_db": 18.044316721194,
+    "clip_count": 0
+  },
+  "after": {
+    "path": "data/delimiter/test/mix_for_NORI_delimited.wav",
+    "sample_rate": 44100,
+    "duration_sec": 33.91360544217687,
+    "peak_dbfs": -12.722431647784692,
+    "true_peak_dbtp": -12.716904374526699,
+    "lufs": -27.868562238002884,
+    "rms_dbfs": -30.986230527670546,
+    "plr": 15.151657863476185,
+    "crest_factor_db": 18.263798879885854,
+    "clip_count": 0
+  }
+}
