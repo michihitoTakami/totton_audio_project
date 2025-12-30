@@ -1,0 +1,168 @@
+name: Mirror release assets to public repo
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to mirror (e.g., v1.2.3)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-release-mirror-${{ github.event.release.tag_name || github.ref_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_REPO: michihitoTakami/totton-audio-system-full
+      TARGET_BRANCH: main
+      TAG_NAME: ${{ github.event.release.tag_name || github.event.inputs.tag || github.ref_name }}
+      PUBLIC_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+      ASSET_DIR: dist/assets
+    steps:
+      - name: Validate secret (skip if missing)
+        run: |
+          set -euo pipefail
+          if [ -z "${PUBLIC_TOKEN}" ]; then
+            echo "secrets.PUBLIC_REPO_TOKEN is not configured. Skipping."
+            exit 0
+          fi
+
+      - name: Resolve tag/version
+        if: env.PUBLIC_TOKEN != ''
+        id: vars
+        run: |
+          set -euo pipefail
+          tag="${TAG_NAME}"
+          if [ -z "${tag}" ]; then
+            echo "TAG_NAME is empty. Provide release tag via event or workflow dispatch input 'tag'." >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download release assets from private repo
+        if: env.PUBLIC_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.vars.outputs.tag }}"
+          mkdir -p "${ASSET_DIR}"
+          gh release download "${tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir "${ASSET_DIR}" \
+            --clobber
+
+      - name: Validate required assets
+        if: env.PUBLIC_TOKEN != ''
+        run: |
+          set -euo pipefail
+          version="${{ steps.vars.outputs.version }}"
+          required=(
+            "magicbox-update-${version}-jetson-arm64.tar.gz"
+            "magicbox-update-${version}-jetson-arm64.tar.gz.sha256"
+            "sbom-${version}-jetson-arm64.cdx.json"
+            "sbom-${version}-jetson-arm64.cdx.json.sha256"
+            "SHA256SUMS"
+            "checksums.sha256"
+            "openapi.json"
+            "openapi.json.sha256"
+            "raspi_openapi.json"
+            "raspi_openapi.json.sha256"
+          )
+          missing=()
+          for f in "${required[@]}"; do
+            if [ ! -f "${ASSET_DIR}/${f}" ]; then
+              missing+=("${f}")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "Missing release assets: ${missing[*]}" >&2
+            ls -l "${ASSET_DIR}" >&2 || true
+            exit 1
+          fi
+
+      - name: Build release notes for public repo
+        if: env.PUBLIC_TOKEN != ''
+        run: |
+          set -euo pipefail
+          tag="${{ steps.vars.outputs.tag }}"
+          version="${{ steps.vars.outputs.version }}"
+          target_repo="${TARGET_REPO}"
+          target_branch="${TARGET_BRANCH}"
+          notes="dist/public-release-notes.md"
+          mkdir -p "$(dirname "${notes}")"
+          export tag version target_repo target_branch notes
+          python -c 'import os, textwrap; tag=os.environ["tag"]; version=os.environ["version"]; repo=os.environ["target_repo"]; branch=os.environ["target_branch"]; notes=os.environ["notes"]; content=textwrap.dedent(f"""# Magic Box {tag}
+          ## 配布物（Release assets）
+          - magicbox-update-{version}-jetson-arm64.tar.gz（Jetson runtime配布物。`docker/` や Web UI を同梱）
+          - magicbox-update-{version}-jetson-arm64.tar.gz.sha256 / SHA256SUMS（整合性検証用）
+          - sbom-{version}-jetson-arm64.cdx.json（CycloneDX JSON）とその .sha256
+          - openapi.json / raspi_openapi.json と各 .sha256
+          - checksums.sha256（tarball 内コンテンツのハッシュ一覧）
+
+          ## ダウンロードと検証
+          1. 本Releaseのアセットを同じディレクトリに保存し、Jetson 向け tarball と .sha256 をセットで取得してください。
+          2. 整合性検証: `sha256sum -c magicbox-update-{version}-jetson-arm64.tar.gz.sha256`
+          3. 展開: `sudo mkdir -p /opt/magicbox && sudo tar -xzf magicbox-update-{version}-jetson-arm64.tar.gz -C /opt/magicbox`
+          4. 起動: `/opt/magicbox/docker` 配下で QuickStart のコマンドを実行してください。
+
+          ## 評価手順/ドキュメント
+          - Jetson QuickStart: https://github.com/{repo}/blob/{branch}/docs/jetson/evaluator_quickstart.md
+          - Raspberry Pi (入力ブリッジ/rtp): https://github.com/{repo}/blob/{branch}/raspberry_pi/README.md
+          - API (OpenAPI): https://github.com/{repo}/blob/{branch}/docs/api/README.md
+
+          ## 対応範囲・既知制約
+          - 対応機種: Jetson Orin Nano（確認済み）、JetPack 6.1 以降 / L4T r36.4+。
+          - 必須: Docker Engine + Docker Compose v2、NVIDIA Container Runtime、有線/USB gadget 経由のネットワーク接続、ALSAデバイス(`/dev/snd`)が見えること。
+          - デフォルト公開先: Web UI は USB gadget `192.168.55.1` のみ。LAN公開する場合は `MAGICBOX_PUBLISH_IP=0.0.0.0` を明示。
+          - 音声入力: UAC2/ALSA入力（推奨は Raspberry Pi ブリッジの `usb-i2s-bridge` または `rtp_sender`）。環境に応じて `USB_I2S_*` を設定。
+          - 非対応/未検証: JetPack 6.0 以前、PC/amd64 配布、インターネット越し公開。
+          """); open(notes, "w", encoding="utf-8").write(content)'
+
+      - name: Create or update public release
+        if: env.PUBLIC_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.PUBLIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.vars.outputs.tag }}"
+          notes="dist/public-release-notes.md"
+          if gh release view "${tag}" --repo "${TARGET_REPO}" >/dev/null 2>&1; then
+            gh release edit "${tag}" \
+              --repo "${TARGET_REPO}" \
+              --title "${tag}" \
+              --notes-file "${notes}" \
+              --latest
+          else
+            gh release create "${tag}" \
+              --repo "${TARGET_REPO}" \
+              --title "${tag}" \
+              --notes-file "${notes}" \
+              --target "${TARGET_BRANCH}" \
+              --latest
+          fi
+
+      - name: Upload assets to public release
+        if: env.PUBLIC_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.PUBLIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.vars.outputs.tag }}"
+          asset_dir="${ASSET_DIR}"
+          mapfile -t assets < <(find "${asset_dir}" -maxdepth 1 -type f -print)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No assets found in ${asset_dir}" >&2
+            exit 1
+          fi
+          gh release upload "${tag}" "${assets[@]}" --repo "${TARGET_REPO}" --clobber
