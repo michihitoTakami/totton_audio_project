@@ -14,12 +14,39 @@ Issue: #1063（Epic: #1051）
 
 ---
 
+## 配布物の入手（Release から取得）
+
+1. 公開 Release: <https://github.com/michihitoTakami/totton-audio-system-full/releases>
+2. 対象タグ `vX.Y.Z` のアセットから、少なくとも次をダウンロードしてください。
+   - `magicbox-update-<X.Y.Z>-jetson-arm64.tar.gz`（Jetson runtime 配布物）
+   - `magicbox-update-<X.Y.Z>-jetson-arm64.tar.gz.sha256`（整合性検証用、必須）
+   - （任意）`openapi.json` / `raspi_openapi.json` と各 `.sha256`、`sbom-<X.Y.Z>-jetson-arm64.cdx.json`
+3. 検証と展開（例: `VERSION=1.2.3`）。
+
+```bash
+VERSION=1.2.3
+INSTALL_ROOT=/opt/magicbox
+
+# tarball と .sha256 を同じディレクトリに置いた上で検証
+sha256sum -c magicbox-update-${VERSION}-jetson-arm64.tar.gz.sha256
+
+# 展開先を作成して tarball を配置
+sudo mkdir -p "${INSTALL_ROOT}"
+sudo tar -xzf magicbox-update-${VERSION}-jetson-arm64.tar.gz -C "${INSTALL_ROOT}"
+```
+
+4. 以降の `cd docker` は、上記で展開したディレクトリ（例: `${INSTALL_ROOT}/docker`）を前提としています。
+5. PC/amd64 向け tarball は開発者向けのため、公開 Release には含まれない場合があります。
+
+---
+
 ## 構成A: Jetsonのみ（最短）
 
 Jetson で評価版を起動して、Web UI を開きます。
 
 ```bash
-cd docker
+INSTALL_ROOT=/opt/magicbox
+cd "${INSTALL_ROOT}/docker"
 docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 docker compose -f jetson/docker-compose.jetson.runtime.yml logs -f
 ```
@@ -37,7 +64,8 @@ docker compose -f jetson/docker-compose.jetson.runtime.yml logs -f
 Pi 側（runtime-only）:
 
 ```bash
-cd /path/to/magicbox-root
+INSTALL_ROOT=/opt/magicbox
+cd "${INSTALL_ROOT}"
 docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml up -d
 docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs -f
 ```
@@ -93,7 +121,8 @@ Jetson 側（RTP受信を有効化）:
 以下のように **明示的に有効化**して起動してください。
 
 ```bash
-cd docker
+INSTALL_ROOT=/opt/magicbox
+cd "${INSTALL_ROOT}/docker"
 MAGICBOX_ENABLE_RTP=true MAGICBOX_RTP_AUTOSTART=true \
   docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 ```
@@ -105,7 +134,8 @@ MAGICBOX_ENABLE_RTP=true MAGICBOX_RTP_AUTOSTART=true \
   - Pi が USB gadget のサブネット外（LAN側）から送る場合は、明示的に変更してください:
 
 ```bash
-cd docker
+INSTALL_ROOT=/opt/magicbox
+cd "${INSTALL_ROOT}/docker"
 MAGICBOX_PUBLISH_IP=0.0.0.0 MAGICBOX_ENABLE_RTP=true MAGICBOX_RTP_AUTOSTART=true \
   docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 ```
@@ -136,6 +166,8 @@ MAGICBOX_PUBLISH_IP=0.0.0.0 MAGICBOX_ENABLE_RTP=true MAGICBOX_RTP_AUTOSTART=true
 - runtime compose の場合:
 
 ```bash
+INSTALL_ROOT=/opt/magicbox
+cd "${INSTALL_ROOT}"
 docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs --since 1h --no-color > raspi.log
 ```
 
