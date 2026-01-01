@@ -180,7 +180,7 @@ AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
     workRight_.resize(initialFrames);
 
     // Initialize telemetry defaults (backend will be lazily started on first enable)
-    highLatencyEnabled_ = false;
+    highLatencyEnabled_.store(false, std::memory_order_relaxed);
     delimiterWarmup_.store(false, std::memory_order_relaxed);
     delimiterQueueSamples_.store(0, std::memory_order_relaxed);
     delimiterQueueSeconds_.store(0.0, std::memory_order_relaxed);
@@ -241,7 +241,7 @@ AudioPipeline::~AudioPipeline() {
 }
 
 bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
-    if (!highLatencyEnabled_) {
+    if (!highLatencyEnabled_.load(std::memory_order_acquire)) {
         return processDirect(inputSamples, nFrames);
     }
     return enqueueInputForWorker(inputSamples, nFrames);
@@ -653,14 +653,14 @@ bool AudioPipeline::waitForRtQuiescent(std::chrono::milliseconds timeout) const 
 }
 
 bool AudioPipeline::startDelimiterBackend(bool forceEnable) {
-    if (highLatencyEnabled_) {
+    if (highLatencyEnabled_.load(std::memory_order_acquire)) {
         return delimiterBackend_ != nullptr;
     }
     if (!deps_.config) {
         return false;
     }
 
-    highLatencyEnabled_ = true;
+    highLatencyEnabled_.store(true, std::memory_order_release);
 
     delimiterWarmup_.store(true, std::memory_order_relaxed);
     throttleOutput_.store(true, std::memory_order_relaxed);
@@ -728,7 +728,7 @@ bool AudioPipeline::startDelimiterBackend(bool forceEnable) {
 
     if (!backendValid) {
         // Revert state when backend creation fails or reports invalid config
-        highLatencyEnabled_ = false;
+        highLatencyEnabled_.store(false, std::memory_order_release);
         throttleOutput_.store(false, std::memory_order_relaxed);
         delimiterWarmup_.store(false, std::memory_order_relaxed);
         delimiterBackendAvailable_.store(false, std::memory_order_relaxed);
@@ -774,7 +774,7 @@ bool AudioPipeline::startDelimiterBackend(bool forceEnable) {
 }
 
 bool AudioPipeline::stopDelimiterBackend(const char* reason, bool clearOutputBuffer) {
-    highLatencyEnabled_ = false;
+    highLatencyEnabled_.store(false, std::memory_order_release);
     throttleOutput_.store(false, std::memory_order_relaxed);
     delimiterCommand_.store(static_cast<int>(DelimiterCommand::None), std::memory_order_release);
     workerStop_.store(true, std::memory_order_release);
@@ -861,7 +861,7 @@ bool AudioPipeline::requestDelimiterEnable() {
         return false;
     }
 
-    if (!highLatencyEnabled_) {
+    if (!highLatencyEnabled_.load(std::memory_order_acquire)) {
         if (!startDelimiterBackend(true)) {
             return false;
         }
@@ -890,7 +890,7 @@ bool AudioPipeline::requestDelimiterDisable() {
     if (!pauseGuard.ok) {
         return false;
     }
-    if (!highLatencyEnabled_) {
+    if (!highLatencyEnabled_.load(std::memory_order_acquire)) {
         return stopDelimiterBackend("user disabled via ZMQ", true);
     }
     delimiterCommand_.store(static_cast<int>(DelimiterCommand::Disable), std::memory_order_release);
@@ -900,7 +900,7 @@ bool AudioPipeline::requestDelimiterDisable() {
 
 DelimiterStatusSnapshot AudioPipeline::delimiterStatus() const {
     DelimiterStatusSnapshot snapshot;
-    snapshot.enabled = highLatencyEnabled_;
+    snapshot.enabled = highLatencyEnabled_.load(std::memory_order_relaxed);
     snapshot.backendAvailable = delimiterBackendAvailable_.load(std::memory_order_relaxed);
     snapshot.backendValid = delimiterBackendValid_.load(std::memory_order_relaxed);
     snapshot.warmup = delimiterWarmup_.load(std::memory_order_relaxed);
@@ -1118,7 +1118,7 @@ void AudioPipeline::updateDelimiterStatus(const delimiter::SafetyStatus& status)
 void AudioPipeline::applyDelimiterCommand() {
     auto command = static_cast<DelimiterCommand>(delimiterCommand_.exchange(
         static_cast<int>(DelimiterCommand::None), std::memory_order_acq_rel));
-    if (command == DelimiterCommand::None || !highLatencyEnabled_) {
+    if (command == DelimiterCommand::None || !highLatencyEnabled_.load(std::memory_order_acquire)) {
         return;
     }
 
@@ -1340,7 +1340,8 @@ void AudioPipeline::workerLoop() {
                     (status.mode == delimiter::ProcessingMode::Bypass) || status.bypassLocked;
             }
 
-            const bool backendEnabled = (highLatencyEnabled_ && delimiterBackend_);
+            const bool backendEnabled =
+                highLatencyEnabled_.load(std::memory_order_acquire) && delimiterBackend_;
             const int backendRate =
                 delimiterBackend_ ? static_cast<int>(delimiterBackend_->expectedSampleRate()) : 0;
             backendValid = backendEnabled && backendRate > 0;

@@ -149,6 +149,11 @@ TEST(AudioPipelineHighLatency, OutputsAfterInitialChunkAndCrossfades) {
     std::atomic<bool> running{true};
     std::atomic<bool> fallbackActive{false};
     std::atomic<bool> outputReady{true};
+    std::atomic<int> delimiterMode(static_cast<int>(delimiter::ProcessingMode::Active));
+    std::atomic<int> delimiterTargetMode(static_cast<int>(delimiter::ProcessingMode::Active));
+    std::atomic<int> delimiterReason(static_cast<int>(delimiter::FallbackReason::None));
+    std::atomic<bool> delimiterLocked{false};
+    std::atomic<bool> delimiterEnabled{false};
     std::atomic<bool> crossfeedEnabled{false};
     std::atomic<bool> crossfeedResetRequested{false};
 
@@ -527,4 +532,103 @@ TEST(AudioPipelineHighLatency, FallbackTriggersBypassLockOnRepeatedFailures) {
               delimiter::ProcessingMode::Bypass);
 
     running.store(false, std::memory_order_release);
+}
+
+TEST(AudioPipelineHighLatency, DisableWhileWorkerRunningIsSafe) {
+    AppConfig config;
+    config.upsampleRatio = 1;
+    config.delimiter.enabled = true;
+    config.delimiter.backend = "bypass";
+    config.delimiter.expectedSampleRate = 2000;
+    config.delimiter.chunkSec = 0.015f;    // 30 frames @ 2kHz
+    config.delimiter.overlapSec = 0.003f;  // 6 frames @ 2kHz
+
+    std::atomic<bool> running{true};
+    std::atomic<bool> fallbackActive{false};
+    std::atomic<bool> outputReady{true};
+    std::atomic<int> delimiterMode(static_cast<int>(delimiter::ProcessingMode::Active));
+    std::atomic<int> delimiterTargetMode(static_cast<int>(delimiter::ProcessingMode::Active));
+    std::atomic<int> delimiterReason(static_cast<int>(delimiter::FallbackReason::None));
+    std::atomic<bool> delimiterLocked{false};
+    std::atomic<bool> delimiterEnabled{false};
+
+    constexpr std::size_t kBufferFrames = 4096;
+    constexpr std::size_t kInputFrames = 30;
+    daemon_output::PlaybackBufferManager playbackBuffer([]() { return kBufferFrames; });
+
+    ConvolutionEngine::StreamFloatVector streamInputLeft;
+    ConvolutionEngine::StreamFloatVector streamInputRight;
+    std::size_t streamAccumLeft = 0;
+    std::size_t streamAccumRight = 0;
+    ConvolutionEngine::StreamFloatVector upsamplerOutputLeft;
+    ConvolutionEngine::StreamFloatVector upsamplerOutputRight;
+
+    audio_pipeline::Dependencies deps{};
+    deps.config = &config;
+    deps.running = &running;
+    deps.fallbackActive = &fallbackActive;
+    deps.outputReady = &outputReady;
+    deps.delimiterMode = &delimiterMode;
+    deps.delimiterTargetMode = &delimiterTargetMode;
+    deps.delimiterFallbackReason = &delimiterReason;
+    deps.delimiterBypassLocked = &delimiterLocked;
+    deps.delimiterEnabled = &delimiterEnabled;
+    deps.streamInputLeft = &streamInputLeft;
+    deps.streamInputRight = &streamInputRight;
+    deps.streamAccumulatedLeft = &streamAccumLeft;
+    deps.streamAccumulatedRight = &streamAccumRight;
+    deps.upsamplerOutputLeft = &upsamplerOutputLeft;
+    deps.upsamplerOutputRight = &upsamplerOutputRight;
+    deps.streamingCacheManager = nullptr;
+    deps.buffer.playbackBuffer = &playbackBuffer;
+    deps.maxOutputBufferFrames = []() { return kBufferFrames; };
+    deps.currentInputRate = []() { return 2000; };
+    deps.currentOutputRate = []() { return 2000; };
+    deps.delimiterBackendFactory = [](const AppConfig::DelimiterConfig& cfg) {
+        return delimiter::createDelimiterInferenceBackend(cfg);
+    };
+
+    deps.upsampler.available = true;
+    deps.upsampler.streamLeft = nullptr;
+    deps.upsampler.streamRight = nullptr;
+    deps.upsampler.process = [](const float* inputData, std::size_t inputFrames,
+                                ConvolutionEngine::StreamFloatVector& outputData,
+                                cudaStream_t /*stream*/,
+                                ConvolutionEngine::StreamFloatVector& /*streamInput*/,
+                                std::size_t& /*streamAccumulated*/) {
+        outputData.assign(inputData, inputData + inputFrames);
+        return true;
+    };
+
+    audio_pipeline::AudioPipeline pipeline(std::move(deps));
+
+    std::atomic<bool> producerFailed{false};
+    std::vector<float> input(kInputFrames * 2, 0.1f);
+
+    std::thread producer([&]() {
+        for (int i = 0; i < 120 && running.load(std::memory_order_acquire); ++i) {
+            if (!pipeline.process(input.data(), static_cast<uint32_t>(kInputFrames))) {
+                producerFailed.store(true, std::memory_order_release);
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_TRUE(pipeline.requestDelimiterDisable());
+
+    for (int i = 0; i < 10; ++i) {
+        EXPECT_TRUE(pipeline.process(input.data(), static_cast<uint32_t>(kInputFrames)));
+    }
+
+    running.store(false, std::memory_order_release);
+    if (producer.joinable()) {
+        producer.join();
+    }
+
+    EXPECT_FALSE(producerFailed.load(std::memory_order_acquire));
+    auto status = pipeline.delimiterStatus();
+    EXPECT_FALSE(status.enabled);
+    EXPECT_EQ(status.mode, delimiter::ProcessingMode::Bypass);
 }
