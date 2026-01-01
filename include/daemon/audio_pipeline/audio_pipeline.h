@@ -177,7 +177,7 @@ class AudioPipeline {
     std::vector<float> workRight_;
 
     // High-latency worker path (Fix #1010 / Epic #1006)
-    bool highLatencyEnabled_ = false;
+    std::atomic<bool> highLatencyEnabled_{false};
     std::unique_ptr<delimiter::InferenceBackend> delimiterBackend_;
     std::unique_ptr<delimiter::SafetyController> delimiterSafety_;
     std::thread workerThread_;
