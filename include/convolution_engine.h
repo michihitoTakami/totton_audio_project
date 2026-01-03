@@ -292,7 +292,7 @@ class GPUUpsampler : public IAudioUpsampler {
 
     // Get current input sample rate (multi-rate mode)
     int getCurrentInputRate() const {
-        return currentInputRate_;
+        return multiRateEnabled_ ? currentInputRate_ : inputSampleRate_;
     }
 
     // Switch to a different rate family (glitch-free via double buffering)
