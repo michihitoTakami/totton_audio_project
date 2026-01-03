@@ -14,7 +14,9 @@ services:
     # Runtime-only distribution (GHCR)
     # NOTE: GHCR の "package" を増やさず、既存の `totton-audio-system` をタグで分岐する想定。
     # 実際のタグは Release Notes / 配布物に合わせて上書きしてください。
+    # 例: USB_I2S_BRIDGE_IMAGE=ghcr.io/michihitotakami/totton-audio-system@sha256:<digest>
     image: ${USB_I2S_BRIDGE_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:raspi-usb-i2s-bridge-latest}
+    platform: linux/arm64
     container_name: rpi-usb-i2s-bridge
     network_mode: "host"
     cap_add:
@@ -42,7 +44,9 @@ services:
       - usb-i2s-bridge-config:/var/lib/usb-i2s-bridge
 
   raspi-control-api:
+    # 例: RASPI_CONTROL_API_IMAGE=ghcr.io/michihitotakami/totton-audio-system@sha256:<digest>
     image: ${RASPI_CONTROL_API_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:raspi-control-api-latest}
+    platform: linux/arm64
     container_name: rpi-control-api
     network_mode: "host"
     depends_on:

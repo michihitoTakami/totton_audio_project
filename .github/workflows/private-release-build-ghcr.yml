@@ -181,6 +181,40 @@ jobs:
           docker push "${image}:${VERSION}"
           docker push "${image}:latest"
 
+      - name: Ensure GHCR package is public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          package="${IMAGE_NAME}"
+          # Package owner is the current user (not org)
+          gh api --method PUT "/user/packages/container/${package}/visibility" -f visibility=public
+
+      - name: Collect GHCR digests (RepoDigests)
+        run: |
+          set -euo pipefail
+          VERSION_RAW="${{ steps.vars.outputs.version_raw }}"
+          VERSION="${{ steps.vars.outputs.version }}"
+          owner_lower="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner_lower}/${IMAGE_NAME}"
+
+          out_dir="dist/digests"
+          mkdir -p "${out_dir}"
+
+          # Pull to make sure RepoDigests is populated locally
+          docker pull "${image}:${VERSION_RAW}"
+
+          docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${image}:${VERSION_RAW}" \
+            > "${out_dir}/ghcr-digests-${VERSION}-${PLATFORM}.txt"
+          cat "${out_dir}/ghcr-digests-${VERSION}-${PLATFORM}.txt"
+
+      - name: Upload GHCR digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghcr-digests-${{ steps.vars.outputs.version_raw }}-${{ env.PLATFORM }}
+          path: dist/digests/ghcr-digests-${{ steps.vars.outputs.version }}-${{ env.PLATFORM }}.txt
+          if-no-files-found: error
+
   publish-release-assets:
     name: Publish Release assets (.sha256 / SHA256SUMS / SBOM)
     needs: [build-jetson-arm64]
@@ -203,6 +237,12 @@ jobs:
         with:
           name: magicbox-update-${{ steps.vars.outputs.version_raw }}-${{ env.PLATFORM }}
           path: dist
+
+      - name: Download GHCR digest artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ghcr-digests-${{ steps.vars.outputs.version_raw }}-${{ env.PLATFORM }}
+          path: dist/digests
 
       - name: Generate SBOM (CycloneDX JSON) from tarball content
         run: |
@@ -250,3 +290,4 @@ jobs:
             dist/sbom-${{ steps.vars.outputs.version }}-${{ env.PLATFORM }}.cdx.json.sha256
             dist/SHA256SUMS
             dist/checksums.sha256
+            dist/digests/ghcr-digests-${{ steps.vars.outputs.version }}-${{ env.PLATFORM }}.txt

@@ -4,6 +4,31 @@
 
 ---
 
+## GHCRイメージ（公開 / アーキ別タグ / ダイジェスト固定）
+
+- パッケージ: `ghcr.io/michihitotakami/totton-audio-system`（公開、認証不要で pull 可能）
+- サポートプラットフォーム:
+  - `linux/arm64`（Jetson Orin 系）: `MAGICBOX_IMAGE` / `USB_I2S_BRIDGE_IMAGE` / `RASPI_CONTROL_API_IMAGE`
+  - `linux/amd64`（開発PC/NVIDIA GPU）: amd64 イメージが発行されたリリースでは、`--platform=linux/amd64` を明示して pull 可能
+- タグ運用:
+  - リリースタグ: `vX.Y.Z`（推奨） / `X.Y.Z`
+  - 評価用ダイジェスト: Release アセットの `ghcr-digests-<X.Y.Z>.txt` を参照し、`@sha256:...` で pin
+  - `latest`: スモーク向け。評価時は使わず、必ずバージョンまたはダイジェストを指定
+- 例（Jetsonで digest pin する場合）:
+
+```bash
+export MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system@sha256:<jetson-digest>
+docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+```
+
+例（PC/amd64で pull できることを確認する場合。実行には NVIDIA GPU + CUDA ドライバが必要）:
+
+```bash
+docker pull --platform=linux/amd64 ghcr.io/michihitotakami/totton-audio-system@sha256:<amd64-digest>
+```
+
+---
+
 ## Jetson: runtime-only（image-based）
 
 詳細な前提・ログ取得・既知トラブル・ロールバックは、まずこちら:
