@@ -14,7 +14,10 @@
 services:
   magicbox:
     # Runtime-only distribution (GHCR)
+    # 評価時は release note 掲載の digest で pin することを推奨。
+    # 例: MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system@sha256:<digest>
     image: ${MAGICBOX_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:latest}
+    platform: linux/arm64
     container_name: magicbox
     command: all
     restart: always

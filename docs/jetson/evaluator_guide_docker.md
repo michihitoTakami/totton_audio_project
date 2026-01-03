@@ -13,6 +13,7 @@ Issue: #1060（Epic: #1051）
 - **NVIDIA Container Runtime が有効**
 - **音声デバイスをコンテナに渡せる**こと（`/dev/snd` が存在する）
 - インターネット接続（GHCR から image を pull するため）
+- GHCR の image は **認証不要**で pull 可能。評価では Release アセットの `ghcr-digests-<VERSION>.txt` に記載のダイジェストで **pin することを推奨**（`latest` はスモーク用）
 
 確認コマンド（例）:
 
@@ -170,6 +171,6 @@ docker compose -f jetson/docker-compose.jetson.runtime.yml down -v
 cd docker
 
 # 例: 既知のタグへ固定して起動
-MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system:<tag> \
+MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system@sha256:<digest> \
   docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
 ```

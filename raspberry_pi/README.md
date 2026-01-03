@@ -15,11 +15,13 @@ Raspberry Pi 側の評価者導入を一本道化するためのガイドです�
 ## 起動（評価者向け / ソース不要: runtime-only）
 
 Pi では GHCR image を pull して起動します（**ソースコード不要**）。
+必ず Release アセットの `ghcr-digests-<VERSION>.txt` に記載のダイジェストで pin してください（`latest` はスモーク用途のみ）。
 
 ```bash
 #
 # NOTE: 配布された Release Notes の指定がある場合は、image を環境変数で固定してください。
-#   USB_I2S_BRIDGE_IMAGE=ghcr.io/...:<tag> RASPI_CONTROL_API_IMAGE=ghcr.io/...:<tag> \
+#   USB_I2S_BRIDGE_IMAGE=ghcr.io/...@sha256:<digest> \
+#   RASPI_CONTROL_API_IMAGE=ghcr.io/...@sha256:<digest> \
 #
 docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml up -d
 docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs -f

@@ -140,3 +140,7 @@ Private Repo の GitHub Actions で以下を行う：
 - [ ] `docs/api/openapi.json` と `docs/api/raspi_openapi.json` が最新
 - [ ] `LICENSE*` が Public に含まれている
 - [ ] OPRA 等の外部データは **データ本体ではなく** 帰属/利用条件/取得手段が明記されている
+
+## GHCR 公開確認
+
+- GHCR で配布するコンテナは `ghcr_public.md` の手順で **認証なし pull 可 / タグ・ダイジェストの運用が明確** であることを確認する
