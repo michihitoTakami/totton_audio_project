@@ -49,6 +49,55 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+      - name: Wait for required assets on private release
+        if: env.PUBLIC_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.vars.outputs.tag }}"
+          version="${{ steps.vars.outputs.version }}"
+          required=(
+            "magicbox-update-${version}-jetson-arm64.tar.gz"
+            "magicbox-update-${version}-jetson-arm64.tar.gz.sha256"
+            "sbom-${version}-jetson-arm64.cdx.json"
+            "sbom-${version}-jetson-arm64.cdx.json.sha256"
+            "SHA256SUMS"
+            "checksums.sha256"
+            "openapi.json"
+            "openapi.json.sha256"
+            "raspi_openapi.json"
+            "raspi_openapi.json.sha256"
+          )
+
+          max_attempts=30
+          sleep_sec=30
+          attempt=1
+
+          while true; do
+            asset_names="$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+            missing=()
+            for f in "${required[@]}"; do
+              if ! grep -Fxq "${f}" <<< "${asset_names}"; then
+                missing+=("${f}")
+              fi
+            done
+
+            if [ "${#missing[@]}" -eq 0 ]; then
+              echo "All required assets are present on the private release."
+              break
+            fi
+
+            if [ "${attempt}" -ge "${max_attempts}" ]; then
+              echo "Timed out waiting for assets: ${missing[*]}" >&2
+              exit 1
+            fi
+
+            echo "Waiting for assets (${attempt}/${max_attempts}): ${missing[*]}"
+            attempt=$((attempt + 1))
+            sleep "${sleep_sec}"
+          done
+
       - name: Download release assets from private repo
         if: env.PUBLIC_TOKEN != ''
         env:
