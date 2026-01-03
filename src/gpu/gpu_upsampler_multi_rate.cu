@@ -488,6 +488,7 @@ bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
             return false;
         }
         // Keep multi-rate compatibility fields coherent even when not in multi-rate mode.
+        inputSampleRate_ = inputSampleRate;
         currentInputRate_ = inputSampleRate_;
         return true;
     }

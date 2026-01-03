@@ -232,8 +232,8 @@ bool handleRateSwitch(daemon_app::RuntimeState& state, int newInputRate) {
             std::ostringstream data;
             data << "{\"hasUpsampler\":" << (hasUpsampler ? "true" : "false")
                  << ",\"isMultiRate\":" << (isMulti ? "true" : "false") << "}";
-            agent_debug_log("switch_actions.cpp:handleRateSwitch:early",
-                            "blocked_by_multi_rate_gate", data.str(), "H1");
+            agent_debug_log("switch_actions.cpp:handleRateSwitch:early", "non_multi_rate_path",
+                            data.str(), "H1");
         }
         // #endregion
         if (!state.upsampler) {
