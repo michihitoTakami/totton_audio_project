@@ -10,11 +10,30 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <thread>
 
 namespace audio_pipeline {
+
+// #region agent log
+static void agent_debug_log(const char* location, const char* message, const std::string& dataJson,
+                            const char* hypothesisId) {
+    std::ofstream ofs("/home/michihito/Working/gpu_os/.cursor/debug.log", std::ios::app);
+    if (!ofs.is_open()) {
+        return;
+    }
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+    ofs << "{\"sessionId\":\"debug-session\",\"runId\":\"pre-fix\",\"hypothesisId\":\""
+        << (hypothesisId ? hypothesisId : "") << "\",\"location\":\"" << location
+        << "\",\"message\":\"" << message << "\",\"data\":" << dataJson
+        << ",\"timestamp\":" << nowMs << "}\n";
+}
+// #endregion
 
 void applySoftMuteForFilterSwitch(daemon_app::RuntimeState& state,
                                   std::function<bool()> filterSwitchFunc) {
@@ -193,14 +212,47 @@ bool reinitializeStreamingForLegacyMode(daemon_app::RuntimeState& state) {
 }
 
 bool handleRateSwitch(daemon_app::RuntimeState& state, int newInputRate) {
+    // #region agent log
+    {
+        std::ostringstream data;
+        data << "{\"newInputRate\":" << newInputRate
+             << ",\"upsamplerNull\":" << (state.upsampler ? "false" : "true") << "}";
+        agent_debug_log("switch_actions.cpp:handleRateSwitch:entry", "enter", data.str(), "H1");
+    }
+    // #endregion
+
     if (!state.upsampler || !state.upsampler->isMultiRateEnabled()) {
-        std::cerr << "[Rate] Multi-rate mode not enabled" << '\n';
-        return false;
+        std::cerr << "[Rate] Multi-rate mode not enabled (attempting non-multi-rate switch)"
+                  << '\n';
+        // #region agent log
+        {
+            const bool hasUpsampler = (state.upsampler != nullptr);
+            const bool isMulti =
+                (state.upsampler != nullptr) ? state.upsampler->isMultiRateEnabled() : false;
+            std::ostringstream data;
+            data << "{\"hasUpsampler\":" << (hasUpsampler ? "true" : "false")
+                 << ",\"isMultiRate\":" << (isMulti ? "true" : "false") << "}";
+            agent_debug_log("switch_actions.cpp:handleRateSwitch:early", "non_multi_rate_path",
+                            data.str(), "H1");
+        }
+        // #endregion
+        if (!state.upsampler) {
+            return false;
+        }
     }
 
     int currentRate = state.upsampler->getCurrentInputRate();
     if (currentRate == newInputRate) {
         std::cout << "[Rate] Already at target rate: " << newInputRate << " Hz" << '\n';
+        // #region agent log
+        {
+            std::ostringstream data;
+            data << "{\"currentRate\":" << currentRate << ",\"newInputRate\":" << newInputRate
+                 << "}";
+            agent_debug_log("switch_actions.cpp:handleRateSwitch:noop", "already_at_target",
+                            data.str(), "H2");
+        }
+        // #endregion
         return true;
     }
 
@@ -269,6 +321,15 @@ bool handleRateSwitch(daemon_app::RuntimeState& state, int newInputRate) {
 
         if (!state.upsampler->switchToInputRate(newInputRate)) {
             std::cerr << "[Rate] Failed to switch rate, rolling back" << '\n';
+            // #region agent log
+            {
+                std::ostringstream data;
+                data << "{\"newInputRate\":" << newInputRate << ",\"savedRate\":" << savedRate
+                     << "}";
+                agent_debug_log("switch_actions.cpp:handleRateSwitch:switch",
+                                "switchToInputRate_failed", data.str(), "H3");
+            }
+            // #endregion
             if (state.upsampler->switchToInputRate(savedRate)) {
                 std::cout << "[Rate] Rollback successful: restored to " << savedRate << " Hz"
                           << '\n';
@@ -336,6 +397,15 @@ bool handleRateSwitch(daemon_app::RuntimeState& state, int newInputRate) {
               << "x -> " << newOutputRate << " Hz)" << '\n';
     std::cout << "[Rate] Streaming buffers re-initialized: " << buffer_capacity
               << " samples capacity" << '\n';
+
+    // #region agent log
+    {
+        std::ostringstream data;
+        data << "{\"newInputRate\":" << newInputRate << ",\"newOutputRate\":" << newOutputRate
+             << ",\"newUpsampleRatio\":" << newUpsampleRatio << "}";
+        agent_debug_log("switch_actions.cpp:handleRateSwitch:done", "success", data.str(), "H4");
+    }
+    // #endregion
 
     return true;
 }

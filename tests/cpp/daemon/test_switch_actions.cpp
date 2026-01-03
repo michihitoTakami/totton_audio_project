@@ -17,6 +17,79 @@
 #include <mutex>
 #include <vector>
 
+namespace {
+
+class FakeUpsampler : public ConvolutionEngine::IAudioUpsampler {
+   public:
+    bool isMulti = false;
+    int inputRate = 44100;
+    int ratio = 16;
+    bool switchCalled = false;
+    bool resetCalled = false;
+    bool initStreamingCalled = false;
+
+    void setPartitionedConvolutionConfig(
+        const AppConfig::PartitionedConvolutionConfig& /*config*/) override {}
+
+    bool initializeStreaming() override {
+        initStreamingCalled = true;
+        return true;
+    }
+    void resetStreaming() override {
+        resetCalled = true;
+    }
+
+    size_t getStreamValidInputPerBlock() const override {
+        return 256;
+    }
+    int getUpsampleRatio() const override {
+        return ratio;
+    }
+    int getOutputSampleRate() const override {
+        return inputRate * ratio;
+    }
+    int getInputSampleRate() const override {
+        return inputRate;
+    }
+
+    bool isMultiRateEnabled() const override {
+        return isMulti;
+    }
+    int getCurrentInputRate() const override {
+        return inputRate;
+    }
+    bool switchToInputRate(int inputSampleRate) override {
+        switchCalled = true;
+        inputRate = inputSampleRate;
+        return true;
+    }
+    PhaseType getPhaseType() const override {
+        return PhaseType::Minimum;
+    }
+    bool switchPhaseType(PhaseType /*targetPhase*/) override {
+        return true;
+    }
+    size_t getFilterFftSize() const override {
+        return 0;
+    }
+    size_t getFullFftSize() const override {
+        return 0;
+    }
+    bool applyEqMagnitude(const std::vector<double>& /*eqMagnitude*/) override {
+        return true;
+    }
+
+    bool processStreamBlock(const float* /*inputData*/, size_t /*inputFrames*/,
+                            ConvolutionEngine::StreamFloatVector& /*outputData*/,
+                            ConvolutionEngine::DeviceStream /*stream*/,
+                            ConvolutionEngine::StreamFloatVector& /*streamInputBuffer*/,
+                            size_t& /*streamInputAccumulated*/) override {
+        return false;
+    }
+};
+
+}  // namespace
+
 TEST(SwitchActionsTest, ResetStreamingCachesClearsPlaybackAndStreamingStateWithoutPipeline) {
     daemon_app::RuntimeState state;
 
@@ -72,4 +145,17 @@ TEST(SwitchActionsTest, ReinitializeStreamingForLegacyModeReturnsFalseWithoutUps
     daemon_app::RuntimeState state;
     state.upsampler = nullptr;
     EXPECT_FALSE(audio_pipeline::reinitializeStreamingForLegacyMode(state));
+}
+
+TEST(SwitchActionsTest, HandleRateSwitchWorksEvenWhenIsMultiRateEnabledIsFalse) {
+    daemon_app::RuntimeState state;
+    FakeUpsampler up;
+    up.isMulti = false;  // emulate quad-phase/dual-rate mode
+    up.inputRate = 44100;
+    state.upsampler = &up;
+
+    // Expected behavior: even when multi-rate is disabled, 44.1k/48k base rates should still
+    // switch (quad-phase/dual-rate family follow).
+    EXPECT_TRUE(audio_pipeline::handleRateSwitch(state, 48000));
+    EXPECT_TRUE(up.switchCalled);
 }

@@ -470,8 +470,27 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
 
 bool GPUUpsampler::switchToInputRate(int inputSampleRate) {
     if (!multiRateEnabled_) {
-        LOG_ERROR("Multi-rate mode not enabled");
-        return false;
+        // Quad-phase / dual-rate mode: only base rates are supported here.
+        if (!(quadPhaseEnabled_ || dualRateEnabled_)) {
+            LOG_ERROR("Multi-rate mode not enabled");
+            return false;
+        }
+        if (inputSampleRate != 44100 && inputSampleRate != 48000) {
+            LOG_ERROR("Unsupported input sample rate (non-multi-rate): {}", inputSampleRate);
+            return false;
+        }
+        RateFamily targetFamily = detectRateFamily(inputSampleRate);
+        if (targetFamily == RateFamily::RATE_UNKNOWN) {
+            LOG_ERROR("Unsupported input sample rate (family unknown): {}", inputSampleRate);
+            return false;
+        }
+        if (!switchRateFamily(targetFamily)) {
+            return false;
+        }
+        // Keep multi-rate compatibility fields coherent even when not in multi-rate mode.
+        inputSampleRate_ = inputSampleRate;
+        currentInputRate_ = inputSampleRate_;
+        return true;
     }
 
     int targetIndex = findMultiRateConfigIndex(inputSampleRate);
