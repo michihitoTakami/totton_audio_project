@@ -11,9 +11,14 @@ struct FilterHeadroomInfo {
     std::string metadataPath;
     float maxCoefficient = 1.0f;
     float l1Norm = 0.0f;
+    float normalizedDcGain = 0.0f;
+    float upsampleRatio = 0.0f;
+    // Peak gain seen in the input band (normalized by upsample ratio).
+    float inputBandPeak = 0.0f;
     float safeGain = 1.0f;
     float targetPeak = 1.0f;
     bool metadataFound = false;
+    bool usedInputBandPeak = false;
 };
 
 class FilterHeadroomCache {

@@ -38,7 +38,10 @@ FilterHeadroomInfo FilterHeadroomCache::get(const std::string& coefficientPath) 
 
     FilterHeadroomInfo info = loadMetadata(coefficientPath);
     info.targetPeak = targetPeak_;
-    info.safeGain = std::min(1.0f, targetPeak_ / std::max(info.maxCoefficient, kEpsilon));
+    float headroomMetric =
+        (info.inputBandPeak > kEpsilon) ? info.inputBandPeak : info.maxCoefficient;
+    info.usedInputBandPeak = info.inputBandPeak > kEpsilon;
+    info.safeGain = std::min(1.0f, targetPeak_ / std::max(headroomMetric, kEpsilon));
     cache_[coefficientPath] = info;
     return info;
 }
@@ -48,6 +51,9 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
     info.coefficientPath = coefficientPath;
     info.metadataPath = deriveMetadataPath(coefficientPath);
     info.maxCoefficient = 1.0f;
+    info.inputBandPeak = 0.0f;
+    info.upsampleRatio = 0.0f;
+    info.normalizedDcGain = 0.0f;
     info.safeGain = 1.0f;
 
     std::filesystem::path metaPath(info.metadataPath);
@@ -67,6 +73,10 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
         nlohmann::json metadata;
         ifs >> metadata;
 
+        if (metadata.contains("upsample_ratio") && metadata["upsample_ratio"].is_number()) {
+            info.upsampleRatio = metadata["upsample_ratio"].get<float>();
+        }
+
         const auto& validation = metadata.at("validation_results");
         const auto& normalization = validation.at("normalization");
 
@@ -76,10 +86,44 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
         if (normalization.contains("l1_norm") && normalization["l1_norm"].is_number()) {
             info.l1Norm = normalization["l1_norm"].get<float>();
         }
+        if (normalization.contains("normalized_dc_gain") &&
+            normalization["normalized_dc_gain"].is_number()) {
+            info.normalizedDcGain = normalization["normalized_dc_gain"].get<float>();
+        }
+
+        float inputBandPeakRaw = 0.0f;
+        if (validation.contains("input_band_peak_normalized") &&
+            validation["input_band_peak_normalized"].is_number()) {
+            info.inputBandPeak = validation["input_band_peak_normalized"].get<float>();
+        } else if (validation.contains("input_band_peak") &&
+                   validation["input_band_peak"].is_number()) {
+            inputBandPeakRaw = validation["input_band_peak"].get<float>();
+        }
+
+        if (info.inputBandPeak < kEpsilon) {
+            float derivedDcGain = info.normalizedDcGain;
+            if ((derivedDcGain < kEpsilon) && normalization.contains("target_dc_gain") &&
+                normalization.contains("dc_gain_factor") &&
+                normalization["target_dc_gain"].is_number() &&
+                normalization["dc_gain_factor"].is_number()) {
+                derivedDcGain = normalization["target_dc_gain"].get<float>() *
+                                normalization["dc_gain_factor"].get<float>();
+            }
+
+            if (info.upsampleRatio > kEpsilon) {
+                if (inputBandPeakRaw > kEpsilon) {
+                    info.inputBandPeak = inputBandPeakRaw / info.upsampleRatio;
+                } else if (derivedDcGain > kEpsilon) {
+                    info.inputBandPeak = derivedDcGain / info.upsampleRatio;
+                }
+            }
+        }
+
         info.metadataFound = true;
 
         std::cout << "Headroom: metadata loaded for " << coefficientPath << " (max coeff "
-                  << info.maxCoefficient << ", L1 " << info.l1Norm << ")" << '\n';
+                  << info.maxCoefficient << ", L1 " << info.l1Norm << ", input peak "
+                  << info.inputBandPeak << ")" << '\n';
 
     } catch (const std::exception& e) {
         LOG_WARN("Headroom: failed to parse metadata {} - {}", info.metadataPath, e.what());

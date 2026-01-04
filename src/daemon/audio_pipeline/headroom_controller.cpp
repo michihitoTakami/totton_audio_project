@@ -99,12 +99,18 @@ void HeadroomController::applyHeadroomForPath(const std::string& path,
     FilterHeadroomInfo info = deps_.headroomCache->get(path);
     updateEffectiveGain(info.safeGain, reason);
 
+    const char* metricLabel = info.usedInputBandPeak ? "input_peak" : "max_coef";
+    float metricValue = info.usedInputBandPeak ? info.inputBandPeak : info.maxCoefficient;
+
     if (!info.metadataFound) {
         LOG_WARN("Headroom [{}]: metadata missing for {} (using safe gain {:.4f})", reason, path,
                  info.safeGain);
     } else {
-        LOG_INFO("Headroom [{}]: {} max_coef={:.6f} safeGain={:.4f} target={:.2f}", reason, path,
-                 info.maxCoefficient, info.safeGain, info.targetPeak);
+        LOG_INFO(
+            "Headroom [{}]: {} {}={:.6f} safeGain={:.4f} target={:.2f} (max_coef={:.6f}, "
+            "input_peak={:.6f})",
+            reason, path, metricLabel, metricValue, info.safeGain, info.targetPeak,
+            info.maxCoefficient, info.inputBandPeak);
     }
 }
 

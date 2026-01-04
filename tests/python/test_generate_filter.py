@@ -120,10 +120,14 @@ class TestFilterValidator:
         results = validator.validate(h)
 
         assert "passband_ripple_db" in results
+        assert "input_band_peak" in results
+        assert "input_band_peak_normalized" in results
         assert "stopband_attenuation_db" in results
         assert "is_minimum_phase" in results
         assert "is_symmetric" in results
         assert "peak_position" in results
+        assert results["input_band_peak"] >= 0.0
+        assert results["input_band_peak_normalized"] >= 0.0
 
     def test_validate_detects_minimum_phase(self):
         """validate should detect minimum phase filters."""
