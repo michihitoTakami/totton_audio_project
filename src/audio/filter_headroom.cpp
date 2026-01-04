@@ -3,6 +3,7 @@
 #include "logging/logger.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -11,7 +12,35 @@
 
 namespace {
 constexpr float kEpsilon = 1e-6f;
+
+inline int64_t debug_now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
 }
+
+inline const char* debug_run_id() {
+    const char* v = std::getenv("MAGICBOX_DEBUG_RUN_ID");
+    return (v && *v) ? v : "pre-fix";
+}
+
+inline void debug_ndjson(const char* location, const char* message, const char* hypothesisId,
+                         const nlohmann::json& data) {
+    nlohmann::json payload;
+    payload["sessionId"] = "debug-session";
+    payload["runId"] = debug_run_id();
+    payload["hypothesisId"] = hypothesisId;
+    payload["location"] = location;
+    payload["message"] = message;
+    payload["data"] = data;
+    payload["timestamp"] = debug_now_ms();
+    std::ofstream ofs("/home/michihito/Working/gpu_os/.cursor/debug.log", std::ios::app);
+    if (!ofs) {
+        return;
+    }
+    ofs << payload.dump() << "\n";
+}
+}  // namespace
 
 FilterHeadroomCache::FilterHeadroomCache(float targetPeak) : targetPeak_(targetPeak) {}
 
@@ -52,6 +81,11 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
 
     std::filesystem::path metaPath(info.metadataPath);
     if (!std::filesystem::exists(metaPath)) {
+        // #region agent log
+        debug_ndjson("src/audio/filter_headroom.cpp:loadMetadata",
+                     "Metadata file not found for coefficients", "H2",
+                     {{"coefficientPath", coefficientPath}, {"metadataPath", info.metadataPath}});
+        // #endregion
         LOG_WARN("Headroom: metadata not found for {} (expected {})", coefficientPath,
                  info.metadataPath);
         return info;
@@ -78,6 +112,13 @@ FilterHeadroomInfo FilterHeadroomCache::loadMetadata(const std::string& coeffici
         }
         info.metadataFound = true;
 
+        // #region agent log
+        debug_ndjson("src/audio/filter_headroom.cpp:loadMetadata", "Metadata loaded", "H1",
+                     {{"coefficientPath", coefficientPath},
+                      {"metadataPath", info.metadataPath},
+                      {"maxCoefficient", info.maxCoefficient},
+                      {"l1Norm", info.l1Norm}});
+        // #endregion
         std::cout << "Headroom: metadata loaded for " << coefficientPath << " (max coeff "
                   << info.maxCoefficient << ", L1 " << info.l1Norm << ")" << '\n';
 

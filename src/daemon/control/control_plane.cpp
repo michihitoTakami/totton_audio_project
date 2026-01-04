@@ -13,12 +13,42 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <thread>
 #include <utility>
 
 namespace daemon_control {
 namespace {
+
+inline int64_t debug_now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+inline const char* debug_run_id() {
+    const char* v = std::getenv("MAGICBOX_DEBUG_RUN_ID");
+    return (v && *v) ? v : "pre-fix";
+}
+
+inline void debug_ndjson(const char* location, const char* message, const char* hypothesisId,
+                         const nlohmann::json& data) {
+    nlohmann::json payload;
+    payload["sessionId"] = "debug-session";
+    payload["runId"] = debug_run_id();
+    payload["hypothesisId"] = hypothesisId;
+    payload["location"] = location;
+    payload["message"] = message;
+    payload["data"] = data;
+    payload["timestamp"] = debug_now_ms();
+    std::ofstream ofs("/home/michihito/Working/gpu_os/.cursor/debug.log", std::ios::app);
+    if (!ofs) {
+        return;
+    }
+    ofs << payload.dump() << "\n";
+}
 
 std::string buildOkResponse(const daemon_ipc::ZmqRequest& request, const std::string& message = "",
                             const nlohmann::json& data = {}) {
@@ -664,6 +694,17 @@ std::string ControlPlane::handlePhaseTypeSet(const daemon_ipc::ZmqRequest& reque
     if (oldPhase == newPhase) {
         return buildOkResponse(request, "Phase type already " + phaseStr);
     }
+
+    // #region agent log
+    debug_ndjson("src/daemon/control/control_plane.cpp:handlePhaseTypeSet",
+                 "Phase switch requested via ZMQ", "H3",
+                 {{"requested", phaseStr},
+                  {"oldPhase", static_cast<int>(oldPhase)},
+                  {"newPhase", static_cast<int>(newPhase)},
+                  {"partitionedEnabled",
+                   (deps_.config) ? deps_.config->partitionedConvolution.enabled : false},
+                  {"disablePartitionForLinear", disablePartitionForLinear}});
+    // #endregion
 
     bool switchSuccess = false;
     auto switchFunc = [&]() {
