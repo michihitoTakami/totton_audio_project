@@ -102,8 +102,12 @@ _DEFAULT_CONTROL_POLL_INTERVAL = float(
 )
 _DEFAULT_CONTROL_TIMEOUT_MS = int(os.getenv("USB_I2S_CONTROL_TIMEOUT_MS", "2000"))
 
-# Jetson Web(:80) への状態レポート（任意, #950）
-_DEFAULT_STATUS_REPORT_URL = os.getenv("USB_I2S_STATUS_REPORT_URL", "").strip()
+# Jetson Web(:80) への状態レポート（#950）
+# 空文字の場合もデフォルト値にフォールバック
+_DEFAULT_STATUS_REPORT_URL = (
+    os.getenv("USB_I2S_STATUS_REPORT_URL", "").strip()
+    or "http://192.168.55.1/i2s/peer-status"
+)
 _DEFAULT_STATUS_REPORT_TIMEOUT_MS = int(
     os.getenv("USB_I2S_STATUS_REPORT_TIMEOUT_MS", "300")
 )
