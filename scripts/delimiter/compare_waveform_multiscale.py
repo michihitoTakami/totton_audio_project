@@ -62,7 +62,9 @@ def plot_waveform_pair(
 ):
     """Plot a pair of before/after waveforms."""
     duration_samples = int(duration_sec * sr)
-    end_sample = min(start_sample + duration_samples, len(before_audio), len(after_audio))
+    end_sample = min(
+        start_sample + duration_samples, len(before_audio), len(after_audio)
+    )
 
     time = np.arange(end_sample - start_sample) / sr
 
@@ -92,8 +94,8 @@ def plot_waveform_pair(
     ax_after.grid(True, alpha=0.3)
 
     # Peak annotations
-    before_peak = np.max(np.abs(before_segment))
-    after_peak = np.max(np.abs(after_segment))
+    before_peak: float = float(np.max(np.abs(before_segment)))
+    after_peak: float = float(np.max(np.abs(after_segment)))
     ax_before.text(
         0.02,
         0.98,
