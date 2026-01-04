@@ -422,20 +422,21 @@ body::before {
 .status-card-body {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: 8px;
+    width: 100%;
 }
 
 .status-indicator {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
     gap: 10px;
     padding: 8px 12px;
     border: 1px solid rgba(0, 255, 255, 0.25);
     border-radius: 6px;
     background: rgba(10, 14, 18, 0.8);
-    min-width: 160px;
+    width: 100%;
     transition: all 0.2s;
 }
 
@@ -445,6 +446,8 @@ body::before {
     border-radius: 50%;
     background: #7a7a7a;
     box-shadow: 0 0 6px rgba(255, 255, 255, 0.15);
+    flex-shrink: 0;
+    margin-top: 3px;
 }
 
 .status-text {
@@ -453,11 +456,20 @@ body::before {
     letter-spacing: 1px;
     color: #e0e0e0;
     text-transform: uppercase;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: break-word;
+    flex: 1;
+    min-width: 0;
 }
 
 .status-subtext {
     font-size: 12px;
     color: rgba(128, 160, 160, 0.8);
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: break-word;
+    width: 100%;
 }
 
 .status-link {
@@ -1186,8 +1198,9 @@ body::before {
 .status-card-body {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: 12px;
+    width: 100%;
 }
 
 .status-indicator {
@@ -1197,9 +1210,12 @@ body::before {
     font-size: 12px;
     font-weight: 600;
     border: 1px solid;
-    white-space: nowrap;
-    width: fit-content;
+    white-space: normal;
+    width: 100%;
     line-height: 1.4;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: break-word;
 }
 
 .status-indicator.status-ok {
@@ -1732,34 +1748,47 @@ body::before {
 .kv-grid {
     display: grid;
     gap: 10px;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(2, 1fr);
+}
+
+@media (max-width: 768px) {
+    .kv-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .kv-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     padding: 8px 10px;
     background: rgba(0, 255, 255, 0.03);
     border: 1px solid rgba(0, 255, 255, 0.12);
     border-radius: 8px;
+    min-height: fit-content;
 }
 
 .kv-key {
     color: rgba(224, 224, 224, 0.9);
     font-weight: 600;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .kv-sep {
     color: rgba(0, 255, 255, 0.7);
     font-weight: 700;
+    flex-shrink: 0;
 }
 
 .kv-value {
     color: rgba(224, 224, 224, 0.95);
     font-family: 'Courier New', monospace;
-    word-break: break-all;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: normal;
+    flex: 1;
+    min-width: 0;
 }
 
 .config-notes {
