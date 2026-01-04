@@ -2,6 +2,7 @@
 {% import "components/buttons.html" as buttons %}
 {% import "components/card_panel.html" as panels %}
 {% import "components/toggle_switch.html" as toggles %}
+{% import "components/status_card.html" as status_card %}
 
 {% block title %}{{ t.get('nav.delimiter') }} - {{ t.get('app.title') }}{% endblock %}
 
@@ -10,6 +11,51 @@
     <div class="page-header">
         <h1 class="page-title">{{ t.get('nav.delimiter') }}</h1>
         <p class="page-subtitle">{{ t.get('delimiter.subtitle') }}</p>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">{{ t.get('system.delimiter.status_title') }}</h2>
+        <div class="card-grid">
+            {% set status_icon = "🎛️" %}
+            {% set status_title = t.get('system.delimiter.state') %}
+            {% set status_class = "delimiter.enabled ? (delimiter.backendValid ? 'status-ok' : 'status-error') : 'status-off'" %}
+            {% set status_text = "delimiterStatusLabel()" %}
+            {% set status_subtext = "delimiter.backendValid ? '" ~ t.get('system.delimiter.backend_valid') ~ "' : '" ~ t.get('system.delimiter.backend_invalid') ~ "'" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "🔄" %}
+            {% set status_title = t.get('system.delimiter.mode') %}
+            {% set status_class = "delimiter.mode !== 'unknown' ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "delimiter.mode" %}
+            {% set status_subtext = "`" ~ t.get('system.delimiter.target_mode') ~ ": ${delimiter.target_mode}`" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "⚠️" %}
+            {% set status_title = t.get('system.delimiter.fallback') %}
+            {% set status_class = "delimiter.fallback_reason === 'none' || delimiter.fallback_reason === 'unknown' ? 'status-ok' : 'status-info'" %}
+            {% set status_text = "delimiter.fallback_reason" %}
+            {% set status_subtext = "delimiter.bypass_locked ? '" ~ t.get('system.delimiter.locked') ~ "' : ''" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "📊" %}
+            {% set status_title = t.get('system.delimiter.queue') %}
+            {% set status_class = "'status-info'" %}
+            {% set status_text = "formatQueueSeconds()" %}
+            {% set status_subtext = "`${delimiter.queue_samples} " ~ t.get('system.delimiter.queue_samples') ~ "`" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "⏱️" %}
+            {% set status_title = t.get('system.delimiter.last_inference') %}
+            {% set status_class = "delimiter.last_inference_ms > 0 ? 'status-ok' : 'status-off'" %}
+            {% set status_text = "formatInferenceMs()" %}
+            {% include 'components/status_card.html' %}
+
+            {% set status_icon = "📝" %}
+            {% set status_title = t.get('system.delimiter.detail') %}
+            {% set status_class = "'status-info'" %}
+            {% set status_text = "delimiter.detail || '" ~ t.get('system.delimiter.no_detail') ~ "'" %}
+            {% include 'components/status_card.html' %}
+        </div>
     </div>
 
     {% call panels.card_panel(t.get('system.delimiter.title')) %}
@@ -24,40 +70,6 @@
             {{ buttons.btn_primary(t.get('system.delimiter.refresh'), icon='🔄', click='fetchDelimiter()', disabled='delimiter.loading', extra_class='btn-secondary') }}
         </div>
         <div class="muted small">{{ t.get('system.delimiter.latency_notice') }}</div>
-
-        <div class="grid-3">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.state') }}</div>
-                <div class="mono" x-text="delimiterStatusLabel()"></div>
-                <div class="muted small" x-text="delimiter.backendValid ? '{{ t.get('system.delimiter.backend_valid') }}' : '{{ t.get('system.delimiter.backend_invalid') }}'"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.mode') }}</div>
-                <div class="mono" x-text="delimiter.mode"></div>
-                <div class="muted small">{{ t.get('system.delimiter.target_mode') }} <span class="mono" x-text="delimiter.target_mode"></span></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.fallback') }}</div>
-                <div class="mono" x-text="delimiter.fallback_reason"></div>
-                <div class="muted small" x-show="delimiter.bypass_locked">{{ t.get('system.delimiter.locked') }}</div>
-            </div>
-        </div>
-
-        <div class="grid-3">
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.queue') }}</div>
-                <div class="mono" x-text="formatQueueSeconds()"></div>
-                <div class="muted small" x-text="`${delimiter.queue_samples} {{ t.get('system.delimiter.queue_samples') }}`"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.last_inference') }}</div>
-                <div class="mono" x-text="formatInferenceMs()"></div>
-            </div>
-            <div class="stack">
-                <div class="muted">{{ t.get('system.delimiter.detail') }}</div>
-                <div class="mono" x-text="delimiter.detail || '{{ t.get('system.delimiter.no_detail') }}'"></div>
-            </div>
-        </div>
 
         <div class="alert alert-warning" x-show="delimiter.enabled && !delimiter.backendAvailable">
             <span x-text="delimiter.backendHint"></span>
