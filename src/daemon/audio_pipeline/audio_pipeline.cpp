@@ -146,6 +146,18 @@ struct RtPauseGuard {
     }
 };
 
+struct RtInProcessGuard {
+    std::atomic<bool>& flag;
+
+    explicit RtInProcessGuard(std::atomic<bool>& f) : flag(f) {
+        flag.store(true, std::memory_order_release);
+    }
+
+    ~RtInProcessGuard() {
+        flag.store(false, std::memory_order_release);
+    }
+};
+
 }  // namespace
 
 AudioPipeline::AudioPipeline(Dependencies deps) : deps_(std::move(deps)) {
@@ -248,15 +260,7 @@ bool AudioPipeline::process(const float* inputSamples, uint32_t nFrames) {
 }
 
 bool AudioPipeline::processDirect(const float* inputSamples, uint32_t nFrames) {
-    struct RtScopeGuard {
-        std::atomic<bool>& flag;
-        explicit RtScopeGuard(std::atomic<bool>& f) : flag(f) {
-            flag.store(true, std::memory_order_release);
-        }
-        ~RtScopeGuard() {
-            flag.store(false, std::memory_order_release);
-        }
-    } rtScope(rtInProcess_);
+    RtInProcessGuard rtScope(rtInProcess_);
 
     if (!inputSamples || nFrames == 0 || !isUpsamplerAvailable() || !hasBufferState() ||
         !deps_.streamInputLeft || !deps_.streamInputRight || !deps_.streamAccumulatedLeft ||
@@ -539,6 +543,8 @@ bool AudioPipeline::processDirect(const float* inputSamples, uint32_t nFrames) {
 }
 
 bool AudioPipeline::enqueueInputForWorker(const float* inputSamples, uint32_t nFrames) {
+    RtInProcessGuard rtScope(rtInProcess_);
+
     if (!inputSamples || nFrames == 0 || !hasBufferState()) {
         return false;
     }
