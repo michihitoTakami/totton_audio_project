@@ -120,7 +120,7 @@ struct AppConfig {
         std::string backend = "bypass";
 
         // High-latency worker chunking parameters (Fix #1009 / #1010)
-        float chunkSec = 6.0f;
+        float chunkSec = 4.0f;
         float overlapSec = 0.25f;
 
         struct OrtConfig {

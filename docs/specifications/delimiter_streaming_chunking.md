@@ -1,7 +1,7 @@
 ## De-limiter ストリーミング分割設計（chunk/overlap/crossfade） (Fix #1009)
 
 ### 目的
-- **6〜10秒遅延を前提**に、De-limiter のような「固定長/高コスト推論」を **連続再生**できる形にする。
+- **約4秒遅延（公式チャンク長 4 秒）を前提**に、De-limiter のような「固定長/高コスト推論」を **連続再生**できる形にする。
 - chunk境界での **クリック/境界アーティファクトを抑制**するため、**overlap + crossfade（OLA）** を採用する。
 - 次の実装タスク（#1010: 高遅延処理パス、#1014: 安全設計、#1017: 推論バックエンド抽象化）と **矛盾しない前提**を固定する。
 - 併せて、モデル選定と 44.1k/48k の SR 方針は **別ドキュメント**で確定させる: `docs/specifications/delimiter_model_sr_strategy_1096.md`（Issue #1096）
@@ -19,7 +19,7 @@
 
 ### 入力/出力の前提
 - **挿入位置**: アップサンプリング前（入力 44.1kHz/48kHz）
-- **処理単位**: 固定長 chunk（例: 6.0秒）を推論へ渡し、復元後 chunk を受け取る
+- **処理単位**: 固定長 chunk（例: 4.0秒）を推論へ渡し、復元後 chunk を受け取る
 - **ステレオ同期**: L/R は **同一境界**・同一窓・同一chunk長で扱う（片ch単独で境界処理しない）
 
 ### アルゴリズム: Overlap-Add + Crossfade
@@ -33,7 +33,7 @@
 ## 2. パラメータ（デフォルト案）
 
 ### デフォルト（案）
-- **chunkSec**: `6.0` 秒
+- **chunkSec**: `4.0` 秒
 - **overlapSec**: `0.25` 秒（250ms）
 - **window**: raised-cosine（Hannの半周期相当）
 
@@ -113,11 +113,11 @@ w(t) = 0.5 - 0.5\cos(\pi t),\quad t \in [0,1]
 
 ## 7. 性能計測とデフォルト決定（Fix #1015）
 
-- ストリーミング時の **平均処理速度>1.0x**（throughput_x >= 1）が目標。chunkSec=6.0 / overlapSec=0.25 を基本とし、Jetson Orin Nano（最小ターゲット）で計測して維持できるか確認する。
+- ストリーミング時の **平均処理速度>1.0x**（throughput_x >= 1）が目標。chunkSec=4.0 / overlapSec=0.25 を基本とし、Jetson Orin Nano（最小ターゲット）で計測して維持できるか確認する。
 - 計測スクリプト: `scripts/delimiter/benchmark_streaming.py`
   - 例:
     `uv sync --extra onnxruntime --extra benchmark`
-    `uv run python scripts/delimiter/benchmark_streaming.py --input test_data/example.wav --model /path/to/delimiter.onnx --provider cpu --chunk-sec 6.0 --overlap-sec 0.25 --target-sr 44100 --measure-resources --report reports/delimiter_bench.json`
+    `uv run python scripts/delimiter/benchmark_streaming.py --input test_data/example.wav --model /path/to/delimiter.onnx --provider cpu --chunk-sec 4.0 --overlap-sec 0.25 --target-sr 44100 --measure-resources --report reports/delimiter_bench.json`
   - 出力: chunkごとの推論時間、平均/95パーセンタイル、throughput_x（速いほど良い）、推定初期遅延（chunkSec）、hop秒（chunkSec - overlapSec）、CPU/GPU使用率（psutil/nvidia-ml-py3がある場合）。
   - `--fallback-on-error` を付けると推論例外発生時に該当chunkのみバイパスして継続し、`error_rate` と `failed_chunks` をレポートに残す。失敗系回帰の確認に利用する。
 - デフォルト運用: throughput_x が 1 未満になった場合は

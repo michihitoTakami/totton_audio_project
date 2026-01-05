@@ -30,7 +30,7 @@ struct Args {
     std::string outputPath;
     std::string modelPath;
     std::string provider = "cuda";
-    float chunkSec = 6.0f;
+    float chunkSec = 4.0f;
     float overlapSec = 0.25f;
     int expectedSampleRate = 44100;
     int intraOpThreads = 0;
@@ -44,7 +44,7 @@ void printUsage(const char* prog) {
               << "  --output <path>      Output WAV file (required)\n"
               << "  --model <path>       ONNX model path (required)\n"
               << "  --provider <name>    ORT provider: cpu, cuda, tensorrt (default: cuda)\n"
-              << "  --chunk-sec <float>  Chunk size in seconds (default: 6.0)\n"
+              << "  --chunk-sec <float>  Chunk size in seconds (default: 4.0)\n"
               << "  --overlap-sec <float> Overlap size in seconds (default: 0.25)\n"
               << "  --sample-rate <int>  Expected sample rate (default: 44100)\n"
               << "  --threads <int>      Intra-op threads (default: 0 = auto)\n"

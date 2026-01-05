@@ -453,7 +453,7 @@ def parse_args() -> argparse.Namespace:
         "--model", type=Path, required=True, help="Path to delimiter ONNX model"
     )
     p.add_argument("--provider", choices=["cpu", "cuda", "tensorrt"], default="cpu")
-    p.add_argument("--chunk-sec", type=float, default=6.0, help="Chunk size in seconds")
+    p.add_argument("--chunk-sec", type=float, default=4.0, help="Chunk size in seconds")
     p.add_argument(
         "--overlap-sec", type=float, default=0.25, help="Crossfade overlap seconds"
     )
