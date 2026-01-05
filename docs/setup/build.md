@@ -212,6 +212,54 @@ cmake --build build -j$(nproc)
 
 詳細は [docs/jetson/README.md](../jetson/README.md) を参照。
 
+## De-Limiter用のONNX Runtimeビルド
+
+De-Limiter（AI Loudness Care）機能を使用する場合、ONNX Runtimeをソースからビルドする必要があります。
+
+### Jetson Orin Nano向けビルド
+
+```bash
+# ビルドディレクトリをクリーン
+rm -rf /home/michihito/Working/onnxruntime/build
+
+# シンプルなビルド（disable_contrib_ops を外す）
+./build.sh --config Release --update --build --parallel 1 \
+  --build_shared_lib \
+  --use_cuda --cuda_home /usr/local/cuda \
+  --cudnn_home /usr/lib/aarch64-linux-gnu \
+  --skip_tests \
+  --compile_no_warning_as_error \
+  --cmake_extra_defines onnxruntime_USE_FLASH_ATTENTION=OFF \
+  --cmake_extra_defines onnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=OFF \
+  --cmake_extra_defines CMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG" \
+  --cmake_extra_defines CMAKE_C_FLAGS_RELEASE="-O1 -DNDEBUG"
+```
+
+### ビルドオプション説明
+
+- `--config Release`: リリースビルド（最適化有効）
+- `--parallel 1`: 並列ジョブ数（Jetsonのメモリ制約に対応）
+- `--build_shared_lib`: 共有ライブラリを生成
+- `--use_cuda`: CUDA実行プロバイダを有効化
+- `--skip_tests`: テストをスキップして高速化
+- `--compile_no_warning_as_error`: 警告をエラー扱いしない
+- `CMAKE_CXX_FLAGS_RELEASE="-O1"`: 最適化レベルを下げてメモリ使用量を削減
+
+### ビルド後の設定
+
+ビルドが完了したら、Magic Box ProjectのCMake設定で使用します：
+
+```bash
+cmake -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DDELIMITER_ENABLE_ORT=ON \
+  -DONNXRUNTIME_ROOT=/home/michihito/Working/onnxruntime/build/Release
+
+cmake --build build -j$(nproc)
+```
+
+De-Limiterの詳細なセットアップ手順は [delimiter.md](delimiter.md) を参照してください。
+
 ## フィルタ係数の確認
 
 ビルド前にフィルタ係数が生成されていることを確認：
