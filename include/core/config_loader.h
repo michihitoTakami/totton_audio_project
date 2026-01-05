@@ -17,6 +17,9 @@ enum class PhaseType {
 // Output pipeline mode (Issue #515)
 enum class OutputMode { Usb };
 
+// Headroom gain computation mode
+enum class HeadroomMode { PerFilter, FamilyMax };
+
 struct OutputUsbOptions {
     std::string preferredDevice = "hw:USB";
 };
@@ -36,6 +39,7 @@ struct AppConfig {
     int blockSize = 4096;
     float gain = 1.0f;
     float headroomTarget = 0.92f;  // Peak target (linear 0-1) for headroom + limiter guard
+    HeadroomMode headroomMode = HeadroomMode::FamilyMax;  // Gain calc: per-filter or family-max
     std::string filterPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
     GpuBackend gpuBackend = GpuBackend::Cuda;  // Backend selection: CUDA (default) or Vulkan
@@ -142,6 +146,12 @@ PhaseType parsePhaseType(const std::string& str);
 
 // Convert PhaseType to string
 const char* phaseTypeToString(PhaseType type);
+
+// Convert string to HeadroomMode (returns FamilyMax for invalid input)
+HeadroomMode parseHeadroomMode(const std::string& str);
+
+// Convert HeadroomMode to string ("per_filter", "family_max")
+const char* headroomModeToString(HeadroomMode mode);
 
 // Convert string to OutputMode (invalid -> Usb)
 OutputMode parseOutputMode(const std::string& str);

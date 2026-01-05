@@ -4,6 +4,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <unistd.h>
 
@@ -33,13 +34,36 @@ class FilterHeadroomCacheTest : public ::testing::Test {
         fs::remove_all(tempDir);
     }
 
-    fs::path writeMetadata(const fs::path& coeffPath, float maxCoeff, float l1Norm) {
+    fs::path writeMetadata(const fs::path& coeffPath, float maxCoeff, float l1Norm,
+                           int inputRate = 44100) {
         fs::path metaPath = coeffPath;
         metaPath.replace_extension(".json");
         std::ofstream ofs(metaPath);
-        ofs << R"({"validation_results":{"normalization":{)"
+        ofs << R"({"sample_rate_input":)" << inputRate << R"(,)"
+            << R"("validation_results":{"normalization":{)"
             << R"("max_coefficient_amplitude":)" << maxCoeff << R"(,)"
             << R"("l1_norm":)" << l1Norm << R"(}}})";
+        return metaPath;
+    }
+
+    fs::path writeMetadataWithDcGain(const fs::path& coeffPath, float maxCoeff, float l1Norm,
+                                     float upsampleRatio, float normalizedDcGain,
+                                     std::optional<float> inputPeakNormalized = std::nullopt,
+                                     int inputRate = 44100) {
+        fs::path metaPath = coeffPath;
+        metaPath.replace_extension(".json");
+        std::ofstream ofs(metaPath);
+        int outputRate = static_cast<int>(inputRate * upsampleRatio);
+        ofs << R"({"sample_rate_input":)" << inputRate << R"(,"sample_rate_output":)" << outputRate
+            << R"(,"upsample_ratio":)" << upsampleRatio << R"(,)"
+            << R"("validation_results":{"normalization":{)"
+            << R"("max_coefficient_amplitude":)" << maxCoeff << R"(,)"
+            << R"("l1_norm":)" << l1Norm << R"(,)"
+            << R"("normalized_dc_gain":)" << normalizedDcGain << R"(})";
+        if (inputPeakNormalized.has_value()) {
+            ofs << R"(,"input_band_peak_normalized":)" << inputPeakNormalized.value();
+        }
+        ofs << "}}";
         return metaPath;
     }
 };
@@ -79,4 +103,49 @@ TEST_F(FilterHeadroomCacheTest, TargetPeakChangeClearsCache) {
     cache.setTargetPeak(0.7f);
     FilterHeadroomInfo second = cache.get(coeffPath.string());
     EXPECT_FLOAT_EQ(second.safeGain, 0.35f);
+}
+
+TEST_F(FilterHeadroomCacheTest, PrefersInputPeakWhenAvailable) {
+    FilterHeadroomCache cache(0.92f);
+    fs::path coeffPath = tempDir / "filter_input_peak.bin";
+    writeMetadataWithDcGain(coeffPath, 2.0f, 0.0f, 16.0f, 15.84f, 0.99f);
+
+    FilterHeadroomInfo info = cache.get(coeffPath.string());
+    EXPECT_TRUE(info.metadataFound);
+    EXPECT_TRUE(info.usedInputBandPeak);
+    EXPECT_FLOAT_EQ(info.inputBandPeak, 0.99f);
+    EXPECT_NEAR(info.safeGain, 0.92f / 0.99f, 1e-6f);
+}
+
+TEST_F(FilterHeadroomCacheTest, DerivesInputPeakFromDcGainWhenMissing) {
+    FilterHeadroomCache cache(0.92f);
+    fs::path coeffPath = tempDir / "filter_derived_peak.bin";
+    writeMetadataWithDcGain(coeffPath, 2.0f, 0.0f, 8.0f, 7.92f);
+
+    FilterHeadroomInfo info = cache.get(coeffPath.string());
+    EXPECT_TRUE(info.metadataFound);
+    EXPECT_TRUE(info.usedInputBandPeak);
+    EXPECT_NEAR(info.inputBandPeak, 0.99f, 1e-6f);
+    EXPECT_NEAR(info.safeGain, 0.92f / 0.99f, 1e-6f);
+}
+
+TEST_F(FilterHeadroomCacheTest, FamilyModeUsesMaxAcrossPaths) {
+    FilterHeadroomCache cache(0.9f);
+    cache.setMode(HeadroomMode::FamilyMax);
+    fs::path coeffPathA = tempDir / "filter_a.bin";
+    fs::path coeffPathB = tempDir / "filter_b.bin";
+    writeMetadata(coeffPathA, 1.5f, 0.0f);
+    writeMetadata(coeffPathB, 2.0f, 0.0f);
+
+    FilterHeadroomInfo first = cache.get(coeffPathA.string());
+    EXPECT_TRUE(first.metadataFound);
+    EXPECT_NEAR(first.safeGain, 0.9f / 1.5f, 1e-6f);
+
+    FilterHeadroomInfo second = cache.get(coeffPathB.string());
+    EXPECT_TRUE(second.metadataFound);
+    EXPECT_NEAR(second.safeGain, 0.9f / 2.0f, 1e-6f);
+
+    FilterHeadroomInfo updatedFirst = cache.get(coeffPathA.string());
+    EXPECT_NEAR(updatedFirst.safeGain, 0.9f / 2.0f, 1e-6f);
+    EXPECT_TRUE(updatedFirst.familyGainApplied);
 }

@@ -361,6 +361,14 @@ class FilterValidator:
         passband_mask = w <= self.config.passband_end
         passband_db = H_db[passband_mask]
         passband_ripple = np.max(passband_db) - np.min(passband_db)
+        input_band_peak = (
+            float(np.max(np.abs(H[passband_mask]))) if np.any(passband_mask) else 0.0
+        )
+        input_band_peak_normalized = (
+            float(input_band_peak / float(self.config.upsample_ratio))
+            if self.config.upsample_ratio
+            else 0.0
+        )
 
         stopband_mask = w >= self.config.stopband_start
         stopband_attenuation = np.min(H_db[stopband_mask])
@@ -377,6 +385,8 @@ class FilterValidator:
 
         results = {
             "passband_ripple_db": float(passband_ripple),
+            "input_band_peak": input_band_peak,
+            "input_band_peak_normalized": input_band_peak_normalized,
             "stopband_attenuation_db": float(abs(stopband_attenuation)),
             "peak_position": peak_idx,
             "peak_threshold_samples": peak_threshold,
@@ -395,6 +405,11 @@ class FilterValidator:
     ) -> None:
         print(f"  実際のタップ数: {results['actual_taps']}")
         print(f"  通過帯域リップル: {results['passband_ripple_db']:.3f} dB")
+        print(
+            "  入力帯域ピーク: "
+            f"{results.get('input_band_peak_normalized', 0.0):.6f} "
+            f"(raw {results.get('input_band_peak', 0.0):.6f})"
+        )
         print(
             f"  阻止帯域減衰: {results['stopband_attenuation_db']:.1f} dB (目標: {self.config.stopband_attenuation_db} dB)"
         )

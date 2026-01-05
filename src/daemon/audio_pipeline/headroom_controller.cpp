@@ -3,6 +3,7 @@
 #include "logging/logger.h"
 
 #include <utility>
+#include <vector>
 
 namespace audio_pipeline {
 
@@ -47,6 +48,12 @@ void HeadroomController::refreshCurrentHeadroom(const std::string& reason) const
 void HeadroomController::setTargetPeak(float targetPeak) {
     if (deps_.headroomCache) {
         deps_.headroomCache->setTargetPeak(targetPeak);
+    }
+}
+
+void HeadroomController::setMode(HeadroomMode mode) {
+    if (deps_.headroomCache) {
+        deps_.headroomCache->setMode(mode);
     }
 }
 
@@ -96,15 +103,33 @@ void HeadroomController::applyHeadroomForPath(const std::string& path,
         return;
     }
 
+    if (deps_.config && deps_.config->headroomMode == HeadroomMode::FamilyMax &&
+        deps_.headroomCache) {
+        ConvolutionEngine::RateFamily family = ConvolutionEngine::RateFamily::RATE_44K;
+        if (deps_.activeRateFamily) {
+            family = deps_.activeRateFamily();
+        }
+        std::vector<std::string> preloadPaths;
+        preloadPaths.push_back(resolveFilterPathFor(family, PhaseType::Minimum));
+        preloadPaths.push_back(resolveFilterPathFor(family, PhaseType::Linear));
+        deps_.headroomCache->preload(preloadPaths);
+    }
+
     FilterHeadroomInfo info = deps_.headroomCache->get(path);
     updateEffectiveGain(info.safeGain, reason);
+
+    const char* metricLabel = info.usedInputBandPeak ? "input_peak" : "max_coef";
+    float metricValue = info.usedInputBandPeak ? info.inputBandPeak : info.maxCoefficient;
 
     if (!info.metadataFound) {
         LOG_WARN("Headroom [{}]: metadata missing for {} (using safe gain {:.4f})", reason, path,
                  info.safeGain);
     } else {
-        LOG_INFO("Headroom [{}]: {} max_coef={:.6f} safeGain={:.4f} target={:.2f}", reason, path,
-                 info.maxCoefficient, info.safeGain, info.targetPeak);
+        LOG_INFO(
+            "Headroom [{}]: {} {}={:.6f} safeGain={:.4f} target={:.2f} (max_coef={:.6f}, "
+            "input_peak={:.6f})",
+            reason, path, metricLabel, metricValue, info.safeGain, info.targetPeak,
+            info.maxCoefficient, info.inputBandPeak);
     }
 }
 

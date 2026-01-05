@@ -389,6 +389,7 @@ static void print_config_summary(const AppConfig& cfg) {
     LOG_INFO("  Block size:     {}", cfg.blockSize);
     LOG_INFO("  Gain:           {}", cfg.gain);
     LOG_INFO("  Headroom tgt:   {}", cfg.headroomTarget);
+    LOG_INFO("  Headroom mode:  {}", headroomModeToString(cfg.headroomMode));
     LOG_INFO("  Base filter path: {}", cfg.filterPath);
     LOG_INFO("  Filter path 44k min: {}", cfg.filterPath44kMin);
     LOG_INFO("  Filter path 48k min: {}", cfg.filterPath48kMin);
@@ -515,6 +516,14 @@ static void load_runtime_config() {
             make_headroom_dependencies(nullptr));
     }
     if (g_state.managers.headroomController) {
+        g_state.managers.headroomController->setMode(g_state.config.headroomMode);
+        if (g_state.config.headroomMode == HeadroomMode::FamilyMax) {
+            std::vector<std::string> preloadPaths = {
+                g_state.config.filterPath44kMin, g_state.config.filterPath48kMin,
+                g_state.config.filterPath44kLinear, g_state.config.filterPath48kLinear};
+            g_state.headroomCache.preloadDirectory(g_state.config.coefficientDir);
+            g_state.headroomCache.preload(preloadPaths);
+        }
         g_state.managers.headroomController->setTargetPeak(g_state.config.headroomTarget);
         g_state.managers.headroomController->resetEffectiveGain(
             "config load (pending filter headroom)");

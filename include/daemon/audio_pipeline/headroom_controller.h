@@ -31,6 +31,7 @@ class HeadroomController {
     std::string currentFilterPath() const;
     void refreshCurrentHeadroom(const std::string& reason) const;
     void setTargetPeak(float targetPeak);
+    void setMode(HeadroomMode mode);
     void resetEffectiveGain(const std::string& reason) const;
 
    private:
