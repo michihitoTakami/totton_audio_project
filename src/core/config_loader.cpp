@@ -34,6 +34,24 @@ const char* phaseTypeToString(PhaseType type) {
     }
 }
 
+HeadroomMode parseHeadroomMode(const std::string& str) {
+    std::string lower = toLower(str);
+    if (lower == "per_filter" || lower == "per-filter" || lower == "legacy") {
+        return HeadroomMode::PerFilter;
+    }
+    return HeadroomMode::FamilyMax;
+}
+
+const char* headroomModeToString(HeadroomMode mode) {
+    switch (mode) {
+    case HeadroomMode::PerFilter:
+        return "per_filter";
+    case HeadroomMode::FamilyMax:
+    default:
+        return "family_max";
+    }
+}
+
 OutputMode parseOutputMode(const std::string& str) {
     std::string lower = toLower(str);
     if (lower == "usb") {
@@ -145,6 +163,9 @@ bool loadAppConfig(const std::filesystem::path& configPath, AppConfig& outConfig
         }
         if (j.contains("headroomTarget")) {
             outConfig.headroomTarget = j["headroomTarget"].get<float>();
+        }
+        if (j.contains("headroomMode") && j["headroomMode"].is_string()) {
+            outConfig.headroomMode = parseHeadroomMode(j["headroomMode"].get<std::string>());
         }
         if (j.contains("filterPath")) {
             outConfig.filterPath = j["filterPath"].get<std::string>();

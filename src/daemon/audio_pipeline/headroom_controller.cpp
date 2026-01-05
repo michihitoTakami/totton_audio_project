@@ -3,6 +3,7 @@
 #include "logging/logger.h"
 
 #include <utility>
+#include <vector>
 
 namespace audio_pipeline {
 
@@ -50,6 +51,12 @@ void HeadroomController::setTargetPeak(float targetPeak) {
     }
 }
 
+void HeadroomController::setMode(HeadroomMode mode) {
+    if (deps_.headroomCache) {
+        deps_.headroomCache->setMode(mode);
+    }
+}
+
 void HeadroomController::resetEffectiveGain(const std::string& reason) const {
     updateEffectiveGain(1.0f, reason);
 }
@@ -94,6 +101,18 @@ void HeadroomController::applyHeadroomForPath(const std::string& path,
         LOG_WARN("Headroom [{}]: headroom cache missing, falling back to unity gain", reason);
         updateEffectiveGain(1.0f, reason);
         return;
+    }
+
+    if (deps_.config && deps_.config->headroomMode == HeadroomMode::FamilyMax &&
+        deps_.headroomCache) {
+        ConvolutionEngine::RateFamily family = ConvolutionEngine::RateFamily::RATE_44K;
+        if (deps_.activeRateFamily) {
+            family = deps_.activeRateFamily();
+        }
+        std::vector<std::string> preloadPaths;
+        preloadPaths.push_back(resolveFilterPathFor(family, PhaseType::Minimum));
+        preloadPaths.push_back(resolveFilterPathFor(family, PhaseType::Linear));
+        deps_.headroomCache->preload(preloadPaths);
     }
 
     FilterHeadroomInfo info = deps_.headroomCache->get(path);

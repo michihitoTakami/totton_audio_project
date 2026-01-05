@@ -14,6 +14,7 @@
   "blockSize": 2048,
   "gain": 1.0,
   "headroomTarget": 0.92,
+  "headroomMode": "family_max",
   "phaseType": "minimum",
   "filterPath": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
   "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_min_phase.bin",
