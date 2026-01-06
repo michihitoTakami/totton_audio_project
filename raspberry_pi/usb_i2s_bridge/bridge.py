@@ -1,7 +1,7 @@
 """USB(PC) -> I2S(TX) bridge for Raspberry Pi.
 
 要件:
-- USB入力(PC)の rate/format を取得し I2S へ流す（取り急ぎは **パススルー優先**）
+- USB入力(PC)の rate/format を取得し I2S へ流す（安定性優先で微小リサンプルをデフォルト有効化）
 - 44.1k系/48k系の切替を検知し安全に再初期化（フェード/ミュート）
 - USB切断(PC再起動/抜き差し)や XRUN で落ちても自動復帰
 - Jetson側が再起動しても継続運用できるよう、入力が無い時はサイレンスを送出してI2Sを維持
@@ -85,7 +85,9 @@ _DEFAULT_FADE_MS = 80
 _DEFAULT_RESTART_BACKOFF_SEC = 0.5
 _DEFAULT_POLL_INTERVAL_SEC = 1.0
 _DEFAULT_STATUS_PATH = Path("/var/run/usb-i2s-bridge/status.json")
-_DEFAULT_PASSTHROUGH = True
+_DEFAULT_PASSTHROUGH = False  # 安定性優先で変換/リサンプルを有効化（Issue #1231）
+_DEFAULT_DRIFT_COMPENSATION = True
+_DEFAULT_AUDIORATE_TOLERANCE_NS = 5_000_000  # 5ms
 
 # LAN 制御プレーン（Issue #824）
 # NOTE(#950):
@@ -150,6 +152,8 @@ class UsbI2sBridgeConfig:
     restart_backoff_sec: float = _DEFAULT_RESTART_BACKOFF_SEC
     keep_silence_when_no_capture: bool = True
     passthrough: bool = _DEFAULT_PASSTHROUGH
+    drift_compensation: bool = _DEFAULT_DRIFT_COMPENSATION
+    audiorate_tolerance_ns: int = _DEFAULT_AUDIORATE_TOLERANCE_NS
     status_path: Path | None = _DEFAULT_STATUS_PATH
     status_report_url: str | None = _DEFAULT_STATUS_REPORT_URL or None
     status_report_timeout_ms: int = _DEFAULT_STATUS_REPORT_TIMEOUT_MS
@@ -176,6 +180,8 @@ class UsbI2sBridgeConfig:
             raise ValueError("poll_interval_sec must be > 0")
         if self.restart_backoff_sec < 0:
             raise ValueError("restart_backoff_sec must be >= 0")
+        if self.audiorate_tolerance_ns <= 0:
+            raise ValueError("audiorate_tolerance_ns must be > 0")
 
         if self.status_path is not None and not isinstance(self.status_path, Path):
             raise ValueError("status_path must be a Path or None")
@@ -639,7 +645,14 @@ def build_gst_launch_command(
     # 取り急ぎは「受けた形式をそのまま投げる」(passthrough) を優先する。
     # ただし、I2S側が受け入れない format の場合はエラーになるため、
     # conversion=true で再起動するフォールバックを Supervisor 側で行う。
-    if conversion:
+    if cfg.drift_compensation:
+        pipeline += [
+            "!",
+            "audiorate",
+            f"tolerance={cfg.audiorate_tolerance_ns}",
+        ]
+
+    if conversion or cfg.drift_compensation:
         pipeline += [
             "!",
             "audioresample",
@@ -1196,7 +1209,7 @@ def _run_with_gst_launch(
     last_rate = cfg.fallback_rate
     last_observed_capture_format: Optional[str] = None
     current_mode = "silence" if cfg.keep_silence_when_no_capture else "capture"
-    conversion = False
+    conversion = not cfg.passthrough
     proc_holder: dict[str, subprocess.Popen | None] = {"proc": None}
     last_capture_allowed = control.capture_allowed() if control else True
     status_generation = 0
@@ -1409,7 +1422,7 @@ def _run_with_gi(
             self.current_rate: int = cfg.fallback_rate
             self.current_fmt: str = cfg.preferred_format
             self.current_capture_fmt: Optional[str] = None
-            self.conversion_enabled: bool = False
+            self.conversion_enabled: bool = not cfg.passthrough
             self._restart_scheduled = False
             self._control = control
             self._reporter: StatusReporter | None = None
@@ -1445,8 +1458,11 @@ def _run_with_gi(
                 src = "audiotestsrc is-live=true wave=silence"
             # name=vol で後から操作可能にする
             convert = ""
-            if self.conversion_enabled:
-                convert = "audioresample quality=10 ! audioconvert ! "
+            if self.cfg.drift_compensation or self.conversion_enabled:
+                convert = (
+                    f"audiorate tolerance={self.cfg.audiorate_tolerance_ns} ! "
+                    "audioresample quality=10 ! audioconvert ! "
+                )
             return (
                 f"{src} ! queue max-size-time={self.cfg.queue_time_ns} "
                 f"max-size-bytes=0 max-size-buffers=0 ! {convert}"
@@ -1744,13 +1760,34 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
         dest="passthrough",
         action="store_true",
         default=_env_bool("USB_I2S_PASSTHROUGH", _DEFAULT_PASSTHROUGH),
-        help="UAC2で受けた rate/format をそのまま I2S へ流す (default: true)",
+        help="UAC2で受けた rate/format をそのまま I2S へ流す (default: false)",
     )
     parser.add_argument(
         "--no-passthrough",
         dest="passthrough",
         action="store_false",
         help="I2S側の安定性優先で preferred_format へ変換して出力する",
+    )
+    parser.add_argument(
+        "--drift-compensation",
+        dest="drift_compensation",
+        action="store_true",
+        default=_env_bool("USB_I2S_DRIFT_COMPENSATION", _DEFAULT_DRIFT_COMPENSATION),
+        help="audiorate+audioresample でクロックドリフトを吸収する (default: true)",
+    )
+    parser.add_argument(
+        "--no-drift-compensation",
+        dest="drift_compensation",
+        action="store_false",
+        help="ドリフト補償を無効化して旧来のビットパススルーに近い動作に戻す",
+    )
+    parser.add_argument(
+        "--audiorate-tolerance-ns",
+        type=int,
+        default=_env_int(
+            "USB_I2S_AUDIORATE_TOLERANCE_NS", _DEFAULT_AUDIORATE_TOLERANCE_NS
+        ),
+        help="audiorate の許容ジッタ(ns)。小さくするほど追従が早い",
     )
     parser.add_argument(
         "--keep-silence",
@@ -1842,6 +1879,8 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
         restart_backoff_sec=max(0.0, float(args.restart_backoff)),
         keep_silence_when_no_capture=bool(args.keep_silence_when_no_capture),
         passthrough=bool(args.passthrough),
+        drift_compensation=bool(args.drift_compensation),
+        audiorate_tolerance_ns=max(1, int(args.audiorate_tolerance_ns)),
         status_path=args.status_path,
         status_report_url=str(args.status_report_url or "").strip() or None,
         status_report_timeout_ms=max(1, int(args.status_report_timeout_ms)),
@@ -1861,12 +1900,24 @@ def main(argv: list[str] | None = None) -> None:
     cfg = _parse_args(argv)
     cfg.validate()
 
-    # NOTE: Issue #919: GStreamer を経由せず arecord|aplay パイプで動かす
     control = _build_control_sync(cfg)
     if control:
         control.start()
     try:
-        _run_with_arecord_aplay(cfg, control)
+        if cfg.drift_compensation:
+            # ドリフト補償を有効化した場合は audiorate/audioresample を持つ GStreamer パスを優先
+            GLib, Gst = _try_import_gi_gst()
+            if GLib is not None and Gst is not None:
+                _run_with_gi(cfg, control)
+            else:
+                print(
+                    "[usb_i2s_bridge] GI unavailable; falling back to gst-launch path with "
+                    "audiorate/audioresample"
+                )
+                _run_with_gst_launch(cfg, control)
+        else:
+            # Issue #919: GStreamer を経由せず arecord|aplay パイプで動かす
+            _run_with_arecord_aplay(cfg, control)
     finally:
         if control:
             control.stop()
