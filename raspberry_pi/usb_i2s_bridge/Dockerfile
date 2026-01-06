@@ -5,13 +5,7 @@ RUN apt-get update \
         libasound2 \
         alsa-utils \
         python3 \
-        python3-gi \
         python3-zmq \
-        gstreamer1.0-tools \
-        gstreamer1.0-plugins-base \
-        gstreamer1.0-plugins-good \
-        gstreamer1.0-alsa \
-        gir1.2-gstreamer-1.0 \
         ca-certificates \
         bash \
         util-linux \

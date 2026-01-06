@@ -90,8 +90,7 @@ python3 -m raspberry_pi.rtp_sender \
 
 - 対応フォーマット: `S16_LE`, `S24_3LE`, `S32_LE`（payload は L16/L24/L32）
 - 対応レート: 44.1k/48k 系の代表レート（44100/48000/88200/96000/176400/192000/352800/384000/705600/768000）
-- デフォルトで `audiorate + audioresample quality=10` によるクロックドリフト吸収を有効化（`USB_I2S_DRIFT_COMPENSATION=true`）。ビットパーフェクト優先なら無効化してください。
-- RTCP で Jetson へフィードバックします。
+- `audioresample quality=10` でクロックドリフトを吸収し、RTCP で Jetson へフィードバックします。
 - ALSA の実サンプルレートを自動検出し、caps/clock-rate に反映。検出結果は ZeroMQ ブリッジ用の JSON にも書き出します。レート変化を検知するとパイプラインを自動再起動して追従します。
 - `--dry-run` または `RTP_SENDER_DRY_RUN=true` でパイプライン文字列だけを出力します。
 
@@ -112,9 +111,6 @@ python3 -m raspberry_pi.rtp_sender \
 | `RTP_SENDER_LATENCY_MS` | `100` | jitterbuffer latency (ms) |
 | `RTP_SENDER_PAYLOAD_TYPE` | `96` | RTP Payload Type |
 | `RTP_SENDER_DRY_RUN` | `false` | true でパイプライン出力のみ |
-| `USB_I2S_DRIFT_COMPENSATION` | `true` | audiorate+audioresample を有効にしてクロック差を吸収 |
-| `USB_I2S_AUDIORATE_TOLERANCE_NS` | `5000000` | audiorate の許容ジッタ(ns)。小さくすると追従が早い |
-| `USB_I2S_PASSTHROUGH` | `false` | 旧来のビットパススルーを優先する場合に true へ |
 | `RTP_BRIDGE_STATS_PATH` | `/tmp/rtp_receiver_stats.json` | ZeroMQ STATUS 用に検出レート等を書き出すパス |
 
 ---
