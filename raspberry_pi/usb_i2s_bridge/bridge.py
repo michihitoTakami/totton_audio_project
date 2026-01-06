@@ -823,9 +823,10 @@ def _run_with_arecord_aplay(
             )
 
     def _record_error(message: str, *, is_xrun: bool = False) -> None:
-        nonlocal xrun_count, last_error, last_error_at_unix_ms
+        nonlocal xrun_count, last_error, last_error_at_unix_ms, current_mode
         with error_lock:
-            if is_xrun:
+            mode_snapshot = current_mode
+            if is_xrun and mode_snapshot == "capture":
                 xrun_count += 1
             last_error = str(message)
             last_error_at_unix_ms = int(time.time() * 1000)
@@ -1070,7 +1071,7 @@ def _run_with_arecord_aplay(
                             f"enabling conversion fallback rc={rc}"
                         )
                         _record_error(
-                            f"aplay exited in passthrough rc={rc}", is_xrun=True
+                            f"aplay exited in passthrough rc={rc}", is_xrun=False
                         )
                         conversion_enabled = True
                         desired_fmt = str(cfg.preferred_format)
@@ -1112,7 +1113,7 @@ def _run_with_arecord_aplay(
                         "[usb_i2s_bridge] aplay exited unexpectedly; enabling conversion fallback "
                         f"rc={rc}"
                     )
-                    _record_error(f"aplay exited unexpectedly rc={rc}", is_xrun=True)
+                    _record_error(f"aplay exited unexpectedly rc={rc}", is_xrun=False)
                     conversion_enabled = True
                     next_poll = 0.0
                 time.sleep(cfg.restart_backoff_sec)
@@ -1134,7 +1135,7 @@ def _run_with_arecord_aplay(
                         print(
                             f"[usb_i2s_bridge] arecord EOF/exit rc={rc}; switching to silence and restarting"
                         )
-                        _record_error(f"arecord EOF/exit rc={rc}", is_xrun=True)
+                        _record_error(f"arecord EOF/exit rc={rc}", is_xrun=False)
                         _stop_arecord()
                         conversion_enabled = True  # 次回は安全側で起動
                         current_mode = (
@@ -1147,7 +1148,7 @@ def _run_with_arecord_aplay(
                     aplay_in.write(b"\x00" * chunk_bytes)
             except BrokenPipeError:
                 print("[usb_i2s_bridge] aplay broken pipe; restarting")
-                _record_error("aplay broken pipe", is_xrun=True)
+                _record_error("aplay broken pipe", is_xrun=False)
                 _terminate_process(aplay_proc)
                 aplay_proc = None
                 aplay_in = None
@@ -1157,7 +1158,7 @@ def _run_with_arecord_aplay(
                 time.sleep(cfg.restart_backoff_sec)
             except OSError as e:
                 print(f"[usb_i2s_bridge] I/O error: {e}; restarting aplay/arecord")
-                _record_error(f"I/O error: {e}", is_xrun=True)
+                _record_error(f"I/O error: {e}", is_xrun=False)
                 _stop_all()
                 time.sleep(cfg.restart_backoff_sec)
     finally:
