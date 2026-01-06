@@ -68,10 +68,15 @@ CrossfeedInitResult initializeCrossfeed(daemon_app::RuntimeState& state,
     CrossfeedInitResult result{};
     (void)partitionedConvolutionEnabled;
 
-    std::string hrtfDir = "data/crossfeed/hrtf";
+    std::filesystem::path hrtfDir = state.config.crossfeed.hrtfPath;
+    if (hrtfDir.empty()) {
+        hrtfDir = "data/crossfeed/hrtf";
+    }
+    hrtfDir = hrtfDir.lexically_normal();
+
     if (!std::filesystem::exists(hrtfDir)) {
-        std::cout << "HRTF directory not found (" << hrtfDir << "), crossfeed feature disabled"
-                  << '\n';
+        std::cout << "HRTF directory not found (" << hrtfDir.string()
+                  << "), crossfeed feature disabled" << '\n';
         std::cout << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
                      "generate HRTF "
                      "filters"
@@ -79,7 +84,8 @@ CrossfeedInitResult initializeCrossfeed(daemon_app::RuntimeState& state,
         return result;
     }
 
-    std::cout << "Initializing HRTF processor for crossfeed..." << '\n';
+    std::cout << "Initializing HRTF processor for crossfeed (path: " << hrtfDir.string() << ")..."
+              << '\n';
 #if defined(HAVE_VULKAN_BACKEND)
     const bool useVulkanBackend = (state.config.gpuBackend == GpuBackend::Vulkan);
     if (useVulkanBackend) {
@@ -99,8 +105,8 @@ CrossfeedInitResult initializeCrossfeed(daemon_app::RuntimeState& state,
     ConvolutionEngine::HeadSize initialHeadSize =
         ConvolutionEngine::stringToHeadSize(state.config.crossfeed.headSize);
 
-    if (!state.crossfeed.processor->initialize(hrtfDir, state.config.blockSize, initialHeadSize,
-                                               rateFamily)) {
+    if (!state.crossfeed.processor->initialize(hrtfDir.string(), state.config.blockSize,
+                                               initialHeadSize, rateFamily)) {
         std::cerr << "  HRTF: Failed to initialize processor" << '\n';
         std::cerr << "  Hint: Run 'uv run python scripts/filters/generate_hrtf.py' to "
                      "generate HRTF "
