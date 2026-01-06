@@ -1050,12 +1050,14 @@ void AudioPipeline::logDroppingInput() {
 }
 
 void AudioPipeline::logDroppingHighLatencyInput() {
+    gpu_upsampler::metrics::recordProcessingXrun();
+    gpu_upsampler::metrics::recordBufferOverflow();
     auto now = std::chrono::steady_clock::now();
     if (now - lastInputDropWarn_ > std::chrono::seconds(5)) {
         size_t available = inputInterleaved_.availableToRead();
         size_t capacity = inputInterleaved_.capacity();
         LOG_WARN(
-            "[AudioPipeline] High-latency input queue overflow (available={} samples, cap={}), "
+            "[AudioPipeline] Processing ring buffer XRUN (input queue overflow: {} / {} samples), "
             "dropping input",
             available, capacity);
         lastInputDropWarn_ = now;

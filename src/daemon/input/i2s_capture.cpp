@@ -5,6 +5,7 @@
 #include "daemon/core/thread_priority.h"
 #include "daemon/input/loopback_capture.h"
 #include "logging/logger.h"
+#include "logging/metrics.h"
 
 #include <algorithm>
 #include <chrono>
@@ -312,7 +313,8 @@ void i2sCaptureThread(daemon_app::RuntimeState& state, const std::string& device
                 continue;
             }
             if (frames == -EPIPE) {
-                LOG_WARN("[I2S] XRUN detected, recovering");
+                LOG_WARN("[I2S] XRUN detected at capture buffer, recovering");
+                gpu_upsampler::metrics::recordCaptureXrun();
                 // Use recover() to handle driver-specific XRUN recovery requirements.
                 if (snd_pcm_recover(handle, frames, 1) < 0) {
                     snd_pcm_prepare(handle);

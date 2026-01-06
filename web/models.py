@@ -176,6 +176,15 @@ class DelimiterStatus(BaseModel):
     detail: Optional[str] = None
 
 
+class XrunBreakdown(BaseModel):
+    """XRUN breakdown across pipeline stages."""
+
+    total: int = 0
+    capture: int = 0
+    processing: int = 0
+    output: int = 0
+
+
 class Status(BaseModel):
     """System status response model."""
 
@@ -190,6 +199,7 @@ class Status(BaseModel):
     output_rate: int = 0
     peaks: PeakLevels = Field(default_factory=PeakLevels)
     # Debug / diagnostics (from /tmp/gpu_upsampler_stats.json)
+    xrun: XrunBreakdown = Field(default_factory=XrunBreakdown)
     xrun_count: int = 0
     buffer_underflows: int = 0
     buffer_overflows: int = 0

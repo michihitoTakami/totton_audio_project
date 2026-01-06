@@ -156,6 +156,10 @@ MetricsSnapshot getSnapshot() {
     snapshot.audio.totalSamples = g_audioStats.totalSamples.load(std::memory_order_relaxed);
     snapshot.audio.clipCount = g_audioStats.clipCount.load(std::memory_order_relaxed);
     snapshot.audio.xrunCount = g_audioStats.xrunCount.load(std::memory_order_relaxed);
+    snapshot.audio.captureXrunCount = g_audioStats.captureXrunCount.load(std::memory_order_relaxed);
+    snapshot.audio.processingXrunCount =
+        g_audioStats.processingXrunCount.load(std::memory_order_relaxed);
+    snapshot.audio.outputXrunCount = g_audioStats.outputXrunCount.load(std::memory_order_relaxed);
     snapshot.audio.bufferUnderflows = g_audioStats.bufferUnderflows.load(std::memory_order_relaxed);
     snapshot.audio.bufferOverflows = g_audioStats.bufferOverflows.load(std::memory_order_relaxed);
 
@@ -188,9 +192,22 @@ void recordSamples(uint64_t count) {
 }
 
 void recordXrun() {
+    recordOutputXrun();
+}
+
+void recordCaptureXrun() {
+    g_audioStats.captureXrunCount.fetch_add(1, std::memory_order_relaxed);
     g_audioStats.xrunCount.fetch_add(1, std::memory_order_relaxed);
-    // Note: Logging removed to avoid I/O in audio thread
-    // Use metrics snapshot to monitor XRUN count
+}
+
+void recordProcessingXrun() {
+    g_audioStats.processingXrunCount.fetch_add(1, std::memory_order_relaxed);
+    g_audioStats.xrunCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+void recordOutputXrun() {
+    g_audioStats.outputXrunCount.fetch_add(1, std::memory_order_relaxed);
+    g_audioStats.xrunCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 void recordBufferUnderflow() {

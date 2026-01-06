@@ -35,6 +35,10 @@ async def get_status():
         input_rate=stats["input_rate"],
         output_rate=stats["output_rate"],
         peaks=stats["peaks"],
+        xrun=stats.get(
+            "xrun",
+            {"total": 0, "capture": 0, "processing": 0, "output": 0},
+        ),
         xrun_count=stats.get("xrun_count", 0),
         buffer_underflows=stats.get("buffer_underflows", 0),
         buffer_overflows=stats.get("buffer_overflows", 0),
@@ -68,6 +72,10 @@ async def websocket_stats(websocket: WebSocket):
                     "input_rate": stats["input_rate"],
                     "output_rate": stats["output_rate"],
                     "peaks": stats["peaks"],
+                    "xrun": stats.get(
+                        "xrun",
+                        {"total": 0, "capture": 0, "processing": 0, "output": 0},
+                    ),
                     "xrun_count": stats.get("xrun_count", 0),
                     "buffer_underflows": stats.get("buffer_underflows", 0),
                     "buffer_overflows": stats.get("buffer_overflows", 0),
