@@ -76,7 +76,7 @@ docker compose -f raspberry_pi/docker-compose.raspberry_pi.runtime.yml logs -f
 - 少なくとも次は環境に合わせて調整してください:
   - `USB_I2S_CAPTURE_DEVICE`（UAC2 “受け口” の ALSA device。例: `hw:CARD=UAC2Gadget,DEV=0`）
   - `USB_I2S_PLAYBACK_DEVICE`（I2S 出力。典型: `hw:0,0`）
-  - `USB_I2S_PASSTHROUGH=true`（推奨）
+  - 変換は行わない（橋渡しに特化）
   - `USB_I2S_PREFERRED_FORMAT=S32_LE`（推奨）
 
 確認コマンド例:

@@ -221,8 +221,9 @@ docker compose -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rt
 - format不一致の疑い:
   - Jetson I2S: `i2s.format=S32_LE` を推奨（24in32運用）
   - RTP: `rtp_input` は ALSA 直前を `S32LE` に揃える（loopback側の format も合わせる）
-- Pi側で passthrough が不安定な場合:
-  - `USB_I2S_PASSTHROUGH=false`（preferred_formatへ変換して安定性優先）
+- Pi側で不安定な場合:
+  - 変換フォールバックは行わないため、**UAC2入力とI2S出力で同じ format が通る**構成になっているか確認する（推奨: `S32_LE`）
+  - 余裕が必要なら `USB_I2S_ALSA_BUFFER_TIME_US` / `USB_I2S_QUEUE_TIME_NS` を増やす
 
 ### クリック/プチノイズ（XRUN）
 - Pi側:

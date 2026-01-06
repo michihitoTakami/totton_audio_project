@@ -180,13 +180,6 @@
             </div>
 
             <div class="card-row wrap">
-                {% set toggle_id = "pi-passthrough" %}
-                {% set toggle_label = t.get('pi.config.passthrough') %}
-                {% set toggle_desc = t.get('pi.config.passthrough_desc') %}
-                {% set alpine_model = "config.passthrough" %}
-                {% set alpine_click = "togglePassthrough()" %}
-                {% include 'components/toggle_switch.html' %}
-
                 {% set toggle_id = "pi-keep-silence" %}
                 {% set toggle_label = t.get('pi.config.keep_silence') %}
                 {% set toggle_desc = t.get('pi.config.keep_silence_desc') %}
@@ -300,7 +293,6 @@ function piSettingsPage() {
             channels: 2,
             fallback_rate: 44100,
             preferred_format: 'S32_LE',
-            passthrough: true,
             alsa_buffer_time_us: 200000,
             alsa_latency_time_us: 20000,
             queue_time_ns: 100000000,
@@ -488,10 +480,6 @@ function piSettingsPage() {
             this.config.queue_time_ns = profile.queue_time_ns;
         },
 
-        togglePassthrough() {
-            this.config.passthrough = !this.config.passthrough;
-        },
-
         toggleKeepSilence() {
             this.config.keep_silence_when_no_capture = !this.config.keep_silence_when_no_capture;
         },
@@ -624,7 +612,6 @@ function piSettingsPage() {
                 channels: toInt(this.config.channels, 2),
                 fallback_rate: toInt(this.config.fallback_rate, 44100),
                 preferred_format: String(this.config.preferred_format || '').trim(),
-                passthrough: Boolean(this.config.passthrough),
                 alsa_buffer_time_us: toInt(this.config.alsa_buffer_time_us, 200000),
                 alsa_latency_time_us: toInt(this.config.alsa_latency_time_us, 20000),
                 queue_time_ns: toInt(this.config.queue_time_ns, 100000000),
