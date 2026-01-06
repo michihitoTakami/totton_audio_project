@@ -40,7 +40,7 @@
   "delimiter": {
     "enabled": true,
     "backend": "ort",
-    "chunkSec": 6.0,
+    "chunkSec": 4.0,
     "overlapSec": 0.25,
     "expectedSampleRate": 44100,
     "ort": {

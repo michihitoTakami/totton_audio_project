@@ -47,7 +47,7 @@ uv run python scripts/delimiter/offline_wav_to_wav.py \
   --output /tmp/output.wav \
   --backend delimiter \
   --expected-sample-rate 44100 \
-  --chunk-sec 6.0 \
+  --chunk-sec 4.0 \
   --overlap-sec 0.25 \
   --resample-back \
   --debug-dir /tmp/delimiter_debug \
@@ -67,7 +67,7 @@ uv run python scripts/delimiter/onnx_wav_to_wav.py \
   --model data/delimiter/weights/jeonchangbin49-de-limiter/44100/delimiter.onnx \
   --provider cpu \
   --expected-sample-rate 44100 \
-  --chunk-sec 6.0 \
+  --chunk-sec 4.0 \
   --overlap-sec 0.25 \
   --resample-back \
   --report /tmp/delimiter_report_ort.json

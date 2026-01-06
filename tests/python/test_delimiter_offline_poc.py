@@ -41,7 +41,7 @@ def test_delimiter_offline_poc_bypass_smoke(
             "--backend",
             "bypass",
             "--chunk-sec",
-            "6.0",
+            "4.0",
             "--overlap-sec",
             "0.25",
             "--resample-back",

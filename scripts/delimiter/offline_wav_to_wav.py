@@ -408,7 +408,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--chunk-sec",
         type=float,
-        default=6.0,
+        default=4.0,
         help="Chunk size in seconds (0 to disable chunking)",
     )
     p.add_argument("--overlap-sec", type=float, default=0.25, help="Crossfade overlap")
