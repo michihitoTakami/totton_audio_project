@@ -1,6 +1,6 @@
 # De-Limiter セットアップ & 運用手順 (#1102)
 
-De-Limiter（AI Loudness Care）を **モデル取得 → 配置 → 設定 → ON** まで通せるようにするための手順をまとめます。高遅延ワーカの chunk/overlap 方式（6.0s / 0.25s）を前提とし、**推論サンプルレートは 44.1kHz 固定**です（#1096 方針）。
+De-Limiter（AI Loudness Care）を **モデル取得 → 配置 → 設定 → ON** まで通せるようにするための手順をまとめます。高遅延ワーカの chunk/overlap 方式（4.0s / 0.25s）を前提とし、**推論サンプルレートは 44.1kHz 固定**です（#1096 方針）。
 
 ## 前提
 
@@ -37,7 +37,7 @@ De-Limiter（AI Loudness Care）を **モデル取得 → 配置 → 設定 → 
      - `delimiter.enabled`: `true` で高遅延パスを有効化（`false` のままだと Web UI で backend unavailable）
      - `delimiter.backend`: `ort` を指定（`bypass` はNo-op）
      - `delimiter.expectedSampleRate`: **モデルが期待するSR**。現行モデルは `44100` 固定（44.1k/48k入力どちらもこの値のまま運用）。許可値は `44100` または `48000` のみ。
-     - `delimiter.chunkSec` / `overlapSec`: 推奨 `6.0` / `0.25`（#1009 設計）。`chunkSec > overlapSec` を守る。
+    - `delimiter.chunkSec` / `overlapSec`: 推奨 `4.0` / `0.25`（#1232 デフォルト短縮）。`chunkSec > overlapSec` を守る。
      - `delimiter.ort.modelPath`: 上記で生成した ONNX へのパス（存在必須）。
      - `delimiter.ort.provider`: `cpu` / `cuda` / `tensorrt`（ONNX Runtime ビルドに含まれているもののみ使用可）。
      - `delimiter.ort.intraOpThreads`: ORTのスレッド数。`0` でデフォルト。
