@@ -4,6 +4,7 @@
 #include "daemon/audio_pipeline/audio_pipeline.h"
 #include "daemon/output/playback_buffer_manager.h"
 #include "logging/logger.h"
+#include "logging/metrics.h"
 
 #include <algorithm>
 #include <cctype>
@@ -253,7 +254,8 @@ void loopbackCaptureThread(const std::string& device, snd_pcm_format_t format, u
             continue;
         }
         if (frames == -EPIPE) {
-            LOG_WARN("[Loopback] XRUN detected, recovering");
+            LOG_WARN("[Loopback] XRUN detected at capture buffer, recovering");
+            gpu_upsampler::metrics::recordCaptureXrun();
             snd_pcm_prepare(handle);
             continue;
         }

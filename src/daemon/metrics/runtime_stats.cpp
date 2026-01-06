@@ -362,7 +362,13 @@ nlohmann::json collect(const Dependencies& deps, std::size_t bufferCapacityFrame
     // size)
     nlohmann::json audioDiag;
     const auto& audioStats = gpu_upsampler::metrics::getAudioStats();
-    audioDiag["xrun_count"] = audioStats.xrunCount.load(std::memory_order_relaxed);
+    nlohmann::json xrun;
+    xrun["total"] = audioStats.xrunCount.load(std::memory_order_relaxed);
+    xrun["capture"] = audioStats.captureXrunCount.load(std::memory_order_relaxed);
+    xrun["processing"] = audioStats.processingXrunCount.load(std::memory_order_relaxed);
+    xrun["output"] = audioStats.outputXrunCount.load(std::memory_order_relaxed);
+    audioDiag["xrun"] = xrun;
+    audioDiag["xrun_count"] = xrun["total"];
     audioDiag["buffer_underflows"] = audioStats.bufferUnderflows.load(std::memory_order_relaxed);
     audioDiag["buffer_overflows"] = audioStats.bufferOverflows.load(std::memory_order_relaxed);
     stats["audio"] = audioDiag;

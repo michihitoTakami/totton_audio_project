@@ -25,11 +25,14 @@ namespace metrics {
  * @brief Audio processing statistics (atomic for thread-safe updates)
  */
 struct AudioStats {
-    std::atomic<uint64_t> totalSamples{0};      // Total samples processed
-    std::atomic<uint64_t> clipCount{0};         // Number of clipped samples
-    std::atomic<uint64_t> xrunCount{0};         // Number of XRUNs detected
-    std::atomic<uint64_t> bufferUnderflows{0};  // Buffer underflow events
-    std::atomic<uint64_t> bufferOverflows{0};   // Buffer overflow events
+    std::atomic<uint64_t> totalSamples{0};         // Total samples processed
+    std::atomic<uint64_t> clipCount{0};            // Number of clipped samples
+    std::atomic<uint64_t> xrunCount{0};            // Number of XRUNs detected
+    std::atomic<uint64_t> captureXrunCount{0};     // XRUNs at capture/input stage
+    std::atomic<uint64_t> processingXrunCount{0};  // XRUNs at processing/ring buffer
+    std::atomic<uint64_t> outputXrunCount{0};      // XRUNs at output/DAC stage
+    std::atomic<uint64_t> bufferUnderflows{0};     // Buffer underflow events
+    std::atomic<uint64_t> bufferOverflows{0};      // Buffer overflow events
 };
 
 /**
@@ -39,6 +42,9 @@ struct AudioStatsSnapshot {
     uint64_t totalSamples{0};
     uint64_t clipCount{0};
     uint64_t xrunCount{0};
+    uint64_t captureXrunCount{0};
+    uint64_t processingXrunCount{0};
+    uint64_t outputXrunCount{0};
     uint64_t bufferUnderflows{0};
     uint64_t bufferOverflows{0};
 };
@@ -160,6 +166,21 @@ void recordSamples(uint64_t count);
  * Thread-safe, lock-free.
  */
 void recordXrun();
+
+/**
+ * @brief Record an XRUN at the capture/input stage (I2S/loopback)
+ */
+void recordCaptureXrun();
+
+/**
+ * @brief Record an XRUN in processing/ring buffers
+ */
+void recordProcessingXrun();
+
+/**
+ * @brief Record an XRUN at the output/DAC stage
+ */
+void recordOutputXrun();
 
 /**
  * @brief Record a buffer underflow

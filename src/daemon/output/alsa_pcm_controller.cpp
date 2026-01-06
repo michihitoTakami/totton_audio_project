@@ -309,8 +309,9 @@ long AlsaPcmController::writeInterleaved(const std::int32_t* interleaved, std::s
         if (deps_.fallbackManager) {
             deps_.fallbackManager->notifyXrun();
         }
-        gpu_upsampler::metrics::recordXrun();
-        LOG_WARN("ALSA: XRUN detected");
+        gpu_upsampler::metrics::recordOutputXrun();
+        const char* device = currentDevice_.empty() ? "unknown" : currentDevice_.c_str();
+        LOG_WARN("ALSA: XRUN detected at output buffer (device: {})", device);
     };
 
     return daemon_output::alsa_write_loop::writeAllInterleaved(interleaved, frames, channels_,

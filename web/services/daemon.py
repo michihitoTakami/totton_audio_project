@@ -317,6 +317,12 @@ def load_stats() -> dict:
             "post_gain": {"linear": 0.0, "dbfs": -200.0},
         },
         # Debug extras (may be absent depending on daemon build/version)
+        "xrun": {
+            "total": 0,
+            "capture": 0,
+            "processing": 0,
+            "output": 0,
+        },
         "xrun_count": 0,
         "buffer_underflows": 0,
         "buffer_overflows": 0,
@@ -365,6 +371,10 @@ def load_stats() -> dict:
         if not isinstance(audio, dict):
             audio = {}
 
+        audio_xrun = audio.get("xrun", {}) if isinstance(audio, dict) else {}
+        if not isinstance(audio_xrun, dict):
+            audio_xrun = {}
+
         buffer = data.get("buffer", {}) if isinstance(data, dict) else {}
         if not isinstance(buffer, dict):
             buffer = {}
@@ -376,6 +386,19 @@ def load_stats() -> dict:
         delimiter = data.get("delimiter", {}) if isinstance(data, dict) else {}
         if not isinstance(delimiter, dict):
             delimiter = {}
+
+        xrun_total = int(
+            audio_xrun.get("total", audio.get("xrun_count", 0))  # new field
+            or audio.get("xrun_count", 0)
+            or 0
+        )
+        xrun_capture = int(
+            audio_xrun.get("capture", audio.get("capture_xruns", 0)) or 0
+        )
+        xrun_processing = int(
+            audio_xrun.get("processing", audio.get("processing_xruns", 0)) or 0
+        )
+        xrun_output = int(audio_xrun.get("output", audio.get("output_xruns", 0)) or 0)
 
         return {
             "clip_rate": clip_rate,
@@ -389,7 +412,13 @@ def load_stats() -> dict:
                 "post_mix": _stage("post_mix"),
                 "post_gain": _stage("post_gain"),
             },
-            "xrun_count": int(audio.get("xrun_count", 0) or 0),
+            "xrun": {
+                "total": xrun_total,
+                "capture": xrun_capture,
+                "processing": xrun_processing,
+                "output": xrun_output,
+            },
+            "xrun_count": xrun_total,
             "buffer_underflows": int(audio.get("buffer_underflows", 0) or 0),
             "buffer_overflows": int(audio.get("buffer_overflows", 0) or 0),
             "buffer_capacity_frames": int(buffer.get("capacity_frames", 0) or 0),

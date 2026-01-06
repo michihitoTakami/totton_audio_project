@@ -4713,6 +4713,9 @@
           "peaks": {
             "$ref": "#/components/schemas/PeakLevels"
           },
+          "xrun": {
+            "$ref": "#/components/schemas/XrunBreakdown"
+          },
           "xrun_count": {
             "type": "integer",
             "title": "Xrun Count",
@@ -4808,6 +4811,33 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "XrunBreakdown": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "capture": {
+            "type": "integer",
+            "title": "Capture",
+            "default": 0
+          },
+          "processing": {
+            "type": "integer",
+            "title": "Processing",
+            "default": 0
+          },
+          "output": {
+            "type": "integer",
+            "title": "Output",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "XrunBreakdown",
+        "description": "XRUN breakdown across pipeline stages."
       },
       "ZmqPingResponse": {
         "properties": {

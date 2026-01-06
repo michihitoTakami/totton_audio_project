@@ -131,6 +131,9 @@
     {% call panels.card_panel(t.get('system.debug.title')) %}
         <div class="kv-grid">
             {{ kv.kv_row(t.get('system.debug.xrun_count'), value_binding="formatNumber(debug.xrun_count)") }}
+            {{ kv.kv_row(t.get('system.debug.xrun_capture'), value_binding="formatNumber(debug.xrun.capture)") }}
+            {{ kv.kv_row(t.get('system.debug.xrun_processing'), value_binding="formatNumber(debug.xrun.processing)") }}
+            {{ kv.kv_row(t.get('system.debug.xrun_output'), value_binding="formatNumber(debug.xrun.output)") }}
             {{ kv.kv_row(t.get('system.debug.buffer_capacity'), value_binding="formatNumber(debug.buffer_capacity_frames)") }}
             {{ kv.kv_row(t.get('system.debug.dropped_frames'), value_binding="formatNumber(debug.dropped_frames)") }}
             {{ kv.kv_row(t.get('system.debug.rendered_silence_blocks'), value_binding="formatNumber(debug.rendered_silence_blocks)") }}
@@ -183,6 +186,7 @@ function systemPage() {
         },
         config: { bufferSize: null, periodSize: null, gain: null, headroomTarget: null },
         debug: {
+            xrun: { total: 0, capture: 0, processing: 0, output: 0 },
             xrun_count: 0,
             buffer_capacity_frames: 0,
             dropped_frames: 0,
@@ -225,7 +229,8 @@ function systemPage() {
                     this.config.gain = settings.gain;
                     this.config.headroomTarget = settings.headroom_target;
                 }
-                this.debug.xrun_count = data.xrun_count ?? 0;
+                this.debug.xrun = data.xrun ?? { total: 0, capture: 0, processing: 0, output: 0 };
+                this.debug.xrun_count = data.xrun?.total ?? data.xrun_count ?? 0;
                 this.debug.buffer_capacity_frames = data.buffer_capacity_frames ?? 0;
                 this.debug.dropped_frames = data.dropped_frames ?? 0;
                 this.debug.rendered_silence_blocks = data.rendered_silence_blocks ?? 0;
