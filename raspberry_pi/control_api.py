@@ -99,7 +99,6 @@ class UsbI2sConfig(BaseModel):
     channels: int = Field(ge=1)
     fallback_rate: int = Field(ge=1)
     preferred_format: str
-    passthrough: bool
     alsa_buffer_time_us: int = Field(ge=1)
     alsa_latency_time_us: int = Field(ge=1)
     queue_time_ns: int = Field(ge=1)
@@ -123,7 +122,6 @@ class UsbI2sConfigUpdate(BaseModel):
     channels: Optional[int] = Field(default=None, ge=1)
     fallback_rate: Optional[int] = Field(default=None, ge=1)
     preferred_format: Optional[str] = None
-    passthrough: Optional[bool] = None
     alsa_buffer_time_us: Optional[int] = Field(default=None, ge=1)
     alsa_latency_time_us: Optional[int] = Field(default=None, ge=1)
     queue_time_ns: Optional[int] = Field(default=None, ge=1)
@@ -160,7 +158,6 @@ _CONFIG_ENV_MAP = {
     "channels": "USB_I2S_CHANNELS",
     "fallback_rate": "USB_I2S_FALLBACK_RATE",
     "preferred_format": "USB_I2S_PREFERRED_FORMAT",
-    "passthrough": "USB_I2S_PASSTHROUGH",
     "alsa_buffer_time_us": "USB_I2S_ALSA_BUFFER_TIME_US",
     "alsa_latency_time_us": "USB_I2S_ALSA_LATENCY_TIME_US",
     "queue_time_ns": "USB_I2S_QUEUE_TIME_NS",
@@ -187,7 +184,6 @@ def _default_config() -> UsbI2sConfig:
         channels=defaults.channels,
         fallback_rate=defaults.fallback_rate,
         preferred_format=defaults.preferred_format,
-        passthrough=defaults.passthrough,
         alsa_buffer_time_us=defaults.alsa_buffer_time_us,
         alsa_latency_time_us=defaults.alsa_latency_time_us,
         queue_time_ns=defaults.queue_time_ns,

@@ -208,8 +208,6 @@ class TestPiTranslations:
             "pi.config.restart_backoff_sec",
             "pi.config.status_report_timeout_ms",
             "pi.config.status_report_min_interval_sec",
-            "pi.config.passthrough",
-            "pi.config.passthrough_desc",
             "pi.config.keep_silence",
             "pi.config.keep_silence_desc",
             "pi.config.fade_ms",

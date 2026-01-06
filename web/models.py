@@ -306,7 +306,6 @@ class PiUsbI2sConfig(BaseModel):
     channels: int = Field(ge=1)
     fallback_rate: int = Field(ge=1)
     preferred_format: str
-    passthrough: bool
     alsa_buffer_time_us: int = Field(ge=1)
     alsa_latency_time_us: int = Field(ge=1)
     queue_time_ns: int = Field(ge=1)
@@ -332,7 +331,6 @@ class PiUsbI2sConfigUpdate(BaseModel):
     channels: Optional[int] = Field(default=None, ge=1)
     fallback_rate: Optional[int] = Field(default=None, ge=1)
     preferred_format: Optional[str] = None
-    passthrough: Optional[bool] = None
     alsa_buffer_time_us: Optional[int] = Field(default=None, ge=1)
     alsa_latency_time_us: Optional[int] = Field(default=None, ge=1)
     queue_time_ns: Optional[int] = Field(default=None, ge=1)

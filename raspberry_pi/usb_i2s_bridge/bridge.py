@@ -7,8 +7,8 @@
 - Jetson側が再起動しても継続運用できるよう、入力が無い時はサイレンスを送出してI2Sを維持
 
 実装方針:
-- 可能な環境では Python GI (GStreamer) で volume を制御しフェードを実現
-- GI が無い場合は gst-launch を再起動するフォールバック（この場合はミュート時間で代替）
+- 「橋渡し」に徹し、系統変換（任意のリサンプル/フォーマット変換/DSP）は行わない
+- `arecord|aplay` のみで構成し、再初期化（レート/フォーマット切替）・切断復帰・無入力時サイレンス送出に注力する
 
 将来拡張（Issue #824）:
 - LAN制御プレーンで rate/format/ch を相互監視し、Jetson側の再初期化へ同期させる。
@@ -85,7 +85,6 @@ _DEFAULT_FADE_MS = 80
 _DEFAULT_RESTART_BACKOFF_SEC = 0.5
 _DEFAULT_POLL_INTERVAL_SEC = 1.0
 _DEFAULT_STATUS_PATH = Path("/var/run/usb-i2s-bridge/status.json")
-_DEFAULT_PASSTHROUGH = True
 
 # LAN 制御プレーン（Issue #824）
 # NOTE(#950):
@@ -115,16 +114,6 @@ _DEFAULT_STATUS_REPORT_MIN_INTERVAL_SEC = float(
     os.getenv("USB_I2S_STATUS_REPORT_MIN_INTERVAL_SEC", "1.0")
 )
 
-# ALSA hw_params (e.g. S24_3LE) -> GStreamer audio/x-raw format token
-_ALSA_TO_GST_FORMAT: dict[str, str] = {
-    "S16_LE": "S16LE",
-    "S24_3LE": "S24LE",
-    "S32_LE": "S32LE",
-    "S16_BE": "S16BE",
-    "S24_3BE": "S24BE",
-    "S32_BE": "S32BE",
-}
-
 _ALSA_BYTES_PER_SAMPLE: dict[str, int] = {
     "S16_LE": 2,
     "S24_3LE": 3,
@@ -133,6 +122,8 @@ _ALSA_BYTES_PER_SAMPLE: dict[str, int] = {
     "S24_3BE": 3,
     "S32_BE": 4,
 }
+
+_SUPPORTED_ALSA_FORMATS = sorted(_ALSA_BYTES_PER_SAMPLE.keys())
 
 
 @dataclass
@@ -149,7 +140,6 @@ class UsbI2sBridgeConfig:
     poll_interval_sec: float = _DEFAULT_POLL_INTERVAL_SEC
     restart_backoff_sec: float = _DEFAULT_RESTART_BACKOFF_SEC
     keep_silence_when_no_capture: bool = True
-    passthrough: bool = _DEFAULT_PASSTHROUGH
     status_path: Path | None = _DEFAULT_STATUS_PATH
     status_report_url: str | None = _DEFAULT_STATUS_REPORT_URL or None
     status_report_timeout_ms: int = _DEFAULT_STATUS_REPORT_TIMEOUT_MS
@@ -402,14 +392,6 @@ def _probe_capture_params(device: str) -> Tuple[Optional[int], Optional[str]]:
     return best_rate, best_fmt
 
 
-def _gst_raw_format_from_alsa(alsa_format: Optional[str], preferred: str) -> str:
-    if alsa_format and alsa_format in _ALSA_TO_GST_FORMAT:
-        return _ALSA_TO_GST_FORMAT[alsa_format]
-    if preferred in _ALSA_TO_GST_FORMAT:
-        return _ALSA_TO_GST_FORMAT[preferred]
-    return "S32LE"
-
-
 class StatusReporter:
     """Jetson Web(:80)へ状態を非同期にPOSTする（#950）.
 
@@ -556,137 +538,19 @@ def _build_control_sync(cfg: UsbI2sBridgeConfig) -> ControlPlaneSync | None:
     )
 
 
-def _choose_raw_caps(
-    cfg: UsbI2sBridgeConfig,
-    *,
-    mode: str,
-    sample_rate: int,
-    capture_alsa_format: Optional[str],
-    conversion: bool,
-) -> tuple[str, str]:
-    """caps 用の (raw_format, alsa_format_for_status) を決める.
-
-    - passthrough + capture: ALSAで観測した format を優先
-    - silence: preferred_format を使用
-    - conversion=true の場合: 互換性のため preferred_format を使用
-    """
-    if mode == "silence":
-        return _gst_raw_format_from_alsa(
-            cfg.preferred_format, cfg.preferred_format
-        ), cfg.preferred_format
-
-    if conversion:
-        return _gst_raw_format_from_alsa(
-            cfg.preferred_format, cfg.preferred_format
-        ), cfg.preferred_format
-
-    if cfg.passthrough and capture_alsa_format:
-        return _gst_raw_format_from_alsa(
-            capture_alsa_format, cfg.preferred_format
-        ), capture_alsa_format
-
-    # passthrough しない（または不明）場合は preferred_format を使う
-    return _gst_raw_format_from_alsa(
-        cfg.preferred_format, cfg.preferred_format
-    ), cfg.preferred_format
-
-
-def build_gst_launch_command(
-    cfg: UsbI2sBridgeConfig,
-    *,
-    mode: str,
-    sample_rate: int,
-    raw_format: str,
-    conversion: bool,
-) -> list[str]:
-    """gst-launch-1.0 フォールバック用のコマンドを構築."""
-    cfg.validate()
-    if mode not in {"capture", "silence"}:
-        raise ValueError("mode must be capture or silence")
-
-    # NOTE: 安定性優先で period/avail ギリギリを避けるため buffer-time/latency-time を明示
-    src: list[str]
-    if mode == "capture":
-        src = [
-            "alsasrc",
-            f"device={cfg.capture_device}",
-            f"buffer-time={cfg.alsa_buffer_time_us}",
-            f"latency-time={cfg.alsa_latency_time_us}",
-            "do-timestamp=true",
-        ]
-    else:
-        # I2S を維持するためのサイレンス源（USB未接続でも動かす）
-        src = [
-            "audiotestsrc",
-            "is-live=true",
-            "wave=silence",
-        ]
-
-    caps = f"audio/x-raw,rate={sample_rate},channels={cfg.channels},format={raw_format}"
-
-    # 出力側は I2S の安定性優先。queue で揺らぎを吸収。
-    pipeline = [
-        "gst-launch-1.0",
-        "-e",
-        *src,
-        "!",
-        "queue",
-        f"max-size-time={cfg.queue_time_ns}",
-        "max-size-bytes=0",
-        "max-size-buffers=0",
-    ]
-
-    # 取り急ぎは「受けた形式をそのまま投げる」(passthrough) を優先する。
-    # ただし、I2S側が受け入れない format の場合はエラーになるため、
-    # conversion=true で再起動するフォールバックを Supervisor 側で行う。
-    if conversion:
-        pipeline += [
-            "!",
-            "audioresample",
-            "quality=10",
-            "!",
-            "audioconvert",
-        ]
-
-    pipeline += [
-        "!",
-        caps,
-        "!",
-        "volume",
-        "volume=1.0",
-        "!",
-        "alsasink",
-        f"device={cfg.playback_device}",
-        # ライブ系で同期を取る（I2S維持）
-        "sync=true",
-        "async=false",
-    ]
-    return pipeline
-
-
 def _alsa_bytes_per_sample(fmt: str) -> int:
     return _ALSA_BYTES_PER_SAMPLE.get(fmt, 4)
 
 
-def _as_plughw(device: str) -> str:
-    # ALSA plugin layer for format/rate conversion
-    if device.startswith("hw:"):
-        return f"plughw:{device[3:]}"
-    if device.startswith("plughw:"):
-        return device
-    return device
-
-
 def _build_arecord_command(
-    cfg: UsbI2sBridgeConfig, *, sample_rate: int, alsa_format: str, conversion: bool
+    cfg: UsbI2sBridgeConfig, *, sample_rate: int, alsa_format: str
 ) -> list[str]:
-    dev = _as_plughw(cfg.capture_device) if conversion else cfg.capture_device
     # NOTE: -t raw でヘッダ無しPCM
     return [
         "arecord",
         "-q",
         "-D",
-        dev,
+        cfg.capture_device,
         "-t",
         "raw",
         "-c",
@@ -703,14 +567,13 @@ def _build_arecord_command(
 
 
 def _build_aplay_command(
-    cfg: UsbI2sBridgeConfig, *, sample_rate: int, alsa_format: str, conversion: bool
+    cfg: UsbI2sBridgeConfig, *, sample_rate: int, alsa_format: str
 ) -> list[str]:
-    dev = _as_plughw(cfg.playback_device) if conversion else cfg.playback_device
     return [
         "aplay",
         "-q",
         "-D",
-        dev,
+        cfg.playback_device,
         "-t",
         "raw",
         "-c",
@@ -769,7 +632,6 @@ def _run_with_arecord_aplay(
     current_mode = "none"  # capture / silence / none
     current_rate = int(cfg.fallback_rate)
     current_fmt = str(cfg.preferred_format)
-    conversion_enabled = not cfg.passthrough
 
     start_monotonic = time.monotonic()
     xrun_count = 0
@@ -857,21 +719,17 @@ def _run_with_arecord_aplay(
         thread.start()
         return thread
 
-    def _restart_aplay(*, rate: int, fmt: str, conversion: bool) -> None:
+    def _restart_aplay(*, rate: int, fmt: str) -> None:
         nonlocal aplay_proc, aplay_in, current_rate, current_fmt, aplay_err_thread
         _terminate_process(aplay_proc)
         aplay_proc = None
         aplay_in = None
         aplay_err_thread = None
-        cmd = _build_aplay_command(
-            cfg, sample_rate=rate, alsa_format=fmt, conversion=conversion
-        )
+        cmd = _build_aplay_command(cfg, sample_rate=rate, alsa_format=fmt)
         if cfg.dry_run:
             print(f"[usb_i2s_bridge] aplay cmd: {' '.join(cmd)}")
             return
-        print(
-            f"[usb_i2s_bridge] start aplay rate={rate} fmt={fmt} conversion={conversion} cmd={' '.join(cmd)}"
-        )
+        print(f"[usb_i2s_bridge] start aplay rate={rate} fmt={fmt} cmd={' '.join(cmd)}")
         try:
             aplay_proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE
@@ -892,20 +750,18 @@ def _run_with_arecord_aplay(
             aplay_proc = None
             aplay_in = None
 
-    def _restart_arecord(*, rate: int, fmt: str, conversion: bool) -> None:
+    def _restart_arecord(*, rate: int, fmt: str) -> None:
         nonlocal arecord_proc, arecord_out, arecord_err_thread
         _terminate_process(arecord_proc)
         arecord_proc = None
         arecord_out = None
         arecord_err_thread = None
-        cmd = _build_arecord_command(
-            cfg, sample_rate=rate, alsa_format=fmt, conversion=conversion
-        )
+        cmd = _build_arecord_command(cfg, sample_rate=rate, alsa_format=fmt)
         if cfg.dry_run:
             print(f"[usb_i2s_bridge] arecord cmd: {' '.join(cmd)}")
             return
         print(
-            f"[usb_i2s_bridge] start arecord rate={rate} fmt={fmt} conversion={conversion} cmd={' '.join(cmd)}"
+            f"[usb_i2s_bridge] start arecord rate={rate} fmt={fmt} cmd={' '.join(cmd)}"
         )
         try:
             arecord_proc = subprocess.Popen(
@@ -952,9 +808,7 @@ def _run_with_arecord_aplay(
         # 初期: keep_silence=true ならサイレンスで I2S を立ち上げる
         if cfg.keep_silence_when_no_capture:
             current_mode = "silence"
-            _restart_aplay(
-                rate=current_rate, fmt=current_fmt, conversion=conversion_enabled
-            )
+            _restart_aplay(rate=current_rate, fmt=current_fmt)
             _write_status(current_mode, current_rate, current_fmt)
 
         # 送出チャンク（小さめにして、切断検知/再起動の反応性を上げる）
@@ -984,35 +838,10 @@ def _run_with_arecord_aplay(
                 if fmt is not None:
                     last_observed_capture_format = fmt
 
-                # passthrough で未確定な段階は conversion（plughw + preferred）で安全に立ち上げる
-                if (
-                    cfg.passthrough
-                    and desired_mode == "capture"
-                    and (rate is None or fmt is None)
-                ):
-                    conversion_enabled = True
-
-                # hw_params が揃ったら passthrough を試す（失敗時はプロセス異常終了で conversion に戻す）
-                if (
-                    cfg.passthrough
-                    and desired_mode == "capture"
-                    and conversion_enabled
-                    and rate is not None
-                    and fmt is not None
-                ):
-                    conversion_enabled = False
-
                 desired_rate = int(last_rate)
-                if (
-                    desired_mode == "capture"
-                    and cfg.passthrough
-                    and not conversion_enabled
-                ):
-                    desired_fmt = str(
-                        fmt or last_observed_capture_format or cfg.preferred_format
-                    )
-                else:
-                    desired_fmt = str(cfg.preferred_format)
+                desired_fmt = str(
+                    fmt or last_observed_capture_format or cfg.preferred_format
+                )
 
                 if capture_present and not capture_allowed:
                     print(
@@ -1021,20 +850,11 @@ def _run_with_arecord_aplay(
 
                 if cfg.dry_run:
                     print(
-                        f"[usb_i2s_bridge] mode={desired_mode} rate={desired_rate} fmt={desired_fmt} "
-                        f"passthrough={cfg.passthrough} conversion={conversion_enabled}"
+                        f"[usb_i2s_bridge] mode={desired_mode} rate={desired_rate} fmt={desired_fmt}"
                     )
-                    _restart_aplay(
-                        rate=desired_rate,
-                        fmt=desired_fmt,
-                        conversion=conversion_enabled,
-                    )
+                    _restart_aplay(rate=desired_rate, fmt=desired_fmt)
                     if desired_mode == "capture":
-                        _restart_arecord(
-                            rate=desired_rate,
-                            fmt=desired_fmt,
-                            conversion=conversion_enabled,
-                        )
+                        _restart_arecord(rate=desired_rate, fmt=desired_fmt)
                     return
 
                 # aplay は必ず起動（none 以外）
@@ -1057,29 +877,7 @@ def _run_with_arecord_aplay(
                     or current_fmt != desired_fmt
                 )
                 if need_restart_aplay:
-                    # aplay が passthrough 形式を受け付けずに即死するケースでは、
-                    # plughw + preferred_format へ切り替えて継続送出する（最優先は安定動作）
-                    if (
-                        aplay_proc is not None
-                        and aplay_proc.poll() is not None
-                        and cfg.passthrough
-                        and not conversion_enabled
-                    ):
-                        rc = aplay_proc.poll()
-                        print(
-                            "[usb_i2s_bridge] aplay exited unexpectedly in passthrough; "
-                            f"enabling conversion fallback rc={rc}"
-                        )
-                        _record_error(
-                            f"aplay exited in passthrough rc={rc}", is_xrun=False
-                        )
-                        conversion_enabled = True
-                        desired_fmt = str(cfg.preferred_format)
-                    _restart_aplay(
-                        rate=desired_rate,
-                        fmt=desired_fmt,
-                        conversion=conversion_enabled,
-                    )
+                    _restart_aplay(rate=desired_rate, fmt=desired_fmt)
 
                 # arecord は capture の時だけ起動
                 if desired_mode == "capture":
@@ -1087,11 +885,7 @@ def _run_with_arecord_aplay(
                         arecord_proc is None or arecord_proc.poll() is not None
                     )
                     if need_restart_arecord:
-                        _restart_arecord(
-                            rate=desired_rate,
-                            fmt=desired_fmt,
-                            conversion=conversion_enabled,
-                        )
+                        _restart_arecord(rate=desired_rate, fmt=desired_fmt)
                 else:
                     _stop_arecord()
 
@@ -1101,21 +895,6 @@ def _run_with_arecord_aplay(
 
             # 出力先が無ければ待つ
             if aplay_in is None or aplay_proc is None or aplay_proc.poll() is not None:
-                # ここでも passthrough での即死を拾って安全側へ倒す
-                if (
-                    aplay_proc is not None
-                    and aplay_proc.poll() is not None
-                    and cfg.passthrough
-                    and not conversion_enabled
-                ):
-                    rc = aplay_proc.poll()
-                    print(
-                        "[usb_i2s_bridge] aplay exited unexpectedly; enabling conversion fallback "
-                        f"rc={rc}"
-                    )
-                    _record_error(f"aplay exited unexpectedly rc={rc}", is_xrun=False)
-                    conversion_enabled = True
-                    next_poll = 0.0
                 time.sleep(cfg.restart_backoff_sec)
                 continue
 
@@ -1137,7 +916,6 @@ def _run_with_arecord_aplay(
                         )
                         _record_error(f"arecord EOF/exit rc={rc}", is_xrun=False)
                         _stop_arecord()
-                        conversion_enabled = True  # 次回は安全側で起動
                         current_mode = (
                             "silence" if cfg.keep_silence_when_no_capture else "none"
                         )
@@ -1152,9 +930,6 @@ def _run_with_arecord_aplay(
                 _terminate_process(aplay_proc)
                 aplay_proc = None
                 aplay_in = None
-                if cfg.passthrough and not conversion_enabled:
-                    conversion_enabled = True
-                    next_poll = 0.0
                 time.sleep(cfg.restart_backoff_sec)
             except OSError as e:
                 print(f"[usb_i2s_bridge] I/O error: {e}; restarting aplay/arecord")
@@ -1164,524 +939,6 @@ def _run_with_arecord_aplay(
     finally:
         if reporter:
             reporter.stop()
-
-
-def _try_import_gi_gst():
-    """テスト環境で GI が無いことがあるため遅延import."""
-    try:
-        import gi
-
-        gi.require_version("Gst", "1.0")
-        gi.require_version("GLib", "2.0")
-        from gi.repository import GLib, Gst
-
-        return GLib, Gst
-    except Exception:
-        return None, None
-
-
-def _run_with_gst_launch(
-    cfg: UsbI2sBridgeConfig, control: ControlPlaneSync | None = None
-) -> None:
-    """GI無し環境のフォールバック: gst-launch を再起動し続ける."""
-    reporter: StatusReporter | None = None
-    if cfg.status_report_url:
-        reporter = StatusReporter(
-            url=cfg.status_report_url,
-            timeout_ms=int(cfg.status_report_timeout_ms),
-            min_interval_sec=float(cfg.status_report_min_interval_sec),
-        )
-        reporter.start()
-
-    last_rate = cfg.fallback_rate
-    last_observed_capture_format: Optional[str] = None
-    current_mode = "silence" if cfg.keep_silence_when_no_capture else "capture"
-    conversion = False
-    proc_holder: dict[str, subprocess.Popen | None] = {"proc": None}
-    last_capture_allowed = control.capture_allowed() if control else True
-    status_generation = 0
-    last_status_key: tuple[str, int, str, int] | None = None
-
-    # Docker/systemd からの SIGTERM で子プロセスが残らないようにする
-    def _handle_term(signum: int, frame) -> None:  # noqa: ANN001
-        _ = signum, frame
-        proc = proc_holder.get("proc")
-        if proc is not None and proc.poll() is None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-        raise SystemExit(0)
-
-    signal.signal(signal.SIGTERM, _handle_term)
-    signal.signal(signal.SIGINT, _handle_term)
-
-    while True:
-        capture_present = _device_present(cfg.capture_device, "c")
-        rate, fmt = _probe_capture_params(cfg.capture_device)
-        capture_allowed = control.capture_allowed() if control else True
-        if not capture_present and not cfg.keep_silence_when_no_capture:
-            # キャプチャデバイスが無いなら待機しつつリトライ（出力停止）
-            time.sleep(cfg.poll_interval_sec)
-            continue
-
-        if rate is not None:
-            last_rate = rate
-        elif capture_present and current_mode != "capture":
-            # デバイスが現れたが hw_params がまだ取れない場合、まずはフォールバックレートで起動する
-            last_rate = cfg.fallback_rate
-        if fmt is not None:
-            last_observed_capture_format = fmt
-
-        desired_mode = "capture" if capture_present and capture_allowed else "silence"
-        if capture_present and not capture_allowed:
-            print(
-                "[usb_i2s_bridge] peer not synced; holding capture and sending silence"
-            )
-        current_mode = desired_mode
-
-        # passthrough で rate/format が未確定な段階は、まず conversion で安全に立ち上げる
-        if (
-            cfg.passthrough
-            and current_mode == "capture"
-            and (rate is None or fmt is None)
-        ):
-            conversion = True
-
-        # hw_params が揃ったら passthrough を試す（失敗時はプロセス終了→conversionへ戻る）
-        if (
-            cfg.passthrough
-            and current_mode == "capture"
-            and conversion
-            and rate is not None
-            and fmt is not None
-        ):
-            conversion = False
-        raw_format, status_alsa_format = _choose_raw_caps(
-            cfg,
-            mode=current_mode,
-            sample_rate=last_rate,
-            capture_alsa_format=fmt or last_observed_capture_format,
-            conversion=conversion,
-        )
-        cmd = build_gst_launch_command(
-            cfg,
-            mode=current_mode,
-            sample_rate=last_rate,
-            raw_format=raw_format,
-            conversion=conversion,
-        )
-        if cfg.dry_run:
-            print(" ".join(cmd))
-            return
-        last_capture_allowed = capture_allowed
-
-        if cfg.status_path:
-            key = (
-                str(current_mode),
-                int(last_rate),
-                str(status_alsa_format),
-                int(cfg.channels),
-            )
-            if key != last_status_key:
-                status_generation += 1
-                last_status_key = key
-            _persist_status(
-                cfg.status_path,
-                running=True,
-                mode=current_mode,
-                sample_rate=last_rate,
-                alsa_format=status_alsa_format,
-                channels=cfg.channels,
-                generation=status_generation,
-                reporter=reporter,
-            )
-        if control:
-            control.update_local(
-                running=True,
-                mode=current_mode,
-                sample_rate=last_rate,
-                fmt=status_alsa_format,
-                channels=cfg.channels,
-            )
-
-        print(
-            f"[usb_i2s_bridge] (fallback) launch mode={current_mode} "
-            f"rate={last_rate} fmt={raw_format} passthrough={cfg.passthrough} "
-            f"conversion={conversion} cmd={' '.join(cmd)}"
-        )
-        proc = subprocess.Popen(cmd)
-        proc_holder["proc"] = proc
-        # ポーリングでレート変化・切断を検知したら再起動
-        try:
-            while True:
-                try:
-                    rc = proc.wait(timeout=cfg.poll_interval_sec)
-                    if rc != 0:
-                        print(f"[usb_i2s_bridge] gst-launch exited rc={rc}; restarting")
-                    break
-                except subprocess.TimeoutExpired:
-                    new_present = _device_present(cfg.capture_device, "c")
-                    new_rate, new_fmt = _probe_capture_params(cfg.capture_device)
-                    new_capture_allowed = control.capture_allowed() if control else True
-                    if (
-                        new_present != capture_present
-                        or new_rate != rate
-                        or new_fmt != fmt
-                        or (rate is None and new_rate is not None)
-                        or (fmt is None and new_fmt is not None)
-                        or new_capture_allowed != last_capture_allowed
-                    ):
-                        print(
-                            "[usb_i2s_bridge] detected capture change "
-                            f"(present {capture_present}->{new_present}, "
-                            f"rate {rate}->{new_rate}, fmt {fmt}->{new_fmt}, "
-                            f"capture_allowed {last_capture_allowed}->{new_capture_allowed}); restarting"
-                        )
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=2)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                        break
-                    last_capture_allowed = new_capture_allowed
-                    # USBが抜けた場合はサイレンスに切替（keep_silence=trueのみ）
-                    if (
-                        cfg.keep_silence_when_no_capture
-                        and capture_present
-                        and not new_present
-                    ):
-                        print(
-                            "[usb_i2s_bridge] capture disappeared; switching to silence"
-                        )
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=2)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                        break
-        except KeyboardInterrupt:
-            proc.terminate()
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            if reporter:
-                reporter.stop()
-            return
-
-        # パススルーで起動したが出力が受け付けず即死する場合に備え、
-        # 次回は変換を有効化して再試行する。
-        if cfg.passthrough and not conversion:
-            # プロセスが短時間で落ちた場合だけ conversion に切り替える
-            conversion = True
-
-        time.sleep(cfg.restart_backoff_sec)
-
-    # pragma: no cover - defensive
-    if reporter:
-        reporter.stop()
-
-
-def _run_with_gi(
-    cfg: UsbI2sBridgeConfig, control: ControlPlaneSync | None = None
-) -> None:
-    """GI+GStreamer でフェード付きの再起動を行う本実装."""
-    GLib, Gst = _try_import_gi_gst()
-    if GLib is None or Gst is None:
-        _run_with_gst_launch(cfg, control)
-        return
-
-    Gst.init(None)
-
-    class Supervisor:
-        def __init__(self, cfg: UsbI2sBridgeConfig) -> None:
-            self.cfg = cfg
-            self.loop = GLib.MainLoop()
-            self.pipeline = None
-            self.bus = None
-            self.volume = None
-            self.current_mode: str = "none"
-            self.current_rate: int = cfg.fallback_rate
-            self.current_fmt: str = cfg.preferred_format
-            self.current_capture_fmt: Optional[str] = None
-            self.conversion_enabled: bool = False
-            self._restart_scheduled = False
-            self._control = control
-            self._reporter: StatusReporter | None = None
-            if cfg.status_report_url:
-                self._reporter = StatusReporter(
-                    url=cfg.status_report_url,
-                    timeout_ms=int(cfg.status_report_timeout_ms),
-                    min_interval_sec=float(cfg.status_report_min_interval_sec),
-                )
-                self._reporter.start()
-            self._status_generation = 0
-            self._last_status_key: tuple[str, int, str, int] | None = None
-
-        def _pipeline_str(
-            self, mode: str, rate: int, capture_fmt: Optional[str]
-        ) -> tuple[str, str]:
-            raw_format, status_alsa_format = _choose_raw_caps(
-                self.cfg,
-                mode=mode,
-                sample_rate=rate,
-                capture_alsa_format=capture_fmt,
-                conversion=self.conversion_enabled,
-            )
-            caps = f"audio/x-raw,rate={rate},channels={self.cfg.channels},format={raw_format}"
-            if mode == "capture":
-                src = (
-                    f"alsasrc device={self.cfg.capture_device} "
-                    f"buffer-time={self.cfg.alsa_buffer_time_us} "
-                    f"latency-time={self.cfg.alsa_latency_time_us} "
-                    f"do-timestamp=true"
-                )
-            else:
-                src = "audiotestsrc is-live=true wave=silence"
-            # name=vol で後から操作可能にする
-            convert = ""
-            if self.conversion_enabled:
-                convert = "audioresample quality=10 ! audioconvert ! "
-            return (
-                f"{src} ! queue max-size-time={self.cfg.queue_time_ns} "
-                f"max-size-bytes=0 max-size-buffers=0 ! {convert}"
-                f"{caps} ! volume name=vol volume=1.0 ! "
-                f"alsasink device={self.cfg.playback_device} sync=true async=false"
-            ), status_alsa_format
-
-        def _set_pipeline(self, pipeline_str: str) -> None:
-            if self.pipeline is not None:
-                self.pipeline.set_state(Gst.State.NULL)
-            self.pipeline = Gst.parse_launch(pipeline_str)
-            assert self.pipeline is not None
-
-            bus = self.pipeline.get_bus()
-            assert bus is not None
-            self.bus = bus
-            self.bus.add_signal_watch()
-            self.bus.connect("message", self._on_message)
-
-            self.volume = self.pipeline.get_by_name("vol")
-
-        def _on_message(self, bus, message) -> None:  # noqa: ANN001
-            t = message.type
-            if t == Gst.MessageType.ERROR:
-                err, dbg = message.parse_error()
-                print(f"[usb_i2s_bridge] ERROR: {err} debug={dbg}")
-                # パススルーで落ちる（I2S側非対応など）場合は次回変換を有効化して再試行する
-                if self.cfg.passthrough and not self.conversion_enabled:
-                    print(
-                        "[usb_i2s_bridge] enabling conversion fallback after ERROR "
-                        "(passthrough mode likely unsupported by sink)"
-                    )
-                    self.conversion_enabled = True
-                self._schedule_restart()
-            elif t == Gst.MessageType.EOS:
-                print("[usb_i2s_bridge] EOS received; restarting")
-                self._schedule_restart()
-
-        def _fade(self, start: float, end: float, duration_ms: int, then) -> None:  # noqa: ANN001
-            if self.volume is None:
-                then()
-                return
-            if duration_ms <= 0:
-                self.volume.set_property("volume", end)
-                then()
-                return
-            steps = max(1, min(50, duration_ms // 10))
-            interval_ms = max(5, duration_ms // steps)
-            delta = (end - start) / float(steps)
-            state = {"i": 0, "v": start}
-            self.volume.set_property("volume", start)
-
-            def _tick() -> bool:
-                state["i"] += 1
-                state["v"] += delta
-                self.volume.set_property("volume", float(state["v"]))
-                if state["i"] >= steps:
-                    self.volume.set_property("volume", end)
-                    then()
-                    return False
-                return True
-
-            GLib.timeout_add(interval_ms, _tick)
-
-        def _start(self, mode: str, rate: int, capture_fmt: Optional[str]) -> None:
-            pipeline_str, status_alsa_format = self._pipeline_str(
-                mode, rate, capture_fmt
-            )
-            print(
-                f"[usb_i2s_bridge] start mode={mode} rate={rate} "
-                f"passthrough={self.cfg.passthrough} conversion={self.conversion_enabled} "
-                f"capture_fmt={capture_fmt}\n{pipeline_str}"
-            )
-            if self.cfg.dry_run:
-                self.loop.quit()
-                return
-            self._set_pipeline(pipeline_str)
-            assert self.pipeline is not None
-            self.pipeline.set_state(Gst.State.PLAYING)
-            self.current_mode = mode
-            self.current_rate = rate
-            self.current_capture_fmt = capture_fmt
-            self.current_fmt = status_alsa_format
-            if self.cfg.status_path:
-                key = (
-                    str(mode),
-                    int(rate),
-                    str(status_alsa_format),
-                    int(self.cfg.channels),
-                )
-                if key != self._last_status_key:
-                    self._status_generation += 1
-                    self._last_status_key = key
-                _persist_status(
-                    self.cfg.status_path,
-                    running=True,
-                    mode=mode,
-                    sample_rate=rate,
-                    alsa_format=status_alsa_format,
-                    channels=self.cfg.channels,
-                    generation=self._status_generation,
-                    reporter=self._reporter,
-                )
-            if self._control:
-                self._control.update_local(
-                    running=True,
-                    mode=mode,
-                    sample_rate=rate,
-                    fmt=status_alsa_format,
-                    channels=self.cfg.channels,
-                )
-            self._fade(0.0, 1.0, self.cfg.fade_ms, lambda: None)
-
-        def _stop_then(self, then) -> None:  # noqa: ANN001
-            if self.pipeline is None:
-                then()
-                return
-
-            def _do_stop() -> None:
-                try:
-                    self.pipeline.set_state(Gst.State.NULL)
-                finally:
-                    then()
-
-            self._fade(1.0, 0.0, self.cfg.fade_ms, _do_stop)
-
-        def _schedule_restart(self) -> None:
-            if self._restart_scheduled:
-                return
-            self._restart_scheduled = True
-
-            def _restart() -> bool:
-                self._restart_scheduled = False
-                self._reconcile(force=True)
-                return False
-
-            GLib.timeout_add(int(self.cfg.restart_backoff_sec * 1000), _restart)
-
-        def _reconcile(self, force: bool = False) -> None:
-            capture_present = _device_present(self.cfg.capture_device, "c")
-            rate, fmt = _probe_capture_params(self.cfg.capture_device)
-            if not capture_present and not self.cfg.keep_silence_when_no_capture:
-                # 無入力時は停止（ポリシー）
-                if self.current_mode != "none":
-                    self._stop_then(lambda: setattr(self, "current_mode", "none"))
-                return
-
-            desired_mode = "capture" if capture_present else "silence"
-            if (
-                desired_mode == "capture"
-                and self._control
-                and not self._control.capture_allowed()
-            ):
-                print(
-                    "[usb_i2s_bridge] peer not synced; holding capture and sending silence"
-                )
-                desired_mode = "silence"
-            desired_rate = rate if capture_present else self.current_rate
-            if desired_rate is None:
-                desired_rate = self.cfg.fallback_rate
-            desired_capture_fmt = fmt if capture_present else None
-
-            # passthrough で rate/format が未確定な段階は、まず conversion で安全に立ち上げる
-            if (
-                self.cfg.passthrough
-                and desired_mode == "capture"
-                and (rate is None or fmt is None)
-            ):
-                self.conversion_enabled = True
-
-            # hw_params が揃ったら passthrough を試す（失敗時は ERROR で conversion に戻る）
-            if (
-                self.cfg.passthrough
-                and desired_mode == "capture"
-                and self.conversion_enabled
-                and rate is not None
-                and fmt is not None
-            ):
-                self.conversion_enabled = False
-                force = True
-
-            need_switch = (
-                force
-                or self.current_mode != desired_mode
-                or (desired_mode == "capture" and desired_rate != self.current_rate)
-                or (
-                    desired_mode == "capture"
-                    and desired_capture_fmt != self.current_capture_fmt
-                )
-            )
-            if not need_switch and self.pipeline is not None:
-                return
-
-            def _do_start() -> None:
-                self._start(desired_mode, int(desired_rate), desired_capture_fmt)
-
-            self._stop_then(_do_start)
-
-        def run(self) -> None:
-            # 初期状態: まずサイレンスで I2S を立ち上げ、USB が来たら capture にスイッチ
-            self.current_rate = self.cfg.fallback_rate
-            self.current_fmt = self.cfg.preferred_format
-            initial_mode = (
-                "silence" if self.cfg.keep_silence_when_no_capture else "capture"
-            )
-            self._start(initial_mode, self.current_rate, None)
-
-            # Docker/systemd からの SIGTERM でパイプラインを確実に落として終了する
-            def _handle_term(signum: int, frame) -> None:  # noqa: ANN001
-                _ = signum, frame
-                try:
-                    if self.pipeline is not None:
-                        self.pipeline.set_state(Gst.State.NULL)
-                finally:
-                    if self._reporter:
-                        self._reporter.stop()
-                    self.loop.quit()
-
-            signal.signal(signal.SIGTERM, _handle_term)
-            signal.signal(signal.SIGINT, _handle_term)
-
-            def _poll() -> bool:
-                try:
-                    self._reconcile(force=False)
-                except Exception as e:
-                    print(f"[usb_i2s_bridge] reconcile exception: {e}; restarting")
-                    self._schedule_restart()
-                return True
-
-            GLib.timeout_add(int(self.cfg.poll_interval_sec * 1000), _poll)
-            self.loop.run()
-            if self._reporter:
-                self._reporter.stop()
-
-    Supervisor(cfg).run()
 
 
 def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
@@ -1707,7 +964,7 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
     parser.add_argument(
         "--preferred-format",
         default=_env_str("USB_I2S_PREFERRED_FORMAT", _DEFAULT_PREFERRED_FORMAT),
-        choices=sorted(set(_ALSA_TO_GST_FORMAT.keys())),
+        choices=_SUPPORTED_ALSA_FORMATS,
     )
     parser.add_argument(
         "--alsa-buffer-time-us",
@@ -1738,19 +995,6 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
         "--restart-backoff",
         type=float,
         default=_env_float("USB_I2S_RESTART_BACKOFF_SEC", _DEFAULT_RESTART_BACKOFF_SEC),
-    )
-    parser.add_argument(
-        "--passthrough",
-        dest="passthrough",
-        action="store_true",
-        default=_env_bool("USB_I2S_PASSTHROUGH", _DEFAULT_PASSTHROUGH),
-        help="UAC2で受けた rate/format をそのまま I2S へ流す (default: true)",
-    )
-    parser.add_argument(
-        "--no-passthrough",
-        dest="passthrough",
-        action="store_false",
-        help="I2S側の安定性優先で preferred_format へ変換して出力する",
     )
     parser.add_argument(
         "--keep-silence",
@@ -1841,7 +1085,6 @@ def _parse_args(argv: list[str] | None = None) -> UsbI2sBridgeConfig:
         poll_interval_sec=max(0.2, float(args.poll_interval)),
         restart_backoff_sec=max(0.0, float(args.restart_backoff)),
         keep_silence_when_no_capture=bool(args.keep_silence_when_no_capture),
-        passthrough=bool(args.passthrough),
         status_path=args.status_path,
         status_report_url=str(args.status_report_url or "").strip() or None,
         status_report_timeout_ms=max(1, int(args.status_report_timeout_ms)),

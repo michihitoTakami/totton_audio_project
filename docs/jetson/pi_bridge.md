@@ -31,7 +31,7 @@ Pi 側の「UAC2 の受け口」は **ALSA の入力デバイス**として扱�
 - **2ch**（ステレオ）
 - 44.1k 系/48k 系のレート切替に追従できること
 - 量子化は **24-in-32（`S32_LE`）推奨**
-- 変換は極力せず **パススルー優先**（`USB_I2S_PASSTHROUGH=true` を想定）
+- **変換は行わず**（橋渡しに特化）入力の rate/format をそのまま下流へ流す
 
 これらは `raspberry_pi/usb_i2s_bridge/bridge.py` が「入力の rate/format を検出して追従する」前提に合わせたものです。
 
@@ -76,7 +76,6 @@ docker compose -f raspberry_pi/docker-compose.yml up -d --build
 
 - `USB_I2S_CAPTURE_DEVICE`: UAC2 input（受け口）
 - `USB_I2S_PLAYBACK_DEVICE`: I2S 出力（典型: `hw:0,0`）
-- `USB_I2S_PASSTHROUGH`: `true`（推奨）
 - `USB_I2S_FALLBACK_RATE`: `44100`（`hw_params` 未確定時のフォールバック）
 - `USB_I2S_PREFERRED_FORMAT`: `S32_LE`（推奨）
 

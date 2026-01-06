@@ -4124,10 +4124,6 @@
             "type": "string",
             "title": "Preferred Format"
           },
-          "passthrough": {
-            "type": "boolean",
-            "title": "Passthrough"
-          },
           "alsa_buffer_time_us": {
             "type": "integer",
             "minimum": 1.0,
@@ -4227,7 +4223,6 @@
           "channels",
           "fallback_rate",
           "preferred_format",
-          "passthrough",
           "alsa_buffer_time_us",
           "alsa_latency_time_us",
           "queue_time_ns",
@@ -4302,17 +4297,6 @@
               }
             ],
             "title": "Preferred Format"
-          },
-          "passthrough": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passthrough"
           },
           "alsa_buffer_time_us": {
             "anyOf": [
