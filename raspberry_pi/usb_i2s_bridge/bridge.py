@@ -22,6 +22,7 @@ import json
 import os
 import re
 import signal
+import shutil
 import subprocess
 import threading
 import time
@@ -1205,6 +1206,14 @@ def _run_with_gst_launch(
             min_interval_sec=float(cfg.status_report_min_interval_sec),
         )
         reporter.start()
+
+    if shutil.which("gst-launch-1.0") is None:
+        print(
+            "[usb_i2s_bridge] gst-launch-1.0 not found; falling back to arecord/aplay "
+            "path without audiorate"
+        )
+        _run_with_arecord_aplay(cfg, control)
+        return
 
     last_rate = cfg.fallback_rate
     last_observed_capture_format: Optional[str] = None
