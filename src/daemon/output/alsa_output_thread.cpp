@@ -190,11 +190,22 @@ void alsaOutputThread(daemon_app::RuntimeState& state) {
         std::unique_lock<std::mutex> lock(bufferManager.mutex());
         size_t ready_threshold =
             get_playback_ready_threshold(state, static_cast<size_t>(period_size));
-        bufferManager.cv().wait_for(
-            lock, std::chrono::milliseconds(200), [&bufferManager, ready_threshold, &state] {
-                return bufferManager.queuedFramesLocked() >= ready_threshold ||
-                       !state.flags.running;
-            });
+        int outputRate = state.rates.currentOutputRate.load(std::memory_order_acquire);
+        if (outputRate <= 0) {
+            outputRate = DaemonConstants::DEFAULT_OUTPUT_SAMPLE_RATE;
+        }
+        double periodMs =
+            (outputRate > 0 && period_size > 0)
+                ? (1000.0 * static_cast<double>(period_size) / static_cast<double>(outputRate))
+                : 10.0;
+        auto waitDuration =
+            std::chrono::milliseconds(static_cast<int64_t>(std::clamp(periodMs, 5.0, 50.0)));
+
+        // Issue #1232: wake roughly once per ALSA period even when input is silent, so we keep
+        // feeding zeros and avoid miscounting silence as XRUN underflow.
+        bufferManager.cv().wait_for(lock, waitDuration, [&bufferManager, ready_threshold, &state] {
+            return bufferManager.queuedFramesLocked() >= ready_threshold || !state.flags.running;
+        });
 
         if (!state.flags.running) {
             break;
