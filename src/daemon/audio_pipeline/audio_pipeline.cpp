@@ -17,7 +17,7 @@ namespace audio_pipeline {
 
 namespace {
 
-constexpr float kDefaultChunkSec = 6.0f;
+constexpr float kDefaultChunkSec = 4.0f;
 constexpr float kDefaultOverlapSec = 0.25f;
 constexpr int kMaxHighLatencyInitRate = 192000;
 constexpr float kHighLatencyInputBufferSeconds = 20.0f;

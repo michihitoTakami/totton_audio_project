@@ -39,9 +39,9 @@ def test_delimiter_latency_notice_present():
     html_en = render_delimiter(lang="en", current_page="delimiter")
     html_ja = render_delimiter(lang="ja", current_page="delimiter")
 
-    assert "Processes ~6s buffered chunks" in html_en
+    assert "Processes ~4s buffered chunks" in html_en
     assert "latency_notice" not in html_en  # key should not leak to markup
-    assert "約6秒分のバッファ" in html_ja
+    assert "約4秒分のバッファ" in html_ja
 
 
 def test_delimiter_backend_warning_only_when_enabled_template():
