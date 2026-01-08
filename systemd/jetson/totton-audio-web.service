@@ -1,0 +1,56 @@
+[Unit]
+Description=Totton Audio Project Web Control Interface
+Documentation=https://github.com/michihitoTakami/totton_audio
+
+# Dependencies
+After=network.target gpu-upsampler.service
+Requires=gpu-upsampler.service
+
+[Service]
+Type=simple
+
+# Run as non-root user
+User=totton_audio
+Group=totton_audio
+
+# RTP はコードとして残すが、I2Sメイン運用ではデフォルトで無効化する
+Environment=TOTTON_AUDIO_ENABLE_RTP=false
+Environment=TOTTON_AUDIO_RTP_AUTOSTART=false
+
+# Web UI bind defaults:
+# - USB Gadget (usb0) only by default to avoid accidental exposure on Wi-Fi/Ethernet.
+# - Override explicitly if needed (LAN内運用のみ。インターネット公開は禁止/非推奨):
+#   TOTTON_AUDIO_WEB_HOST=0.0.0.0, TOTTON_AUDIO_WEB_PORT=80 など。
+Environment=TOTTON_AUDIO_WEB_HOST=192.168.55.1
+Environment=TOTTON_AUDIO_WEB_PORT=80
+
+# Execution
+WorkingDirectory=/opt/totton_audio
+ExecStart=/opt/totton_audio/venv/bin/uvicorn web.main:app \
+    --host ${TOTTON_AUDIO_WEB_HOST} \
+    --port ${TOTTON_AUDIO_WEB_PORT} \
+    --workers 1 \
+    --log-level warning
+
+# Restart policy
+Restart=always
+RestartSec=3
+
+# Resource limits
+MemoryMax=512M
+CPUWeight=50
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/totton_audio/data /tmp
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=totton-audio-web
+
+[Install]
+WantedBy=multi-user.target
