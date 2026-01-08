@@ -92,4 +92,4 @@ Data Plane (C++/CUDA)
 | OPRA EQ データ | CC BY-SA 4.0 | 帰属表示必須 |
 | HUTUBS (Crossfeed) | CC BY 4.0 | 帰属表示必須 |
 
-依存ライブラリ: CUDA/cuFFT (NVIDIA EULA), alsa-lib (LGPL-2.1), ZeroMQ (LGPL-3.0), FastAPI (MIT), scipy (BSD-3-Clause) など。OPRA由来EQのみを同梱し、商用不可データ（例: oratory1990）は含みません。
+依存ライブラリ: CUDA/cuFFT (NVIDIA EULA), alsa-lib (LGPL-2.1), ZeroMQ (LGPL-3.0), FastAPI (MIT), scipy (BSD-3-Clause) など。EQデータは **OPRA由来のみ**を同梱します。

@@ -21,7 +21,7 @@ Copyright (c) 2025 Michihito Takami
 
 OPRA の帰属要件（例）:
 - OPRA ロゴと説明、リポジトリへのリンク
-- プリセット表示時は、OPRA だけでなく **プリセット作者（例: oratory1990 / AutoEQ 等）** のクレジットを明示
+- プリセット表示時は、OPRA だけでなく **プリセット作者** のクレジットを明示
 
 ※ OPRA の詳細な帰属要件は、OPRA リポジトリの `README.md` および sync 時に取得される `metadata.json`（source/commit/sha256）を参照してください。
 

@@ -25,7 +25,7 @@
 ```
 Control Plane (Python/FastAPI)     Data Plane (C++ Audio Engine)
 ├── IR Generator (scipy)           ├── GPU FFT Convolution (CUDA)
-├── oratory1990 Integration        ├── libsoxr Resampling
+├── OPRA Integration               ├── libsoxr Resampling
 └── ZeroMQ Command Interface   <-> └── ALSA Output
 ```
 
