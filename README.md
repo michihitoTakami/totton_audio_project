@@ -80,10 +80,9 @@ Data Plane (C++/CUDA)
 ```
 
 ## Documentation / ドキュメント
-- Setup / セットアップ: `docs/setup/quick_start.md`, `docs/setup/build.md`, `docs/setup/test.md`, `docs/setup/pi_bridge.md`
-- Jetson / Deployment: `docs/jetson/README.md`
-- Architecture / 仕様: `docs/architecture/crossfeed_integration.md`, `docs/architecture/two_stage_fir_pipeline.md`, `docs/specifications/opra-sync.md`, `docs/specifications/delimiter_streaming_chunking.md`
-- Docker (developer/evaluator): `docker/README.local_build.md`, `raspberry_pi/README.md`
+- Setup / セットアップ: `docs/setup/README.md`, `docs/setup/build.md`, `docs/setup/pi_bridge.md`, `docs/setup/delimiter.md`
+- Deployment (Docker) / デプロイ（Docker）: `docker/README.md`, `docker/README.evaluator.md`, `docker/README.local_build.md`, `raspberry_pi/README.md`
+- API: `docs/api/README.md`, `docs/api/openapi.json`, `docs/api/raspi_openapi.json`
 
 ## License & third-party data / ライセンス
 

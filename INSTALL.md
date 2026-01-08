@@ -185,8 +185,9 @@ sudo apt install nvidia-cuda-toolkit
 ## Next Steps
 
 セットアップ完了後は以下を参照：
-- [PC Development Guide](docs/setup/pc_development.md) - 実行方法の詳細
-- [Architecture Overview](docs/architecture/overview.md) - システム設計
+- [Docker](docker/README.md) - まず動かす（評価者/開発者）
+- [セットアップガイド](docs/setup/README.md) - セットアップ導線（Docker推奨）
+- [Raspberry Pi ブリッジ](docs/setup/pi_bridge.md) - PiをUAC2受け口として初期化
 
 ## Files Added by This Setup
 

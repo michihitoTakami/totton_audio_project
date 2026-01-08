@@ -6,32 +6,29 @@ Totton Audio Projectの開発環境構築とセットアップに関するドキ
 
 | ドキュメント | 内容 | 対象者 |
 |-------------|------|--------|
-| [クイックスタート](quick_start.md) | 最小限の手順で動作確認 | 初めての方 |
+| [Docker](../../docker/README.md) | Dockerで起動（評価者/開発者） | まず動かしたい方 |
 | [ビルド手順](build.md) | 詳細なビルド手順・トラブルシューティング | 開発者 |
-| [テスト実行](test.md) | テストの実行方法 | 開発者 |
-| [PC開発環境](pc_development.md) | ALSA Loopback / RTP入力の詳細設定 | 開発者（実機動作） |
-| [Web UI](web_ui.md) | Web UIサーバーの起動・設定 | 開発者 |
 | [Raspberry Pi ブリッジ](pi_bridge.md) | PiをUAC2+RTPブリッジとして初期化 | Jetson + Pi構成 |
+| [De-Limiter](delimiter.md) | De-Limiter のセットアップ/運用 | Jetson + Pi構成 |
 
 ## 環境別ガイド
 
-### PC開発環境（推奨）
+### Docker（推奨）
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  PC開発環境 (Ubuntu 22.04+)                                      │
+│  Docker (Jetson / Raspberry Pi)                                  │
 ├─────────────────────────────────────────────────────────────────┤
-│  GPU: RTX 2070 Super以上 (CUDA SM 7.5+)                         │
-│  Audio: ALSA Loopback (RTP) → GPU Upsampler → ALSA → USB DAC       │
+│  Jetson: GPU Upsampler + Web (Compose)                            │
+│  Pi: UAC2受け口ブリッジ (Compose)                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-1. [クイックスタート](quick_start.md) で環境構築
-2. [ビルド手順](build.md) でビルド
-3. [テスト実行](test.md) でテスト
-4. [PC開発環境](pc_development.md) で実機動作確認
+1. [Docker（評価者向け / ソース不要）](../../docker/README.evaluator.md) で起動
+2. [Docker（ローカルビルド / 開発者向け）](../../docker/README.local_build.md) で起動（必要な場合）
+3. Raspberry Pi を使う場合は [Raspberry Pi ブリッジ](pi_bridge.md) と `raspberry_pi/README.md` を参照
 
-### Jetson Orin Nano（本番環境）
+### Jetson Orin Nano（Dockerで起動）
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -42,7 +39,7 @@ Totton Audio Projectの開発環境構築とセットアップに関するドキ
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-→ [docs/jetson/README.md](../jetson/README.md) を参照
+→ [Docker（評価者向け / ソース不要）](../../docker/README.evaluator.md) または [Docker（ローカルビルド / 開発者向け）](../../docker/README.local_build.md) を参照
 
 ## 必要なソフトウェア
 
@@ -70,14 +67,10 @@ flowchart TD
     A[リポジトリクローン] --> B[依存関係インストール]
     B --> C[フィルタ係数生成]
     C --> D[ビルド]
-    D --> E{目的は?}
-    E -->|テストのみ| F[テスト実行]
-    E -->|実機動作| G[ALSA Loopback入力設定]
-    G --> H[デーモン起動]
-    H --> I[Web UI起動]
+    D --> E[起動（Docker推奨）]
 ```
 
-### Step 1: 依存関係
+### Step 1: 依存関係（ソースからビルドする場合）
 
 ```bash
 # Ubuntu/Debian
@@ -90,7 +83,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 ```
 
-### Step 2: フィルタ係数生成
+### Step 2: フィルタ係数生成（ソースからビルドする場合）
 
 ```bash
 # 全構成（44k/48k × 2x/4x/8x/16x）最小位相フィルタ
@@ -100,18 +93,11 @@ uv run python scripts/filters/generate_minimum_phase.py --generate-all
 uv run python scripts/filters/generate_linear_phase.py --generate-all
 ```
 
-### Step 3: ビルド
+### Step 3: ビルド（ソースからビルドする場合）
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-```
-
-### Step 4: テスト
-
-```bash
-./build/cpu_tests        # CPUテスト
-./build/gpu_tests        # GPUテスト
 ```
 
 詳細は各ドキュメントを参照してください。
