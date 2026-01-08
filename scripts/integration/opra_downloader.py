@@ -60,7 +60,7 @@ def _read_url(url: str, timeout_sec: float) -> bytes:
         url,
         headers={
             "Accept": "*/*",
-            "User-Agent": "Totton Audio Project-opra-sync",
+            "User-Agent": "magicbox-opra-sync",
         },
     )
     try:

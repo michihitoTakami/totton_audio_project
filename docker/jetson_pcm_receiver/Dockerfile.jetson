@@ -1,6 +1,6 @@
 FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
 
-LABEL org.opencontainers.image.source="https://github.com/michihitoTakami/totton_audio"
+LABEL org.opencontainers.image.source="https://github.com/michihitoTakami/michy_os"
 LABEL org.opencontainers.image.description="jetson-pcm-receiver (PCM over TCP -> ALSA Loopback)"
 
 ENV DEBIAN_FRONTEND=noninteractive

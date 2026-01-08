@@ -3,7 +3,7 @@
 Tests that errors are correctly propagated through the stack:
 C++ Audio Engine → ZeroMQ IPC → Python/FastAPI → HTTP Response (RFC 9457)
 
-Issue #211: https://github.com/michihitoTakami/totton_audio/issues/211
+Issue #211: https://github.com/michihitoTakami/michy_os/issues/211
 """
 
 from unittest.mock import MagicMock, patch

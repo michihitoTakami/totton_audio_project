@@ -21,7 +21,7 @@ namespace audio_pipeline {
 // #region agent log
 static void agent_debug_log(const char* location, const char* message, const std::string& dataJson,
                             const char* hypothesisId) {
-    std::ofstream ofs("/home/michihito/Working/totton_audio/.cursor/debug.log", std::ios::app);
+    std::ofstream ofs("/home/michihito/Working/gpu_os/.cursor/debug.log", std::ios::app);
     if (!ofs.is_open()) {
         return;
     }

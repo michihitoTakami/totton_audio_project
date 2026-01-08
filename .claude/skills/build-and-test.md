@@ -17,7 +17,7 @@ C++/CUDA実装後の完全ビルド・テスト・レポート生成を自動化
 
 - CMake がインストールされていること
 - CUDA Toolkit（GPU テスト用）
-- 実行ディレクトリ: プロジェクトルート (`/home/michihito/Working/totton_audio/`)
+- 実行ディレクトリ: プロジェクトルート (`/home/michihito/Working/gpu_os/`)
 - 十分なディスクスペース（build/ディレクトリ）
 
 ## Execution Steps

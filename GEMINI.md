@@ -5,7 +5,7 @@ Think in English and answer in Japanese.
 
 ## Project Overview
 
-**Totton Audio Project - 魔法の箱**
+**Magic Box Project - 魔法の箱**
 
 全てのヘッドホンユーザーに最高の音を届けるスタンドアロンDDC/DSPデバイス
 
@@ -36,7 +36,7 @@ Think in English and answer in Japanese.
 ## Project Structure
 
 ```
-totton_audio/
+gpu_os/
 ├── src/               # C++/CUDA (convolution_engine.cu, alsa_daemon.cpp)
 ├── scripts/           # Python (generate_minimum_phase.py & generate_linear_phase.py, analysis tools)
 ├── data/coefficients/ # FIR filter binaries (640k-tap)

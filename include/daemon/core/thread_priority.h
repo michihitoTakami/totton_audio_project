@@ -17,10 +17,10 @@ inline void elevateRealtimePriority(const char* name, int priority = 65) {
 #ifdef __linux__
     // RT scheduling can freeze remote shells if something spins.
     // Allow disabling via env for containerized debugging.
-    // - TOTTON_AUDIO_ENABLE_RT=0 disables SCHED_FIFO attempts.
-    const char* enableRt = std::getenv("TOTTON_AUDIO_ENABLE_RT");
+    // - MAGICBOX_ENABLE_RT=0 disables SCHED_FIFO attempts.
+    const char* enableRt = std::getenv("MAGICBOX_ENABLE_RT");
     if (enableRt && std::string(enableRt) == "0") {
-        LOG_WARN("[RT] {} thread: SCHED_FIFO disabled via TOTTON_AUDIO_ENABLE_RT=0", name);
+        LOG_WARN("[RT] {} thread: SCHED_FIFO disabled via MAGICBOX_ENABLE_RT=0", name);
         return;
     }
     sched_param params{};

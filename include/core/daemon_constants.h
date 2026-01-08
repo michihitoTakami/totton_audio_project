@@ -35,7 +35,7 @@ constexpr int FILTER_SWITCH_FADE_TIMEOUT_MS =
     2250;  // Timeout for fade completion (1.5x fade duration)
 
 // ZeroMQ endpoints
-constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/totton_audio.sock";
+constexpr const char* ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock";
 constexpr const char* ZEROMQ_PUB_SUFFIX = ".pub";
 
 }  // namespace DaemonConstants

@@ -1,11 +1,11 @@
-# Totton Audio Project - AI Collaboration Guidelines
+# Magic Box Project - AI Collaboration Guidelines
 
 ## Language
 - Think in English and output in Japanese.
 
 ## Project Vision
 
-**Totton Audio Project - 魔法の箱**
+**Magic Box Project - 魔法の箱**
 
 全てのヘッドホンユーザーに最高の音を届ける箱
 
@@ -40,7 +40,7 @@ Control Plane (Python/FastAPI)     Data Plane (C++ Audio Engine)
 ## Project Structure
 
 ```
-totton_audio/
+gpu_os/
 ├── src/                   # C++/CUDA source (convolution_engine.cu, alsa_daemon.cpp, etc.)
 ├── include/               # C++ headers
 ├── scripts/               # Python tools (filter generation, analysis)

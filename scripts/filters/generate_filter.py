@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared filter generation utilities for the Totton Audio Project toolkit."""
+"""Shared filter generation utilities for the Magic Box toolkit."""
 
 from __future__ import annotations
 
