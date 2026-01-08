@@ -80,7 +80,7 @@ Data Plane (C++/CUDA)
 ```
 
 ## Documentation / ドキュメント
-- Setup / セットアップ: `docs/setup/README.md`, `docs/setup/build.md`, `docs/setup/pi_bridge.md`, `docs/setup/delimiter.md`
+- Setup / セットアップ: `docs/setup/build.md`, `docs/setup/pi_bridge.md`, `docs/setup/delimiter.md`
 - Deployment (Docker) / デプロイ（Docker）: `docker/README.md`, `docker/README.evaluator.md`, `docker/README.local_build.md`, `raspberry_pi/README.md`
 - API: `docs/api/README.md`, `docs/api/openapi.json`, `docs/api/raspi_openapi.json`
 
