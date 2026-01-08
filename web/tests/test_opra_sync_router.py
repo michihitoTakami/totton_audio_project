@@ -72,7 +72,7 @@ def test_opra_sync_update_starts_job(monkeypatch, tmp_path: Path):
 
 def test_opra_sync_requires_admin_token(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("GPU_OS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("MAGICBOX_ADMIN_TOKEN", "secret-token")
+    monkeypatch.setenv("TOTTON_AUDIO_ADMIN_TOKEN", "secret-token")
 
     app = create_app()
     client = TestClient(app)
@@ -88,7 +88,7 @@ def test_opra_sync_requires_admin_token(monkeypatch, tmp_path: Path):
 
 def test_opra_sync_rollback_via_router(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("GPU_OS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("MAGICBOX_ADMIN_TOKEN", "secret-token")
+    monkeypatch.setenv("TOTTON_AUDIO_ADMIN_TOKEN", "secret-token")
 
     manager = OpraCacheManager()
     db_path = tmp_path / "database_v1.jsonl"

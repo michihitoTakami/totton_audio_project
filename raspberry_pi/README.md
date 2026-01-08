@@ -53,7 +53,7 @@ docker compose -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rt
 - **Pi Control API**（Jetson → Pi）: `http://192.168.55.100:8081`（USB直結の典型値）
 - **Pi → Jetson ステータス送信**: `http://192.168.55.1/i2s/peer-status`
 
-> IP がズレる場合は Jetson 側は `MAGICBOX_PI_API_BASE`、Pi 側は `USB_I2S_STATUS_REPORT_URL` を上書きしてください。
+> IP がズレる場合は Jetson 側は `TOTTON_AUDIO_PI_API_BASE`、Pi 側は `USB_I2S_STATUS_REPORT_URL` を上書きしてください。
 
 ## 必要パッケージ (Raspberry Pi OS / Debian 系)
 
@@ -128,7 +128,7 @@ python3 -m raspberry_pi.rtp_sender \
 - `RTP_BRIDGE_STATS_PATH` (既定 `/tmp/rtp_receiver_stats.json`): 送信側が書き出す統計を ZeroMQ から STATUS 参照
 - `RTP_BRIDGE_LATENCY_PATH` (既定 `/tmp/rtp_receiver_latency_ms`): SET_LATENCY 受信時に書き戻し、送信側で適用
 
-Magic Box Web UI からのレイテンシ変更を Pi に伝える場合に使用します。
+Totton Audio Project Web UI からのレイテンシ変更を Pi に伝える場合に使用します。
 
 > NOTE: デフォルトの待受エンドポイントは `tcp://0.0.0.0:60000` に変更しました。Jetson 側は `RTP_BRIDGE_ENDPOINT=tcp://raspberrypi.local:60000` などホスト名/IP を揃えてください。`docker-compose.yml` はポート 60000 を公開します。
 

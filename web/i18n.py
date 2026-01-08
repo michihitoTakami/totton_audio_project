@@ -1,5 +1,5 @@
 """
-i18n (Internationalization) module for Magic Box Web UI.
+i18n (Internationalization) module for Totton Audio Project Web UI.
 
 Basic structure for server-side i18n using Python dictionaries and Jinja2.
 Actual language switching functionality will be implemented in Issue #415.
@@ -9,7 +9,7 @@ SUPPORTED_LANGS = {"en", "ja"}
 
 TRANSLATIONS = {
     "en": {
-        "app.title": "Magic Box",
+        "app.title": "Totton Audio Project",
         "app.tagline": "Ultimate Audio Experience",
         "nav.dashboard": "Dashboard",
         "nav.eq": "EQ Settings",
@@ -302,7 +302,7 @@ TRANSLATIONS = {
         "common.units.khz": "kHz",
     },
     "ja": {
-        "app.title": "Magic Box",
+        "app.title": "Totton Audio Project",
         "app.tagline": "究極のオーディオ体験",
         "nav.dashboard": "ダッシュボード",
         "nav.eq": "EQ設定",

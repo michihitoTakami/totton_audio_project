@@ -1,10 +1,10 @@
-Magic Box Project（michy_os / gpu_os）
+Totton Audio Project（totton_audio）
 Binary & Docker Non-Commercial License (MB-NCL) v1.0
 
 Copyright (c) 2025 Michihito Takami
 All rights reserved.
 
-本ライセンスは、Magic Box Project の「公開配布物（バイナリ、Dockerイメージ、設定ファイル、同梱ドキュメント等）」に対する利用許諾です。
+本ライセンスは、Totton Audio Project の「公開配布物（バイナリ、Dockerイメージ、設定ファイル、同梱ドキュメント等）」に対する利用許諾です。
 
 重要: 本配布物に含まれる第三者ソフトウェア／データ（例: OPRA, HUTUBS など）は、それぞれのライセンスが適用されます。
 本ライセンスは第三者ライセンスで許諾される権利を制限しません。詳細は NOTICE.md / THIRD_PARTY_LICENSES.md を参照してください。

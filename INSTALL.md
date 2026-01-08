@@ -81,7 +81,7 @@ source ~/.bashrc  # or source ~/.zshrc
 
 ```bash
 # プロジェクトディレクトリで実行
-cd /path/to/gpu_os
+cd /path/to/totton_audio
 aqua i
 ```
 
@@ -191,7 +191,7 @@ sudo apt install nvidia-cuda-toolkit
 ## Files Added by This Setup
 
 ```
-gpu_os/
+totton_audio/
 ├── aqua.yaml              # CLIツールバージョン定義
 ├── scripts/
 │   └── setup-system.sh    # システム依存関係インストール

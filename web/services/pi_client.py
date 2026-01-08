@@ -24,8 +24,10 @@ class PiResponseError(PiClientError):
         self.status_code = status_code
 
 
-DEFAULT_PI_API_BASE = os.getenv("MAGICBOX_PI_API_BASE", "http://192.168.55.100:8081")
-DEFAULT_PI_API_TIMEOUT_MS = int(os.getenv("MAGICBOX_PI_API_TIMEOUT_MS", "2000"))
+DEFAULT_PI_API_BASE = os.getenv(
+    "TOTTON_AUDIO_PI_API_BASE", "http://192.168.55.100:8081"
+)
+DEFAULT_PI_API_TIMEOUT_MS = int(os.getenv("TOTTON_AUDIO_PI_API_TIMEOUT_MS", "2000"))
 
 
 class PiClient:

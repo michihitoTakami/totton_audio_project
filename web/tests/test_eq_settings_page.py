@@ -11,7 +11,7 @@ def test_render_eq_settings_english():
 
     # Check page title
     assert "EQ Settings" in html
-    assert "Magic Box" in html
+    assert "Totton Audio Project" in html
 
     # Check sections are present
     assert "Active EQ Profile" in html
@@ -31,7 +31,7 @@ def test_render_eq_settings_japanese():
 
     # Check page title
     assert "EQ設定" in html
-    assert "Magic Box" in html
+    assert "Totton Audio Project" in html
 
     # Check sections are present
     assert "有効なEQプロファイル" in html

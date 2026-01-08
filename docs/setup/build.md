@@ -1,6 +1,6 @@
 # ビルド手順
 
-Magic Box Projectの詳細なビルド手順とオプション。
+Totton Audio Projectの詳細なビルド手順とオプション。
 
 ## 必要なパッケージ
 
@@ -247,7 +247,7 @@ rm -rf /home/michihito/Working/onnxruntime/build
 
 ### ビルド後の設定
 
-ビルドが完了したら、Magic Box ProjectのCMake設定で使用します：
+ビルドが完了したら、Totton Audio ProjectのCMake設定で使用します：
 
 ```bash
 cmake -B build \

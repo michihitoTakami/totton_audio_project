@@ -18,7 +18,10 @@ router = APIRouter(prefix="/i2s", tags=["status"])
 def _status_path() -> Path:
     # NOTE: テストで monkeypatch.setenv を使うため、env は都度参照する
     return Path(
-        os.getenv("MAGICBOX_I2S_PEER_STATUS_PATH", "/tmp/magicbox-i2s-peer-status.json")
+        os.getenv(
+            "TOTTON_AUDIO_I2S_PEER_STATUS_PATH",
+            "/tmp/Totton Audio Project-i2s-peer-status.json",
+        )
     )
 
 

@@ -15,10 +15,10 @@ def require_admin_token(
     Enforce admin token for protected endpoints.
 
     - Token is provided via `X-Admin-Token` header.
-    - If `MAGICBOX_ADMIN_TOKEN` is not set, the check is skipped (backward compat).
+    - If `TOTTON_AUDIO_ADMIN_TOKEN` is not set, the check is skipped (backward compat).
     - Invalid or missing token returns 401.
     """
-    expected = os.getenv("MAGICBOX_ADMIN_TOKEN")
+    expected = os.getenv("TOTTON_AUDIO_ADMIN_TOKEN")
     if not expected:
         return ""
 

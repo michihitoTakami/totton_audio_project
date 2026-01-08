@@ -1,1 +1,1 @@
-"""Template package for the Magic Box web UI."""
+"""Template package for the Totton Audio Project web UI."""

@@ -20,9 +20,9 @@ Issue: #1062（Epic: #1051）
 ### Web UI / API の待受（デフォルト）
 
 - **開発（PC）**: `uv run python web/main.py` は `127.0.0.1:11881` にバインド（外部アクセス不可）
-- **Jetson（systemd）**: `magicbox-web.service` は **`192.168.55.1:80` にバインド**（USB Ethernet のみ想定）
+- **Jetson（systemd）**: `totton-audio-web.service` は **`192.168.55.1:80` にバインド**（USB Ethernet のみ想定）
 - **Jetson（Docker評価版）**: runtime compose はデフォルトで **`192.168.55.1:80` を公開**（USB Ethernet のみ想定）
-  - `MAGICBOX_PUBLISH_IP=0.0.0.0` で明示的に公開先を上書き可能（ただしインターネット公開は禁止/非推奨）
+  - `TOTTON_AUDIO_PUBLISH_IP=0.0.0.0` で明示的に公開先を上書き可能（ただしインターネット公開は禁止/非推奨）
 
 > 注: Jetson側のUSB Ethernetは `docs/jetson/network/usb-ethernet.md` を参照（Jetson: `192.168.55.1`, PC: `192.168.55.100`）。
 
@@ -75,7 +75,7 @@ Jetson(systemd) のログ取得例は `docs/jetson/troubleshooting.md`、Docker�
 
 ### 設定/キャッシュ
 
-- **設定ファイル**（例: `/opt/magicbox/config/`）: デバイスや運用条件を含むため機密扱い
+- **設定ファイル**（例: `/opt/totton_audio/config/`）: デバイスや運用条件を含むため機密扱い
 - **OPRAキャッシュ**（例: `/data/opra`）: 個人情報は通常含まれませんが、配布/共有は必要最小限に
 
 ---

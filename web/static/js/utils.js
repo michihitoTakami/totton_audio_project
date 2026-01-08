@@ -1,5 +1,5 @@
 /**
- * Global utility functions for the Magic Box Web UI
+ * Global utility functions for the Totton Audio Project Web UI
  */
 
 /**
