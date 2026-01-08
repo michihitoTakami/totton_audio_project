@@ -35,7 +35,7 @@ DEFAULT_SENDER_HOST = "192.168.55.100"
 DEFAULT_MONITOR_INTERVAL_SEC = 1.0
 DEFAULT_RATE_PROBE_TIMEOUT_SEC = 1.0
 DEFAULT_RTCP_SEND_ENABLED = os.getenv(
-    "MAGICBOX_RTP_RTCP_SEND_ENABLED", "1"
+    "TOTTON_AUDIO_RTP_RTCP_SEND_ENABLED", "1"
 ).strip().lower() not in {
     "0",
     "false",
@@ -43,10 +43,10 @@ DEFAULT_RTCP_SEND_ENABLED = os.getenv(
     "off",
 }
 DEFAULT_RTCP_SEND_RESOLVE_TIMEOUT_SEC = float(
-    os.getenv("MAGICBOX_RTP_RTCP_SEND_RESOLVE_TIMEOUT_SEC", "0.4")
+    os.getenv("TOTTON_AUDIO_RTP_RTCP_SEND_RESOLVE_TIMEOUT_SEC", "0.4")
 )
 DEFAULT_RTCP_SEND_REACHABILITY_TIMEOUT_SEC = float(
-    os.getenv("MAGICBOX_RTP_RTCP_SEND_REACHABILITY_TIMEOUT_SEC", "0.4")
+    os.getenv("TOTTON_AUDIO_RTP_RTCP_SEND_REACHABILITY_TIMEOUT_SEC", "0.4")
 )
 
 # Issue #762 要件に合わせたサポートレート（44.1k/48k系を網羅）
@@ -106,11 +106,15 @@ def _env_str(name: str, default: str, allowed: Iterable[str] | None = None) -> s
 def load_default_settings() -> RtpInputSettings:
     """環境変数を考慮したデフォルト設定を返す."""
     encoding = _env_str(
-        "MAGICBOX_RTP_ENCODING", DEFAULT_ENCODING, _ENCODING_TO_DEPAY_AND_FORMAT.keys()
+        "TOTTON_AUDIO_RTP_ENCODING",
+        DEFAULT_ENCODING,
+        _ENCODING_TO_DEPAY_AND_FORMAT.keys(),
     )
-    base_port = _env_int("MAGICBOX_RTP_PORT", DEFAULT_PORT, minimum=1024, maximum=65535)
+    base_port = _env_int(
+        "TOTTON_AUDIO_RTP_PORT", DEFAULT_PORT, minimum=1024, maximum=65535
+    )
     sample_rate = _env_int(
-        "MAGICBOX_RTP_SAMPLE_RATE",
+        "TOTTON_AUDIO_RTP_SAMPLE_RATE",
         DEFAULT_SAMPLE_RATE,
         minimum=8000,
         maximum=768000,
@@ -122,26 +126,32 @@ def load_default_settings() -> RtpInputSettings:
         port=base_port,
         sample_rate=sample_rate,
         channels=_env_int(
-            "MAGICBOX_RTP_CHANNELS", DEFAULT_CHANNELS, minimum=1, maximum=8
+            "TOTTON_AUDIO_RTP_CHANNELS", DEFAULT_CHANNELS, minimum=1, maximum=8
         ),
         latency_ms=_env_int(
-            "MAGICBOX_RTP_LATENCY_MS", DEFAULT_LATENCY_MS, minimum=10, maximum=5000
+            "TOTTON_AUDIO_RTP_LATENCY_MS",
+            DEFAULT_LATENCY_MS,
+            minimum=10,
+            maximum=5000,
         ),
         encoding=encoding,  # type: ignore[arg-type]
-        device=os.getenv("MAGICBOX_RTP_DEVICE", DEFAULT_DEVICE),
+        device=os.getenv("TOTTON_AUDIO_RTP_DEVICE", DEFAULT_DEVICE),
         resample_quality=_env_int(
-            "MAGICBOX_RTP_QUALITY", DEFAULT_QUALITY, minimum=0, maximum=10
+            "TOTTON_AUDIO_RTP_QUALITY", DEFAULT_QUALITY, minimum=0, maximum=10
         ),
         rtcp_port=_env_int(
-            "MAGICBOX_RTP_RTCP_PORT", DEFAULT_RTCP_PORT, minimum=1024, maximum=65535
+            "TOTTON_AUDIO_RTP_RTCP_PORT",
+            DEFAULT_RTCP_PORT,
+            minimum=1024,
+            maximum=65535,
         ),
         rtcp_send_port=_env_int(
-            "MAGICBOX_RTP_RTCP_SEND_PORT",
+            "TOTTON_AUDIO_RTP_RTCP_SEND_PORT",
             DEFAULT_RTCP_SEND_PORT,
             minimum=1024,
             maximum=65535,
         ),
-        sender_host=os.getenv("MAGICBOX_RTP_SENDER_HOST", DEFAULT_SENDER_HOST),
+        sender_host=os.getenv("TOTTON_AUDIO_RTP_SENDER_HOST", DEFAULT_SENDER_HOST),
     )
 
 
@@ -160,14 +170,14 @@ def build_gst_command(settings: RtpInputSettings) -> list[str]:
 
     # 受信ジッタ耐性 vs 低遅延 のトレードオフを環境変数で調整可能にする
     jitterbuffer_multiplier = _env_int(
-        "MAGICBOX_RTP_JITTERBUFFER_MULTIPLIER",
+        "TOTTON_AUDIO_RTP_JITTERBUFFER_MULTIPLIER",
         DEFAULT_JITTERBUFFER_MULTIPLIER,
         minimum=1,
         maximum=4,
     )
     rtpbin_latency_ms = int(settings.latency_ms * jitterbuffer_multiplier)
     queue_time_ms = _env_int(
-        "MAGICBOX_RTP_QUEUE_TIME_MS",
+        "TOTTON_AUDIO_RTP_QUEUE_TIME_MS",
         DEFAULT_QUEUE_TIME_MS,
         minimum=10,
         maximum=1000,

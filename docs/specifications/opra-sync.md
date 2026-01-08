@@ -73,7 +73,7 @@ Docker/Jetsonを想定し、永続化ボリュームに配置する。
 - **推奨パス（論理）**: `${DATA_DIR}/opra/`
   - 例（ホスト）: `/var/lib/gpu_upsampler/opra/`
   - 例（Docker）: `/data/opra/`（volume）
-  - Jetson Compose では `GPU_OS_DATA_DIR=/data` を指定し、`magicbox-opra-cache` ボリュームを `/data/opra` にマウントして永続化する。
+  - Jetson Compose では `GPU_OS_DATA_DIR=/data` を指定し、`Totton Audio Project-opra-cache` ボリュームを `/data/opra` にマウントして永続化する。
 
 ### 2) ディレクトリ構成
 

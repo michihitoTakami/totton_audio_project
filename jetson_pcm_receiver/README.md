@@ -1,6 +1,6 @@
 # Jetson RTP Receiver (GStreamer)
 
-`jetson_pcm_receiver` の TCP/C++ 実装は廃止され、Jetson 側は GStreamer ベースの RTP 受信に一本化しました。受信パイプラインは Magic Box Web サーバの `RtpReceiverManager`（`web/services/rtp_input.py`）が管理し、HTTP API から開始/停止・設定変更できます。
+`jetson_pcm_receiver` の TCP/C++ 実装は廃止され、Jetson 側は GStreamer ベースの RTP 受信に一本化しました。受信パイプラインは Totton Audio Project Web サーバの `RtpReceiverManager`（`web/services/rtp_input.py`）が管理し、HTTP API から開始/停止・設定変更できます。
 
 ## 受信の起動
 
@@ -34,15 +34,15 @@ curl -X PUT http://localhost:8000/api/rtp-input/config \
 
 | 変数 | 既定値 | 説明 |
 | ---- | ------ | ---- |
-| `MAGICBOX_RTP_PORT` | `46000` | RTP 受信ポート |
-| `MAGICBOX_RTP_RTCP_PORT` | `46001` | RTCP 受信ポート |
-| `MAGICBOX_RTP_RTCP_SEND_PORT` | `46002` | 送信側へ返す RTCP ポート |
-| `MAGICBOX_RTP_SAMPLE_RATE` | `44100` | サンプルレート |
-| `MAGICBOX_RTP_CHANNELS` | `2` | チャンネル数 |
-| `MAGICBOX_RTP_ENCODING` | `L24` | `L16` / `L24` / `L32` |
-| `MAGICBOX_RTP_LATENCY_MS` | `100` | jitterbuffer latency |
-| `MAGICBOX_RTP_DEVICE` | `hw:Loopback,0,0` | ALSA 出力デバイス |
-| `MAGICBOX_RTP_QUALITY` | `10` | `audioresample` quality (0-10) |
+| `TOTTON_AUDIO_RTP_PORT` | `46000` | RTP 受信ポート |
+| `TOTTON_AUDIO_RTP_RTCP_PORT` | `46001` | RTCP 受信ポート |
+| `TOTTON_AUDIO_RTP_RTCP_SEND_PORT` | `46002` | 送信側へ返す RTCP ポート |
+| `TOTTON_AUDIO_RTP_SAMPLE_RATE` | `44100` | サンプルレート |
+| `TOTTON_AUDIO_RTP_CHANNELS` | `2` | チャンネル数 |
+| `TOTTON_AUDIO_RTP_ENCODING` | `L24` | `L16` / `L24` / `L32` |
+| `TOTTON_AUDIO_RTP_LATENCY_MS` | `100` | jitterbuffer latency |
+| `TOTTON_AUDIO_RTP_DEVICE` | `hw:Loopback,0,0` | ALSA 出力デバイス |
+| `TOTTON_AUDIO_RTP_QUALITY` | `10` | `audioresample` quality (0-10) |
 
 ## パイプライン概要
 

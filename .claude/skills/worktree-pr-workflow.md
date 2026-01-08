@@ -17,7 +17,7 @@ Issue番号からworktree作成→実装→コミット→PR作成までを自�
 ## Requirements
 
 - `gh` CLI がインストール・認証済みであること
-- Git repository: `/home/michihito/Working/gpu_os/`
+- Git repository: `/home/michihito/Working/totton_audio/`
 - GitHub Issue が作成済みであること
 - 実行ディレクトリ: プロジェクトルート
 
@@ -87,7 +87,7 @@ gh pr create --title "#{issue_number} {title}" --body "Closes #{issue_number}
 # Worktree作成完了
 
 ## Worktree情報
-- パス: `/home/michihito/Working/gpu_os/worktrees/567-claude-skills`
+- パス: `/home/michihito/Working/totton_audio/worktrees/567-claude-skills`
 - ブランチ: `feature/#567-claude-skills`
 - ベースコミット: dd1a058
 
@@ -99,7 +99,7 @@ gh pr create --title "#{issue_number} {title}" --body "Closes #{issue_number}
 ## 次のステップ
 1. 以下のコマンドで worktree に移動してください:
    ```bash
-   cd /home/michihito/Working/gpu_os/worktrees/567-claude-skills
+   cd /home/michihito/Working/totton_audio/worktrees/567-claude-skills
    ```
 
 2. 実装を行ってください
@@ -112,7 +112,7 @@ gh pr create --title "#{issue_number} {title}" --body "Closes #{issue_number}
 # PR作成完了
 
 ## Pull Request
-- URL: https://github.com/michihitoTakami/michy_os/pull/568
+- URL: https://github.com/michihitoTakami/totton_audio/pull/568
 - タイトル: #567 Implement Claude Skills for project automation
 - ブランチ: feature/#567-claude-skills → main
 
@@ -198,7 +198,7 @@ cd worktrees/567-feature-name
 このSkillは以下の制約を自動的に適用します：
 
 - **GitHub CLI必須**: `gh` コマンド使用
-- **Worktree構造**: `/home/michihito/Working/gpu_os/worktrees/{issue}-{slug}`
+- **Worktree構造**: `/home/michihito/Working/totton_audio/worktrees/{issue}-{slug}`
 - **ブランチ命名**: `feature/#{issue}-{slug}` または `fix/#{issue}-{slug}`
 - **PR命名**: `#{issue} {title}` 形式
 - **Co-Authored-By**: Claudeのクレジット自動追加

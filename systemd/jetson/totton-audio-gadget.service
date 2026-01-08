@@ -1,6 +1,6 @@
 [Unit]
-Description=Magic Box USB Composite Gadget (UAC2 + ECM)
-Documentation=https://github.com/michihitoTakami/gpu_os/docs/jetson/usb-gadget/
+Description=Totton Audio Project USB Composite Gadget (UAC2 + ECM)
+Documentation=https://github.com/michihitoTakami/totton_audio/docs/jetson/usb-gadget/
 
 # Start early in boot sequence, before network
 DefaultDependencies=no
@@ -16,9 +16,9 @@ Type=oneshot
 RemainAfterExit=yes
 
 # Main commands
-ExecStart=/opt/magicbox/scripts/setup-usb-gadget.sh start
-ExecStop=/opt/magicbox/scripts/setup-usb-gadget.sh stop
-ExecReload=/opt/magicbox/scripts/setup-usb-gadget.sh restart
+ExecStart=/opt/totton_audio/scripts/setup-usb-gadget.sh start
+ExecStop=/opt/totton_audio/scripts/setup-usb-gadget.sh stop
+ExecReload=/opt/totton_audio/scripts/setup-usb-gadget.sh restart
 
 # Recovery on failure
 Restart=on-failure

@@ -14,7 +14,7 @@ namespace {
 std::string make_ipc_endpoint() {
     static std::atomic<int> counter{0};
     std::ostringstream oss;
-    oss << "ipc:///tmp/gpu_os_zmq_server_test_" << ::getpid() << "_" << counter++ << ".sock";
+    oss << "ipc:///tmp/totton_audio_zmq_server_test_" << ::getpid() << "_" << counter++ << ".sock";
     return oss.str();
 }
 

@@ -1,4 +1,4 @@
-# Magic Box - Jetson Orin Nano 組み込みガイド
+# Totton Audio Project - Jetson Orin Nano 組み込みガイド
 
 ## 製品ビジョン
 
@@ -16,7 +16,7 @@
 
 ## システム概要
 
-Magic Boxは、2,000,000タップの最小位相FIRフィルタによる究極のアップサンプリングと、ヘッドホン周波数特性の自動補正を提供するオーディオプロセッサです。
+Totton Audio Projectは、2,000,000タップの最小位相FIRフィルタによる究極のアップサンプリングと、ヘッドホン周波数特性の自動補正を提供するオーディオプロセッサです。
 
 ### 主要機能
 
@@ -46,7 +46,7 @@ Magic Boxは、2,000,000タップの最小位相FIRフィルタによる究極�
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                       Magic Box                              │
+│                       Totton Audio Project                              │
 │                                                              │
 │  ┌─────────────┐    ┌──────────────┐    ┌──────────────┐    │
 │  │ USB Type-C  │───>│ Jetson Orin │───>│ USB Type-A   │    │
@@ -75,7 +75,7 @@ Magic Boxは、2,000,000タップの最小位相FIRフィルタによる究極�
 ### 1. 接続
 
 ```
-PC  ──USB Type-C──>  Magic Box  ──USB Type-A──>  外部DAC  ──>  ヘッドホン
+PC  ──USB Type-C──>  Totton Audio Project  ──USB Type-A──>  外部DAC  ──>  ヘッドホン
 ```
 
 ### 2. 管理画面にアクセス
@@ -83,7 +83,7 @@ PC  ──USB Type-C──>  Magic Box  ──USB Type-A──>  外部DAC  ─�
 USBケーブル接続後、ブラウザで以下にアクセス：
 
 - `http://192.168.55.1/`
-- または `http://magicbox.local/`（mDNS対応環境）
+- または `http://totton-audio.local/`（mDNS対応環境）
 
 ### 3. ヘッドホンを選択
 
@@ -150,7 +150,7 @@ USBケーブル接続後、ブラウザで以下にアクセス：
 
 ## サポート
 
-- **GitHub Issues**: https://github.com/michihitoTakami/gpu_os/issues
+- **GitHub Issues**: https://github.com/michihitoTakami/totton_audio/issues
 - **技術ドキュメント**: 本ディレクトリ配下
 
 ---

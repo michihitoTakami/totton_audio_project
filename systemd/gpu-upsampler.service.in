@@ -1,6 +1,6 @@
 [Unit]
 Description=GPU Audio Upsampler (CUDA 16x to ALSA)
-Documentation=https://github.com/michihitoTakami/michy_os
+Documentation=https://github.com/michihitoTakami/totton_audio
 
 # ALSA/TCP-only path
 After=network-online.target sound.target

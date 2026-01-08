@@ -1,6 +1,6 @@
 # クイックスタート
 
-最小限の手順でMagic Box Projectをビルド・テストする方法。
+最小限の手順でTotton Audio Projectをビルド・テストする方法。
 
 ## 前提条件
 
@@ -25,7 +25,7 @@ source ~/.bashrc  # または新しいターミナルを開く
 
 ```bash
 git clone <repository-url>
-cd gpu_os
+cd totton_audio
 ```
 
 ## 3. Python依存関係のセットアップ

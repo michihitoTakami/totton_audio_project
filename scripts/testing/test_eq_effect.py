@@ -191,7 +191,7 @@ def main():
 
     eq_file = project_dir / "data" / "EQ" / "Sample_EQ.txt"
     if not eq_file.exists():
-        eq_file = Path("/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt")
+        eq_file = Path("/home/michihito/Working/totton_audio/data/EQ/Sample_EQ.txt")
 
     fs = 44100
 

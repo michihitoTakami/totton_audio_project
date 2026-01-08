@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxは複数のSystemdサービスで構成され、適切な依存関係と起動順序で管理されます。
+Totton Audio Projectは複数のSystemdサービスで構成され、適切な依存関係と起動順序で管理されます。
 
 ---
 
@@ -10,9 +10,9 @@ Magic Boxは複数のSystemdサービスで構成され、適切な依存関係�
 
 | サービス | 説明 | Type |
 |---------|------|------|
-| `magicbox-gadget.service` | USB Gadget初期化 | oneshot |
+| `totton-audio-gadget.service` | USB Gadget初期化 | oneshot |
 | `gpu-upsampler.service` | 音声処理デーモン | notify |
-| `magicbox-web.service` | Web UI (FastAPI) | simple |
+| `totton-audio-web.service` | Web UI (FastAPI) | simple |
 
 ---
 
@@ -25,7 +25,7 @@ Magic Boxは複数のSystemdサービスで構成され、適切な依存関係�
             ┌──────────────────────┼──────────────────────┐
             │                      │                      │
             ▼                      │                      ▼
-    magicbox-gadget.service        │           (other services)
+    totton-audio-gadget.service        │           (other services)
     [USB Gadget初期化]             │
             │                      │
             │ After/Requires       │
@@ -36,7 +36,7 @@ Magic Boxは複数のSystemdサービスで構成され、適切な依存関係�
             │ After                │
             ▼                      │
     avahi-daemon.service           │
-    [mDNS: magicbox.local]         │
+    [mDNS: totton-audio.local]         │
             │                      │
             │                      │
             │      ┌───────────────┘
@@ -47,7 +47,7 @@ Magic Boxは複数のSystemdサービスで構成され、適切な依存関係�
             │
             │ After/BindsTo
             ▼
-    magicbox-web.service
+    totton-audio-web.service
     [Web UI]
 ```
 
@@ -55,14 +55,14 @@ Magic Boxは複数のSystemdサービスで構成され、適切な依存関係�
 
 ## サービス定義
 
-### 1. magicbox-gadget.service
+### 1. totton-audio-gadget.service
 
 USB Composite Gadgetの初期化。
 
 ```ini
 [Unit]
-Description=Magic Box USB Composite Gadget
-Documentation=https://github.com/michihitoTakami/gpu_os/docs/jetson/usb-gadget/
+Description=Totton Audio Project USB Composite Gadget
+Documentation=https://github.com/michihitoTakami/totton_audio/docs/jetson/usb-gadget/
 DefaultDependencies=no
 Before=network-pre.target
 After=local-fs.target systemd-modules-load.service
@@ -75,9 +75,9 @@ ConditionPathExists=/sys/class/udc
 Type=oneshot
 RemainAfterExit=yes
 
-ExecStart=/usr/local/bin/magicbox-gadget-setup start
-ExecStop=/usr/local/bin/magicbox-gadget-setup stop
-ExecReload=/usr/local/bin/magicbox-gadget-setup restart
+ExecStart=/usr/local/bin/totton-audio-gadget-setup start
+ExecStop=/usr/local/bin/totton-audio-gadget-setup stop
+ExecReload=/usr/local/bin/totton-audio-gadget-setup restart
 
 # 失敗時の再試行
 Restart=on-failure
@@ -98,14 +98,14 @@ WantedBy=multi-user.target
 ```ini
 [Unit]
 Description=GPU Audio Upsampler Engine
-Documentation=https://github.com/michihitoTakami/gpu_os
+Documentation=https://github.com/michihitoTakami/totton_audio
 
 # 依存関係
-After=magicbox-gadget.service sound.target
-Requires=magicbox-gadget.service
+After=totton-audio-gadget.service sound.target
+Requires=totton-audio-gadget.service
 
 # ガジェットが停止したらこちらも停止
-BindsTo=magicbox-gadget.service
+BindsTo=totton-audio-gadget.service
 
 # ハードウェア条件
 ConditionPathExists=/dev/nvidia0
@@ -115,8 +115,8 @@ Type=notify
 NotifyAccess=main
 
 # 実行設定
-WorkingDirectory=/opt/magicbox
-ExecStart=/opt/magicbox/bin/gpu_upsampler_alsa
+WorkingDirectory=/opt/totton_audio
+ExecStart=/opt/totton_audio/bin/gpu_upsampler_alsa
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Watchdog
@@ -179,14 +179,14 @@ WantedBy=multi-user.target
 
 ---
 
-### 3. magicbox-web.service
+### 3. totton-audio-web.service
 
 Web UI (FastAPI/uvicorn)。
 
 ```ini
 [Unit]
-Description=Magic Box Web Control Interface
-Documentation=https://github.com/michihitoTakami/gpu_os
+Description=Totton Audio Project Web Control Interface
+Documentation=https://github.com/michihitoTakami/totton_audio
 
 # 依存関係
 After=network.target gpu-upsampler.service
@@ -200,14 +200,14 @@ PartOf=gpu-upsampler.service
 Type=simple
 
 # 実行ユーザー（非root）
-User=magicbox
-Group=magicbox
+User=totton_audio
+Group=totton_audio
 
 # 実行設定
-WorkingDirectory=/opt/magicbox
-ExecStart=/opt/magicbox/venv/bin/uvicorn web.main:app \
-    --host ${MAGICBOX_WEB_HOST} \
-    --port ${MAGICBOX_WEB_PORT} \
+WorkingDirectory=/opt/totton_audio
+ExecStart=/opt/totton_audio/venv/bin/uvicorn web.main:app \
+    --host ${TOTTON_AUDIO_WEB_HOST} \
+    --port ${TOTTON_AUDIO_WEB_PORT} \
     --workers 1
 
 # 再起動ポリシー
@@ -223,12 +223,12 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/magicbox/data /tmp
+ReadWritePaths=/opt/totton_audio/data /tmp
 
 # ロギング
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=magicbox-web
+SyslogIdentifier=totton-audio-web
 
 [Install]
 WantedBy=multi-user.target
@@ -245,17 +245,17 @@ t=0s    電源ON
         │
 t=5s    systemd起動
         │
-t=6s    magicbox-gadget.service 開始
+t=6s    totton-audio-gadget.service 開始
         │   └─ ConfigFS設定、UDCバインド
         │
-t=7s    magicbox-gadget.service 完了
+t=7s    totton-audio-gadget.service 完了
         │
 t=7s    systemd-networkd 設定適用
         │   └─ usb0: 192.168.55.1
         │   └─ DHCPサーバ起動
         │
 t=8s    avahi-daemon 起動
-        │   └─ magicbox.local 登録
+        │   └─ totton-audio.local 登録
         │
 t=10s   gpu-upsampler.service 開始
         │   ├─ フィルタ係数ロード (GPU)
@@ -265,8 +265,8 @@ t=10s   gpu-upsampler.service 開始
         │
 t=25s   gpu-upsampler.service Ready
         │
-t=26s   magicbox-web.service 開始
-        │   └─ uvicorn ${MAGICBOX_WEB_HOST}:${MAGICBOX_WEB_PORT} 起動
+t=26s   totton-audio-web.service 開始
+        │   └─ uvicorn ${TOTTON_AUDIO_WEB_HOST}:${TOTTON_AUDIO_WEB_PORT} 起動
         │
 t=28s   Ready (Web UI アクセス可能)
 ```
@@ -322,7 +322,7 @@ void watchdog_thread() {
 
 ### Journald 設定
 
-`/etc/systemd/journald.conf.d/magicbox.conf`:
+`/etc/systemd/journald.conf.d/Totton Audio Project.conf`:
 
 ```ini
 [Journal]
@@ -339,7 +339,7 @@ RateLimitBurst=1000
 
 ```bash
 # 全サービスのログ
-journalctl -u 'magicbox*' -u gpu-upsampler
+journalctl -u 'Totton Audio Project*' -u gpu-upsampler
 
 # リアルタイム
 journalctl -f -u gpu-upsampler
@@ -348,7 +348,7 @@ journalctl -f -u gpu-upsampler
 journalctl -p err -u gpu-upsampler --since "1 hour ago"
 
 # ブート以降
-journalctl -b -u magicbox-gadget
+journalctl -b -u totton-audio-gadget
 ```
 
 ---
@@ -359,10 +359,10 @@ journalctl -b -u magicbox-gadget
 
 ```bash
 # 全サービス起動
-sudo systemctl start magicbox-gadget gpu-upsampler magicbox-web
+sudo systemctl start totton-audio-gadget gpu-upsampler totton-audio-web
 
 # 全サービス停止
-sudo systemctl stop magicbox-web gpu-upsampler magicbox-gadget
+sudo systemctl stop totton-audio-web gpu-upsampler totton-audio-gadget
 
 # 再起動（設定リロード）
 sudo systemctl restart gpu-upsampler
@@ -372,7 +372,7 @@ sudo systemctl restart gpu-upsampler
 
 ```bash
 # 全サービスステータス
-systemctl status magicbox-gadget gpu-upsampler magicbox-web
+systemctl status totton-audio-gadget gpu-upsampler totton-audio-web
 
 # 依存関係確認
 systemctl list-dependencies gpu-upsampler
@@ -382,10 +382,10 @@ systemctl list-dependencies gpu-upsampler
 
 ```bash
 # 有効化
-sudo systemctl enable magicbox-gadget gpu-upsampler magicbox-web
+sudo systemctl enable totton-audio-gadget gpu-upsampler totton-audio-web
 
 # 無効化
-sudo systemctl disable magicbox-web gpu-upsampler magicbox-gadget
+sudo systemctl disable totton-audio-web gpu-upsampler totton-audio-gadget
 ```
 
 ---

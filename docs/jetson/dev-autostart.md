@@ -1,10 +1,10 @@
 # Jetson 開発用自動起動スクリプト
 
-Jetson Orin上で Magic Box を開発する際、再起動の度に
+Jetson Orin上で Totton Audio Project を開発する際、再起動の度に
 `gpu_upsampler_alsa` と Web UI を手動起動する手間をなくすための
 systemd セットアップスクリプトを追加しました。
 
-> ⚠️ **注意**: これは `/opt/magicbox` 以下に正規インストールされた
+> ⚠️ **注意**: これは `/opt/totton_audio` 以下に正規インストールされた
 > プロダクション環境向けではなく、
 > 「GitHub から clone した開発用ワークツリー」専用の機能です。
 
@@ -15,7 +15,7 @@ systemd セットアップスクリプトを追加しました。
 `scripts/jetson/setup-dev-autostart.sh` が以下を行います。
 
 1. リポジトリルート（デフォルト: スクリプト位置から逆算）を検出
-2. `gpu-upsampler-dev.service` と `magicbox-web-dev.service` を `/etc/systemd/system/` に生成
+2. `gpu-upsampler-dev.service` と `totton-audio-web-dev.service` を `/etc/systemd/system/` に生成
 3. `systemctl enable --now` で再起動後も常駐するように設定
 4. `uninstall` でサービス停止＋ファイル削除、`status` で状態参照が可能
 
@@ -48,7 +48,7 @@ sudo ./scripts/jetson/setup-dev-autostart.sh install \
 インストール後の確認:
 
 ```bash
-sudo systemctl status gpu-upsampler-dev.service magicbox-web-dev.service
+sudo systemctl status gpu-upsampler-dev.service totton-audio-web-dev.service
 ```
 
 ### 解除
@@ -75,7 +75,7 @@ sudo ./scripts/jetson/setup-dev-autostart.sh status
 | サービス名 | 役割 | 主な設定 |
 |------------|------|----------|
 | `gpu-upsampler-dev.service` | `build/gpu_upsampler_alsa` をリポジトリ root で実行 | `LimitRTPRIO=99`(Real-Time優先度), `LimitMEMLOCK=infinity`, `Restart=always` |
-| `magicbox-web-dev.service` | `uv run uvicorn web.main:app` を起動し Web UI を提供 | `After=gpu-upsampler-dev`, `Restart=always`, ポート <1024 の場合は Capability 付与 |
+| `totton-audio-web-dev.service` | `uv run uvicorn web.main:app` を起動し Web UI を提供 | `After=gpu-upsampler-dev`, `Restart=always`, ポート <1024 の場合は Capability 付与 |
 
 - どちらも `WantedBy=multi-user.target` のため、Jetson 再起動後に自動で起動します。
 - Web UI は指定ユーザー権限で実行され、`PartOf=gpu-upsampler-dev` により
@@ -90,12 +90,12 @@ sudo ./scripts/jetson/setup-dev-autostart.sh status
 | `uv` が見つからない | `curl -LsSf https://astral.sh/uv/install.sh \| sh` などでインストール |
 | `build/gpu_upsampler_alsa` が無い | Jetson 上で `cmake -B build && cmake --build build -j$(nproc)` を実行 |
 | ポート 80 で起動に失敗する | `--port 11881` など 1024 以上を指定して動作確認 |
-| サービスを完全に無効化したい | `sudo systemctl disable --now magicbox-web-dev gpu-upsampler-dev` を実行 |
+| サービスを完全に無効化したい | `sudo systemctl disable --now totton-audio-web-dev gpu-upsampler-dev` を実行 |
 
 ---
 
 ## 今後の拡張アイデア
 
-- `magicbox-gadget.service` など USB Gadget まわりとの連携
-- `/opt/magicbox` パッケージとの差分を自動検出し警告
+- `totton-audio-gadget.service` など USB Gadget まわりとの連携
+- `/opt/totton_audio` パッケージとの差分を自動検出し警告
 - `--oneshot` でインストールのみ／有効化のみを切り替えるオプション

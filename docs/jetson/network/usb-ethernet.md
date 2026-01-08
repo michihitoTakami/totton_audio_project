@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic BoxはUSB Composite Gadgetの一部としてEthernet機能 (ECM) を提供し、PCからWeb UIへのアクセスを可能にします。
+Totton Audio ProjectはUSB Composite Gadgetの一部としてEthernet機能 (ECM) を提供し、PCからWeb UIへのアクセスを可能にします。
 
 ---
 
@@ -10,7 +10,7 @@ Magic BoxはUSB Composite Gadgetの一部としてEthernet機能 (ECM) を提供
 
 ```
 ┌─────────────────┐                    ┌─────────────────┐
-│       PC        │                    │   Magic Box     │
+│       PC        │                    │   Totton Audio Project     │
 │                 │                    │   (Jetson)      │
 │  ┌───────────┐  │   USB Cable       │  ┌───────────┐  │
 │  │  Browser  │  │                   │  │  Web UI   │  │
@@ -34,7 +34,7 @@ Magic BoxはUSB Composite Gadgetの一部としてEthernet機能 (ECM) を提供
 
 | デバイス | インターフェース | IPアドレス | 備考 |
 |---------|----------------|-----------|------|
-| Jetson (Magic Box) | usb0 | 192.168.55.1/24 | 固定 |
+| Jetson (Totton Audio Project) | usb0 | 192.168.55.1/24 | 固定 |
 | PC (Host) | usb0等 | 192.168.55.100/24 | DHCP割り当て |
 
 ### サブネット選択理由
@@ -93,7 +93,7 @@ USB Ethernet経由のアクセスのみ許可:
 
 ```bash
 #!/bin/bash
-# /usr/local/bin/magicbox-firewall-setup
+# /usr/local/bin/Totton Audio Project-firewall-setup
 
 # nftables使用
 cat > /etc/nftables.conf << 'EOF'
@@ -140,9 +140,9 @@ nft -f /etc/nftables.conf
 ### Systemdサービス
 
 ```ini
-# /etc/systemd/system/magicbox-firewall.service
+# /etc/systemd/system/Totton Audio Project-firewall.service
 [Unit]
-Description=Magic Box Firewall
+Description=Totton Audio Project Firewall
 After=network-pre.target
 Before=network.target
 
@@ -226,10 +226,10 @@ curl http://192.168.55.1/status
 
 ```bash
 # USB Gadget確認
-cat /sys/kernel/config/usb_gadget/magicbox/UDC
+cat /sys/kernel/config/usb_gadget/Totton Audio Project/UDC
 
 # ECM関数確認
-ls /sys/kernel/config/usb_gadget/magicbox/functions/ecm.usb0/
+ls /sys/kernel/config/usb_gadget/Totton Audio Project/functions/ecm.usb0/
 
 # カーネルモジュール確認
 lsmod | grep ecm

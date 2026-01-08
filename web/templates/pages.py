@@ -1,5 +1,5 @@
 """
-Pages module for Magic Box Web UI.
+Pages module for Totton Audio Project Web UI.
 
 This module provides template rendering functions for each page.
 """

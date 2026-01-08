@@ -87,7 +87,7 @@ bool initContext(VulkanContext& ctx) {
     VkApplicationInfo appInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     appInfo.pApplicationName = "vulkan_streaming_upsampler";
     appInfo.applicationVersion = 1;
-    appInfo.pEngineName = "gpu_os";
+    appInfo.pEngineName = "totton_audio";
     appInfo.engineVersion = 1;
     appInfo.apiVersion = VK_API_VERSION_1_1;
 

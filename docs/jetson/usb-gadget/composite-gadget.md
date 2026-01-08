@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxは、単一のUSB Type-Cポートで**オーディオ入力**と**管理アクセス**の両方を提供するUSB Composite Gadgetを実装します。
+Totton Audio Projectは、単一のUSB Type-Cポートで**オーディオ入力**と**管理アクセス**の両方を提供するUSB Composite Gadgetを実装します。
 
 ```
 ┌─────────────────────────────────────────┐
@@ -48,7 +48,7 @@ Magic Boxは、単一のUSB Type-Cポートで**オーディオ入力**と**管�
 ### ディレクトリ構造
 
 ```
-/sys/kernel/config/usb_gadget/magicbox/
+/sys/kernel/config/usb_gadget/Totton Audio Project/
 ├── idVendor                 # 0x1d6b
 ├── idProduct                # 0x0104
 ├── bcdDevice                # 0x0100
@@ -59,8 +59,8 @@ Magic Boxは、単一のUSB Type-Cポートで**オーディオ入力**と**管�
 ├── strings/
 │   └── 0x409/               # English
 │       ├── serialnumber     # MBxxxxxxxx
-│       ├── manufacturer     # MagicBox Audio
-│       └── product          # Magic Box USB Audio
+│       ├── manufacturer     # Totton Audio
+│       └── product          # Totton Audio USB Audio
 ├── functions/
 │   ├── uac2.usb0/           # Audio Function
 │   │   ├── c_chmask         # 3 (Stereo)
@@ -87,19 +87,19 @@ Magic Boxは、単一のUSB Type-Cポートで**オーディオ入力**と**管�
 
 ## 設定スクリプト
 
-### /usr/local/bin/magicbox-gadget-setup
+### /usr/local/bin/totton-audio-gadget-setup
 
 ```bash
 #!/bin/bash
 #
-# Magic Box USB Composite Gadget Setup
+# Totton Audio Project USB Composite Gadget Setup
 # UAC2 (Audio) + ECM (Ethernet)
 #
 
 set -euo pipefail
 
 # === Configuration ===
-GADGET_NAME="magicbox"
+GADGET_NAME="Totton Audio Project"
 GADGET_BASE="/sys/kernel/config/usb_gadget"
 GADGET_PATH="${GADGET_BASE}/${GADGET_NAME}"
 
@@ -109,8 +109,8 @@ USB_PID="0x0104"    # Composite Gadget
 USB_BCD="0x0100"    # Device version 1.0.0
 
 # Strings
-MANUFACTURER="MagicBox Audio"
-PRODUCT="Magic Box USB Audio"
+MANUFACTURER="Totton Audio"
+PRODUCT="Totton Audio USB Audio"
 
 # Generate serial from device serial number
 get_serial() {
@@ -130,7 +130,7 @@ get_mac_suffix() {
 log() {
     local level="$1"
     shift
-    logger -t "magicbox-gadget" -p "user.${level}" "$*"
+    logger -t "totton-audio-gadget" -p "user.${level}" "$*"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
 }
 
@@ -238,7 +238,7 @@ setup_gadget() {
 
     # === Configuration ===
     mkdir -p configs/c.1/strings/0x409
-    echo "Magic Box Audio + Network" > configs/c.1/strings/0x409/configuration
+    echo "Totton Audio + Network" > configs/c.1/strings/0x409/configuration
     echo 500 > configs/c.1/MaxPower   # 500mA
 
     # Link functions to configuration
@@ -318,12 +318,12 @@ esac
 
 ## Systemd サービス
 
-### /etc/systemd/system/magicbox-gadget.service
+### /etc/systemd/system/totton-audio-gadget.service
 
 ```ini
 [Unit]
-Description=Magic Box USB Composite Gadget
-Documentation=https://github.com/michihitoTakami/gpu_os
+Description=Totton Audio Project USB Composite Gadget
+Documentation=https://github.com/michihitoTakami/totton_audio
 DefaultDependencies=no
 Before=network-pre.target
 After=local-fs.target systemd-modules-load.service
@@ -333,9 +333,9 @@ ConditionPathExists=/sys/class/udc
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/magicbox-gadget-setup start
-ExecStop=/usr/local/bin/magicbox-gadget-setup stop
-ExecReload=/usr/local/bin/magicbox-gadget-setup restart
+ExecStart=/usr/local/bin/totton-audio-gadget-setup start
+ExecStop=/usr/local/bin/totton-audio-gadget-setup stop
+ExecReload=/usr/local/bin/totton-audio-gadget-setup restart
 
 # Recovery
 Restart=on-failure
@@ -409,7 +409,7 @@ ls /sys/class/udc/
 lsmod | grep -E 'libcomposite|usb_f_uac2|usb_f_ecm'
 
 # ログ確認
-journalctl -u magicbox-gadget.service
+journalctl -u totton-audio-gadget.service
 dmesg | grep -i gadget
 ```
 
@@ -421,7 +421,7 @@ aplay -l
 arecord -l
 
 # UAC2 function 確認
-cat /sys/kernel/config/usb_gadget/magicbox/functions/uac2.usb0/c_srate
+cat /sys/kernel/config/usb_gadget/Totton Audio Project/functions/uac2.usb0/c_srate
 ```
 
 ---

@@ -5,7 +5,7 @@ from web.main import create_app
 
 def test_i2s_peer_status_accepts_first_update(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv(
-        "MAGICBOX_I2S_PEER_STATUS_PATH", str(tmp_path / "peer-status.json")
+        "TOTTON_AUDIO_I2S_PEER_STATUS_PATH", str(tmp_path / "peer-status.json")
     )
     app = create_app()
     client = TestClient(app)
@@ -33,7 +33,7 @@ def test_i2s_peer_status_accepts_first_update(monkeypatch, tmp_path) -> None:
 
 def test_i2s_peer_status_ignores_stale_generation(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv(
-        "MAGICBOX_I2S_PEER_STATUS_PATH", str(tmp_path / "peer-status.json")
+        "TOTTON_AUDIO_I2S_PEER_STATUS_PATH", str(tmp_path / "peer-status.json")
     )
     app = create_app()
     client = TestClient(app)
@@ -76,7 +76,7 @@ def test_i2s_peer_status_accepts_same_generation_newer_timestamp(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv(
-        "MAGICBOX_I2S_PEER_STATUS_PATH", str(tmp_path / "peer-status.json")
+        "TOTTON_AUDIO_I2S_PEER_STATUS_PATH", str(tmp_path / "peer-status.json")
     )
     app = create_app()
     client = TestClient(app)

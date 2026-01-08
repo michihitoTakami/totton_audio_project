@@ -1,4 +1,4 @@
-# Dockerfile for Magic Box - Jetson Orin Nano Super
+# Dockerfile for Totton Audio Project - Jetson Orin Nano Super
 #
 # This Dockerfile is designed to run NATIVELY on Jetson Orin (ARM64).
 # Do NOT try to build this on x86_64 without cross-compilation setup.
@@ -7,10 +7,10 @@
 # Target: Jetson Orin Nano Super (SM 8.7 Ampere, 1024 CUDA cores)
 #
 # Build on Jetson:
-#   docker build -f docker/jetson/Dockerfile.jetson -t magicbox:latest .
+#   docker build -f docker/jetson/Dockerfile.jetson -t Totton Audio Project:latest .
 #
 # Run:
-#   docker run --runtime=nvidia --device /dev/snd -p 80:80 magicbox:latest
+#   docker run --runtime=nvidia --device /dev/snd -p 80:80 Totton Audio Project:latest
 #
 
 # =============================================================================
@@ -18,8 +18,8 @@
 # =============================================================================
 FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
 
-LABEL maintainer="Magic Box Project"
-LABEL description="Magic Box Audio Processor for Jetson Orin Nano Super"
+LABEL maintainer="Totton Audio Project"
+LABEL description="Totton Audio Processor for Jetson Orin Nano Super"
 LABEL version="0.1.0"
 
 # Environment variables
@@ -29,8 +29,8 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # CUDA runtime paths (include ONNX Runtime for De-limiter)
-ENV PATH=/usr/local/cuda/bin:/opt/magicbox/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/magicbox/lib:/opt/onnxruntime/lib:${LD_LIBRARY_PATH}
+ENV PATH=/usr/local/cuda/bin:/opt/totton_audio/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/totton_audio/lib:/opt/onnxruntime/lib:${LD_LIBRARY_PATH}
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app + log directories
-WORKDIR /opt/magicbox
+WORKDIR /opt/totton_audio
 RUN mkdir -p bin build && mkdir -p /var/log/gpu_upsampler
 
 # Copy pre-built binaries from host (same architecture)
@@ -71,8 +71,8 @@ COPY data/coefficients/ data/coefficients/
 COPY data/EQ/ data/EQ/
 COPY data/crossfeed/ data/crossfeed/
 # Seed default config (copied to writable volume at runtime)
-RUN mkdir -p /opt/magicbox/config-default
-COPY config.json /opt/magicbox/config-default/config.json
+RUN mkdir -p /opt/totton_audio/config-default
+COPY config.json /opt/totton_audio/config-default/config.json
 
 # Copy Python Control Plane
 COPY web/ web/
@@ -80,19 +80,19 @@ COPY scripts/ scripts/
 COPY pyproject.toml uv.lock ./
 
 # Install uv and setup Python environment
-ENV UV_PROJECT_ENVIRONMENT=/opt/magicbox/venv
+ENV UV_PROJECT_ENVIRONMENT=/opt/totton_audio/venv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && export PATH="$HOME/.local/bin:$PATH" \
-    && uv venv /opt/magicbox/venv \
+    && uv venv /opt/totton_audio/venv \
     && uv sync --frozen
 
-ENV PATH="/opt/magicbox/venv/bin:$PATH"
+ENV PATH="/opt/totton_audio/venv/bin:$PATH"
 
 # Create non-root user for security
-RUN useradd -m -s /bin/bash -G audio magicbox
+RUN useradd -m -s /bin/bash -G audio totton_audio
 
 # Set ownership
-RUN chown -R magicbox:magicbox /opt/magicbox
+RUN chown -R totton_audio:totton_audio /opt/totton_audio
 
 # Expose ports
 # 80: Web UI (HTTP)
@@ -104,7 +104,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 # Default: run as root for audio device access
 # For production, consider mapping audio group properly
-# USER magicbox
+# USER Totton Audio Project
 
 # Entry point script
 COPY docker/jetson/entrypoint.sh /usr/local/bin/entrypoint.sh

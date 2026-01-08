@@ -1,4 +1,4 @@
-# Magic Box Project - 魔法の箱
+# Totton Audio Project - 魔法の箱
 
 **全てのヘッドホンユーザーに最高の音を届ける箱**
 

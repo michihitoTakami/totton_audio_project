@@ -54,7 +54,7 @@ public:
         std::uniform_int_distribution<> dis(0, 999999);
 
         path_ = std::filesystem::temp_directory_path().string() +
-                "/gpu_os_test_" + std::to_string(now) + "_" + std::to_string(dis(gen));
+                "/totton_audio_test_" + std::to_string(now) + "_" + std::to_string(dis(gen));
 
         std::error_code ec;
         std::filesystem::create_directories(path_, ec);

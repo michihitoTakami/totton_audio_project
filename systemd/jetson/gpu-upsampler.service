@@ -1,13 +1,13 @@
 [Unit]
-Description=GPU Audio Upsampler Engine (Magic Box)
-Documentation=https://github.com/michihitoTakami/gpu_os
+Description=GPU Audio Upsampler Engine (Totton Audio Project)
+Documentation=https://github.com/michihitoTakami/totton_audio
 
 # Dependencies
-After=magicbox-gadget.service sound.target
-Requires=magicbox-gadget.service
+After=totton-audio-gadget.service sound.target
+Requires=totton-audio-gadget.service
 
 # If gadget stops, stop this service too
-BindsTo=magicbox-gadget.service
+BindsTo=totton-audio-gadget.service
 
 # Hardware requirements
 ConditionPathExists=/dev/nvidia0
@@ -17,8 +17,8 @@ Type=notify
 NotifyAccess=main
 
 # Execution
-WorkingDirectory=/opt/magicbox
-ExecStart=/opt/magicbox/bin/gpu_upsampler_alsa
+WorkingDirectory=/opt/totton_audio
+ExecStart=/opt/totton_audio/bin/gpu_upsampler_alsa
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Watchdog (systemd will restart if no heartbeat within 30s)

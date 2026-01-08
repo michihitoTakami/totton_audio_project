@@ -9,7 +9,7 @@ I2S移行を運用に載せるため、以下を「手順書だけで第三者�
 - 典型トラブル（無音/片ch/歪み/クリック）時のチェックリスト
 
 ## 前提（推奨構成）
-- **Jetson**: `docker/jetson/docker-compose.jetson.yml` の `magicbox` コンテナで運用（本番想定）
+- **Jetson**: `docker/jetson/docker-compose.jetson.yml` の `Totton Audio Project` コンテナで運用（本番想定）
 - **Raspberry Pi**: `raspberry_pi/docker-compose.yml` で運用し、常駐は systemd ユニットでラップ
   - ユニット導入: `scripts/deployment/setup-pi-usb-i2s-bridge.sh`
 
@@ -25,12 +25,12 @@ I2S移行を運用に載せるため、以下を「手順書だけで第三者�
 
 ## 設定ファイルの場所（重要）
 
-### Jetson（magicboxコンテナ）
-- 設定実体: `/opt/magicbox/config/config.json`（Docker volume `magicbox-config`）
-- 参照用シンボリックリンク: `/opt/magicbox/config.json`（上記への symlink）
+### Jetson（Totton Audio Projectコンテナ）
+- 設定実体: `/opt/totton_audio/config/config.json`（Docker volume `Totton Audio Project-config`）
+- 参照用シンボリックリンク: `/opt/totton_audio/config.json`（上記への symlink）
 - RTP APIの露出/自動起動:
-  - `MAGICBOX_ENABLE_RTP=true` で RTP関連APIが有効化
-  - `MAGICBOX_RTP_AUTOSTART=true` でWeb起動時にRTP受信を自動開始
+  - `TOTTON_AUDIO_ENABLE_RTP=true` で RTP関連APIが有効化
+  - `TOTTON_AUDIO_RTP_AUTOSTART=true` でWeb起動時にRTP受信を自動開始
 
 ### Raspberry Pi（usb-i2s-bridge）
 - 設定実体: `/var/lib/usb-i2s-bridge/config.env`
@@ -52,8 +52,8 @@ docker compose -f jetson/docker-compose.jetson.yml logs -f
 
 確認（例）:
 - Web: `http://192.168.55.1/` が開ける
-- コンテナ内設定: `docker compose -f jetson/docker-compose.jetson.yml exec magicbox ls -l /opt/magicbox/config.json`
-- I2S入力が有効: `docker compose -f jetson/docker-compose.jetson.yml exec magicbox jq '.i2s.enabled, .i2s.device' /opt/magicbox/config/config.json`
+- コンテナ内設定: `docker compose -f jetson/docker-compose.jetson.yml exec Totton Audio Project ls -l /opt/totton_audio/config.json`
+- I2S入力が有効: `docker compose -f jetson/docker-compose.jetson.yml exec Totton Audio Project jq '.i2s.enabled, .i2s.device' /opt/totton_audio/config/config.json`
 
 ### Raspberry Pi（Docker Compose + systemd常駐）
 まずは手動で起動確認（その後systemd導入推奨）。
@@ -104,7 +104,7 @@ docker compose -f raspberry_pi/docker-compose.yml down
 
 ### 失敗したときの最短復旧
 - Pi: `sudo systemctl restart usb-i2s-bridge.service`（または compose 再起動）
-- Jetson: `docker compose -f jetson/docker-compose.jetson.yml restart magicbox`
+- Jetson: `docker compose -f jetson/docker-compose.jetson.yml restart Totton Audio Project`
 
 ---
 
@@ -115,7 +115,7 @@ docker compose -f raspberry_pi/docker-compose.yml down
 
 ```bash
 cd docker
-docker compose -f jetson/docker-compose.jetson.yml exec magicbox sh -lc '
+docker compose -f jetson/docker-compose.jetson.yml exec Totton Audio Project sh -lc '
   set -e
   jq ".i2s.enabled=true
       | .i2s.device=\"hw:APE,0\"
@@ -123,16 +123,16 @@ docker compose -f jetson/docker-compose.jetson.yml exec magicbox sh -lc '
       | .i2s.channels=2
       | .i2s.format=\"S32_LE\"
       | .i2s.periodFrames=1024
-      | .loopback.enabled=false" /opt/magicbox/config/config.json > /tmp/config.json
-  mv /tmp/config.json /opt/magicbox/config/config.json
+      | .loopback.enabled=false" /opt/totton_audio/config/config.json > /tmp/config.json
+  mv /tmp/config.json /opt/totton_audio/config/config.json
 '
-docker compose -f jetson/docker-compose.jetson.yml restart magicbox
+docker compose -f jetson/docker-compose.jetson.yml restart Totton Audio Project
 ```
 
 RTPを無効化する（不要なら）:
 ```bash
 cd docker
-MAGICBOX_ENABLE_RTP=false MAGICBOX_RTP_AUTOSTART=false \
+TOTTON_AUDIO_ENABLE_RTP=false TOTTON_AUDIO_RTP_AUTOSTART=false \
   docker compose -f jetson/docker-compose.jetson.yml up -d
 ```
 
@@ -154,14 +154,14 @@ sudo systemctl restart usb-i2s-bridge.service
 ## フォールバック手順: I2S → RTP（緊急）
 
 ### 0) 前提確認（Jetson側）
-RTPは `MAGICBOX_ENABLE_RTP=true` のときのみAPIが有効になる。加えて、
+RTPは `TOTTON_AUDIO_ENABLE_RTP=true` のときのみAPIが有効になる。加えて、
 `docker/jetson/docker-compose.jetson.yml` は UDP(46000/46001/46002) を公開済み（Issue #827）。
 
 ### 1) Jetson: loopback入力へ切替 + RTPを有効化
 
 ```bash
 cd docker
-docker compose -f jetson/docker-compose.jetson.yml exec magicbox sh -lc '
+docker compose -f jetson/docker-compose.jetson.yml exec Totton Audio Project sh -lc '
   set -e
   jq ".i2s.enabled=false
       | .loopback.enabled=true
@@ -169,19 +169,19 @@ docker compose -f jetson/docker-compose.jetson.yml exec magicbox sh -lc '
       | .loopback.sampleRate=44100
       | .loopback.channels=2
       | .loopback.format=\"S32_LE\"
-      | .loopback.periodFrames=1024" /opt/magicbox/config/config.json > /tmp/config.json
-  mv /tmp/config.json /opt/magicbox/config/config.json
+      | .loopback.periodFrames=1024" /opt/totton_audio/config/config.json > /tmp/config.json
+  mv /tmp/config.json /opt/totton_audio/config/config.json
 '
 
 # RTP API有効化 + 自動起動（どちらも必要）
-MAGICBOX_ENABLE_RTP=true MAGICBOX_RTP_AUTOSTART=true \
+TOTTON_AUDIO_ENABLE_RTP=true TOTTON_AUDIO_RTP_AUTOSTART=true \
   docker compose -f jetson/docker-compose.jetson.yml up -d
 
 # 念のため再起動（設定読み直し + autostart）
-docker compose -f jetson/docker-compose.jetson.yml restart magicbox
+docker compose -f jetson/docker-compose.jetson.yml restart Totton Audio Project
 ```
 
-自動起動しない運用なら（`MAGICBOX_RTP_AUTOSTART=false` の場合）:
+自動起動しない運用なら（`TOTTON_AUDIO_RTP_AUTOSTART=false` の場合）:
 ```bash
 curl -X POST http://192.168.55.1/api/rtp-input/start
 ```
@@ -230,7 +230,7 @@ docker compose -f raspberry_pi/docker-compose.yml --profile rtp up -d --build rt
   - `USB_I2S_ALSA_BUFFER_TIME_US` / `USB_I2S_ALSA_LATENCY_TIME_US` を増やす（まず 2倍）
 - Jetson側:
   - `i2s.periodFrames` を増やす（例: 1024→2048）
-  - コンテナ環境変数 `MAGICBOX_WAIT_AUDIO_SECS` を増やし、起動時のデバイス未準備を避ける
+  - コンテナ環境変数 `TOTTON_AUDIO_WAIT_AUDIO_SECS` を増やし、起動時のデバイス未準備を避ける
 
 ---
 

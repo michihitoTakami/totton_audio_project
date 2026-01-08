@@ -28,7 +28,7 @@ LINEAR_PHASE_WARNING = f"線形位相: {LINEAR_PHASE_DESCRIPTION}。約0.45秒�
 # ZeroMQ
 # ============================================================================
 
-ZEROMQ_IPC_PATH = "ipc:///tmp/gpu_os.sock"
+ZEROMQ_IPC_PATH = "ipc:///tmp/totton_audio.sock"
 
 # ============================================================================
 # Daemon

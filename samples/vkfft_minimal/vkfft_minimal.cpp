@@ -35,9 +35,9 @@ uint32_t findComputeQueueFamilyIndex(VkPhysicalDevice physicalDevice) {
 
 VkFFTResult createVulkanContext(VulkanContext& ctx) {
     VkApplicationInfo appInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    appInfo.pApplicationName = "gpu_os VkFFT minimal";
+    appInfo.pApplicationName = "totton_audio VkFFT minimal";
     appInfo.applicationVersion = 1;
-    appInfo.pEngineName = "gpu_os";
+    appInfo.pEngineName = "totton_audio";
     appInfo.engineVersion = 1;
     appInfo.apiVersion = VK_API_VERSION_1_1;
 

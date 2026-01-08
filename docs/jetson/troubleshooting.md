@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxで発生する可能性のある問題と解決方法をまとめています。
+Totton Audio Projectで発生する可能性のある問題と解決方法をまとめています。
 
 ---
 
@@ -10,13 +10,13 @@ Magic Boxで発生する可能性のある問題と解決方法をまとめて�
 
 ```bash
 # 全サービスステータス確認
-systemctl status magicbox-gadget gpu-upsampler magicbox-web
+systemctl status totton-audio-gadget gpu-upsampler totton-audio-web
 
 # 直近のエラーログ
 journalctl -p err --since "1 hour ago"
 
 # USB Gadget状態
-/usr/local/bin/magicbox-gadget-setup status
+/usr/local/bin/totton-audio-gadget-setup status
 
 # ネットワーク状態
 networkctl status usb0
@@ -26,7 +26,7 @@ networkctl status usb0
 
 ## 1. USB関連の問題
 
-### 1.1 PCがMagic Boxを認識しない
+### 1.1 PCがTotton Audio Projectを認識しない
 
 **症状**: USBケーブルを接続してもPCにデバイスが表示されない
 
@@ -36,7 +36,7 @@ networkctl status usb0
 ls /sys/class/udc/
 
 # Gadget設定確認
-cat /sys/kernel/config/usb_gadget/magicbox/UDC
+cat /sys/kernel/config/usb_gadget/Totton Audio Project/UDC
 
 # dmesgでUSBエラー確認
 dmesg | grep -i usb | tail -20
@@ -48,7 +48,7 @@ dmesg | grep -i usb | tail -20
 2. 別のUSBポートを試す
 3. Gadgetサービス再起動:
    ```bash
-   sudo systemctl restart magicbox-gadget
+   sudo systemctl restart totton-audio-gadget
    ```
 4. Jetson再起動
 
@@ -64,7 +64,7 @@ dmesg | grep -i usb | tail -20
 lsmod | grep uac2
 
 # UAC2関数確認
-ls /sys/kernel/config/usb_gadget/magicbox/functions/uac2.usb0/
+ls /sys/kernel/config/usb_gadget/Totton Audio Project/functions/uac2.usb0/
 ```
 
 **解決策**:
@@ -103,7 +103,7 @@ ls /sys/kernel/config/usb_gadget/magicbox/functions/uac2.usb0/
 ```bash
 # Jetson側
 ip addr show usb0
-systemctl status magicbox-web
+systemctl status totton-audio-web
 
 # PC側
 ping 192.168.55.1
@@ -119,12 +119,12 @@ ping 192.168.55.1
 
 2. Webサービス再起動:
    ```bash
-   sudo systemctl restart magicbox-web
+   sudo systemctl restart totton-audio-web
    ```
 
 ---
 
-### 2.2 magicbox.local が解決できない
+### 2.2 totton-audio.local が解決できない
 
 **症状**: IPアドレスでは接続できるが、ホスト名では接続できない
 
@@ -168,7 +168,7 @@ journalctl -u gpu-upsampler | grep -i "input"
 
 **解決策**:
 
-1. PC側の出力デバイスがMagic Boxになっているか確認
+1. PC側の出力デバイスがTotton Audio Projectになっているか確認
 2. DAC接続確認
 3. デーモン再起動:
    ```bash
@@ -245,7 +245,7 @@ journalctl -xeu gpu-upsampler
 
 1. 依存サービス確認:
    ```bash
-   systemctl status magicbox-gadget
+   systemctl status totton-audio-gadget
    ```
 
 2. GPU確認:
@@ -256,7 +256,7 @@ journalctl -xeu gpu-upsampler
 
 3. 設定ファイル確認:
    ```bash
-   cat /opt/magicbox/config.json | jq .
+   cat /opt/totton_audio/config.json | jq .
    ```
 
 ---
@@ -346,7 +346,7 @@ systemd-analyze critical-chain gpu-upsampler
 **確認項目**:
 ```bash
 # 更新ログ
-journalctl -u magicbox-update
+journalctl -u totton-audio-update
 
 # ディスク容量
 df -h
@@ -358,7 +358,7 @@ df -h
 2. ディスク容量確保
 3. 手動アップデート:
    ```bash
-   sudo /usr/local/bin/magicbox-update apply
+   sudo /usr/local/bin/totton-audio-update apply
    ```
 
 ---
@@ -374,26 +374,26 @@ cat /etc/os-release
 nvidia-smi
 
 # サービスログ
-journalctl -u magicbox-gadget --since "1 hour ago" > gadget.log
+journalctl -u totton-audio-gadget --since "1 hour ago" > gadget.log
 journalctl -u gpu-upsampler --since "1 hour ago" > upsampler.log
-journalctl -u magicbox-web --since "1 hour ago" > web.log
+journalctl -u totton-audio-web --since "1 hour ago" > web.log
 
 # 設定
-cp /opt/magicbox/config.json config.json
+cp /opt/totton_audio/config.json config.json
 
 # 統計
 cp /tmp/gpu_upsampler_stats.json stats.json
 
 # まとめて圧縮
-tar czf magicbox-debug-$(date +%Y%m%d).tar.gz *.log *.json
+tar czf Totton Audio Project-debug-$(date +%Y%m%d).tar.gz *.log *.json
 ```
 
 ---
 
 ## サポート
 
-- **GitHub Issues**: https://github.com/michihitoTakami/gpu_os/issues
-- **ドキュメント**: https://github.com/michihitoTakami/gpu_os/docs/jetson/
+- **GitHub Issues**: https://github.com/michihitoTakami/totton_audio/issues
+- **ドキュメント**: https://github.com/michihitoTakami/totton_audio/docs/jetson/
 
 ---
 

@@ -82,7 +82,7 @@ UAC2が動作しない場合の代替入力方式:
 ### 代替案1: USB DDC経由入力
 
 ```
-PC  ──USB──>  USB-DDC  ──S/PDIF──>  Magic Box  ──USB──>  DAC
+PC  ──USB──>  USB-DDC  ──S/PDIF──>  Totton Audio Project  ──USB──>  DAC
                          (同軸/光)
 ```
 
@@ -110,7 +110,7 @@ snd_pcm_open(&capture_handle, "hw:SPDIF", SND_PCM_STREAM_CAPTURE, 0);
 
 ```
                     ┌─────────────────────────┐
-PC  ──USB──>  DAC  ─┤ I2S (BCLK, LRCK, DATA) ├──>  Magic Box (GPIO)
+PC  ──USB──>  DAC  ─┤ I2S (BCLK, LRCK, DATA) ├──>  Totton Audio Project (GPIO)
                     └─────────────────────────┘
 ```
 
@@ -167,7 +167,7 @@ Jetson Orin Nano DevKit（キャリアボード）の **J12（40pin）** は、I
 ### 代替案4: USB Audio Host Mode + 専用入力デバイス
 
 ```
-PC  ──USB──>  USB Audio Interface  ──USB──>  Magic Box (Host)  ──>  DAC
+PC  ──USB──>  USB Audio Interface  ──USB──>  Totton Audio Project (Host)  ──>  DAC
               (UAC2対応)
 ```
 

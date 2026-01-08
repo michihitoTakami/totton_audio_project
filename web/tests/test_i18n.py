@@ -8,11 +8,11 @@ class TestGetText:
 
     def test_get_text_english_app_title(self):
         """Test getting app title in English."""
-        assert get_text("app.title", "en") == "Magic Box"
+        assert get_text("app.title", "en") == "Totton Audio Project"
 
     def test_get_text_japanese_app_title(self):
         """Test getting app title in Japanese."""
-        assert get_text("app.title", "ja") == "Magic Box"
+        assert get_text("app.title", "ja") == "Totton Audio Project"
 
     def test_get_text_english_tagline(self):
         """Test getting tagline in English."""
@@ -24,7 +24,7 @@ class TestGetText:
 
     def test_get_text_default_language_english(self):
         """Test default language is English."""
-        assert get_text("app.title") == "Magic Box"
+        assert get_text("app.title") == "Totton Audio Project"
 
     def test_get_text_missing_key_returns_key(self):
         """Test that missing keys return the key itself."""
@@ -33,7 +33,7 @@ class TestGetText:
 
     def test_get_text_invalid_language_falls_back_to_english(self):
         """Test that invalid language codes fall back to English."""
-        assert get_text("app.title", "invalid_lang") == "Magic Box"
+        assert get_text("app.title", "invalid_lang") == "Totton Audio Project"
 
 
 class TestGetTranslations:
@@ -43,20 +43,20 @@ class TestGetTranslations:
         """Test getting all English translations."""
         translations = get_translations("en")
         assert isinstance(translations, dict)
-        assert translations["app.title"] == "Magic Box"
+        assert translations["app.title"] == "Totton Audio Project"
         assert "nav.dashboard" in translations
 
     def test_get_translations_japanese(self):
         """Test getting all Japanese translations."""
         translations = get_translations("ja")
         assert isinstance(translations, dict)
-        assert translations["app.title"] == "Magic Box"
+        assert translations["app.title"] == "Totton Audio Project"
         assert translations["app.tagline"] == "究極のオーディオ体験"
 
     def test_get_translations_default_english(self):
         """Test default language is English."""
         translations = get_translations()
-        assert translations["app.title"] == "Magic Box"
+        assert translations["app.title"] == "Totton Audio Project"
 
     def test_get_translations_invalid_language_returns_english(self):
         """Test invalid language returns English translations."""

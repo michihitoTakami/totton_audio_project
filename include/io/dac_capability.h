@@ -35,7 +35,7 @@ bool isRateSupported(const Capability& cap, int sampleRate);
 // Get the maximum supported rate that is <= the requested rate
 int getBestSupportedRate(const Capability& cap, int requestedRate);
 
-// Common target rates for Magic Box
+// Common target rates for Totton Audio Project
 constexpr int TARGET_RATE_44K_FAMILY = 705600;  // 44.1k × 16
 constexpr int TARGET_RATE_48K_FAMILY = 768000;  // 48k × 16
 

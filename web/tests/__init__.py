@@ -1,1 +1,1 @@
-"""Unit tests for the Magic Box Web UI."""
+"""Unit tests for the Totton Audio Project Web UI."""

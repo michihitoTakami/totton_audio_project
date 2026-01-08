@@ -236,7 +236,7 @@ UpsamplerBuildResult buildUpsampler(AppConfig& config, int inputSampleRate,
         return result;
     }
 
-    bool enableNonBlocking = env_flag("MAGICBOX_GPU_STREAMING_NONBLOCKING", false);
+    bool enableNonBlocking = env_flag("TOTTON_AUDIO_GPU_STREAMING_NONBLOCKING", false);
     upsampler->setStreamingNonBlocking(enableNonBlocking);
     std::cout << "GPU streaming non-blocking: " << (enableNonBlocking ? "enabled" : "disabled")
               << '\n';

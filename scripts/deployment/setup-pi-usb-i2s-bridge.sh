@@ -35,7 +35,7 @@ trap 'rm -f "${tmp}"' EXIT
 # Bake absolute paths to avoid relying on WorkingDirectory being identical across machines.
 cat > "${tmp}" <<EOF
 [Unit]
-Description=Magic Box USB->I2S Bridge (Docker Compose)
+Description=Totton Audio Project USB->I2S Bridge (Docker Compose)
 Wants=network-online.target docker.service
 After=network-online.target docker.service
 

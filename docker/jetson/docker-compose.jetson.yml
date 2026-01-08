@@ -1,4 +1,4 @@
-# Docker Compose for Magic Box - Jetson Orin Nano Super
+# Docker Compose for Totton Audio Project - Jetson Orin Nano Super
 #
 # Production deployment configuration.
 #
@@ -15,14 +15,14 @@
 
 services:
   # ==========================================================================
-  # Magic Box (Audio Daemon + Web UI in single container)
+  # Totton Audio Project (Audio Daemon + Web UI in single container)
   # ==========================================================================
-  magicbox:
-    image: magicbox:latest
+  Totton Audio Project:
+    image: totton_audio:latest
     build:
       context: ../..
       dockerfile: docker/jetson/Dockerfile.jetson
-    container_name: magicbox
+    container_name: totton_audio
     command: all
     restart: always
 
@@ -50,12 +50,12 @@ services:
     # Static data (coefficients, OPRA database) is read-only for protection
     # EQ profiles directory is writable for dynamic profile generation
     volumes:
-      - ../../data:/opt/magicbox/data:ro
-      - ../../data/EQ:/opt/magicbox/data/EQ:rw
+      - ../../data:/opt/totton_audio/data:ro
+      - ../../data/EQ:/opt/totton_audio/data/EQ:rw
       # Persist runtime config outside the image (survives rebuilds)
-      - magicbox-config:/opt/magicbox/config
+      - Totton Audio Project-config:/opt/totton_audio/config
       # Persist OPRA sync cache outside the image
-      - magicbox-opra-cache:/data/opra
+      - Totton Audio Project-opra-cache:/data/opra
       # ONNX Runtime for De-limiter inference
       - /opt/onnxruntime:/opt/onnxruntime:ro
 
@@ -63,26 +63,26 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - MAGICBOX_PROFILE=jetson
+      - TOTTON_AUDIO_PROFILE=jetson
       # Data root for OPRA cache (mounted as a volume)
       - GPU_OS_DATA_DIR=/data
       # RTP はコードとして残すが、I2Sメイン運用ではデフォルトで無効化する。
-      # 必要な場合のみ MAGICBOX_ENABLE_RTP=true にし、必要ならポートも公開する。
-      - MAGICBOX_ENABLE_RTP=false
-      - MAGICBOX_RTP_AUTOSTART=false
+      # 必要な場合のみ TOTTON_AUDIO_ENABLE_RTP=true にし、必要ならポートも公開する。
+      - TOTTON_AUDIO_ENABLE_RTP=false
+      - TOTTON_AUDIO_RTP_AUTOSTART=false
       # USB直結構成では mDNS(raspberrypi.local) が見えないことがあるため、IPで固定
-      - MAGICBOX_RTP_SENDER_HOST=192.168.55.100
+      - TOTTON_AUDIO_RTP_SENDER_HOST=192.168.55.100
       # ZeroMQ ブリッジを使う場合（任意）
       - RTP_BRIDGE_ENDPOINT=tcp://192.168.55.100:60000
       # Pi control API (USB-I2S bridge)
       # Pi の USB(gadget) 側IPは 192.168.55.100 を前提（mDNS が見えない構成でも到達できるよう固定）。
-      - MAGICBOX_PI_API_BASE=${MAGICBOX_PI_API_BASE:-http://192.168.55.100:8081}
+      - TOTTON_AUDIO_PI_API_BASE=${TOTTON_AUDIO_PI_API_BASE:-http://192.168.55.100:8081}
       # Wait for ALSA devices to appear after cold boot
-      - MAGICBOX_WAIT_AUDIO_SECS=8
-      - MAGICBOX_WAIT_LOOPBACK=true
-      # Set MAGICBOX_RESET_CONFIG=true to restore default config on next start
-      # - MAGICBOX_RTP_RTCP_SEND_ENABLED=0
-      # - MAGICBOX_RTP_USE_RTPBIN=0
+      - TOTTON_AUDIO_WAIT_AUDIO_SECS=8
+      - TOTTON_AUDIO_WAIT_LOOPBACK=true
+      # Set TOTTON_AUDIO_RESET_CONFIG=true to restore default config on next start
+      # - TOTTON_AUDIO_RTP_RTCP_SEND_ENABLED=0
+      # - TOTTON_AUDIO_RTP_USE_RTPBIN=0
 
     # Real-time priority (requires CAP_SYS_NICE)
     cap_add:
@@ -104,5 +104,5 @@ services:
 
 
 volumes:
-  magicbox-config:
-  magicbox-opra-cache:
+  Totton Audio Project-config:
+  Totton Audio Project-opra-cache:

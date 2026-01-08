@@ -19,9 +19,9 @@ class _SpyRtpManager:
 def _make_client(monkeypatch, autostart_env: str | None, enable_env: str | None):
     manager = _SpyRtpManager()
     if autostart_env is None:
-        monkeypatch.delenv("MAGICBOX_RTP_AUTOSTART", raising=False)
+        monkeypatch.delenv("TOTTON_AUDIO_RTP_AUTOSTART", raising=False)
     else:
-        monkeypatch.setenv("MAGICBOX_RTP_AUTOSTART", autostart_env)
+        monkeypatch.setenv("TOTTON_AUDIO_RTP_AUTOSTART", autostart_env)
 
     enable_rtp = enable_env is not None and enable_env.strip().lower() in {
         "1",

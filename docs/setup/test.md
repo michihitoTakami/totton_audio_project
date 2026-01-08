@@ -1,6 +1,6 @@
 # テスト実行手順
 
-Magic Box Projectのテスト実行方法。
+Totton Audio Projectのテスト実行方法。
 
 ## テスト概要
 

@@ -37,9 +37,9 @@ def test_config_init_seeds_default_when_missing(tmp_path: Path) -> None:
     result = _run_entrypoint(
         tmp_path,
         {
-            "MAGICBOX_CONFIG_DIR": str(config_dir),
-            "MAGICBOX_CONFIG_SYMLINK": str(symlink_path),
-            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
+            "TOTTON_AUDIO_CONFIG_DIR": str(config_dir),
+            "TOTTON_AUDIO_CONFIG_SYMLINK": str(symlink_path),
+            "TOTTON_AUDIO_DEFAULT_CONFIG": str(default_file),
         },
         "config-init",
     )
@@ -68,9 +68,9 @@ def test_config_init_preserves_existing_without_reset(tmp_path: Path) -> None:
     result = _run_entrypoint(
         tmp_path,
         {
-            "MAGICBOX_CONFIG_DIR": str(config_dir),
-            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
-            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
+            "TOTTON_AUDIO_CONFIG_DIR": str(config_dir),
+            "TOTTON_AUDIO_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "TOTTON_AUDIO_DEFAULT_CONFIG": str(default_file),
         },
         "config-init",
     )
@@ -96,9 +96,9 @@ def test_config_init_prefers_i2s_when_both_enabled(tmp_path: Path) -> None:
     result = _run_entrypoint(
         tmp_path,
         {
-            "MAGICBOX_CONFIG_DIR": str(config_dir),
-            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
-            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
+            "TOTTON_AUDIO_CONFIG_DIR": str(config_dir),
+            "TOTTON_AUDIO_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "TOTTON_AUDIO_DEFAULT_CONFIG": str(default_file),
         },
         "config-init",
     )
@@ -134,10 +134,10 @@ def test_config_init_applies_jetson_profile(tmp_path: Path) -> None:
     result = _run_entrypoint(
         tmp_path,
         {
-            "MAGICBOX_CONFIG_DIR": str(config_dir),
-            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
-            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
-            "MAGICBOX_PROFILE": "jetson",
+            "TOTTON_AUDIO_CONFIG_DIR": str(config_dir),
+            "TOTTON_AUDIO_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "TOTTON_AUDIO_DEFAULT_CONFIG": str(default_file),
+            "TOTTON_AUDIO_PROFILE": "jetson",
         },
         "config-init",
     )
@@ -168,10 +168,10 @@ def test_config_init_resets_when_flag_true(tmp_path: Path) -> None:
     result = _run_entrypoint(
         tmp_path,
         {
-            "MAGICBOX_CONFIG_DIR": str(config_dir),
-            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
-            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
-            "MAGICBOX_RESET_CONFIG": "true",
+            "TOTTON_AUDIO_CONFIG_DIR": str(config_dir),
+            "TOTTON_AUDIO_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "TOTTON_AUDIO_DEFAULT_CONFIG": str(default_file),
+            "TOTTON_AUDIO_RESET_CONFIG": "true",
         },
         "config-init",
     )
@@ -195,9 +195,9 @@ def test_config_init_recovers_invalid_json(tmp_path: Path) -> None:
     result = _run_entrypoint(
         tmp_path,
         {
-            "MAGICBOX_CONFIG_DIR": str(config_dir),
-            "MAGICBOX_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
-            "MAGICBOX_DEFAULT_CONFIG": str(default_file),
+            "TOTTON_AUDIO_CONFIG_DIR": str(config_dir),
+            "TOTTON_AUDIO_CONFIG_SYMLINK": str(tmp_path / "config-link.json"),
+            "TOTTON_AUDIO_DEFAULT_CONFIG": str(default_file),
         },
         "config-init",
     )

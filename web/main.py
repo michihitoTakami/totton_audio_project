@@ -109,10 +109,12 @@ def create_app(*, enable_rtp: bool | None = None) -> FastAPI:
     FastAPIアプリを生成する。
 
     - RTP はデフォルト無効（I2Sメイン運用のため）。
-    - `MAGICBOX_ENABLE_RTP=true`（または enable_rtp=True）でのみ API 露出/自動起動対象になる。
+    - `TOTTON_AUDIO_ENABLE_RTP=true`（または enable_rtp=True）でのみ API 露出/自動起動対象になる。
     """
     resolved_enable_rtp = (
-        _env_flag("MAGICBOX_ENABLE_RTP", False) if enable_rtp is None else enable_rtp
+        _env_flag("TOTTON_AUDIO_ENABLE_RTP", False)
+        if enable_rtp is None
+        else enable_rtp
     )
 
     effective_tags = list(tags_metadata)
@@ -135,15 +137,17 @@ def create_app(*, enable_rtp: bool | None = None) -> FastAPI:
         """Manage application lifecycle."""
         if resolved_enable_rtp:
             rtp_manager = _resolve_rtp_manager(app)
-            rtp_autostart = _env_flag("MAGICBOX_RTP_AUTOSTART", False)
+            rtp_autostart = _env_flag("TOTTON_AUDIO_RTP_AUTOSTART", False)
             if rtp_autostart:
                 try:
                     await rtp_manager.start()
-                    _logger.info("RTP input autostarted (MAGICBOX_RTP_AUTOSTART=true)")
+                    _logger.info(
+                        "RTP input autostarted (TOTTON_AUDIO_RTP_AUTOSTART=true)"
+                    )
                 except Exception as exc:  # noqa: BLE001
                     _logger.warning("RTP autostart failed: %s", exc)
             else:
-                _logger.info("RTP autostart disabled (MAGICBOX_ENABLE_RTP=true)")
+                _logger.info("RTP autostart disabled (TOTTON_AUDIO_ENABLE_RTP=true)")
 
         yield
         if resolved_enable_rtp:

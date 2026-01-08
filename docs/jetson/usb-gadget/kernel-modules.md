@@ -2,7 +2,7 @@
 
 ## 概要
 
-JetPack 6.x (L4T 36.x) のデフォルトカーネルには、UAC2 (USB Audio Class 2.0) モジュールが含まれていません。Magic BoxでUSB Audio Gadgetを使用するには、カーネルモジュールのビルドが必要です。
+JetPack 6.x (L4T 36.x) のデフォルトカーネルには、UAC2 (USB Audio Class 2.0) モジュールが含まれていません。Totton Audio ProjectでUSB Audio Gadgetを使用するには、カーネルモジュールのビルドが必要です。
 
 ---
 
@@ -201,7 +201,7 @@ sudo depmod -a
 
 ```bash
 # インストールスクリプト（将来）
-curl -sL https://releases.magicbox.audio/modules/install.sh | sudo bash
+curl -sL https://releases.Totton Audio Project.audio/modules/install.sh | sudo bash
 ```
 
 ---

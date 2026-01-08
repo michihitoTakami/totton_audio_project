@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic BoxはWeb UI経由でファームウェアアップデートを提供します。ユーザーは管理画面から簡単にアップデートを実行できます。
+Totton Audio ProjectはWeb UI経由でファームウェアアップデートを提供します。ユーザーは管理画面から簡単にアップデートを実行できます。
 
 ---
 
@@ -113,7 +113,7 @@ GET /api/update/status
 ### ディレクトリ構成
 
 ```
-magicbox-update-1.1.0.tar.gz
+totton-audio-update-1.1.0.tar.gz
 ├── manifest.json           # メタデータ
 ├── checksums.sha256        # ファイルハッシュ
 ├── bin/
@@ -160,29 +160,29 @@ magicbox-update-1.1.0.tar.gz
 
 ## 更新スクリプト
 
-### /usr/local/bin/magicbox-update
+### /usr/local/bin/totton-audio-update
 
 ```bash
 #!/bin/bash
 #
-# Magic Box Update Script
+# Totton Audio Project Update Script
 #
 
 set -euo pipefail
 
-UPDATE_DIR="/opt/magicbox/updates"
-INSTALL_DIR="/opt/magicbox"
-BACKUP_DIR="/opt/magicbox/backup"
-VERSION_FILE="/opt/magicbox/VERSION"
+UPDATE_DIR="/opt/totton_audio/updates"
+INSTALL_DIR="/opt/totton_audio"
+BACKUP_DIR="/opt/totton_audio/backup"
+VERSION_FILE="/opt/totton_audio/VERSION"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-    logger -t "magicbox-update" "$*"
+    logger -t "totton-audio-update" "$*"
 }
 
 # 更新確認
 check_update() {
-    local server="${MAGICBOX_UPDATE_SERVER:-https://updates.magicbox.audio}"
+    local server="${TOTTON_AUDIO_UPDATE_SERVER:-https://updates.Totton Audio Project.audio}"
     local current_version
     current_version=$(cat "$VERSION_FILE" 2>/dev/null || echo "0.0.0")
 
@@ -197,9 +197,9 @@ check_update() {
 # パッケージダウンロード
 download_package() {
     local version="$1"
-    local server="${MAGICBOX_UPDATE_SERVER:-https://updates.magicbox.audio}"
-    local package_url="${server}/packages/magicbox-update-${version}.tar.gz"
-    local package_path="${UPDATE_DIR}/magicbox-update-${version}.tar.gz"
+    local server="${TOTTON_AUDIO_UPDATE_SERVER:-https://updates.Totton Audio Project.audio}"
+    local package_url="${server}/packages/totton-audio-update-${version}.tar.gz"
+    local package_path="${UPDATE_DIR}/totton-audio-update-${version}.tar.gz"
 
     log "Downloading update package: $version"
 
@@ -254,7 +254,7 @@ apply_update() {
 
     # サービス停止
     log "Stopping services..."
-    systemctl stop magicbox-web gpu-upsampler || true
+    systemctl stop totton-audio-web gpu-upsampler || true
 
     # ファイル差し替え
     log "Installing new files..."
@@ -276,7 +276,7 @@ apply_update() {
 
     # サービス起動
     log "Starting services..."
-    systemctl start gpu-upsampler magicbox-web
+    systemctl start gpu-upsampler totton-audio-web
 
     # クリーンアップ
     rm -rf "$temp_dir"
@@ -311,13 +311,13 @@ rollback() {
 
     log "Rolling back to: $backup_path"
 
-    systemctl stop magicbox-web gpu-upsampler || true
+    systemctl stop totton-audio-web gpu-upsampler || true
 
     cp -a "${backup_path}/bin/"* "${INSTALL_DIR}/bin/"
     cp -a "${backup_path}/web/"* "${INSTALL_DIR}/web/"
     [[ -f "${backup_path}/VERSION" ]] && cp "${backup_path}/VERSION" "$VERSION_FILE"
 
-    systemctl start gpu-upsampler magicbox-web
+    systemctl start gpu-upsampler totton-audio-web
 
     log "Rollback completed"
 }
@@ -382,7 +382,7 @@ router = APIRouter(prefix="/api/update", tags=["update"])
 @router.get("/check")
 async def check_update():
     result = subprocess.run(
-        ["/usr/local/bin/magicbox-update", "check"],
+        ["/usr/local/bin/totton-audio-update", "check"],
         capture_output=True,
         text=True
     )
@@ -395,7 +395,7 @@ async def apply_update(version: str, background_tasks: BackgroundTasks):
 
 def run_update(version: str):
     subprocess.run(
-        ["/usr/local/bin/magicbox-update", "apply", version],
+        ["/usr/local/bin/totton-audio-update", "apply", version],
         capture_output=True
     )
 ```
@@ -408,7 +408,7 @@ def run_update(version: str):
 
 ```bash
 # 署名検証
-gpg --verify magicbox-update-1.1.0.tar.gz.sig magicbox-update-1.1.0.tar.gz
+gpg --verify totton-audio-update-1.1.0.tar.gz.sig totton-audio-update-1.1.0.tar.gz
 ```
 
 ### HTTPS必須

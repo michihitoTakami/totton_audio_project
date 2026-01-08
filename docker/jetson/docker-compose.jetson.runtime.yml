@@ -1,4 +1,4 @@
-# Docker Compose for Magic Box - Jetson (runtime-only / image-based)
+# Docker Compose for Totton Audio Project - Jetson (runtime-only / image-based)
 #
 # Issue: #1058
 #
@@ -12,13 +12,13 @@
 #
 
 services:
-  magicbox:
+  Totton Audio Project:
     # Runtime-only distribution (GHCR)
     # 評価時は release note 掲載の digest で pin することを推奨。
-    # 例: MAGICBOX_IMAGE=ghcr.io/michihitotakami/totton-audio-system@sha256:<digest>
-    image: ${MAGICBOX_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:latest}
+    # 例: TOTTON_AUDIO_IMAGE=ghcr.io/michihitotakami/totton-audio-system@sha256:<digest>
+    image: ${TOTTON_AUDIO_IMAGE:-ghcr.io/michihitotakami/totton-audio-system:latest}
     platform: linux/arm64
-    container_name: magicbox
+    container_name: totton_audio
     command: all
     restart: always
 
@@ -33,31 +33,31 @@ services:
       # Wi-Fi/有線LAN等への意図しない露出を避ける。
       # LANで公開したい場合は明示的に変更する（インターネット公開は禁止/非推奨）。
       # 例（LANで公開）:
-      #   MAGICBOX_PUBLISH_IP=0.0.0.0 docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
-      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:80:80"
-      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:46000:46000/udp"
-      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:46001:46001/udp"
-      - "${MAGICBOX_PUBLISH_IP:-192.168.55.1}:46002:46002/udp"
+      #   TOTTON_AUDIO_PUBLISH_IP=0.0.0.0 docker compose -f jetson/docker-compose.jetson.runtime.yml up -d
+      - "${TOTTON_AUDIO_PUBLISH_IP:-192.168.55.1}:80:80"
+      - "${TOTTON_AUDIO_PUBLISH_IP:-192.168.55.1}:46000:46000/udp"
+      - "${TOTTON_AUDIO_PUBLISH_IP:-192.168.55.1}:46001:46001/udp"
+      - "${TOTTON_AUDIO_PUBLISH_IP:-192.168.55.1}:46002:46002/udp"
 
     shm_size: '256m'
 
     # 永続化（評価者の再起動/更新でも維持したいもの）
     volumes:
-      - magicbox-config:/opt/magicbox/config
-      - magicbox-opra-cache:/data/opra
+      - Totton Audio Project-config:/opt/totton_audio/config
+      - Totton Audio Project-opra-cache:/data/opra
 
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - MAGICBOX_PROFILE=jetson
+      - TOTTON_AUDIO_PROFILE=jetson
       - GPU_OS_DATA_DIR=/data
-      - MAGICBOX_ENABLE_RTP=false
-      - MAGICBOX_RTP_AUTOSTART=false
-      - MAGICBOX_RTP_SENDER_HOST=192.168.55.100
+      - TOTTON_AUDIO_ENABLE_RTP=false
+      - TOTTON_AUDIO_RTP_AUTOSTART=false
+      - TOTTON_AUDIO_RTP_SENDER_HOST=192.168.55.100
       - RTP_BRIDGE_ENDPOINT=tcp://192.168.55.100:60000
-      - MAGICBOX_PI_API_BASE=${MAGICBOX_PI_API_BASE:-http://192.168.55.100:8081}
-      - MAGICBOX_WAIT_AUDIO_SECS=8
-      - MAGICBOX_WAIT_LOOPBACK=true
+      - TOTTON_AUDIO_PI_API_BASE=${TOTTON_AUDIO_PI_API_BASE:-http://192.168.55.100:8081}
+      - TOTTON_AUDIO_WAIT_AUDIO_SECS=8
+      - TOTTON_AUDIO_WAIT_LOOPBACK=true
 
     cap_add:
       - SYS_NICE
@@ -69,5 +69,5 @@ services:
         max-file: "3"
 
 volumes:
-  magicbox-config:
-  magicbox-opra-cache:
+  Totton Audio Project-config:
+  Totton Audio Project-opra-cache:

@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxは mDNS (multicast DNS) を使用して、`magicbox.local` としてネットワーク上で自動的に発見可能になります。これにより、IPアドレスを覚えなくてもブラウザからアクセスできます。
+Totton Audio Projectは mDNS (multicast DNS) を使用して、`totton-audio.local` としてネットワーク上で自動的に発見可能になります。これにより、IPアドレスを覚えなくてもブラウザからアクセスできます。
 
 ---
 
@@ -10,7 +10,7 @@ Magic Boxは mDNS (multicast DNS) を使用して、`magicbox.local` として�
 
 | 機能 | 説明 |
 |------|------|
-| ホスト名解決 | `magicbox.local` → `192.168.55.1` |
+| ホスト名解決 | `totton-audio.local` → `192.168.55.1` |
 | サービス広告 | `_http._tcp` (Web UI) |
 | ゼロコンフィグ | PC側の追加設定不要 |
 
@@ -23,7 +23,7 @@ Magic Boxは mDNS (multicast DNS) を使用して、`magicbox.local` として�
 ```ini
 [server]
 # ホスト名（.local は自動付加）
-host-name=magicbox
+host-name=Totton Audio Project
 
 # ドメイン
 domain-name=local
@@ -67,13 +67,13 @@ rlimit-nproc=3
 
 ## サービス広告
 
-### /etc/avahi/services/magicbox-http.service
+### /etc/avahi/services/Totton Audio Project-http.service
 
 ```xml
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
-    <name replace-wildcards="yes">Magic Box Web UI on %h</name>
+    <name replace-wildcards="yes">Totton Audio Project Web UI on %h</name>
 
     <service>
         <type>_http._tcp</type>
@@ -88,8 +88,8 @@ rlimit-nproc=3
 
 ```
 Service: _http._tcp
-Name: Magic Box Web UI on magicbox
-Host: magicbox.local
+Name: Totton Audio Project Web UI on Totton Audio Project
+Host: totton-audio.local
 Port: 80
 TXT: path=/, version=1.0
 ```
@@ -103,7 +103,7 @@ TXT: path=/, version=1.0
 sudo apt install avahi-daemon
 
 # サービスファイル配置
-sudo cp magicbox-http.service /etc/avahi/services/
+sudo cp Totton Audio Project-http.service /etc/avahi/services/
 
 # 再起動
 sudo systemctl restart avahi-daemon
@@ -126,17 +126,17 @@ sudo systemctl status avahi-daemon
 avahi-browse -all -r
 
 # 自分自身の解決テスト
-avahi-resolve -n magicbox.local
+avahi-resolve -n totton-audio.local
 ```
 
 ### PC側 (Linux)
 
 ```bash
 # mDNS解決
-avahi-resolve -n magicbox.local
+avahi-resolve -n totton-audio.local
 
 # または
-ping magicbox.local
+ping totton-audio.local
 
 # サービス検索
 avahi-browse _http._tcp
@@ -146,20 +146,20 @@ avahi-browse _http._tcp
 
 ```bash
 # mDNS解決（Bonjourネイティブ対応）
-ping magicbox.local
+ping totton-audio.local
 
 # サービス検索
 dns-sd -B _http._tcp
 
 # 詳細
-dns-sd -L "Magic Box Web UI on magicbox" _http._tcp local.
+dns-sd -L "Totton Audio Project Web UI on Totton Audio Project" _http._tcp local.
 ```
 
 ### PC側 (Windows)
 
 ```powershell
 # Windows 10以降はmDNS対応
-ping magicbox.local
+ping totton-audio.local
 
 # または Bonjour Print Services インストール後
 dns-sd -B _http._tcp
@@ -182,12 +182,12 @@ dns-sd -B _http._tcp
 
 ## ホスト名の競合
 
-同一ネットワーク上に複数のMagic Boxがある場合:
+同一ネットワーク上に複数のTotton Audio Projectがある場合:
 
 ```
-magicbox.local        (最初のデバイス)
-magicbox-2.local      (2台目)
-magicbox-3.local      (3台目)
+totton-audio.local        (最初のデバイス)
+Totton Audio Project-2.local      (2台目)
+Totton Audio Project-3.local      (3台目)
 ```
 
 Avahiが自動的に番号を付加して競合を回避します。
@@ -200,19 +200,19 @@ Avahiが自動的に番号を付加して競合を回避します。
 
 ```bash
 # ホスト名変更
-sudo hostnamectl set-hostname magicbox-living
+sudo hostnamectl set-hostname Totton Audio Project-living
 
 # Avahi設定更新
 sudo systemctl restart avahi-daemon
 ```
 
-アクセス: `http://magicbox-living.local/`
+アクセス: `http://Totton Audio Project-living.local/`
 
 ---
 
 ## トラブルシューティング
 
-### magicbox.local が解決できない
+### totton-audio.local が解決できない
 
 ```bash
 # Avahi動作確認
@@ -230,10 +230,10 @@ sudo tcpdump -i usb0 port 5353
 
 ```bash
 # 現在の名前確認
-avahi-resolve -n magicbox.local
+avahi-resolve -n totton-audio.local
 
 # ホスト名変更
-sudo hostnamectl set-hostname magicbox-unique
+sudo hostnamectl set-hostname Totton Audio Project-unique
 ```
 
 ### Windows で認識されない

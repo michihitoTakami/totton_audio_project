@@ -2,7 +2,7 @@
 
 Copyright (c) 2025 Michihito Takami
 
-本プロジェクト（Magic Box Project / GPU Upsampler）には、第三者が提供するソフトウェアおよびデータが含まれます。
+本プロジェクト（Totton Audio Project / GPU Upsampler）には、第三者が提供するソフトウェアおよびデータが含まれます。
 第三者部分には、それぞれのライセンスが適用されます。
 本プロジェクトの非商用条項は第三者ソフトウェア／データには適用されず、各ライセンス（例: OPRA CC BY-SA 4.0, HUTUBS CC BY 4.0, De-limiter MIT）が優先します。第三者ライセンスに従う限り、商用利用を含む利用が可能です（必要な帰属表示・継承条件を遵守してください）。
 

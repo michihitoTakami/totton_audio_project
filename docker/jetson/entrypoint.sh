@@ -1,29 +1,29 @@
 #!/bin/bash
 #
-# Magic Box Container Entrypoint
+# Totton Audio Project Container Entrypoint
 #
 # Usage:
-#   docker run magicbox web       # Start Web UI only
-#   docker run magicbox daemon    # Start Audio Daemon only
-#   docker run magicbox all       # Start both (production)
-#   docker run magicbox bash      # Interactive shell
+#   docker run totton_audio web       # Start Web UI only
+#   docker run totton_audio daemon    # Start Audio Daemon only
+#   docker run totton_audio all       # Start both (production)
+#   docker run totton_audio bash      # Interactive shell
 #
 
 set -e
 
 # Paths
-UVICORN="/opt/magicbox/venv/bin/uvicorn"
-DAEMON="/opt/magicbox/bin/gpu_upsampler_alsa"
-CONFIG_DIR="${MAGICBOX_CONFIG_DIR:-/opt/magicbox/config}"
+UVICORN="/opt/totton_audio/venv/bin/uvicorn"
+DAEMON="/opt/totton_audio/bin/gpu_upsampler_alsa"
+CONFIG_DIR="${TOTTON_AUDIO_CONFIG_DIR:-/opt/totton_audio/config}"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
-CONFIG_SYMLINK="${MAGICBOX_CONFIG_SYMLINK:-/opt/magicbox/config.json}"
-DEFAULT_CONFIG="${MAGICBOX_DEFAULT_CONFIG:-/opt/magicbox/config-default/config.json}"
-RESET_CONFIG="${MAGICBOX_RESET_CONFIG:-false}"
-PROFILE="${MAGICBOX_PROFILE:-base}"
+CONFIG_SYMLINK="${TOTTON_AUDIO_CONFIG_SYMLINK:-/opt/totton_audio/config.json}"
+DEFAULT_CONFIG="${TOTTON_AUDIO_DEFAULT_CONFIG:-/opt/totton_audio/config-default/config.json}"
+RESET_CONFIG="${TOTTON_AUDIO_RESET_CONFIG:-false}"
+PROFILE="${TOTTON_AUDIO_PROFILE:-base}"
 DATA_ROOT="${GPU_OS_DATA_DIR:-${DATA_DIR:-/var/lib/gpu_upsampler}}"
 OPRA_CACHE_DIR="${DATA_ROOT}/opra"
-: "${MAGICBOX_ENABLE_RTP:=false}"
-: "${MAGICBOX_RTP_AUTOSTART:=false}"
+: "${TOTTON_AUDIO_ENABLE_RTP:=false}"
+: "${TOTTON_AUDIO_RTP_AUTOSTART:=false}"
 
 # Colors for logging
 RED='\033[0;31m'
@@ -53,11 +53,11 @@ prepare_opra_cache_dir() {
         return 0
     fi
     chmod 775 "${OPRA_CACHE_DIR}" || true
-    chown -R magicbox:magicbox "${OPRA_CACHE_DIR}" 2>/dev/null || true
+    chown -R totton_audio:totton_audio "${OPRA_CACHE_DIR}" 2>/dev/null || true
 }
 
 wait_for_alsa() {
-    local timeout="${MAGICBOX_WAIT_AUDIO_SECS:-0}"
+    local timeout="${TOTTON_AUDIO_WAIT_AUDIO_SECS:-0}"
     if [[ -z "${timeout}" ]]; then
         timeout=0
     fi
@@ -116,7 +116,7 @@ configure_jetson_ape_i2s() {
         log_warn "amixer not available; skipping APE/I2S routing"
         return 0
     fi
-    local ape="${MAGICBOX_APE_CARD:-APE}"
+    local ape="${TOTTON_AUDIO_APE_CARD:-APE}"
 
     log_info "Applying Jetson APE/I2S routing (card=${ape})..."
 
@@ -225,7 +225,7 @@ prepare_config() {
 
     # Optional reset via env
     if [[ "$reset_flag" == "true" || "$reset_flag" == "1" ]]; then
-        log_warn "Reset requested via MAGICBOX_RESET_CONFIG, restoring default config"
+        log_warn "Reset requested via TOTTON_AUDIO_RESET_CONFIG, restoring default config"
         cp -f "$DEFAULT_CONFIG" "$CONFIG_FILE"
         apply_profile_on_seed=true
     else
@@ -326,9 +326,9 @@ start_daemon() {
 
 # Start both services (production mode)
 start_all() {
-    log_info "Starting Magic Box in production mode..."
-    log_info "RTP enabled: ${MAGICBOX_ENABLE_RTP}"
-    log_info "RTP autostart flag: ${MAGICBOX_RTP_AUTOSTART}"
+    log_info "Starting Totton Audio Project in production mode..."
+    log_info "RTP enabled: ${TOTTON_AUDIO_ENABLE_RTP}"
+    log_info "RTP autostart flag: ${TOTTON_AUDIO_RTP_AUTOSTART}"
 
     # Ensure ALSA is ready (cold boot / device enumeration delay).
     wait_for_alsa
