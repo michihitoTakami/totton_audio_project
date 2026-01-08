@@ -666,44 +666,6 @@ install(FILES config.json
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gpu_upsampler"
         OPTIONAL)  # Optional: user may not have config.json yet
 
-# Install systemd user service file
-# Default location: /usr/lib/systemd/user/ (system-wide for all users)
-# User can override with -DSYSTEMD_USER_UNIT_DIR=...
-if(NOT DEFINED SYSTEMD_USER_UNIT_DIR)
-    # Try pkg-config first
-    execute_process(
-        COMMAND pkg-config --variable=systemduserunitdir systemd
-        OUTPUT_VARIABLE SYSTEMD_USER_UNIT_DIR_PKG
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    if(SYSTEMD_USER_UNIT_DIR_PKG)
-        set(SYSTEMD_USER_UNIT_DIR "${SYSTEMD_USER_UNIT_DIR_PKG}")
-    else()
-        set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
-    endif()
-endif()
-
-# Set systemd service type based on libsystemd availability
-if(HAVE_SYSTEMD)
-    set(SYSTEMD_SERVICE_TYPE "notify")
-    set(SYSTEMD_NOTIFY_ACCESS "NotifyAccess=main")
-    set(SYSTEMD_WATCHDOG_SEC "# Watchdog: Daemon sends WATCHDOG=1 every 100ms, systemd expects it within 5s\nWatchdogSec=5")
-else()
-    set(SYSTEMD_SERVICE_TYPE "simple")
-    set(SYSTEMD_NOTIFY_ACCESS "# NotifyAccess not needed for Type=simple")
-    set(SYSTEMD_WATCHDOG_SEC "# Watchdog disabled (libsystemd not available at build time)")
-endif()
-
-# Generate service file with correct install paths
-configure_file(
-    systemd/gpu-upsampler.service.in
-    ${CMAKE_BINARY_DIR}/gpu-upsampler.service
-    @ONLY
-)
-install(FILES ${CMAKE_BINARY_DIR}/gpu-upsampler.service
-        DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
-
 # ============================================================
 # Testing
 # ============================================================
