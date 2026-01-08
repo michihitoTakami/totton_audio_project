@@ -811,11 +811,15 @@ endif()
 if(ENABLE_VULKAN)
     add_executable(vulkan_tests
         tests/cpp/vulkan/test_vulkan_streaming_eq.cpp
+        tests/cpp/vulkan/test_vulkan_cuda_parity.cpp
     )
     target_link_libraries(vulkan_tests
         GTest::gtest_main
         vulkan_streaming
     )
+    if(ENABLE_CUDA)
+        target_link_libraries(vulkan_tests gpu_upsampler_core)
+    endif()
     target_include_directories(vulkan_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
