@@ -42,6 +42,7 @@ In addition to Section 2, the Author permits an Organization to use the Software
 - **No External Offering**: you must not provide the Software or Distributed Artifacts to customers/end-users, or operate it as a hosted service.
 - **No Monetization**: you must not receive any fee or other compensation in connection with the Evaluation Use.
 - **No Redistribution**: you must not redistribute the Software or Distributed Artifacts outside the Organization.
+- **Usage Limit**: Continuous research and development use exceeding 30 days is generally considered "Commercial Use" and requires separate permission.
 
 If you need a longer evaluation period or broader rights, contact the Author to negotiate a separate license (see Section 10).
 
@@ -76,8 +77,17 @@ This license automatically terminates upon your breach.
 ## 9. Enforcement (Including Commercial Use)
 If you violate this license (including engaging in Commercial Use), the Author reserves the right to seek injunctive relief, damages, and any other remedies available under law.
 
-## 10. Commercial Licensing
-If you want to use the Software or Distributed Artifacts commercially, contact the Author in advance to negotiate a separate commercial license.
+## 10. Commercial Licensing and Special Conditions
+
+### General Principle
+If you wish to use the Software commercially (including continuous R&D use by an organization), please contact the Author in advance to negotiate a separate commercial license.
+Licensing fees will be used for the continuous development of this project and AI compute costs.
+
+### Special Conditions (Small Businesses / Individuals)
+For small manufacturers or individual proprietors: If you share the vision of this project ("Delivering the best sound to all headphone users") and present an exciting usage plan, the Author may grant permission for free or at a reduced rate as a special exception. Please feel free to contact us.
+
+### Medium-to-Large Enterprises / Overseas Manufacturers
+For medium-to-large manufacturers with established distribution channels or overseas enterprises: Even for internal research and development purposes, a paid license agreement (or individual permission) is generally required.
 
 ---
 
