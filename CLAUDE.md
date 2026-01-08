@@ -36,7 +36,6 @@ Think in English and answer in Japanese.
 ### EQ Source: OPRA Project (CC BY-SA 4.0)
 - OPRAプロジェクト（https://github.com/opra-project/OPRA）のEQデータをベース
 - **ライセンス**: CC BY-SA 4.0（商用利用OK、帰属表示必須）
-- ⚠️ oratory1990データは商用利用禁止のため使用不可
 - 基本設定に追加: `Filter 11: ON PK Fc 5366 Hz Gain 2.8 dB Q 1.5`
 
 ## System Architecture
