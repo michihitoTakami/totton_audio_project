@@ -89,6 +89,7 @@ TEST(VulkanCudaParityTest, NullResidualIsSmall) {
     ASSERT_TRUE(cudaUpsampler.initializeStreaming());
     const size_t cudaStreamBlock = cudaUpsampler.getStreamValidInputPerBlock();
     ASSERT_GT(cudaStreamBlock, 0u);
+    const size_t validOutput = cudaStreamBlock * static_cast<size_t>(kUpsampleRatio);
 
     VulkanStreamingUpsampler vkUpsampler;
     VulkanStreamingUpsampler::InitParams params{};
@@ -115,6 +116,7 @@ TEST(VulkanCudaParityTest, NullResidualIsSmall) {
 
     ConvolutionEngine::StreamFloatVector cudaStreamBuf(cudaStreamBlock * 2, 0.0f);
     ConvolutionEngine::StreamFloatVector cudaOutput;
+    cudaOutput.reserve(validOutput);
     size_t cudaAccum = 0;
     ASSERT_TRUE(cudaUpsampler.processStreamBlock(input.data(), input.size(), cudaOutput,
                                                  /*stream=*/nullptr, cudaStreamBuf, cudaAccum));
@@ -122,6 +124,7 @@ TEST(VulkanCudaParityTest, NullResidualIsSmall) {
 
     ConvolutionEngine::StreamFloatVector vkStreamBuf(vkStreamBlock * 2, 0.0f);
     ConvolutionEngine::StreamFloatVector vkOutput;
+    vkOutput.reserve(validOutput);
     size_t vkAccum = 0;
     ASSERT_TRUE(vkUpsampler.processStreamBlock(input.data(), input.size(), vkOutput, nullptr,
                                                vkStreamBuf, vkAccum));
