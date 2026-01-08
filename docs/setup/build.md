@@ -220,7 +220,7 @@ De-Limiter（AI Loudness Care）機能を使用する場合、ONNX Runtimeをソ
 
 ```bash
 # ビルドディレクトリをクリーン
-rm -rf /home/michihito/Working/onnxruntime/build
+rm -rf "${HOME}/onnxruntime/build"
 
 # シンプルなビルド（disable_contrib_ops を外す）
 ./build.sh --config Release --update --build --parallel 1 \
@@ -253,7 +253,7 @@ rm -rf /home/michihito/Working/onnxruntime/build
 cmake -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DDELIMITER_ENABLE_ORT=ON \
-  -DONNXRUNTIME_ROOT=/home/michihito/Working/onnxruntime/build/Release
+  -DONNXRUNTIME_ROOT=${HOME}/onnxruntime/build/Release
 
 cmake --build build -j$(nproc)
 ```
