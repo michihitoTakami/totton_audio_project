@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic BoxはWeb UI経由でファームウェアアップデートを提供します。ユーザーは管理画面から簡単にアップデートを実行できます。
+Totton AudioはWeb UI経由でファームウェアアップデートを提供します。ユーザーは管理画面から簡単にアップデートを実行できます。
 
 ---
 
@@ -165,7 +165,7 @@ magicbox-update-1.1.0.tar.gz
 ```bash
 #!/bin/bash
 #
-# Magic Box Update Script
+# Totton Audio Update Script
 #
 
 set -euo pipefail

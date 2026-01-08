@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxは、単一のUSB Type-Cポートで**オーディオ入力**と**管理アクセス**の両方を提供するUSB Composite Gadgetを実装します。
+Totton Audioは、単一のUSB Type-Cポートで**オーディオ入力**と**管理アクセス**の両方を提供するUSB Composite Gadgetを実装します。
 
 ```
 ┌─────────────────────────────────────────┐
@@ -59,8 +59,8 @@ Magic Boxは、単一のUSB Type-Cポートで**オーディオ入力**と**管�
 ├── strings/
 │   └── 0x409/               # English
 │       ├── serialnumber     # MBxxxxxxxx
-│       ├── manufacturer     # MagicBox Audio
-│       └── product          # Magic Box USB Audio
+│       ├── manufacturer     # TottonAudio Audio
+│       └── product          # Totton Audio USB Audio
 ├── functions/
 │   ├── uac2.usb0/           # Audio Function
 │   │   ├── c_chmask         # 3 (Stereo)
@@ -92,7 +92,7 @@ Magic Boxは、単一のUSB Type-Cポートで**オーディオ入力**と**管�
 ```bash
 #!/bin/bash
 #
-# Magic Box USB Composite Gadget Setup
+# Totton Audio USB Composite Gadget Setup
 # UAC2 (Audio) + ECM (Ethernet)
 #
 
@@ -109,8 +109,8 @@ USB_PID="0x0104"    # Composite Gadget
 USB_BCD="0x0100"    # Device version 1.0.0
 
 # Strings
-MANUFACTURER="MagicBox Audio"
-PRODUCT="Magic Box USB Audio"
+MANUFACTURER="TottonAudio Audio"
+PRODUCT="Totton Audio USB Audio"
 
 # Generate serial from device serial number
 get_serial() {
@@ -238,7 +238,7 @@ setup_gadget() {
 
     # === Configuration ===
     mkdir -p configs/c.1/strings/0x409
-    echo "Magic Box Audio + Network" > configs/c.1/strings/0x409/configuration
+    echo "Totton Audio Audio + Network" > configs/c.1/strings/0x409/configuration
     echo 500 > configs/c.1/MaxPower   # 500mA
 
     # Link functions to configuration
@@ -322,7 +322,7 @@ esac
 
 ```ini
 [Unit]
-Description=Magic Box USB Composite Gadget
+Description=Totton Audio USB Composite Gadget
 Documentation=https://github.com/michihitoTakami/gpu_os
 DefaultDependencies=no
 Before=network-pre.target

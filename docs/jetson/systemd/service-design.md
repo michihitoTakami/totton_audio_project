@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxは複数のSystemdサービスで構成され、適切な依存関係と起動順序で管理されます。
+Totton Audioは複数のSystemdサービスで構成され、適切な依存関係と起動順序で管理されます。
 
 ---
 
@@ -61,8 +61,8 @@ USB Composite Gadgetの初期化。
 
 ```ini
 [Unit]
-Description=Magic Box USB Composite Gadget
-Documentation=https://github.com/michihitoTakami/gpu_os/docs/jetson/usb-gadget/
+Description=Totton Audio USB Composite Gadget
+Documentation=https://github.com/michihitoTakami/totton_audio/docs/jetson/usb-gadget/
 DefaultDependencies=no
 Before=network-pre.target
 After=local-fs.target systemd-modules-load.service
@@ -185,7 +185,7 @@ Web UI (FastAPI/uvicorn)。
 
 ```ini
 [Unit]
-Description=Magic Box Web Control Interface
+Description=Totton Audio Web Control Interface
 Documentation=https://github.com/michihitoTakami/gpu_os
 
 # 依存関係

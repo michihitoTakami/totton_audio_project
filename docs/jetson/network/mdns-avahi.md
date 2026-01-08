@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxは mDNS (multicast DNS) を使用して、`magicbox.local` としてネットワーク上で自動的に発見可能になります。これにより、IPアドレスを覚えなくてもブラウザからアクセスできます。
+Totton Audioは mDNS (multicast DNS) を使用して、`magicbox.local` としてネットワーク上で自動的に発見可能になります。これにより、IPアドレスを覚えなくてもブラウザからアクセスできます。
 
 ---
 
@@ -73,7 +73,7 @@ rlimit-nproc=3
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
-    <name replace-wildcards="yes">Magic Box Web UI on %h</name>
+    <name replace-wildcards="yes">Totton Audio Web UI on %h</name>
 
     <service>
         <type>_http._tcp</type>
@@ -88,7 +88,7 @@ rlimit-nproc=3
 
 ```
 Service: _http._tcp
-Name: Magic Box Web UI on magicbox
+Name: Totton Audio Web UI on magicbox
 Host: magicbox.local
 Port: 80
 TXT: path=/, version=1.0
@@ -152,7 +152,7 @@ ping magicbox.local
 dns-sd -B _http._tcp
 
 # 詳細
-dns-sd -L "Magic Box Web UI on magicbox" _http._tcp local.
+dns-sd -L "Totton Audio Web UI on magicbox" _http._tcp local.
 ```
 
 ### PC側 (Windows)
@@ -182,7 +182,7 @@ dns-sd -B _http._tcp
 
 ## ホスト名の競合
 
-同一ネットワーク上に複数のMagic Boxがある場合:
+同一ネットワーク上に複数のTotton Audioがある場合:
 
 ```
 magicbox.local        (最初のデバイス)

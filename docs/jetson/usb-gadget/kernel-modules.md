@@ -2,7 +2,7 @@
 
 ## 概要
 
-JetPack 6.x (L4T 36.x) のデフォルトカーネルには、UAC2 (USB Audio Class 2.0) モジュールが含まれていません。Magic BoxでUSB Audio Gadgetを使用するには、カーネルモジュールのビルドが必要です。
+JetPack 6.x (L4T 36.x) のデフォルトカーネルには、UAC2 (USB Audio Class 2.0) モジュールが含まれていません。Totton AudioでUSB Audio Gadgetを使用するには、カーネルモジュールのビルドが必要です。
 
 ---
 

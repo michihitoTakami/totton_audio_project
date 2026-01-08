@@ -1,6 +1,6 @@
 # クイックスタート
 
-最小限の手順でMagic Box Projectをビルド・テストする方法。
+最小限の手順でTotton Audio Projectsをビルド・テストする方法。
 
 ## 前提条件
 

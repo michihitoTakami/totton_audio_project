@@ -2,7 +2,7 @@
 
 ## 概要
 
-Magic Boxで発生する可能性のある問題と解決方法をまとめています。
+Totton Audioで発生する可能性のある問題と解決方法をまとめています。
 
 ---
 
@@ -26,7 +26,7 @@ networkctl status usb0
 
 ## 1. USB関連の問題
 
-### 1.1 PCがMagic Boxを認識しない
+### 1.1 PCがTotton Audioを認識しない
 
 **症状**: USBケーブルを接続してもPCにデバイスが表示されない
 
@@ -168,7 +168,7 @@ journalctl -u gpu-upsampler | grep -i "input"
 
 **解決策**:
 
-1. PC側の出力デバイスがMagic Boxになっているか確認
+1. PC側の出力デバイスがTotton Audioになっているか確認
 2. DAC接続確認
 3. デーモン再起動:
    ```bash
@@ -392,8 +392,8 @@ tar czf magicbox-debug-$(date +%Y%m%d).tar.gz *.log *.json
 
 ## サポート
 
-- **GitHub Issues**: https://github.com/michihitoTakami/gpu_os/issues
-- **ドキュメント**: https://github.com/michihitoTakami/gpu_os/docs/jetson/
+- **GitHub Issues**: https://github.com/michihitoTakami/totton_audio/issues
+- **ドキュメント**: https://github.com/michihitoTakami/totton_audio/docs/jetson/
 
 ---
 

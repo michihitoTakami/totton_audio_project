@@ -7,7 +7,7 @@ Think in English and answer in Japanese.
 
 ## Project Vision & Concept
 
-### Magic Box Project - 魔法の箱
+### Totton Audio Projects
 
 **Vision:** 全てのヘッドホンユーザーに最高の音を届ける箱
 
@@ -95,7 +95,7 @@ graph TD
 | CUDA Arch | SM 7.5 (Turing) |
 | OS | Linux (Ubuntu 22.04+) |
 
-### Production Environment (Magic Box)
+### Production Environment (Totton Audio)
 
 **I/O分離アーキテクチャ:**
 - **入力デバイス**: Raspberry Pi 5 (UAC2 + GStreamer RTP送信)
@@ -271,7 +271,7 @@ cmake --build build -j$(nproc)
 ## Directory Structure
 
 ```
-gpu_os/
+totton_audio/
 ├── README.md              # User-facing documentation
 ├── CLAUDE.md              # AI development guide (this file)
 ├── AGENTS.md              # AI collaboration guidelines

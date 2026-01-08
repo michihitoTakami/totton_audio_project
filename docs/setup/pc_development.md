@@ -61,7 +61,7 @@ Starting ALSA output thread...
 2. `config.json` の `loopback.enabled` を `true` にすると、デーモンが capture 側 (`hw:Loopback,1,0`) から読み込みます。
 
 #### (Jetsonでのネットワーク入力) RTP を使う場合
-Jetson では `rtp_input` サービス（GStreamer）で RTP を受信し、ALSA Loopback playback に書き込みます。Magic Box Web API から起動できます。
+Jetson では `rtp_input` サービス（GStreamer）で RTP を受信し、ALSA Loopback playback に書き込みます。Totton Audio Web API から起動できます。
 
 ```bash
 # Jetson 上で RTP 受信を開始
@@ -207,7 +207,7 @@ After=sound.target
 [Service]
 Type=simple
 WorkingDirectory=/path/to/gpu_os
-ExecStart=/path/to/gpu_os/build/gpu_upsampler_alsa
+ExecStart=/path/to/totton_audio/build/gpu_upsampler_alsa
 Restart=on-failure
 RestartSec=5
 

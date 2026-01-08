@@ -2,7 +2,7 @@
 
 ## 設計思想
 
-Magic Boxは**Control Plane / Data Plane分離アーキテクチャ**を採用しています。
+Totton Audioは**Control Plane / Data Plane分離アーキテクチャ**を採用しています。
 
 - **Control Plane (Python/FastAPI)**: ユーザー操作、設定管理、係数生成
 - **Data Plane (C++/CUDA)**: リアルタイムオーディオ処理
@@ -15,7 +15,7 @@ Magic Boxは**Control Plane / Data Plane分離アーキテクチャ**を採用�
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Magic Box                                       │
+│                              Totton Audio                                       │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                        USB Composite Gadget                          │    │
@@ -200,7 +200,7 @@ Control PlaneとData Plane間の通信。
 ```
 ┌─────────────────────────────────────────┐
 │             Trusted Zone                 │
-│  (Magic Box内部)                        │
+│  (Totton Audio内部)                        │
 │                                          │
 │  ┌──────────┐  ┌──────────┐             │
 │  │ Data     │  │ Control  │             │

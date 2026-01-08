@@ -1,6 +1,6 @@
 # Web UI セットアップガイド
 
-Magic Box Project の Web コントロールインターフェースの設定と使用方法。
+Totton Audio Projects の Web コントロールインターフェースの設定と使用方法。
 
 ## 前提条件
 

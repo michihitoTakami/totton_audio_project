@@ -1,6 +1,6 @@
 # セットアップガイド
 
-Magic Box Projectの開発環境構築とセットアップに関するドキュメント。
+Totton Audio Projectsの開発環境構築とセットアップに関するドキュメント。
 
 ## ドキュメント一覧
 
@@ -35,7 +35,7 @@ Magic Box Projectの開発環境構築とセットアップに関するドキュ
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Jetson Orin Nano Super (Magic Box)                             │
+│  Jetson Orin Nano Super (Totton Audio)                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  SoC: Jetson Orin Nano Super (8GB, SM 8.7)                      │
 │  Audio: USB Gadget (UAC2) → GPU Upsampler → USB DAC             │

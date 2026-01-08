@@ -1,6 +1,6 @@
 # Jetson 開発用自動起動スクリプト
 
-Jetson Orin上で Magic Box を開発する際、再起動の度に
+Jetson Orin上で Totton Audio を開発する際、再起動の度に
 `gpu_upsampler_alsa` と Web UI を手動起動する手間をなくすための
 systemd セットアップスクリプトを追加しました。
 
