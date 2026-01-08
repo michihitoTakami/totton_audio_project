@@ -191,7 +191,9 @@ def main():
 
     eq_file = project_dir / "data" / "EQ" / "Sample_EQ.txt"
     if not eq_file.exists():
-        eq_file = Path("/home/michihito/Working/gpu_os/data/EQ/Sample_EQ.txt")
+        raise FileNotFoundError(
+            f"EQ profile not found at {eq_file}. Place Sample_EQ.txt under data/EQ."
+        )
 
     fs = 44100
 

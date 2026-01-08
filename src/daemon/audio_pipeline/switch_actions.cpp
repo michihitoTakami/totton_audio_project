@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -21,7 +22,8 @@ namespace audio_pipeline {
 // #region agent log
 static void agent_debug_log(const char* location, const char* message, const std::string& dataJson,
                             const char* hypothesisId) {
-    std::ofstream ofs("/home/michihito/Working/gpu_os/.cursor/debug.log", std::ios::app);
+    const auto logPath = std::filesystem::temp_directory_path() / "gpu_os_agent_debug.log";
+    std::ofstream ofs(logPath, std::ios::app);
     if (!ofs.is_open()) {
         return;
     }
