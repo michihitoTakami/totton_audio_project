@@ -106,8 +106,8 @@ uv sync --all-groups
 # 1M-tap minimum phase FIRフィルタを生成
 uv run python scripts/filters/generate_minimum_phase.py --taps 1000000
 
-# 2M-tapを生成する場合 (メモリ8GB以上推奨)
-uv run python scripts/filters/generate_minimum_phase.py --taps 2000000 --kaiser-beta 55
+# 640k-tapを生成する場合 (メモリ8GB以上推奨)
+uv run python scripts/filters/generate_minimum_phase.py --taps 640000 --kaiser-beta 55
 ```
 
 生成されるファイル：

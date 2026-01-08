@@ -12,7 +12,7 @@
   "phase_type": "minimum",
   "minimum_phase_method": "homomorphic",
   "target_dc_gain": 16.0,
-  "output_basename": "filter_48k_16x_2m_min_phase",
+  "output_basename": "filter_48k_16x_640k_min_phase",
   "validation_results": {
     "passband_ripple_db": 7.1552277844944e-06,
     "stopband_attenuation_db": 166.2234275134557,

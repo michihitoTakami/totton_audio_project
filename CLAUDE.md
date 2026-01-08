@@ -241,8 +241,8 @@ uv run python scripts/filters/generate_minimum_phase.py --generate-all
 uv run python scripts/filters/generate_linear_phase.py --generate-all
 
 # Output (example for minimum-phase result, 44.1kHz input, 16x upsample):
-# - data/coefficients/filter_44k_16x_2m_min_phase.bin (2.44 MB binary)
-# - data/coefficients/filter_44k_16x_2m_min_phase.json (metadata)
+# - data/coefficients/filter_44k_16x_640k_min_phase.bin (2.44 MB binary)
+# - data/coefficients/filter_44k_16x_640k_min_phase.json (metadata)
 # - plots/analysis/44k_16x_* (validation plots)
 ```
 

@@ -274,7 +274,7 @@ TEST_F(ZMQInterfaceTest, ServerLoadIRHandler) {
         if (params.find("path") != std::string::npos) {
             result.status = ResponseStatus::OK;
             result.message = "IR loaded";
-            result.data = R"({"tap_count":2000000})";
+            result.data = R"({"tap_count":640000})";
         } else {
             result.status = ResponseStatus::INVALID_PARAMS;
             result.message = "Missing path parameter";
@@ -291,7 +291,7 @@ TEST_F(ZMQInterfaceTest, ServerLoadIRHandler) {
     // Test with valid params
     auto result = client.loadIR("/data/filter.bin", "44k");
     EXPECT_EQ(result.status, ResponseStatus::OK);
-    EXPECT_NE(result.data.find("2000000"), std::string::npos);
+    EXPECT_NE(result.data.find("640000"), std::string::npos);
 
     client.disconnect();
     server.stop();

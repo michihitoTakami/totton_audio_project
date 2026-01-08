@@ -178,9 +178,9 @@ prepare_config() {
             | .eqEnabled = false
             | .eqProfilePath = ""
             | .phaseType = "minimum"
-            | .filterPath = "data/coefficients/filter_44k_16x_2m_min_phase.bin"
-            | .filterPath44kMin = "data/coefficients/filter_44k_16x_2m_min_phase.bin"
-            | .filterPath48kMin = "data/coefficients/filter_48k_16x_2m_min_phase.bin"
+            | .filterPath = "data/coefficients/filter_44k_16x_640k_min_phase.bin"
+            | .filterPath44kMin = "data/coefficients/filter_44k_16x_640k_min_phase.bin"
+            | .filterPath48kMin = "data/coefficients/filter_48k_16x_640k_min_phase.bin"
             | .i2s.enabled = true
             | .i2s.device = "hw:APE,0"
             | .i2s.sampleRate = 0

@@ -330,7 +330,7 @@ bool GPUUpsampler::initializeMultiRate(const std::string& coefficientDir,
         // Search for matching file (tap count may vary)
         std::string foundPath;
         for (int taps :
-             {1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2000000}) {
+             {1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 640000}) {
             std::string testPath = filename + std::to_string(taps) + "_linear_phase.bin";
             std::ifstream testFile(testPath, std::ios::binary);
             if (testFile.good()) {

@@ -17,7 +17,7 @@ cmake --build build-vulkan -j"$(nproc)" vulkan_overlap_save_tool vulkan_overlap_
 ./build-vulkan/samples/vkfft_overlap_save/vulkan_overlap_save_tool \
   --input test_data/input_mono.wav \
   --output /tmp/output.wav \
-  --filter data/coefficients/filter_44k_8x_2m_min_phase.bin
+  --filter data/coefficients/filter_44k_8x_640k_min_phase.bin
 ```
 
 - `--filter-json` を省略すると、`--filter` の拡張子を `.json` に置き換えてメタデータを読み込みます。

@@ -37,7 +37,7 @@ Data Plane (C++/CUDA)
 
 ### クイックスタート（PC開発環境）
 
-1. **フィルタ生成**: `uv sync` 後に `uv run python scripts/filters/generate_minimum_phase.py --taps 2000000` などで係数を構築
+1. **フィルタ生成**: `uv sync` 後に `uv run python scripts/filters/generate_minimum_phase.py --taps 640000` などで係数を構築
 2. **ビルド**: `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)`
 3. **テスト**: `./build/cpu_tests`, `./build/auto_negotiation_tests`, `./build/gpu_tests` などを実行
 4. **デーモン起動**: `./scripts/daemon.sh start` → ALSA 出力を `GPU Upsampler` に設定

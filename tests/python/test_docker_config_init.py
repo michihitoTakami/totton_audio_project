@@ -119,9 +119,9 @@ def test_config_init_applies_jetson_profile(tmp_path: Path) -> None:
                 "gain": 0.25,
                 "eqEnabled": True,
                 "eqProfilePath": "data/EQ/Sample_EQ.txt",
-                "filterPath": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
-                "filterPath44kMin": "data/coefficients/filter_44k_16x_2m_linear_phase.bin",
-                "filterPath48kMin": "data/coefficients/filter_48k_16x_2m_linear_phase.bin",
+                "filterPath": "data/coefficients/filter_44k_16x_640k_linear_phase.bin",
+                "filterPath44kMin": "data/coefficients/filter_44k_16x_640k_linear_phase.bin",
+                "filterPath48kMin": "data/coefficients/filter_48k_16x_640k_linear_phase.bin",
                 "i2s": {"enabled": False},
                 "loopback": {"enabled": True},
             }

@@ -269,14 +269,14 @@ ls -lh data/coefficients/filter_*_*x_2m_min_phase.bin
 ls -lh data/coefficients/filter_*_*x_2m_linear_phase.bin
 
 # 期待される出力（線形位相の例）:
-# filter_44k_2x_2m_linear_phase.bin  (約7.6MB)
-# filter_44k_4x_2m_linear_phase.bin
-# filter_44k_8x_2m_linear_phase.bin
-# filter_44k_16x_2m_linear_phase.bin
-# filter_48k_2x_2m_linear_phase.bin
-# filter_48k_4x_2m_linear_phase.bin
-# filter_48k_8x_2m_linear_phase.bin
-# filter_48k_16x_2m_linear_phase.bin
+# filter_44k_2x_640k_linear_phase.bin  (約7.6MB)
+# filter_44k_4x_640k_linear_phase.bin
+# filter_44k_8x_640k_linear_phase.bin
+# filter_44k_16x_640k_linear_phase.bin
+# filter_48k_2x_640k_linear_phase.bin
+# filter_48k_4x_640k_linear_phase.bin
+# filter_48k_8x_640k_linear_phase.bin
+# filter_48k_16x_640k_linear_phase.bin
 ```
 
 フィルタがない場合は先に生成してください：

@@ -11,7 +11,7 @@
   "kaiser_beta": 28.0,
   "phase_suffix": "linear_phase",
   "target_dc_gain": 4.0,
-  "output_basename": "filter_48k_4x_2m_linear_phase",
+  "output_basename": "filter_48k_4x_640k_linear_phase",
   "validation_results": {
     "passband_ripple_db": 3.078195476291512e-10,
     "stopband_attenuation_db": 239.9999791327838,

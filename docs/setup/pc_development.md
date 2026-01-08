@@ -151,7 +151,7 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
    ```bash
    # メタデータの確認（DCゲイン・レート情報）
-   cat data/coefficients/filter_44k_16x_2m_linear_phase.json | jq '.sample_rate_input, .sample_rate_output, .upsample_ratio, .validation_results.normalization.normalized_dc_gain'
+   cat data/coefficients/filter_44k_16x_640k_linear_phase.json | jq '.sample_rate_input, .sample_rate_output, .upsample_ratio, .validation_results.normalization.normalized_dc_gain'
    ```
 
 ## 音声経路
@@ -169,18 +169,18 @@ ALSA: Output device configured (705.6kHz, 32-bit int, stereo)
 
 | 入力レート | 出力レート | 倍率 | フィルタファイル |
 |-----------|----------|------|----------------|
-| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_2m_linear_phase.bin |
-| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_2m_linear_phase.bin |
-| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_2m_linear_phase.bin |
-| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_2m_linear_phase.bin |
-| 48kHz | 768kHz | 16x | filter_48k_16x_2m_linear_phase.bin |
-| 96kHz | 768kHz | 8x | filter_48k_8x_2m_linear_phase.bin |
-| 192kHz | 768kHz | 4x | filter_48k_4x_2m_linear_phase.bin |
-| 384kHz | 768kHz | 2x | filter_48k_2x_2m_linear_phase.bin |
+| 44.1kHz | 705.6kHz | 16x | filter_44k_16x_640k_linear_phase.bin |
+| 88.2kHz | 705.6kHz | 8x | filter_44k_8x_640k_linear_phase.bin |
+| 176.4kHz | 705.6kHz | 4x | filter_44k_4x_640k_linear_phase.bin |
+| 352.8kHz | 705.6kHz | 2x | filter_44k_2x_640k_linear_phase.bin |
+| 48kHz | 768kHz | 16x | filter_48k_16x_640k_linear_phase.bin |
+| 96kHz | 768kHz | 8x | filter_48k_8x_640k_linear_phase.bin |
+| 192kHz | 768kHz | 4x | filter_48k_4x_640k_linear_phase.bin |
+| 384kHz | 768kHz | 2x | filter_48k_2x_640k_linear_phase.bin |
 
 ### フィルタとゲイン設定
 
-- **FIRフィルタ**: 2,000,000タップ minimum-phase（各レート・倍率に対応）
+- **FIRフィルタ**: 640,000タップ minimum-phase（各レート・倍率に対応）
 - **DCゲイン**: 各フィルタはアップサンプリング倍率 × 0.99に正規化されており、全レートで音量が統一されています
 - **config.json**: デフォルトゲインは`1.0`に設定されており、全レートで適切に動作します
 - **メタデータ**: 各フィルタには対応する`.json`ファイルがあり、DCゲイン、入力/出力レート、アップサンプリング倍率が記載されています

@@ -11,7 +11,7 @@ Beta sweep simulator for Kaiser-window FIR filters.
     uv run python scripts/analysis/beta_sweep.py --taps 131072 --betas 10 15 20 25 30
 
     # 44.1kHz→16xアップサンプル、最小位相化も評価
-    uv run python scripts/analysis/beta_sweep.py --phase minimum --taps 2000000 \\
+    uv run python scripts/analysis/beta_sweep.py --phase minimum --taps 640000 \\
         --beta-min 12 --beta-max 32 --beta-step 2
 
 出力:

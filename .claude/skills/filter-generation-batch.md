@@ -40,7 +40,7 @@
 
 - **taps**: タップ数
   - デフォルト: `640000` (640k)
-  - 例: `generate filters minimum all 2000000` (2M-tap)
+  - 例: `generate filters minimum all 640000` (640k-tap)
 
 ## Execution Steps
 

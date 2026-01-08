@@ -11,7 +11,7 @@
   "kaiser_beta": 28.0,
   "phase_suffix": "linear_phase",
   "target_dc_gain": 8.0,
-  "output_basename": "filter_48k_8x_2m_linear_phase",
+  "output_basename": "filter_48k_8x_640k_linear_phase",
   "validation_results": {
     "passband_ripple_db": 3.072209153742733e-10,
     "stopband_attenuation_db": 239.99996104362904,
@@ -26,7 +26,7 @@
       "original_dc_gain": 1.0,
       "target_dc_gain": 8.0,
       "dc_gain_factor": 0.99,
-      "normalized_dc_gain": 7.920000000000002,
+      "normalized_dc_gain": 7.96400000000002,
       "applied_scale": 7.92,
       "l1_norm": 39.28792707314126,
       "l1_norm_ratio": 4.910990884142658,

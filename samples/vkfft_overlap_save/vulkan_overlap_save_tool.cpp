@@ -16,8 +16,8 @@ void printUsage() {
 
 int main(int argc, char** argv) {
     VulkanOverlapSaveOptions opts{};
-    opts.filterPath = "data/coefficients/filter_44k_8x_2m_min_phase.bin";
-    opts.filterMetadataPath = "data/coefficients/filter_44k_8x_2m_min_phase.json";
+    opts.filterPath = "data/coefficients/filter_44k_8x_640k_min_phase.bin";
+    opts.filterMetadataPath = "data/coefficients/filter_44k_8x_640k_min_phase.json";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];

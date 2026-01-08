@@ -87,7 +87,7 @@ class TestFilterConfig:
             upsample_ratio=16,
         )
         # C++ expects: filter_{family}_{ratio}x_{taps}_min_phase.bin
-        assert config.base_name == "filter_44k_16x_2m_min_phase"
+        assert config.base_name == "filter_44k_16x_640k_min_phase"
 
     def test_base_name_custom_prefix(self):
         """output_prefix should override auto-generated name."""
@@ -363,7 +363,7 @@ class TestCoefficientFileLoading:
 
     def test_load_44k_16x_coefficients(self, coefficients_dir):
         """Should load 44.1kHz 16x coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
+        coeff_path = coefficients_dir / "filter_44k_16x_640k_min_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("44kHz 16x coefficient file not found")
@@ -375,7 +375,7 @@ class TestCoefficientFileLoading:
 
     def test_load_48k_16x_coefficients(self, coefficients_dir):
         """Should load 48kHz 16x coefficient file if it exists."""
-        coeff_path = coefficients_dir / "filter_48k_16x_2m_min_phase.bin"
+        coeff_path = coefficients_dir / "filter_48k_16x_640k_min_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("48kHz 16x coefficient file not found")
@@ -387,7 +387,7 @@ class TestCoefficientFileLoading:
 
     def test_coefficient_dc_gain_matches_ratio(self, coefficients_dir):
         """Loaded coefficients should have DC gain close to target (L * 0.99)."""
-        coeff_path = coefficients_dir / "filter_44k_16x_2m_min_phase.bin"
+        coeff_path = coefficients_dir / "filter_44k_16x_640k_min_phase.bin"
 
         if not coeff_path.exists():
             pytest.skip("44kHz 16x coefficient file not found")
@@ -404,14 +404,14 @@ class TestCoefficientFileNaming:
 
     # Expected filenames for all 8 multi-rate configurations
     EXPECTED_FILENAMES = [
-        "filter_44k_16x_2m_min_phase.bin",
-        "filter_44k_8x_2m_min_phase.bin",
-        "filter_44k_4x_2m_min_phase.bin",
-        "filter_44k_2x_2m_min_phase.bin",
-        "filter_48k_16x_2m_min_phase.bin",
-        "filter_48k_8x_2m_min_phase.bin",
-        "filter_48k_4x_2m_min_phase.bin",
-        "filter_48k_2x_2m_min_phase.bin",
+        "filter_44k_16x_640k_min_phase.bin",
+        "filter_44k_8x_640k_min_phase.bin",
+        "filter_44k_4x_640k_min_phase.bin",
+        "filter_44k_2x_640k_min_phase.bin",
+        "filter_48k_16x_640k_min_phase.bin",
+        "filter_48k_8x_640k_min_phase.bin",
+        "filter_48k_4x_640k_min_phase.bin",
+        "filter_48k_2x_640k_min_phase.bin",
     ]
 
     def test_all_coefficient_files_exist(self, coefficients_dir):
@@ -424,10 +424,12 @@ class TestCoefficientFileNaming:
         assert not missing_files, f"Missing coefficient files: {missing_files}"
 
     def test_coefficient_filenames_use_2m_format(self, coefficients_dir):
-        """Coefficient files should use '2m' instead of '2000000' in filenames."""
+        """Coefficient files should use '2m' instead of '640000' in filenames."""
         # Check that old naming convention files don't exist
-        old_format_files = list(coefficients_dir.glob("*_2000000_*.bin"))
-        assert not old_format_files, f"Found files with old '2000000' naming: {[f.name for f in old_format_files]}"
+        old_format_files = list(coefficients_dir.glob("*_640000_*.bin"))
+        assert (
+            not old_format_files
+        ), f"Found files with old '640000' naming: {[f.name for f in old_format_files]}"
 
         # Check that new naming convention files exist
         new_format_files = list(coefficients_dir.glob("*_2m_*.bin"))
@@ -444,19 +446,19 @@ class TestCoefficientFileNaming:
             if bin_path.exists():
                 assert json_path.exists(), f"Missing JSON metadata for {filename}"
 
-    def test_filter_config_generates_2m_filename(self):
+    def test_filter_config_generates_640k_filename(self):
         """FilterConfig should generate filenames with '2m' for 2M taps."""
 
         # Test all 8 configurations
         test_cases = [
-            (44100, 16, "filter_44k_16x_2m_min_phase"),
-            (88200, 8, "filter_44k_8x_2m_min_phase"),
-            (176400, 4, "filter_44k_4x_2m_min_phase"),
-            (352800, 2, "filter_44k_2x_2m_min_phase"),
-            (48000, 16, "filter_48k_16x_2m_min_phase"),
-            (96000, 8, "filter_48k_8x_2m_min_phase"),
-            (192000, 4, "filter_48k_4x_2m_min_phase"),
-            (384000, 2, "filter_48k_2x_2m_min_phase"),
+            (44100, 16, "filter_44k_16x_640k_min_phase"),
+            (88200, 8, "filter_44k_8x_640k_min_phase"),
+            (176400, 4, "filter_44k_4x_640k_min_phase"),
+            (352800, 2, "filter_44k_2x_640k_min_phase"),
+            (48000, 16, "filter_48k_16x_640k_min_phase"),
+            (96000, 8, "filter_48k_8x_640k_min_phase"),
+            (192000, 4, "filter_48k_4x_640k_min_phase"),
+            (384000, 2, "filter_48k_2x_640k_min_phase"),
         ]
 
         for input_rate, ratio, expected_basename in test_cases:
@@ -579,7 +581,7 @@ class TestMultiRateOutputFilename:
             input_rate=44100,
             upsample_ratio=16,
         )
-        assert config.base_name == "filter_44k_16x_2m_min_phase"
+        assert config.base_name == "filter_44k_16x_640k_min_phase"
 
 
 class TestValidateTapCountMultiRate:
@@ -719,10 +721,10 @@ class TestCoefficientDcGain:
         coeff_dir = Path(__file__).parent.parent.parent / "data" / "coefficients"
         # 新形式フィルタ: DCゲイン = L * 0.99
         cases = [
-            ("filter_44k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
-            ("filter_48k_16x_2m_min_phase.bin", 16.0 * 0.99),  # 15.84
-            ("filter_44k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
-            ("filter_48k_8x_2m_min_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_44k_16x_640k_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_48k_16x_640k_min_phase.bin", 16.0 * 0.99),  # 15.84
+            ("filter_44k_8x_640k_min_phase.bin", 8.0 * 0.99),  # 7.92
+            ("filter_48k_8x_640k_min_phase.bin", 8.0 * 0.99),  # 7.92
         ]
         for filename, expected_dc in cases:
             filepath = coeff_dir / filename

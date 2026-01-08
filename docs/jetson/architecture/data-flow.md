@@ -120,11 +120,11 @@ ReaderWriterQueue<AudioBlock> input_queue(16);  // 16ブロック分バッファ
 
 #### Overlap-Save畳み込み
 
-2Mタップフィルタを効率的に処理するための分割畳み込み：
+640kタップフィルタを効率的に処理するための分割畳み込み：
 
 ```
 Input Block Size:  N = 4096 samples
-Filter Length:     L = 2,000,000 taps
+Filter Length:     L = 640,000 taps
 Partitions:        L / N = 488 partitions
 FFT Size:          2N = 8192 points
 Overlap:           N samples (50%)
@@ -238,7 +238,7 @@ snd_pcm_set_params(playback_handle,
 | ハイブリッド遅延整列 | ~10 ms（全帯域をクロスオーバー周波数100Hzの1周期位置に揃える） |
 | **合計** | **~41 ms** |
 
-> 参考: 旧線形位相フィルタは 2Mタップ @705.6kHz で約1.4秒の遅延が発生していました。
+> 参考: 旧線形位相フィルタは 640kタップ @705.6kHz で約1.4秒の遅延が発生していました。
 
 ---
 

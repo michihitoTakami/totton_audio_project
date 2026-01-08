@@ -111,7 +111,7 @@ using StreamFloatVector = ConvolutionEngine::StreamFloatVector;
 constexpr const char* DEFAULT_ALSA_DEVICE = "hw:USB";
 constexpr const char* DEFAULT_LOOPBACK_DEVICE = "hw:Loopback,1,0";
 constexpr uint32_t DEFAULT_LOOPBACK_PERIOD_FRAMES = 1024;
-constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_2m_min_phase.bin";
+constexpr const char* DEFAULT_FILTER_PATH = "data/coefficients/filter_44k_16x_640k_min_phase.bin";
 constexpr const char* CONFIG_FILE_PATH = DEFAULT_CONFIG_FILE;
 
 static constexpr std::array<const char*, 1> kSupportedOutputModes = {"usb"};

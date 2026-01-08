@@ -7,7 +7,7 @@
 namespace AudioInput {
 
 // Stall detection threshold for streaming input gaps (ns) - 200ms
-constexpr std::int64_t kStreamStallThresholdNs = 200000000;
+constexpr std::int64_t kStreamStallThresholdNs = 64000000;
 
 inline bool shouldResetAfterStall(std::int64_t previousTimestampNs, std::int64_t currentTimestampNs,
                                   std::int64_t thresholdNs = kStreamStallThresholdNs) {

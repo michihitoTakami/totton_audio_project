@@ -40,15 +40,15 @@ struct AppConfig {
     float gain = 1.0f;
     float headroomTarget = 0.92f;  // Peak target (linear 0-1) for headroom + limiter guard
     HeadroomMode headroomMode = HeadroomMode::FamilyMax;  // Gain calc: per-filter or family-max
-    std::string filterPath = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
+    std::string filterPath = "data/coefficients/filter_44k_16x_640k_linear_phase.bin";
     PhaseType phaseType = PhaseType::Minimum;  // Filter phase type (default: Minimum)
     GpuBackend gpuBackend = GpuBackend::Cuda;  // Backend selection: CUDA (default) or Vulkan
 
     // Per-family/phase filter paths (quad-phase engine always uses all four)
-    std::string filterPath44kMin = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
-    std::string filterPath48kMin = "data/coefficients/filter_48k_16x_2m_linear_phase.bin";
-    std::string filterPath44kLinear = "data/coefficients/filter_44k_16x_2m_linear_phase.bin";
-    std::string filterPath48kLinear = "data/coefficients/filter_48k_16x_2m_linear_phase.bin";
+    std::string filterPath44kMin = "data/coefficients/filter_44k_16x_640k_linear_phase.bin";
+    std::string filterPath48kMin = "data/coefficients/filter_48k_16x_640k_linear_phase.bin";
+    std::string filterPath44kLinear = "data/coefficients/filter_44k_16x_640k_linear_phase.bin";
+    std::string filterPath48kLinear = "data/coefficients/filter_48k_16x_640k_linear_phase.bin";
 
     // Multi-rate mode: 10 filter configurations (2 rate families × 5 ratios: 1x/2x/4x/8x/16x)
     // Issue #219: Dynamic rate switching with all filters preloaded

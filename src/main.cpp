@@ -22,7 +22,7 @@ void printUsage(const char* programName) {
     std::cout << "Options:" << '\n';
     std::cout << "  --filter <path>    Path to filter coefficients .bin file" << '\n';
     std::cout
-        << "                     (default: data/coefficients/filter_44k_16x_2m_linear_phase.bin)"
+        << "                     (default: data/coefficients/filter_44k_16x_640k_linear_phase.bin)"
         << '\n';
     std::cout << "  --eq <path>        Path to EQ profile file (optional)" << '\n';
     std::cout << "  --ratio <n>        Upsample ratio (default: 16)" << '\n';
@@ -190,7 +190,7 @@ int main(int argc, char* argv[]) {
                     "To generate: python scripts/filters/generate_minimum_phase.py --input-rate "
                     "48000 "
                     "--stopband-start 24000 --passband-end 21500 "
-                    "--output-prefix filter_48k_16x_2m_min_phase");
+                    "--output-prefix filter_48k_16x_640k_min_phase");
                 if (!applyPreset(FILTER_PRESET_44K)) {
                     LOG_ERROR("44.1kHz fallback filter also missing: {}", FILTER_PRESET_44K.path);
                     return 1;
@@ -220,7 +220,7 @@ int main(int argc, char* argv[]) {
                     "Generate it via: python scripts/filters/generate_minimum_phase.py "
                     "--input-rate 48000 "
                     "--stopband-start 24000 --passband-end 21500 "
-                    "--output-prefix filter_48k_16x_2m_min_phase");
+                    "--output-prefix filter_48k_16x_640k_min_phase");
             } else {
                 LOG_INFO(
                     "Generate it via scripts/filters/generate_minimum_phase.py or specify with "

@@ -21,7 +21,7 @@ class PartitionPlanTest : public ::testing::Test {
 
 TEST_F(PartitionPlanTest, DisabledWhenConfigIsOff) {
     defaultConfig_.enabled = false;
-    auto plan = ConvolutionEngine::buildPartitionPlan(2000000, 16, defaultConfig_);
+    auto plan = ConvolutionEngine::buildPartitionPlan(640000, 16, defaultConfig_);
     EXPECT_FALSE(plan.enabled);
     EXPECT_TRUE(plan.partitions.empty());
 }
