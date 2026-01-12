@@ -82,7 +82,7 @@ Data Plane (C++/CUDA)
 
 | Item | License | Notes |
 |------|---------|-------|
-| Project code | MB-NCL v1.0 | Non-commercial / org evaluation / PoC |
+| Project code | Totton Audio Project NCL v1.1 | Non-commercial / non-commercial org internal use |
 | OPRA EQ data | CC BY-SA 4.0 | Attribution required |
 | HUTUBS (Crossfeed) | CC BY 4.0 | Attribution required |
 
@@ -172,7 +172,7 @@ Data Plane (C++/CUDA)
 
 | アイテム | ライセンス | 備考 |
 |---------|------------|------|
-| 本プロジェクトコード | MB-NCL v1.0 | 非商用・組織評価/PoC |
+| 本プロジェクトコード | Totton Audio Project NCL v1.1 | 非商用・非商用組織の社内利用 |
 | OPRA EQ データ | CC BY-SA 4.0 | 帰属表示必須 |
 | HUTUBS (Crossfeed) | CC BY 4.0 | 帰属表示必須 |
 
