@@ -1,10 +1,10 @@
-Magic Box Project (michy_os / gpu_os)
-Binary & Docker Non-Commercial License (MB-NCL) v1.0
+Totton Audio Project
+Totton Audio Project Non-Commercial License (Totton Audio Project NCL) v1.1
 
 Copyright (c) 2025 Michihito Takami
 All rights reserved.
 
-This license governs the use of Magic Box Project “Distributed Artifacts” (binaries, Docker images, configuration files, and bundled documentation) that are distributed by the Author.
+This license governs the use of Totton Audio Project “Distributed Artifacts” (binaries, Docker images, configuration files, and bundled documentation) that are distributed by the Author.
 
 Important: Third-party software and data included in the Distributed Artifacts (e.g., OPRA, HUTUBS) are governed by their respective licenses.
 This license does not restrict any rights granted by those third-party licenses. See NOTICE.md / THIRD_PARTY_LICENSES.md.
@@ -21,36 +21,25 @@ This license does not restrict any rights granted by those third-party licenses.
 - "Software": programs, configurations, scripts, and documents included in this repository (or distributed artifacts) for which the Author holds copyright, excluding third-party components.
 - "Distributed Artifacts": binary distributions, Docker images, installers, archives, etc. that include the Software.
 - "Personal Use": use by an individual for their own purposes (including family/household use).
-- "Organization": a legal entity (including a company, corporation, or other organization) and its employees/contractors acting on its behalf.
-- "Evaluation Use": an Organization’s internal use solely to evaluate the Software or Distributed Artifacts (including internal testing and proof-of-concept) under Section 2-A.
-- "Production Use": use for operating a production system, providing services to customers/end-users, or running the Software as part of a business process beyond evaluation.
-- "Commercial Use": any use intended for commercial advantage or monetary compensation, whether direct or indirect, including (but not limited to) selling, subscription fees, advertising revenue, providing services, paid support, contracting/consulting deliverables, internal business use, SaaS/hosted services, or embedding into a product or service; excluding permitted Evaluation Use that complies with Section 2-A.
+- "Organization": any entity other than a natural person, including a company, corporation, school, laboratory, university, non-profit organization, public institution, or other group, and its employees/contractors acting on its behalf.
+- "Non-Commercial Organization": an Organization that is not operated for profit and whose use is not for commercial advantage or monetary compensation (direct or indirect).
+- "Production Use": use for operating a production system, providing services to customers/end-users, or running the Software as part of a business process.
+- "Commercial Use": any use intended for commercial advantage or monetary compensation, whether direct or indirect, including (but not limited to) selling, subscription fees, advertising revenue, providing services, paid support, contracting/consulting deliverables, internal business use, SaaS/hosted services, embedding into a product or service, or any use by or for a for-profit Organization.
 
 ## 2. Grant (Non-Exclusive)
 Subject to compliance with this license, the Author grants you a non-exclusive, non-transferable, non-sublicensable permission to:
 - run the Software for Personal Use;
+- if you act on behalf of a Non-Commercial Organization, run the Software and/or Distributed Artifacts solely for that Non-Commercial Organization’s non-commercial internal purposes;
 - copy the Distributed Artifacts and make backups for Personal Use;
 - modify configuration files and operational scripts for Personal Use;
 - redistribute the Distributed Artifacts free of charge for non-commercial purposes, provided you satisfy Section 5.
-
-## 2-A. Organization Evaluation Use (Limited, Time-Bound)
-In addition to Section 2, the Author permits an Organization to use the Software and/or Distributed Artifacts for Evaluation Use, subject to all of the following:
-- **Purpose**: internal evaluation and proof-of-concept only.
-- **Duration**: up to **30 days** from the first use by the Organization.
-- **Scope**: use is limited to the Organization’s internal personnel and internal environments.
-- **No Production Use**: you must not use it for Production Use.
-- **No External Offering**: you must not provide the Software or Distributed Artifacts to customers/end-users, or operate it as a hosted service.
-- **No Monetization**: you must not receive any fee or other compensation in connection with the Evaluation Use.
-- **No Redistribution**: you must not redistribute the Software or Distributed Artifacts outside the Organization.
-
-If you need a longer evaluation period or broader rights, contact the Author to negotiate a separate license (see Section 10).
 
 ## 3. Prohibitions
 You must not:
 - use the Software or Distributed Artifacts for Commercial Use;
 - sell, rent, license for a fee, or otherwise commercialize any part of the Software or Distributed Artifacts;
 - provide the Software or Distributed Artifacts as part of a commercial service or hosted offering;
-- use the Software or Distributed Artifacts for Production Use (including after the Evaluation Use period ends);
+- use the Software or Distributed Artifacts for Production Use when such use falls under Commercial Use;
 - reverse engineer, decompile, or disassemble the Software, except to the extent permitted by mandatory law;
 - remove or alter copyright notices, this license text, or NOTICE files.
 
@@ -78,6 +67,10 @@ If you violate this license (including engaging in Commercial Use), the Author r
 
 ## 10. Commercial Licensing
 If you want to use the Software or Distributed Artifacts commercially, contact the Author in advance to negotiate a separate commercial license.
+
+The Author may grant commercial permissions under separate terms. As a general policy (non-binding):
+- for individual (sole proprietor) use, the Author may grant permissions free of charge after a short discussion about your goals (e.g., your vision for audio and what you want to achieve);
+- for companies that already sell products/services in distribution channels, the Author typically requires a usage fee, after which broader rights may be granted.
 
 ---
 
