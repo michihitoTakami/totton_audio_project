@@ -2,8 +2,19 @@
 name = "gpu-audio-upsampler"
 version = "0.1.0"
 description = "GPU-accelerated high-precision audio upsampling plugin"
-readme = "CLAUDE.md"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "Totton Audio Project NCL v1.1" }
+license-files = ["LICENSE", "LICENSE.ja.md", "NOTICE.md", "THIRD_PARTY_LICENSES.md"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Sound/Audio",
+]
 dependencies = [
     "scipy>=1.11.0",
     "numpy>=1.24.0",
