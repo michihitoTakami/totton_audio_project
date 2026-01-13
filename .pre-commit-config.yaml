@@ -123,6 +123,8 @@ repos:
         always_run: true
       - id: vulkan-build-and-tests
         name: Vulkan build & ctest (ENABLE_VULKAN=ON, CUDA=OFF)
+        # 重いので、関連コードが変更されたときだけ実行する（docs-only では走らせない）
+        files: ^(src/|include/|samples/|cmake/|CMakeLists\.txt$|.*\.(c|cpp|h|hpp|cu|cuh|cmake)$)
         entry: |
           bash -c '
             set -euo pipefail
