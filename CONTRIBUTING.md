@@ -49,17 +49,8 @@ pre-commit run --hook-stage pre-push
 
 Issue番号を必ず含めてください。
 
-- ブランチ名: `feature/#123-topic` / `fix/#456-bug`
-- PRタイトル: `#123 変更の説明` / `Fix #456: バグの説明`
-
-### 4.3 ワークツリー運用（推奨）
-
-`git worktree` を推奨します（コンフリクトを減らすため、作業開始前に必ず最新化）。
-
-```bash
-git fetch origin main
-git worktree add worktrees/123-topic -b feature/#123-topic origin/main
-```
+- ブランチ名: `feature/123-topic` / `fix/456-bug`
+- PRタイトル: `123 変更の説明` / `Fix 456: バグの説明`
 
 ## 5. ライセンス / 権利（DCO）
 
