@@ -11,7 +11,7 @@ registries:
 
 packages:
   # Build tools
-  - name: Kitware/CMake@v3.30.0
+  - name: cmake/cmake@v3.30.0
   - name: ninja-build/ninja@v1.12.1
   - name: koalaman/shellcheck@v0.10.0
   - name: rhysd/actionlint@v1.7.9
