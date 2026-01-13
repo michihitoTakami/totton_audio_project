@@ -37,6 +37,7 @@ add_executable(vkfft_minimal
 target_include_directories(vkfft_minimal PRIVATE
     ${vkfft_SOURCE_DIR}/vkFFT
     ${glslang_SOURCE_DIR}/glslang/Include
+    ${glslang_SOURCE_DIR}/glslang/Public
 )
 
 target_compile_definitions(vkfft_minimal PRIVATE VKFFT_BACKEND=0 VK_API_VERSION=11)
