@@ -7,11 +7,11 @@
 #
 registries:
   - type: standard
-    ref: v4.232.0  # https://github.com/aquaproj/aqua-registry/releases
+    ref: v4.454.0  # https://github.com/aquaproj/aqua-registry/releases
 
 packages:
   # Build tools
-  - name: cmake/cmake@v3.30.0
+  - name: Kitware/CMake@v3.30.0
   - name: ninja-build/ninja@v1.12.1
   - name: koalaman/shellcheck@v0.10.0
   - name: rhysd/actionlint@v1.7.9
