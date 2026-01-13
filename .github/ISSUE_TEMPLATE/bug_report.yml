@@ -72,4 +72,3 @@ body:
       label: ログ/スクリーンショット
       description: 可能な範囲で貼り付けてください（機密情報はマスク）。
       render: shell
-
