@@ -18,7 +18,7 @@ GPU Audio Upsamplerのセットアップ手順です。
 curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v3.0.1/aqua-installer | bash
 export PATH="${AQUA_ROOT_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/aquaproj-aqua}/bin:$PATH"
 
-# 3. CLIツールのインストール (cmake, uv, gh)
+# 3. CLIツールのインストール (cmake, ninja, uv, gh など)
 aqua i
 
 # 4. Python環境のセットアップ
@@ -87,8 +87,14 @@ aqua i
 
 これにより以下がインストールされます：
 - **cmake** v3.30.0 - ビルドシステム
+- **ninja** v1.12.1 - 高速ビルダー（任意だが推奨）
 - **uv** v0.5.4 - Python環境管理
 - **gh** v2.62.0 - GitHub CLI
+- **shellcheck** v0.10.0 - シェルスクリプト静的解析（pre-commit向け）
+- **actionlint** v1.7.9 - GitHub Actions YAML検証（pre-commit向け）
+- **jq** 1.7.1 - JSON操作（docker/ の entrypoint 等で使用）
+- **yq** v4.44.3 - YAML操作（運用/自動化向け）
+- **ripgrep** 14.1.1 - 高速検索（開発者向け）
 
 ### 4. Python環境
 
@@ -145,8 +151,14 @@ uv run pytest
 | Tool | Managed by | Version |
 |------|------------|---------|
 | cmake | aqua | 3.30.0 |
+| ninja | aqua | 1.12.1 |
 | uv | aqua | 0.5.4 |
 | gh | aqua | 2.62.0 |
+| shellcheck | aqua | 0.10.0 |
+| actionlint | aqua | 1.7.9 |
+| jq | aqua | 1.7.1 |
+| yq | aqua | 4.44.3 |
+| rg (ripgrep) | aqua | 14.1.1 |
 | Python packages | uv | pyproject.toml |
 | CUDA toolkit | apt | system |
 | libsndfile | apt | system |
