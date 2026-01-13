@@ -7,7 +7,6 @@
 
 - `README.md`（全体像）
 - `INSTALL.md`（依存関係〜ビルド〜テストの手順）
-- `AGENTS.md`（コーディング規約・開発ルール）
 - `docs/`（用途別ドキュメント）
 
 ## 2. 開発環境セットアップ（最短）
@@ -84,6 +83,6 @@ git commit -s
 
 ## 6. English (short)
 
-Please read `README.md`, `INSTALL.md`, and `AGENTS.md` first.
+Please read `README.md` and `INSTALL.md` first.
 Before opening a PR, run tests and `pre-commit run --hook-stage pre-push`.
 We use **DCO 1.1**: sign every commit with `git commit -s`.
