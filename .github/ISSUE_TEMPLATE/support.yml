@@ -1,0 +1,25 @@
+name: "❓ 質問/サポート"
+description: "使い方の質問、セットアップ相談など"
+title: "[Support] "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        不具合の可能性がある場合は「🐛 バグ報告」テンプレートをご利用ください。
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 質問内容
+      placeholder: 例) Jetsonでのビルドに必要なCUDAバージョンは？
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: 環境（任意）
+      description: OS/ハードウェア/手順など、分かる範囲で。
+

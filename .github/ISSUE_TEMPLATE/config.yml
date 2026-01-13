@@ -1,0 +1,9 @@
+blank_issues_enabled: true
+contact_links:
+  - name: ドキュメント
+    url: https://github.com/michihitoTakami/totton_audio_project/tree/main/docs
+    about: セットアップや仕様はこちら
+  - name: README
+    url: https://github.com/michihitoTakami/totton_audio_project#readme
+    about: プロジェクト概要
+
