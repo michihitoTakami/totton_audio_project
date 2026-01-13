@@ -15,7 +15,7 @@ GPU Audio Upsamplerのセットアップ手順です。
 ./scripts/deployment/setup-system.sh
 
 # 2. aquaのインストール (CLIツール管理)
-curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v3.0.1/aqua-installer | bash
+curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v4.0.4/aqua-installer | bash
 export PATH="${AQUA_ROOT_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/aquaproj-aqua}/bin:$PATH"
 
 # 3. CLIツールのインストール (cmake, ninja, uv, gh など)
@@ -68,7 +68,7 @@ sudo apt install -y \
 
 ```bash
 # aquaのインストール
-curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v3.0.1/aqua-installer | bash
+curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v4.0.4/aqua-installer | bash
 
 # PATHに追加 (~/.bashrc または ~/.zshrc に追記)
 export PATH="${AQUA_ROOT_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/aquaproj-aqua}/bin:$PATH"

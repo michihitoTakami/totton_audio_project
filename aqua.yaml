@@ -2,7 +2,7 @@
 # https://aquaproj.github.io/
 #
 # Usage:
-#   curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v3.0.1/aqua-installer | bash
+#   curl -sSfL https://raw.githubusercontent.com/aquaproj/aqua-installer/v4.0.4/aqua-installer | bash
 #   aqua i
 #
 registries:
