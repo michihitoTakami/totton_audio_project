@@ -65,7 +65,7 @@ Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the project maintainers:
 
 - GitHub: https://github.com/michihitoTakami
-- Repository Issues: https://github.com/michihitoTakami/michy_os/issues
+- GitHub Discussions: https://github.com/michihitoTakami/michy_os/discussions
 
 All complaints will be reviewed and investigated promptly and fairly.
 
@@ -142,7 +142,7 @@ available at https://www.contributor-covenant.org/version/2/1/code_of_conduct.ht
 嫌がらせや不適切な行為を見聞きした場合は、以下へ報告してください:
 
 - GitHub: https://github.com/michihitoTakami
-- リポジトリのIssue: https://github.com/michihitoTakami/michy_os/issues
+- GitHub Discussions: https://github.com/michihitoTakami/michy_os/discussions
 
 すべての報告は速やかに、かつ公平に確認・調査します。
 
