@@ -9,6 +9,10 @@
 - GPU-accelerated upsampling with **640k-tap minimum-phase FIR** (Kaiser β≈28, ~160dB stopband), output up to 768kHz.
 - Headphone EQ using OPRA data + KB5000_7 target; crossfeed / AI de-limiter; safe auto-negotiation & soft mute.
 - Runs as a standalone DDC/DSP on Jetson Orin Nano or on PC for development.
+- This is not only an “upsampler” but a broader DSP playground for improving audio with the GPU.
+- Setup can be challenging; if you get stuck, please leverage AI assistants while trying.
+- Vulkan backend: high-resolution behavior on real hardware is not fully validated yet.
+- Verified sample rates so far: 48kHz / 44.1kHz families.
 
 ### Quick Start (Docker-first)
 
@@ -99,6 +103,10 @@ Dependencies include CUDA/cuFFT (NVIDIA EULA), alsa-lib (LGPL-2.1), ZeroMQ (LGPL
 - **640kタップ最小位相FIR**（Kaiser β≈28、阻止域 ~160dB）によるGPUアップサンプリング（最大768kHz出力）
 - OPRA由来EQ + KB5000_7ターゲットによるヘッドホン補正、クロスフィード / AIデリミッタ、レート自動切替とソフトミュート
 - Jetson Orin Nanoを本番、PCを開発用として単体DDC/DSPとして動作
+- アップサンプラーというよりは、GPUで音を良くするためのDSP全般のプロジェクトです
+- セットアップはたぶん相当難しいので、詰まったらAI等に聞きながら進めてください
+- Vulkanはまだ実機でハイレゾでの挙動確認が十分ではありません
+- 動作確認は 48kHz / 44.1kHz 系のみです
 
 ### クイックスタート（Docker推奨）
 
