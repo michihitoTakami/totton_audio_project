@@ -2,13 +2,19 @@
 
 ## English
 
-**Vision**: Delivering personalized 1-to-1 audio experiences with a GPU-powered upsampler.
+**Vision**: Delivering personalized 1-to-1 audio experiences with a GPU-powered audio DSP (upsampling, EQ, and more).
 
 ### Overview
 
-- GPU-accelerated upsampling with **640k-tap minimum-phase FIR** (Kaiser β≈28, ~160dB stopband), output up to 768kHz.
+- GPU-accelerated audio DSP pipeline, including **640k-tap minimum-phase FIR** upsampling (Kaiser β≈28, ~160dB stopband), output up to 768kHz.
 - Headphone EQ using OPRA data + KB5000_7 target; crossfeed / AI de-limiter; safe auto-negotiation & soft mute.
 - Runs as a standalone DDC/DSP on Jetson Orin Nano or on PC for development.
+
+### Status & notes
+
+- This repository is an experimental project and may require non-trivial setup.
+- The Vulkan backend is available, but high sample-rate behavior on real devices is not fully validated yet.
+- Validation coverage is currently focused on the 44.1kHz / 48kHz families.
 
 ### Quick Start (Docker-first)
 
@@ -92,13 +98,19 @@ Dependencies include CUDA/cuFFT (NVIDIA EULA), alsa-lib (LGPL-2.1), ZeroMQ (LGPL
 
 ## 日本語
 
-**ビジョン**: 1to1オーディオで一人ひとりに最適化された音楽体験を、GPUアップサンプラーで届ける。
+**ビジョン**: 1to1オーディオで一人ひとりに最適化された音楽体験を、GPUベースのオーディオDSP（アップサンプル/EQ等）で届ける。
 
 ### 概要
 
 - **640kタップ最小位相FIR**（Kaiser β≈28、阻止域 ~160dB）によるGPUアップサンプリング（最大768kHz出力）
 - OPRA由来EQ + KB5000_7ターゲットによるヘッドホン補正、クロスフィード / AIデリミッタ、レート自動切替とソフトミュート
 - Jetson Orin Nanoを本番、PCを開発用として単体DDC/DSPとして動作
+
+### 現状と注意点
+
+- 本リポジトリは実験的な内容を含み、セットアップが簡単ではない可能性があります。
+- Vulkanバックエンドは用意していますが、実機でハイレゾ相当の挙動は十分に検証できていません。
+- 動作確認は現状、44.1kHz/48kHz系を中心に行っています。
 
 ### クイックスタート（Docker推奨）
 
