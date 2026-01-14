@@ -75,6 +75,11 @@ test_detail.xml
 
 worktrees/
 
+# Prevent accidental nested git repos / submodules
+**/.git
+**/.git/
+.gitmodules
+
 # HUTUBS SOFA data (CC BY 4.0)
 # Track only the 5 required measured SOFA files for head sizes XS/S/M/L/XL
 # Exclude simulated files (~6MB each) - pattern: *_simulated.sofa

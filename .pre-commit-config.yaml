@@ -71,6 +71,16 @@ repos:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
 
+  # Repo hygiene: prevent nested git repos / generated artifacts from being committed
+  - repo: local
+    hooks:
+      - id: check-repo-hygiene
+        name: Check repo hygiene (nested git / generated)
+        entry: bash scripts/repo/check_repo_hygiene.sh --staged
+        language: system
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
+
   # Pre-push: Type checking with mypy and Raspberry Pi clang-tidy
   # Uses system Python to access project dependencies
   - repo: local
