@@ -185,12 +185,12 @@ function systemPage() {
         currentLang: "{{ lang }}",
         partitioned: {
             enabled: false,
-            fast_partition_taps: 49152,
+            fast_partition_taps: 16384,
             min_partition_taps: 8192,
-            max_partitions: 6,
-            tail_fft_multiple: 4,
+            max_partitions: 4,
+            tail_fft_multiple: 2,
             loading: false,
-            preset: "balanced",
+            preset: "stable",
         },
         config: { bufferSize: null, periodSize: null, gain: null, headroomTarget: null },
         debug: {
@@ -389,7 +389,7 @@ function systemPage() {
         },
 
         resetPartitioned() {
-            this.usePreset('balanced');
+            this.usePreset('stable');
             showToast('{{ t.get("system.partitioned.reset_defaults") }}', 'info');
         },
 
