@@ -98,6 +98,7 @@
             <div class="muted">{{ t.get('system.partitioned.preset.subtitle') }}</div>
             <div class="btn-group">
                 {{ buttons.btn_primary(t.get('system.partitioned.preset.low_latency'), icon='⚡', click="usePreset('low_latency')", extra_class='btn-group-item', attrs=':class="{ active: partitioned.preset === &quot;low_latency&quot; }"') }}
+                {{ buttons.btn_primary(t.get('system.partitioned.preset.stable'), icon='🛡️', click="usePreset('stable')", extra_class='btn-group-item', attrs=':class="{ active: partitioned.preset === &quot;stable&quot; }"') }}
                 {{ buttons.btn_primary(t.get('system.partitioned.preset.balanced'), icon='🎧', click="usePreset('balanced')", extra_class='btn-group-item', attrs=':class="{ active: partitioned.preset === &quot;balanced&quot; }"') }}
             </div>
             <div class="info-text">
@@ -157,6 +158,12 @@ function systemPage() {
         },
         partitionedPresets: {
             low_latency: {
+                fast_partition_taps: 4096,
+                min_partition_taps: 4096,
+                max_partitions: 4,
+                tail_fft_multiple: 2,
+            },
+            stable: {
                 fast_partition_taps: 16384,
                 min_partition_taps: 8192,
                 max_partitions: 4,
@@ -171,18 +178,19 @@ function systemPage() {
         },
         presetDescriptions: {
             low_latency: "{{ t.get('system.partitioned.preset.low_latency_desc') }}",
+            stable: "{{ t.get('system.partitioned.preset.stable_desc') }}",
             balanced: "{{ t.get('system.partitioned.preset.balanced_desc') }}",
             custom: "{{ t.get('system.partitioned.preset.custom_desc') }}",
         },
         currentLang: "{{ lang }}",
         partitioned: {
             enabled: false,
-            fast_partition_taps: 49152,
+            fast_partition_taps: 16384,
             min_partition_taps: 8192,
-            max_partitions: 6,
-            tail_fft_multiple: 4,
+            max_partitions: 4,
+            tail_fft_multiple: 2,
             loading: false,
-            preset: "balanced",
+            preset: "stable",
         },
         config: { bufferSize: null, periodSize: null, gain: null, headroomTarget: null },
         debug: {
@@ -349,7 +357,11 @@ function systemPage() {
         },
 
         togglePartitioned() {
-            this.partitioned.enabled = !this.partitioned.enabled;
+            if (this.partitioned.enabled) {
+                this.partitioned.enabled = false;
+                return;
+            }
+            this.usePreset('low_latency');
         },
 
         async savePartitioned() {
@@ -377,7 +389,7 @@ function systemPage() {
         },
 
         resetPartitioned() {
-            this.usePreset('balanced');
+            this.usePreset('stable');
             showToast('{{ t.get("system.partitioned.reset_defaults") }}', 'info');
         },
 

@@ -368,8 +368,8 @@ TEST(ConfigLoaderStandaloneTests, OutputModeToStringUsb) {
 TEST_F(ConfigLoaderTest, PartitionedConvolutionDefaults) {
     AppConfig config;
     EXPECT_FALSE(config.partitionedConvolution.enabled);
-    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 32768);
-    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 32768);
+    EXPECT_EQ(config.partitionedConvolution.fastPartitionTaps, 4096);
+    EXPECT_EQ(config.partitionedConvolution.minPartitionTaps, 4096);
     EXPECT_EQ(config.partitionedConvolution.maxPartitions, 4);
     EXPECT_EQ(config.partitionedConvolution.tailFftMultiple, 2);
 }
