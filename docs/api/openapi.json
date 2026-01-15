@@ -3909,14 +3909,14 @@
             "maximum": 262144.0,
             "minimum": 1024.0,
             "title": "Fast Partition Taps",
-            "default": 32768
+            "default": 4096
           },
           "min_partition_taps": {
             "type": "integer",
             "maximum": 262144.0,
             "minimum": 1024.0,
             "title": "Min Partition Taps",
-            "default": 32768
+            "default": 4096
           },
           "max_partitions": {
             "type": "integer",

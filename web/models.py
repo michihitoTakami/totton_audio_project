@@ -125,8 +125,8 @@ class PartitionedConvolutionSettings(BaseModel):
     """Partitioned convolution (low latency) configuration."""
 
     enabled: bool = False
-    fast_partition_taps: int = Field(default=32768, ge=1024, le=262_144)
-    min_partition_taps: int = Field(default=32768, ge=1024, le=262_144)
+    fast_partition_taps: int = Field(default=4096, ge=1024, le=262_144)
+    min_partition_taps: int = Field(default=4096, ge=1024, le=262_144)
     max_partitions: int = Field(default=4, ge=1, le=32)
     tail_fft_multiple: int = Field(default=2, ge=2, le=16)
 
