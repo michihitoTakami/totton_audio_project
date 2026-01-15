@@ -83,8 +83,8 @@ struct AppConfig {
     // Partitioned convolution (Issue #351)
     struct PartitionedConvolutionConfig {
         bool enabled = false;
-        int fastPartitionTaps = 4096;
-        int minPartitionTaps = 4096;
+        int fastPartitionTaps = 10240;
+        int minPartitionTaps = 10240;
         int maxPartitions = 4;
         int tailFftMultiple = 2;
     } partitionedConvolution;

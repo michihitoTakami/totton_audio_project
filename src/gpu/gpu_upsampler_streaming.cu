@@ -1038,7 +1038,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                             newSamples,
                             outputData.capacity());
                 outputData.clear();
-                return false;
+                return handleRtFailure("partition output buffer capacity too small");
             }
             outputData.resize(static_cast<size_t>(newSamples));
             std::fill(outputData.begin(), outputData.end(), 0.0f);
@@ -1071,7 +1071,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                                     validOutputPerBlock_,
                                     outputData.capacity());
                         outputData.clear();
-                        return false;
+                        return handleRtFailure("partition output buffer capacity too small");
                     }
                     outputData.resize(static_cast<size_t>(validOutputPerBlock_));
                     std::fill(outputData.begin(), outputData.end(), 0.0f);
@@ -1097,7 +1097,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                                 validOutputPerBlock_,
                                 outputData.capacity());
                     outputData.clear();
-                    return false;
+                    return handleRtFailure("partition output buffer capacity too small");
                 }
                 outputData.resize(static_cast<size_t>(validOutputPerBlock_));
                 std::fill(outputData.begin(), outputData.end(), 0.0f);
@@ -1127,7 +1127,7 @@ bool GPUUpsampler::processPartitionedStreamBlock(
                         required,
                         streamInputBuffer.size());
             outputData.clear();
-            return false;
+            return handleRtFailure("partition input buffer capacity exceeded");
         }
 
         registerStreamInputBuffer(streamInputBuffer, stream);

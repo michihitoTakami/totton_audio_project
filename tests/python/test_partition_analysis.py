@@ -17,17 +17,17 @@ from scripts.analysis.partition_analysis import (
 def test_build_partition_plan_matches_cpp_defaults():
     config = PartitionConfig(
         enabled=True,
-        fast_partition_taps=32_768,
-        min_partition_taps=32_768,
+        fast_partition_taps=10_240,
+        min_partition_taps=10_240,
         max_partitions=4,
         tail_fft_multiple=2,
     )
     plan = build_partition_plan(640_000, config)
     assert plan.enabled
     taps = [part.taps for part in plan.partitions]
-    assert taps == [32_768, 65_536, 131_072, 410_624]
-    assert plan.partitions[0].fft_size == 65_536
-    assert plan.partitions[0].valid_output == 32_769
+    assert taps == [10_240, 20_480, 40_960, 568_320]
+    assert plan.partitions[0].fft_size == 32_768
+    assert plan.partitions[0].valid_output == 22_529
 
 
 def test_partition_energy_summary_tracks_segments():
