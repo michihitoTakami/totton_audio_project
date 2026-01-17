@@ -540,29 +540,51 @@ void GPUUpsampler::removePinnedHostBuffer(void* ptr) {
 }
 
 void GPUUpsampler::registerStreamInputBuffer(StreamFloatVector& buffer, cudaStream_t stream) {
+    // Track per-stream host buffers to avoid duplicate registrations when vectors reallocate
+    void** trackedPtr = nullptr;
+    size_t* trackedBytes = nullptr;
+    const char* context = "stream input buffer (mono)";
+    if (stream == streamLeft_) {
+        trackedPtr = &pinnedStreamInputLeft_;
+        trackedBytes = &pinnedStreamInputLeftBytes_;
+        context = "stream input buffer (left)";
+    } else if (stream == streamRight_) {
+        trackedPtr = &pinnedStreamInputRight_;
+        trackedBytes = &pinnedStreamInputRightBytes_;
+        context = "stream input buffer (right)";
+    } else {
+        trackedPtr = &pinnedStreamInputMono_;
+        trackedBytes = &pinnedStreamInputMonoBytes_;
+    }
+
     if (buffer.empty()) {
+        if (*trackedPtr) {
+            removePinnedHostBuffer(*trackedPtr);
+        }
+        *trackedPtr = nullptr;
+        *trackedBytes = 0;
         return;
     }
 
     void* ptr = buffer.data();
     size_t bytes = buffer.size() * sizeof(float);
 
-    // Track per-stream host buffers to avoid duplicate registrations when vectors reallocate
-    void** trackedPtr = nullptr;
-    size_t* trackedBytes = nullptr;
-    if (stream == streamLeft_) {
-        trackedPtr = &pinnedStreamInputLeft_;
-        trackedBytes = &pinnedStreamInputLeftBytes_;
-    } else if (stream == streamRight_) {
-        trackedPtr = &pinnedStreamInputRight_;
-        trackedBytes = &pinnedStreamInputRightBytes_;
-    } else {
-        trackedPtr = &pinnedStreamInputMono_;
-        trackedBytes = &pinnedStreamInputMonoBytes_;
+    if (*trackedPtr) {
+        removePinnedHostBuffer(*trackedPtr);
     }
 
-    if (*trackedPtr == ptr && *trackedBytes == bytes) {
-        return;  // Already prepared for this stream
+    bool alreadyPinned = false;
+    cudaPointerAttributes attrs{};
+    auto attrStatus = cudaPointerGetAttributes(&attrs, ptr);
+    if (attrStatus == cudaSuccess &&
+        (attrs.type == cudaMemoryTypeHost || attrs.type == cudaMemoryTypeManaged)) {
+        alreadyPinned = true;
+    } else if (attrStatus != cudaSuccess) {
+        cudaGetLastError();  // Clear sticky error state for pageable memory
+    }
+
+    if (!alreadyPinned) {
+        registerHostBuffer(ptr, bytes, context);
     }
 
     *trackedPtr = ptr;
@@ -570,28 +592,50 @@ void GPUUpsampler::registerStreamInputBuffer(StreamFloatVector& buffer, cudaStre
 }
 
 void GPUUpsampler::registerStreamOutputBuffer(StreamFloatVector& buffer, cudaStream_t stream) {
+    void** trackedPtr = nullptr;
+    size_t* trackedBytes = nullptr;
+    const char* context = "stream output buffer (mono)";
+    if (stream == streamLeft_) {
+        trackedPtr = &pinnedStreamOutputLeft_;
+        trackedBytes = &pinnedStreamOutputLeftBytes_;
+        context = "stream output buffer (left)";
+    } else if (stream == streamRight_) {
+        trackedPtr = &pinnedStreamOutputRight_;
+        trackedBytes = &pinnedStreamOutputRightBytes_;
+        context = "stream output buffer (right)";
+    } else {
+        trackedPtr = &pinnedStreamOutputMono_;
+        trackedBytes = &pinnedStreamOutputMonoBytes_;
+    }
+
     if (buffer.empty()) {
+        if (*trackedPtr) {
+            removePinnedHostBuffer(*trackedPtr);
+        }
+        *trackedPtr = nullptr;
+        *trackedBytes = 0;
         return;
     }
 
     void* ptr = buffer.data();
     size_t bytes = buffer.size() * sizeof(float);
 
-    void** trackedPtr = nullptr;
-    size_t* trackedBytes = nullptr;
-    if (stream == streamLeft_) {
-        trackedPtr = &pinnedStreamOutputLeft_;
-        trackedBytes = &pinnedStreamOutputLeftBytes_;
-    } else if (stream == streamRight_) {
-        trackedPtr = &pinnedStreamOutputRight_;
-        trackedBytes = &pinnedStreamOutputRightBytes_;
-    } else {
-        trackedPtr = &pinnedStreamOutputMono_;
-        trackedBytes = &pinnedStreamOutputMonoBytes_;
+    if (*trackedPtr) {
+        removePinnedHostBuffer(*trackedPtr);
     }
 
-    if (*trackedPtr == ptr && *trackedBytes == bytes) {
-        return;  // Already prepared
+    bool alreadyPinned = false;
+    cudaPointerAttributes attrs{};
+    auto attrStatus = cudaPointerGetAttributes(&attrs, ptr);
+    if (attrStatus == cudaSuccess &&
+        (attrs.type == cudaMemoryTypeHost || attrs.type == cudaMemoryTypeManaged)) {
+        alreadyPinned = true;
+    } else if (attrStatus != cudaSuccess) {
+        cudaGetLastError();
+    }
+
+    if (!alreadyPinned) {
+        registerHostBuffer(ptr, bytes, context);
     }
 
     *trackedPtr = ptr;
