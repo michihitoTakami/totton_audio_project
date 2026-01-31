@@ -371,7 +371,16 @@ class FilterValidator:
         )
 
         stopband_mask = w >= self.config.stopband_start
-        stopband_attenuation = np.min(H_db[stopband_mask])
+        if np.any(stopband_mask):
+            stopband_db = H_db[stopband_mask]
+            stopband_max_db = float(np.max(stopband_db))
+            stopband_peak_idx = int(np.argmax(stopband_db))
+            stopband_peak_freq = float(w[stopband_mask][stopband_peak_idx])
+            stopband_attenuation = max(0.0, -stopband_max_db)
+        else:
+            stopband_max_db = 0.0
+            stopband_peak_freq = 0.0
+            stopband_attenuation = 0.0
 
         peak_idx = int(np.argmax(np.abs(h)))
         midpoint = len(h) // 2
@@ -387,7 +396,9 @@ class FilterValidator:
             "passband_ripple_db": float(passband_ripple),
             "input_band_peak": input_band_peak,
             "input_band_peak_normalized": input_band_peak_normalized,
-            "stopband_attenuation_db": float(abs(stopband_attenuation)),
+            "stopband_attenuation_db": float(stopband_attenuation),
+            "stopband_max_db": stopband_max_db,
+            "stopband_peak_freq_hz": stopband_peak_freq,
             "peak_position": peak_idx,
             "peak_threshold_samples": peak_threshold,
             "energy_ratio_first_to_second_half": float(energy_ratio),
@@ -397,12 +408,10 @@ class FilterValidator:
             "is_symmetric": is_symmetric,
             "actual_taps": len(h),
         }
-        self._print_results(results, stopband_attenuation)
+        self._print_results(results)
         return results
 
-    def _print_results(
-        self, results: dict[str, Any], stopband_attenuation: float
-    ) -> None:
+    def _print_results(self, results: dict[str, Any]) -> None:
         print(f"  実際のタップ数: {results['actual_taps']}")
         print(f"  通過帯域リップル: {results['passband_ripple_db']:.3f} dB")
         print(
@@ -411,7 +420,12 @@ class FilterValidator:
             f"(raw {results.get('input_band_peak', 0.0):.6f})"
         )
         print(
-            f"  阻止帯域減衰: {results['stopband_attenuation_db']:.1f} dB (目標: {self.config.stopband_attenuation_db} dB)"
+            f"  阻止帯域最悪値: {results['stopband_max_db']:.1f} dB "
+            f"@ {results['stopband_peak_freq_hz']:.1f} Hz"
+        )
+        print(
+            f"  阻止帯域減衰: {results['stopband_attenuation_db']:.1f} dB "
+            f"(目標: {self.config.stopband_attenuation_db} dB)"
         )
         print(
             f"  阻止帯域スペック: {'合格' if results['meets_stopband_spec'] else '不合格'}"
