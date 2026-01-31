@@ -33,8 +33,6 @@ class LinearPhaseDesigner:
 
     def design(self) -> np.ndarray:
         cutoff = (self.config.passband_end + self.config.stopband_start) / 2
-        nyquist = self.config.output_rate / 2
-        normalized_cutoff = cutoff / nyquist
         numtaps = (
             self.config.n_taps
             if self.config.n_taps % 2 == 1
@@ -42,13 +40,13 @@ class LinearPhaseDesigner:
         )
         print("線形位相フィルタ設計中...")
         print(f"  タップ数: {numtaps}")
-        print(f"  カットオフ周波数: {cutoff} Hz (正規化: {normalized_cutoff:.6f})")
+        print(f"  カットオフ周波数: {cutoff} Hz")
         print(f"  Kaiser β: {self.config.kaiser_beta}")
         return signal.firwin(
             numtaps=numtaps,
-            cutoff=normalized_cutoff,
+            cutoff=cutoff,
             window=("kaiser", self.config.kaiser_beta),
-            fs=1.0,
+            fs=self.config.output_rate,
             scale=True,
         )
 
